@@ -23,9 +23,9 @@ python3 -m venv "$VENV_DIR"
 
 # Se executado via curl|bash, não existe pyproject local.
 if [ -n "${ROOT_DIR}" ] && [ -f "$ROOT_DIR/pyproject.toml" ]; then
-  "$VENV_DIR/bin/python" -m pip install -e "$ROOT_DIR" >/dev/null
+  "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall -e "$ROOT_DIR" >/dev/null
 else
-  "$VENV_DIR/bin/python" -m pip install "git+${REPO_URL}" >/dev/null
+  "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall "git+${REPO_URL}" >/dev/null
 fi
 
 mkdir -p "$BIN_DIR"
