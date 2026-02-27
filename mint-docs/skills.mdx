@@ -1,0 +1,32 @@
+# 🧩 Skills
+
+Instale, use e publique skills no ecossistema ClawLite.
+
+## Instalar
+
+```bash
+clawlite skill search web
+clawlite skill install web-search
+```
+
+## Publicar
+
+```bash
+clawlite skill publish ./skills/minha-skill \
+  --version 0.1.0 \
+  --category Desenvolvimento \
+  --status stable \
+  --tag cli --tag automation
+```
+
+## Auto-update seguro
+
+```bash
+clawlite skill auto-update --dry-run
+clawlite skill auto-update --apply --strict
+```
+
+> [!tip]
+> `--strict` exige checksum válido e evita update inseguro.
+
+➡️ Próxima página: [Gateway](./gateway)
