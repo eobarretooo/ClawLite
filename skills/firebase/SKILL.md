@@ -1,11 +1,10 @@
 ---
 name: firebase
-description: Gerenciar projetos Firebase
+description: |
 ---
 
 # firebase
 
-Compatível com Linux/Termux (MVP do ClawLite).
+Port da skill para ClawLite (Linux/Termux).
 
-## Status
-Implementado como skill base com validações de ambiente e comandos seguros.
+Origem: /root/projetos/openclaw-skills/skills/byungkyu/firebase/SKILL.md
