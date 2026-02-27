@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import secrets
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
 from clawlite.config.settings import CONFIG_DIR, load_config, save_config
+from clawlite.core.agent import run_task_with_meta
 from clawlite.skills.marketplace import (
     DEFAULT_DOWNLOAD_BASE_URL,
     SkillMarketplaceError,
@@ -24,7 +26,7 @@ from clawlite.skills.marketplace import (
 app = FastAPI(title="ClawLite Gateway", version="0.3.0")
 connections: set[WebSocket] = set()
 chat_connections: set[WebSocket] = set()
-log_connections: set[WebSocket] = set()
+log_connections: dict[WebSocket, dict[str, str]] = {}
 STARTED_AT = datetime.now(timezone.utc)
 
 LOG_RING: deque[dict[str, Any]] = deque(maxlen=500)
@@ -96,11 +98,155 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text.strip()) // 4)
 
 
-def _estimate_cost_usd(tokens: int, model: str) -> float:
-    # estimativa local simplificada por 1K tokens
-    cheap_models = ("mini", "flash", "haiku")
-    rate_per_1k = 0.002 if any(x in model.lower() for x in cheap_models) else 0.01
-    return round((tokens / 1000.0) * rate_per_1k, 6)
+def _looks_cheap_model(model: str) -> bool:
+    return any(x in model.lower() for x in ("mini", "flash", "haiku", "nano"))
+
+
+def _pricing_per_1k(model: str) -> tuple[float, float]:
+    normalized = model.lower()
+    if normalized.startswith("openai/"):
+        return (0.00015, 0.0006) if _looks_cheap_model(model) else (0.005, 0.015)
+    if normalized.startswith("openrouter/"):
+        return (0.0005, 0.0015) if _looks_cheap_model(model) else (0.004, 0.012)
+    if normalized.startswith("ollama/") or normalized.startswith("local/"):
+        return 0.0, 0.0
+    return (0.0005, 0.0015) if _looks_cheap_model(model) else (0.003, 0.009)
+
+
+def _estimate_cost_parts_usd(prompt_tokens: int, completion_tokens: int, model: str) -> tuple[float, float]:
+    in_rate, out_rate = _pricing_per_1k(model)
+    prompt_cost = round((prompt_tokens / 1000.0) * in_rate, 6)
+    completion_cost = round((completion_tokens / 1000.0) * out_rate, 6)
+    return prompt_cost, completion_cost
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _period_start(period: str) -> datetime | None:
+    now = datetime.now(timezone.utc)
+    p = period.strip().lower()
+    if p in {"", "all"}:
+        return None
+    if p == "24h":
+        return now - timedelta(hours=24)
+    if p == "7d":
+        return now - timedelta(days=7)
+    if p == "30d":
+        return now - timedelta(days=30)
+    if p == "today":
+        return datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    if p == "week":
+        base = now - timedelta(days=now.weekday())
+        return datetime(base.year, base.month, base.day, tzinfo=timezone.utc)
+    if p == "month":
+        return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    return None
+
+
+def _telemetry_tokens(row: dict[str, Any]) -> tuple[int, int, int]:
+    prompt = int(row.get("prompt_tokens", 0) or 0)
+    completion = int(row.get("completion_tokens", 0) or 0)
+    total = int(row.get("tokens", 0) or 0)
+    if prompt == 0 and completion == 0 and total > 0:
+        prompt = total // 2
+        completion = total - prompt
+    if total == 0:
+        total = prompt + completion
+    return prompt, completion, total
+
+
+def _telemetry_costs(row: dict[str, Any]) -> tuple[float, float, float]:
+    prompt_cost = float(row.get("prompt_cost_usd", 0.0) or 0.0)
+    completion_cost = float(row.get("completion_cost_usd", 0.0) or 0.0)
+    total_cost = float(row.get("cost_usd", 0.0) or 0.0)
+    if prompt_cost == 0.0 and completion_cost == 0.0 and total_cost > 0.0:
+        prompt_cost = round(total_cost / 2.0, 6)
+        completion_cost = round(total_cost - prompt_cost, 6)
+    if total_cost == 0.0:
+        total_cost = round(prompt_cost + completion_cost, 6)
+    return prompt_cost, completion_cost, total_cost
+
+
+def _log_matches(entry: dict[str, Any], *, level: str = "", event: str = "", query: str = "") -> bool:
+    if level and str(entry.get("level", "")).lower() != level.lower():
+        return False
+    if event and event.lower() not in str(entry.get("event", "")).lower():
+        return False
+    if query:
+        haystack = json.dumps(entry, ensure_ascii=False).lower()
+        if query.lower() not in haystack:
+            return False
+    return True
+
+
+def _filter_logs(rows: list[dict[str, Any]], *, level: str = "", event: str = "", query: str = "") -> list[dict[str, Any]]:
+    return [row for row in rows if _log_matches(row, level=level, event=event, query=query)]
+
+
+def _build_chat_prompt(text: str, hooks: dict[str, Any]) -> str:
+    pre = str(hooks.get("pre", "")).strip()
+    if pre:
+        return f"{pre}\n\n{text}"
+    return text
+
+
+def _build_chat_reply(raw_output: str, hooks: dict[str, Any]) -> str:
+    post = str(hooks.get("post", "")).strip()
+    if not post:
+        return raw_output
+    return f"{raw_output}\n\n{post}"
+
+
+async def _run_agent_reply(text: str, hooks: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    prompt = _build_chat_prompt(text, hooks)
+    output, meta = await asyncio.to_thread(run_task_with_meta, prompt)
+    return _build_chat_reply(output, hooks), meta
+
+
+def _record_telemetry(
+    *,
+    session_id: str,
+    text: str,
+    reply: str,
+    requested_model: str,
+    effective_model: str,
+    mode: str,
+    reason: str,
+) -> dict[str, Any]:
+    prompt_tokens = _estimate_tokens(text)
+    completion_tokens = _estimate_tokens(reply)
+    tokens = prompt_tokens + completion_tokens
+    prompt_cost_usd, completion_cost_usd = _estimate_cost_parts_usd(prompt_tokens, completion_tokens, effective_model)
+    cost_usd = round(prompt_cost_usd + completion_cost_usd, 6)
+    row = {
+        "ts": _iso_now(),
+        "session_id": session_id,
+        "model_requested": requested_model,
+        "model_effective": effective_model,
+        "mode": mode,
+        "reason": reason,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "tokens": tokens,
+        "prompt_cost_usd": prompt_cost_usd,
+        "completion_cost_usd": completion_cost_usd,
+        "cost_usd": cost_usd,
+    }
+    _append_jsonl(TELEMETRY_FILE, row)
+    return row
 
 
 def _log(event: str, level: str = "info", data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -111,12 +257,22 @@ def _log(event: str, level: str = "info", data: dict[str, Any] | None = None) ->
         "data": data or {},
     }
     LOG_RING.append(entry)
-    for ws in list(log_connections):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return entry
+    for ws, filters in list(log_connections.items()):
+        if not _log_matches(
+            entry,
+            level=str(filters.get("level", "")),
+            event=str(filters.get("event", "")),
+            query=str(filters.get("q", "")),
+        ):
+            continue
         try:
-            import asyncio
-            asyncio.create_task(ws.send_json({"type": "log", "payload": entry}))
+            loop.create_task(ws.send_json({"type": "log", "payload": entry}))
         except Exception:
-            log_connections.discard(ws)
+            log_connections.pop(ws, None)
     return entry
 
 
@@ -182,6 +338,53 @@ def _session_messages(session_id: str) -> list[dict[str, Any]]:
 
 def _skills_dir() -> Path:
     return Path.cwd() / "skills"
+
+
+async def _handle_chat_message(session_id: str, text: str) -> dict[str, Any]:
+    clean_text = text.strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Mensagem vazia")
+
+    cfg = load_config()
+    settings = _load_dashboard_settings()
+    requested_model = str(cfg.get("model", "openai/gpt-4o-mini"))
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+
+    user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": clean_text}
+    _append_jsonl(SESSIONS_FILE, user_msg)
+
+    reply, meta = await _run_agent_reply(clean_text, hooks)
+    assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
+    _append_jsonl(SESSIONS_FILE, assistant_msg)
+
+    effective_model = str(meta.get("model") or requested_model)
+    telemetry_row = _record_telemetry(
+        session_id=session_id,
+        text=clean_text,
+        reply=reply,
+        requested_model=requested_model,
+        effective_model=effective_model,
+        mode=str(meta.get("mode", "unknown")),
+        reason=str(meta.get("reason", "unknown")),
+    )
+    _log(
+        "chat.message",
+        level="error" if str(meta.get("mode")) == "error" else "info",
+        data={
+            "session_id": session_id,
+            "tokens": telemetry_row["tokens"],
+            "cost_usd": telemetry_row["cost_usd"],
+            "mode": telemetry_row["mode"],
+            "model": effective_model,
+        },
+    )
+    return {
+        "assistant_message": assistant_msg,
+        "telemetry": telemetry_row,
+        "meta": meta,
+    }
 
 
 @app.get("/health")
@@ -316,6 +519,7 @@ def api_dashboard_skills_install(payload: dict[str, Any], authorization: str | N
     slug = _safe_slug(str(payload.get("slug", "")))
     skills_dir = _skills_dir()
     skill_dir = skills_dir / slug
+    created = not skill_dir.exists()
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_file = skill_dir / "SKILL.md"
     if not skill_file.exists():
@@ -326,21 +530,23 @@ def api_dashboard_skills_install(payload: dict[str, Any], authorization: str | N
     active.add(slug)
     cfg["skills"] = sorted(active)
     save_config(cfg)
-    _log("skills.installed", data={"slug": slug})
-    return JSONResponse({"ok": True, "slug": slug})
+    _log("skills.installed", data={"slug": slug, "created": created})
+    return JSONResponse({"ok": True, "slug": slug, "created": created})
 
 
 @app.post("/api/dashboard/skills/enable")
 def api_dashboard_skills_enable(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
     _check_bearer(authorization)
     slug = _safe_slug(str(payload.get("slug", "")))
+    if not (_skills_dir() / slug).exists():
+        raise HTTPException(status_code=404, detail=f"Skill '{slug}' não encontrada no diretório local")
     cfg = load_config()
     active = set(cfg.get("skills", []))
     active.add(slug)
     cfg["skills"] = sorted(active)
     save_config(cfg)
     _log("skills.enabled", data={"slug": slug})
-    return JSONResponse({"ok": True, "slug": slug})
+    return JSONResponse({"ok": True, "slug": slug, "enabled": True})
 
 
 @app.post("/api/dashboard/skills/disable")
@@ -348,22 +554,27 @@ def api_dashboard_skills_disable(payload: dict[str, Any], authorization: str | N
     _check_bearer(authorization)
     slug = _safe_slug(str(payload.get("slug", "")))
     cfg = load_config()
+    if slug not in cfg.get("skills", []):
+        raise HTTPException(status_code=404, detail=f"Skill '{slug}' já está desativada ou não existe")
     cfg["skills"] = [s for s in cfg.get("skills", []) if s != slug]
     save_config(cfg)
     _log("skills.disabled", data={"slug": slug})
-    return JSONResponse({"ok": True, "slug": slug})
+    return JSONResponse({"ok": True, "slug": slug, "enabled": False})
 
 
 @app.post("/api/dashboard/skills/remove")
 def api_dashboard_skills_remove(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
     _check_bearer(authorization)
     slug = _safe_slug(str(payload.get("slug", "")))
-
+    skill_dir = _skills_dir() / slug
     cfg = load_config()
+    was_enabled = slug in cfg.get("skills", [])
+    if not skill_dir.exists() and not was_enabled:
+        raise HTTPException(status_code=404, detail=f"Skill '{slug}' não encontrada")
+
     cfg["skills"] = [s for s in cfg.get("skills", []) if s != slug]
     save_config(cfg)
 
-    skill_dir = _skills_dir() / slug
     if skill_dir.exists() and skill_dir.is_dir():
         for p in sorted(skill_dir.rglob("*"), reverse=True):
             if p.is_file():
@@ -379,7 +590,7 @@ def api_dashboard_skills_remove(payload: dict[str, Any], authorization: str | No
             pass
 
     _log("skills.removed", data={"slug": slug})
-    return JSONResponse({"ok": True, "slug": slug})
+    return JSONResponse({"ok": True, "slug": slug, "removed": True})
 
 
 @app.get("/api/dashboard/sessions")
@@ -398,27 +609,145 @@ def api_dashboard_session_messages(session_id: str, authorization: str | None = 
 
 
 @app.get("/api/dashboard/telemetry")
-def api_dashboard_telemetry(authorization: str | None = Header(default=None)) -> JSONResponse:
+def api_dashboard_telemetry(
+    authorization: str | None = Header(default=None),
+    session_id: str = Query(default=""),
+    period: str = Query(default="7d"),
+    granularity: str = Query(default="auto"),
+    start: str = Query(default=""),
+    end: str = Query(default=""),
+    limit: int = Query(default=200),
+) -> JSONResponse:
     _check_bearer(authorization)
     rows = _read_jsonl(TELEMETRY_FILE)
-    total_tokens = sum(int(i.get("tokens", 0)) for i in rows)
-    total_cost_usd = round(sum(float(i.get("cost_usd", 0.0)) for i in rows), 6)
+    clean_session = session_id.strip()
+    start_dt = _parse_ts(start) if start else _period_start(period)
+    end_dt = _parse_ts(end) if end else None
+    if start_dt and end_dt and end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="Intervalo inválido: end < start")
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if clean_session and str(row.get("session_id", "")) != clean_session:
+            continue
+        row_ts = _parse_ts(row.get("ts"))
+        if start_dt and (row_ts is None or row_ts < start_dt):
+            continue
+        if end_dt and (row_ts is None or row_ts > end_dt):
+            continue
+        filtered.append(row)
+
+    summary = {
+        "events": 0,
+        "sessions": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "tokens": 0,
+        "prompt_cost_usd": 0.0,
+        "completion_cost_usd": 0.0,
+        "cost_usd": 0.0,
+    }
+    session_map: dict[str, dict[str, Any]] = {}
+
+    use_hour = False
+    if granularity.lower() == "hour":
+        use_hour = True
+    elif granularity.lower() == "auto":
+        use_hour = period.lower() in {"24h", "today"}
+
+    timeline_map: dict[str, dict[str, Any]] = {}
+    for row in filtered:
+        prompt_tokens, completion_tokens, tokens = _telemetry_tokens(row)
+        prompt_cost, completion_cost, total_cost = _telemetry_costs(row)
+        sid = str(row.get("session_id", "")).strip() or "unknown"
+
+        summary["events"] += 1
+        summary["prompt_tokens"] += prompt_tokens
+        summary["completion_tokens"] += completion_tokens
+        summary["tokens"] += tokens
+        summary["prompt_cost_usd"] = round(summary["prompt_cost_usd"] + prompt_cost, 6)
+        summary["completion_cost_usd"] = round(summary["completion_cost_usd"] + completion_cost, 6)
+        summary["cost_usd"] = round(summary["cost_usd"] + total_cost, 6)
+
+        item = session_map.setdefault(
+            sid,
+            {
+                "session_id": sid,
+                "events": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "tokens": 0,
+                "cost_usd": 0.0,
+                "last_ts": "",
+            },
+        )
+        item["events"] += 1
+        item["prompt_tokens"] += prompt_tokens
+        item["completion_tokens"] += completion_tokens
+        item["tokens"] += tokens
+        item["cost_usd"] = round(item["cost_usd"] + total_cost, 6)
+        ts = str(row.get("ts", ""))
+        if ts >= item["last_ts"]:
+            item["last_ts"] = ts
+
+        dt = _parse_ts(row.get("ts"))
+        if dt is None:
+            continue
+        if use_hour:
+            bucket_dt = dt.replace(minute=0, second=0, microsecond=0)
+            bucket = bucket_dt.isoformat().replace("+00:00", "Z")
+        else:
+            bucket = dt.strftime("%Y-%m-%d")
+        bucket_item = timeline_map.setdefault(
+            bucket,
+            {
+                "bucket": bucket,
+                "events": 0,
+                "tokens": 0,
+                "cost_usd": 0.0,
+            },
+        )
+        bucket_item["events"] += 1
+        bucket_item["tokens"] += tokens
+        bucket_item["cost_usd"] = round(bucket_item["cost_usd"] + total_cost, 6)
+
+    summary["sessions"] = len(session_map)
+    sessions = sorted(
+        session_map.values(),
+        key=lambda row: (float(row.get("cost_usd", 0.0)), int(row.get("tokens", 0))),
+        reverse=True,
+    )
+    timeline = [timeline_map[k] for k in sorted(timeline_map)]
+    n = max(1, min(limit, 500))
+
     return JSONResponse({
         "ok": True,
-        "summary": {
-            "events": len(rows),
-            "tokens": total_tokens,
-            "cost_usd": total_cost_usd,
+        "filters": {
+            "session_id": clean_session,
+            "period": period,
+            "granularity": "hour" if use_hour else "day",
+            "start": start_dt.isoformat() if start_dt else "",
+            "end": end_dt.isoformat() if end_dt else "",
         },
-        "events": rows[-100:],
+        "summary": summary,
+        "sessions": sessions,
+        "timeline": timeline,
+        "events": filtered[-n:],
     })
 
 
 @app.get("/api/dashboard/logs")
-def api_dashboard_logs(authorization: str | None = Header(default=None), limit: int = 100) -> JSONResponse:
+def api_dashboard_logs(
+    authorization: str | None = Header(default=None),
+    limit: int = 100,
+    level: str = Query(default=""),
+    event: str = Query(default=""),
+    q: str = Query(default=""),
+) -> JSONResponse:
     _check_bearer(authorization)
     n = max(1, min(limit, 500))
-    return JSONResponse({"ok": True, "logs": list(LOG_RING)[-n:]})
+    rows = _filter_logs(list(LOG_RING), level=level, event=event, query=q)
+    return JSONResponse({"ok": True, "logs": rows[-n:]})
 
 
 @app.get("/api/hub/manifest")
@@ -474,26 +803,19 @@ async def ws_endpoint(websocket: WebSocket):
             elif msg_type == "chat":
                 session_id = str(msg.get("session_id") or "default")
                 text = str(msg.get("text") or "").strip()
-                cfg = load_config()
-                model = cfg.get("model", "openai/gpt-4o-mini")
-                user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": text}
-                _append_jsonl(SESSIONS_FILE, user_msg)
-
-                reply = f"[{model}] Resposta local (MVP): recebi '{text}'"
-                assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
-                _append_jsonl(SESSIONS_FILE, assistant_msg)
-
-                tokens = _estimate_tokens(text) + _estimate_tokens(reply)
-                cost_usd = _estimate_cost_usd(tokens, model)
-                _append_jsonl(TELEMETRY_FILE, {
-                    "ts": _iso_now(),
-                    "session_id": session_id,
-                    "model": model,
-                    "tokens": tokens,
-                    "cost_usd": cost_usd,
-                })
-                _log("chat.message", data={"session_id": session_id, "tokens": tokens, "cost_usd": cost_usd})
-                await websocket.send_json({"type": "chat", "message": assistant_msg})
+                try:
+                    result = await _handle_chat_message(session_id=session_id, text=text)
+                except HTTPException as exc:
+                    await websocket.send_json({"type": "error", "detail": exc.detail})
+                    continue
+                await websocket.send_json(
+                    {
+                        "type": "chat",
+                        "message": result["assistant_message"],
+                        "meta": result["meta"],
+                        "telemetry": result["telemetry"],
+                    }
+                )
             else:
                 await websocket.send_json({"type": "echo", "payload": msg})
     except WebSocketDisconnect:
@@ -520,28 +842,19 @@ async def ws_chat(websocket: WebSocket):
                 continue
             session_id = str(msg.get("session_id") or "default")
             text = str(msg.get("text") or "").strip()
-            cfg = load_config()
-            model = cfg.get("model", "openai/gpt-4o-mini")
-
-            user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": text}
-            _append_jsonl(SESSIONS_FILE, user_msg)
-
-            reply = f"[{model}] Resposta local (MVP): recebi '{text}'"
-            assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
-            _append_jsonl(SESSIONS_FILE, assistant_msg)
-
-            tokens = _estimate_tokens(text) + _estimate_tokens(reply)
-            cost_usd = _estimate_cost_usd(tokens, model)
-            _append_jsonl(TELEMETRY_FILE, {
-                "ts": _iso_now(),
-                "session_id": session_id,
-                "model": model,
-                "tokens": tokens,
-                "cost_usd": cost_usd,
-            })
-            _log("chat.message", data={"session_id": session_id, "tokens": tokens, "cost_usd": cost_usd})
-
-            await websocket.send_json({"type": "chat", "message": assistant_msg})
+            try:
+                result = await _handle_chat_message(session_id=session_id, text=text)
+            except HTTPException as exc:
+                await websocket.send_json({"type": "error", "detail": exc.detail})
+                continue
+            await websocket.send_json(
+                {
+                    "type": "chat",
+                    "message": result["assistant_message"],
+                    "meta": result["meta"],
+                    "telemetry": result["telemetry"],
+                }
+            )
     except WebSocketDisconnect:
         pass
     finally:
@@ -554,16 +867,34 @@ async def ws_logs(websocket: WebSocket):
     if token != _token():
         await websocket.close(code=4403)
         return
+    level = str(websocket.query_params.get("level", "")).strip().lower()
+    event = str(websocket.query_params.get("event", "")).strip().lower()
+    query = str(websocket.query_params.get("q", "")).strip().lower()
     await websocket.accept()
-    log_connections.add(websocket)
+    log_connections[websocket] = {"level": level, "event": event, "q": query}
     try:
-        await websocket.send_json({"type": "snapshot", "logs": list(LOG_RING)[-100:]})
+        snapshot = _filter_logs(list(LOG_RING), level=level, event=event, query=query)
+        await websocket.send_json({"type": "snapshot", "logs": snapshot[-100:]})
         while True:
-            _ = await websocket.receive_text()
+            raw = await websocket.receive_text()
+            if not raw.strip():
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("type") != "filters":
+                continue
+            level = str(payload.get("level", "")).strip().lower()
+            event = str(payload.get("event", "")).strip().lower()
+            query = str(payload.get("q", "")).strip().lower()
+            log_connections[websocket] = {"level": level, "event": event, "q": query}
+            snapshot = _filter_logs(list(LOG_RING), level=level, event=event, query=query)
+            await websocket.send_json({"type": "snapshot", "logs": snapshot[-100:]})
     except WebSocketDisconnect:
         pass
     finally:
-        log_connections.discard(websocket)
+        log_connections.pop(websocket, None)
 
 
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
