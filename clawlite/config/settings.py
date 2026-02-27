@@ -30,10 +30,28 @@ DEFAULT_CONFIG = {
         "host": "0.0.0.0",
         "port": 8787,
         "token": "",
+        "dashboard_enabled": True,
     },
     "channels": {
-        "telegram": {"enabled": False},
-        "discord": {"enabled": False},
+        "telegram": {"enabled": False, "token": "", "chat_id": ""},
+        "whatsapp": {"enabled": False, "token": "", "phone": ""},
+        "discord": {"enabled": False, "token": "", "guild_id": ""},
+    },
+    "hooks": {
+        "boot": True,
+        "session_memory": True,
+        "command_logger": False,
+    },
+    "web_tools": {
+        "web_search": {"enabled": True, "provider": "brave"},
+        "reddit": {"enabled": False, "subreddits": ["selfhosted", "Python"]},
+        "threads": {"enabled": False, "username": ""},
+    },
+    "language": "pt-br",
+    "security": {
+        "allow_shell_exec": True,
+        "redact_tokens_in_logs": True,
+        "require_gateway_token": True,
     },
     "skills": ["core-tools", "memory", "gateway"],
     "reddit": {

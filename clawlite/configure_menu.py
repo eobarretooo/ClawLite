@@ -12,18 +12,44 @@ from rich.syntax import Syntax
 
 from clawlite.auth import PROVIDERS, auth_login
 from clawlite.config.settings import load_config, save_config
-from clawlite.skills.registry import SKILLS
+from clawlite.runtime.locale import detect_language
+from clawlite.skills.registry import SKILLS, describe_skill
 
 console = Console()
 
 
-def _preview(cfg: dict[str, Any]) -> str:
-    return json.dumps(cfg, ensure_ascii=False, indent=2)
+I18N = {
+    "pt-br": {
+        "title": "⚙️ ClawLite Configure",
+        "menu": "Use ↑↓ para navegar e Enter para abrir uma seção:",
+        "saved": "✅ Configuração salva automaticamente.",
+        "preview": "👀 Prévia final",
+        "confirm": "Salvar esta configuração?",
+        "bye": "👋 Saindo do configurador.",
+    },
+    "en": {
+        "title": "⚙️ ClawLite Configure",
+        "menu": "Use ↑↓ and Enter to open a section:",
+        "saved": "✅ Configuration auto-saved.",
+        "preview": "👀 Final preview",
+        "confirm": "Save this configuration?",
+        "bye": "👋 Leaving configurator.",
+    },
+}
+
+MODEL_OPTIONS = {
+    "openai": ["openai/gpt-4o-mini", "openai/gpt-4.1-mini"],
+    "anthropic": ["anthropic/claude-3-5-sonnet", "anthropic/claude-3-5-haiku"],
+    "gemini": ["gemini/gemini-2.0-flash", "gemini/gemini-1.5-pro"],
+    "openrouter": ["openrouter/auto", "openrouter/anthropic/claude-3.5-sonnet"],
+    "groq": ["groq/llama-3.3-70b", "groq/mixtral-8x7b"],
+    "ollama": ["ollama/llama3.1:8b", "ollama/qwen2.5:7b"],
+}
 
 
 def _validate_required(label: str):
     def _inner(value: str) -> bool | str:
-        if value is None or not str(value).strip():
+        if not str(value or "").strip():
             return f"⚠️ {label} é obrigatório."
         return True
 
@@ -32,193 +58,244 @@ def _validate_required(label: str):
 
 def _validate_port(value: str) -> bool | str:
     v = (value or "").strip()
-    if not v:
-        return "⚠️ Porta é obrigatória."
     if not v.isdigit():
-        return "⚠️ Porta precisa ser numérica (ex.: 8787)."
-    port = int(v)
-    if not (1 <= port <= 65535):
-        return "⚠️ Porta fora do intervalo válido (1-65535)."
+        return "⚠️ Porta inválida (1-65535)."
+    n = int(v)
+    if n < 1 or n > 65535:
+        return "⚠️ Porta inválida (1-65535)."
     return True
 
 
-def _steps_done(cfg: dict[str, Any]) -> int:
-    done = 0
-    if cfg.get("model"):
-        done += 1
-    channels = cfg.get("channels", {})
-    if isinstance(channels, dict):
-        done += 1
-    if isinstance(cfg.get("skills", []), list):
-        done += 1
-    gateway = cfg.get("gateway", {})
-    if gateway.get("host") and gateway.get("port"):
-        done += 1
-    if isinstance(cfg.get("security", {}), dict):
-        done += 1
-    if "enabled" in cfg.get("web_tools", {}):
-        done += 1
-    return done
+def _preview(cfg: dict[str, Any]) -> str:
+    return json.dumps(cfg, ensure_ascii=False, indent=2)
 
 
-def _header(cfg: dict[str, Any]) -> None:
-    done = min(_steps_done(cfg), 6)
-    total = 6
-    pct = int((done / total) * 100)
-    bar_width = 24
-    fill = int((done / total) * bar_width)
-    bar = "🟪" * fill + "⬜" * (bar_width - fill)
+def _autosave(cfg: dict[str, Any]) -> None:
+    save_config(cfg)
+    console.print("[green]✅ Configuração salva automaticamente.[/green]")
 
-    console.print(
-        Panel.fit(
-            f"[bold cyan]⚙️ ClawLite Configure (PT-BR)[/bold cyan]\n"
-            f"[magenta]{bar}[/magenta] [bold]{done}/{total}[/bold] etapas • {pct}%",
-            border_style="bright_magenta",
-        )
+
+def _ensure_defaults(cfg: dict[str, Any]) -> None:
+    cfg.setdefault("language", detect_language("pt-br"))
+    cfg.setdefault("channels", {})
+    cfg["channels"].setdefault("telegram", {"enabled": False, "token": "", "chat_id": ""})
+    cfg["channels"].setdefault("whatsapp", {"enabled": False, "token": "", "phone": ""})
+    cfg["channels"].setdefault("discord", {"enabled": False, "token": "", "guild_id": ""})
+    cfg.setdefault("hooks", {"boot": True, "session_memory": True, "command_logger": False})
+    cfg.setdefault("gateway", {"host": "0.0.0.0", "port": 8787, "token": "", "dashboard_enabled": True})
+    cfg.setdefault(
+        "web_tools",
+        {
+            "web_search": {"enabled": True, "provider": "brave"},
+            "reddit": {"enabled": False, "subreddits": ["selfhosted", "Python"]},
+            "threads": {"enabled": False, "username": ""},
+        },
+    )
+    cfg.setdefault("security", {"allow_shell_exec": True, "redact_tokens_in_logs": True, "require_gateway_token": True})
+    cfg.setdefault("skills", cfg.get("skills", []))
+
+
+def _section_model(cfg: dict[str, Any]) -> None:
+    provider = questionary.select("Provedor de modelo:", choices=list(MODEL_OPTIONS.keys())).ask()
+    model = questionary.select("Modelo:", choices=MODEL_OPTIONS[provider]).ask()
+    cfg["model"] = model
+    if provider in PROVIDERS and questionary.confirm(f"Fazer login OAuth/chave de {provider} agora?", default=False).ask():
+        auth_login(provider)
+
+
+def _section_channels(cfg: dict[str, Any]) -> None:
+    selected = questionary.checkbox(
+        "Canais ativos (espaço para marcar):",
+        choices=[
+            Choice("telegram", checked=cfg["channels"]["telegram"].get("enabled", False)),
+            Choice("whatsapp", checked=cfg["channels"]["whatsapp"].get("enabled", False)),
+            Choice("discord", checked=cfg["channels"]["discord"].get("enabled", False)),
+        ],
+    ).ask() or []
+
+    for name in ["telegram", "whatsapp", "discord"]:
+        cfg["channels"][name]["enabled"] = name in selected
+
+    if cfg["channels"]["telegram"]["enabled"]:
+        cfg["channels"]["telegram"]["token"] = questionary.text(
+            "Token do Telegram:", default=cfg["channels"]["telegram"].get("token", "")
+        ).ask()
+        cfg["channels"]["telegram"]["chat_id"] = questionary.text(
+            "Chat ID padrão:", default=cfg["channels"]["telegram"].get("chat_id", "")
+        ).ask()
+
+    if cfg["channels"]["whatsapp"]["enabled"]:
+        cfg["channels"]["whatsapp"]["token"] = questionary.text(
+            "Token/API key do WhatsApp:", default=cfg["channels"]["whatsapp"].get("token", "")
+        ).ask()
+        cfg["channels"]["whatsapp"]["phone"] = questionary.text(
+            "Número padrão (+55...):", default=cfg["channels"]["whatsapp"].get("phone", "")
+        ).ask()
+
+    if cfg["channels"]["discord"]["enabled"]:
+        cfg["channels"]["discord"]["token"] = questionary.text(
+            "Token do bot Discord:", default=cfg["channels"]["discord"].get("token", "")
+        ).ask()
+        cfg["channels"]["discord"]["guild_id"] = questionary.text(
+            "Guild ID padrão:", default=cfg["channels"]["discord"].get("guild_id", "")
+        ).ask()
+
+
+def _section_skills(cfg: dict[str, Any]) -> None:
+    skills = sorted(SKILLS.keys())
+    viewed = questionary.select("Ver descrição de qual skill?", choices=skills + ["pular"]).ask()
+    if viewed and viewed != "pular":
+        console.print(Panel(describe_skill(viewed), title=f"🧩 {viewed}", border_style="cyan"))
+
+    enabled = set(cfg.get("skills", []))
+    choices = [Choice(f"{name} — {describe_skill(name)}", value=name, checked=(name in enabled)) for name in skills]
+    cfg["skills"] = questionary.checkbox("Ative/desative skills (espaço):", choices=choices).ask() or []
+
+
+def _section_hooks(cfg: dict[str, Any]) -> None:
+    selected = questionary.checkbox(
+        "Hooks ativos:",
+        choices=[
+            Choice("boot", checked=cfg["hooks"].get("boot", True)),
+            Choice("session-memory", checked=cfg["hooks"].get("session_memory", True)),
+            Choice("command-logger", checked=cfg["hooks"].get("command_logger", False)),
+        ],
+    ).ask() or []
+    cfg["hooks"] = {
+        "boot": "boot" in selected,
+        "session_memory": "session-memory" in selected,
+        "command_logger": "command-logger" in selected,
+    }
+
+
+def _section_gateway(cfg: dict[str, Any]) -> None:
+    cfg["gateway"]["host"] = questionary.text(
+        "Host do gateway:", default=str(cfg["gateway"].get("host", "0.0.0.0")), validate=_validate_required("Host")
+    ).ask()
+    cfg["gateway"]["port"] = int(
+        questionary.text("Porta do gateway:", default=str(cfg["gateway"].get("port", 8787)), validate=_validate_port).ask()
+    )
+    token = questionary.text("Token do gateway (vazio gera automático):", default=str(cfg["gateway"].get("token", ""))).ask().strip()
+    cfg["gateway"]["token"] = token or secrets.token_urlsafe(24)
+    cfg["gateway"]["dashboard_enabled"] = bool(
+        questionary.confirm("Dashboard web habilitado?", default=cfg["gateway"].get("dashboard_enabled", True)).ask()
     )
 
 
-def _resumo_final(cfg: dict[str, Any]) -> None:
-    channels = cfg.get("channels", {})
-    skills = cfg.get("skills", [])
-    gateway = cfg.get("gateway", {})
+def _section_web_tools(cfg: dict[str, Any]) -> None:
+    selected = questionary.checkbox(
+        "Ferramentas web ativas:",
+        choices=[
+            Choice("web-search", checked=cfg["web_tools"].get("web_search", {}).get("enabled", True)),
+            Choice("reddit", checked=cfg["web_tools"].get("reddit", {}).get("enabled", False)),
+            Choice("threads", checked=cfg["web_tools"].get("threads", {}).get("enabled", False)),
+        ],
+    ).ask() or []
 
-    linhas = [
-        f"🤖 Modelo: [bold]{cfg.get('model', 'não definido')}[/bold]",
-        f"📡 Telegram: {'✅ ativo' if channels.get('telegram', {}).get('enabled') else '❌ desativado'}",
-        f"💬 Discord: {'✅ ativo' if channels.get('discord', {}).get('enabled') else '❌ desativado'}",
-        f"🧩 Skills ativas: [bold]{len(skills)}[/bold]",
-        f"🌐 Gateway: [bold]{gateway.get('host', '0.0.0.0')}:{gateway.get('port', 8787)}[/bold]",
-        f"🕸️ Web tools: {'✅ ativado' if cfg.get('web_tools', {}).get('enabled', True) else '❌ desativado'}",
-    ]
+    cfg["web_tools"].setdefault("web_search", {})
+    cfg["web_tools"].setdefault("reddit", {})
+    cfg["web_tools"].setdefault("threads", {})
 
-    console.print(Panel("\n".join(linhas), title="✅ Configuração concluída", border_style="green"))
+    cfg["web_tools"]["web_search"]["enabled"] = "web-search" in selected
+    cfg["web_tools"]["reddit"]["enabled"] = "reddit" in selected
+    cfg["web_tools"]["threads"]["enabled"] = "threads" in selected
+
+    if cfg["web_tools"]["web_search"]["enabled"]:
+        cfg["web_tools"]["web_search"]["provider"] = questionary.select(
+            "Provider do web search:", choices=["brave", "duckduckgo", "serpapi"]
+        ).ask()
+
+    if cfg["web_tools"]["reddit"]["enabled"]:
+        subs = questionary.text(
+            "Subreddits (vírgula):",
+            default=", ".join(cfg["web_tools"]["reddit"].get("subreddits", ["selfhosted", "Python"])),
+        ).ask()
+        cfg["web_tools"]["reddit"]["subreddits"] = [s.strip() for s in subs.split(",") if s.strip()]
+
+    if cfg["web_tools"]["threads"]["enabled"]:
+        cfg["web_tools"]["threads"]["username"] = questionary.text(
+            "Usuário Threads:", default=cfg["web_tools"]["threads"].get("username", "")
+        ).ask()
+
+
+def _section_language(cfg: dict[str, Any]) -> None:
+    default_lang = cfg.get("language") or detect_language("pt-br")
+    cfg["language"] = questionary.select("Idioma da interface:", choices=["pt-br", "en"], default=default_lang).ask()
+
+
+def _section_security(cfg: dict[str, Any]) -> None:
+    selected = questionary.checkbox(
+        "Opções de segurança:",
+        choices=[
+            Choice("allow-shell-exec", checked=cfg["security"].get("allow_shell_exec", True)),
+            Choice("redact-tokens-in-logs", checked=cfg["security"].get("redact_tokens_in_logs", True)),
+            Choice("require-gateway-token", checked=cfg["security"].get("require_gateway_token", True)),
+        ],
+    ).ask() or []
+    cfg["security"] = {
+        "allow_shell_exec": "allow-shell-exec" in selected,
+        "redact_tokens_in_logs": "redact-tokens-in-logs" in selected,
+        "require_gateway_token": "require-gateway-token" in selected,
+    }
+    if cfg["security"]["require_gateway_token"] and not str(cfg["gateway"].get("token", "")).strip():
+        cfg["gateway"]["token"] = secrets.token_urlsafe(24)
 
 
 def run_configure_menu() -> None:
     cfg = load_config()
-    cfg.setdefault("channels", {"telegram": {"enabled": False}, "discord": {"enabled": False}})
-    cfg.setdefault("gateway", {"host": "0.0.0.0", "port": 8787, "token": ""})
-    cfg.setdefault("security", {"allow_shell_exec": True, "redact_tokens_in_logs": True})
-    cfg.setdefault("web_tools", {"enabled": True})
-    cfg.setdefault("skills", cfg.get("skills", []))
+    _ensure_defaults(cfg)
+    if not cfg.get("language"):
+        cfg["language"] = detect_language("pt-br")
 
     sections = [
-        Choice(
-            title="🤖 Modelo e autenticação\n   └─ Define IA padrão e login inicial de provedor",
-            value="model",
-        ),
-        Choice(
-            title="📡 Canais\n   └─ Liga/desliga Telegram e Discord",
-            value="channels",
-        ),
-        Choice(
-            title="🧩 Skills\n   └─ Escolhe recursos extras com espaço",
-            value="skills",
-        ),
-        Choice(
-            title="🌐 Gateway\n   └─ Host, porta e token de acesso",
-            value="gateway",
-        ),
-        Choice(
-            title="🔒 Segurança\n   └─ Regras de execução e proteção de logs",
-            value="security",
-        ),
-        Choice(
-            title="🕸️ Ferramentas Web\n   └─ Habilita busca/fetch na internet",
-            value="web_tools",
-        ),
-        Choice(
-            title="👀 Prévia, confirmação e salvar\n   └─ Revise tudo antes de gravar",
-            value="save",
-        ),
-        Choice(title="❌ Sair sem salvar", value="exit"),
+        Choice("Model", "model"),
+        Choice("Channels", "channels"),
+        Choice("Skills", "skills"),
+        Choice("Hooks", "hooks"),
+        Choice("Gateway", "gateway"),
+        Choice("Web Tools", "web_tools"),
+        Choice("Language", "language"),
+        Choice("Security", "security"),
+        Choice("Preview & Save", "save"),
+        Choice("Exit", "exit"),
     ]
 
     while True:
-        _header(cfg)
-        section = questionary.select(
-            "Use ↑↓ para navegar e Enter para abrir uma etapa:",
-            choices=sections,
-            use_shortcuts=True,
-        ).ask()
+        lang = cfg.get("language", "pt-br")
+        console.print(Panel.fit(f"[bold cyan]{I18N.get(lang, I18N['pt-br'])['title']}[/bold cyan]", border_style="magenta"))
+        section = questionary.select(I18N.get(lang, I18N["pt-br"])["menu"], choices=sections).ask()
 
         if section == "model":
-            cfg["model"] = questionary.text(
-                "🤖 Modelo padrão:",
-                default=cfg.get("model", "openai/gpt-4o-mini"),
-                validate=_validate_required("Modelo"),
-            ).ask()
-            first = questionary.select(
-                "🔐 Autenticar provedor agora?",
-                choices=["pular"] + list(PROVIDERS.keys()),
-            ).ask()
-            if first and first != "pular":
-                auth_login(first)
-
+            _section_model(cfg)
+            _autosave(cfg)
         elif section == "channels":
-            ch = questionary.checkbox(
-                "📡 Canais ativos (use espaço para marcar):",
-                choices=[
-                    Choice("Telegram", checked=cfg.get("channels", {}).get("telegram", {}).get("enabled", False)),
-                    Choice("Discord", checked=cfg.get("channels", {}).get("discord", {}).get("enabled", False)),
-                ],
-            ).ask() or []
-            cfg["channels"]["telegram"]["enabled"] = "Telegram" in ch
-            cfg["channels"]["discord"]["enabled"] = "Discord" in ch
-
+            _section_channels(cfg)
+            _autosave(cfg)
         elif section == "skills":
-            enabled = set(cfg.get("skills", []))
-            choices = [Choice(f"{s}", checked=(s in enabled)) for s in sorted(SKILLS.keys())]
-            picked = questionary.checkbox("🧩 Skills ativas (espaço para marcar):", choices=choices).ask() or []
-            cfg["skills"] = picked
-
+            _section_skills(cfg)
+            _autosave(cfg)
+        elif section == "hooks":
+            _section_hooks(cfg)
+            _autosave(cfg)
         elif section == "gateway":
-            cfg["gateway"]["host"] = questionary.text(
-                "🌐 Host do gateway:",
-                default=str(cfg["gateway"].get("host", "0.0.0.0")),
-                validate=_validate_required("Host do gateway"),
-            ).ask()
-            port_raw = questionary.text(
-                "🔌 Porta do gateway:",
-                default=str(cfg["gateway"].get("port", 8787)),
-                validate=_validate_port,
-            ).ask()
-            cfg["gateway"]["port"] = int(port_raw)
-            tok = questionary.text(
-                "🪪 Token do gateway (vazio = gerar automático):",
-                default=str(cfg["gateway"].get("token", "")),
-            ).ask().strip()
-            cfg["gateway"]["token"] = tok or secrets.token_urlsafe(24)
-
-        elif section == "security":
-            security = questionary.checkbox(
-                "🔒 Regras de segurança (espaço para marcar):",
-                choices=[
-                    Choice("Permitir shell exec", checked=cfg["security"].get("allow_shell_exec", True)),
-                    Choice("Mascarar tokens nos logs", checked=cfg["security"].get("redact_tokens_in_logs", True)),
-                ],
-            ).ask() or []
-            cfg["security"]["allow_shell_exec"] = "Permitir shell exec" in security
-            cfg["security"]["redact_tokens_in_logs"] = "Mascarar tokens nos logs" in security
-
+            _section_gateway(cfg)
+            _autosave(cfg)
         elif section == "web_tools":
-            enabled = questionary.confirm(
-                "🕸️ Ativar ferramentas web?",
-                default=cfg.get("web_tools", {}).get("enabled", True),
-            ).ask()
-            cfg["web_tools"]["enabled"] = bool(enabled)
-
+            _section_web_tools(cfg)
+            _autosave(cfg)
+        elif section == "language":
+            _section_language(cfg)
+            _autosave(cfg)
+        elif section == "security":
+            _section_security(cfg)
+            _autosave(cfg)
         elif section == "save":
-            console.print(Panel("Revise com calma antes de confirmar.", border_style="cyan", title="👀 Prévia"))
+            console.print(Panel(I18N.get(lang, I18N["pt-br"])["preview"], border_style="cyan"))
             console.print(Syntax(_preview(cfg), "json", theme="monokai", line_numbers=False))
-
-            if questionary.confirm("💾 Salvar essas configurações agora?", default=True).ask():
+            if questionary.confirm(I18N.get(lang, I18N["pt-br"])["confirm"], default=True).ask():
                 save_config(cfg)
-                _resumo_final(cfg)
+                console.print("[green]✅ Configuração final salva.[/green]")
                 return
-            console.print("🟡 Nada foi salvo ainda. Você pode continuar editando.")
-
-        elif section in ("exit", None):
-            console.print("👋 Saindo sem salvar alterações.")
+        else:
+            console.print(I18N.get(lang, I18N["pt-br"])["bye"])
             return
