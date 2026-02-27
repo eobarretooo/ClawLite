@@ -39,33 +39,56 @@ clawlite skill install find-skills
 clawlite skill update
 ```
 
-## UX nova do `clawlite configure` (PT-BR)
+## Offline automático com Ollama
 
-- Menu vibrante com ícones e descrições curtas
-- Navegação por **setas** + seleção com **espaço** (checkbox)
-- Barra de progresso por etapas
-- Validações amigáveis (porta, campos obrigatórios)
-- Prévia JSON antes de salvar + confirmação
-- Resumo final claro após salvar
+- Se `offline_mode.enabled=true`, o runtime tenta o modelo remoto e faz fallback automático para Ollama em dois casos:
+  - sem conectividade
+  - falha do provedor
+- Fallback usa o primeiro `ollama/...` em `model_fallback`.
 
-Exemplo (ASCII):
+Status rápido de modelo/fallback:
 
-```text
-╭──────────────────────────────────────────────╮
-│ ⚙️ ClawLite Configure (PT-BR)               │
-│ 🟪🟪🟪🟪🟪🟪🟪⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 2/6 etapas • 33% │
-╰──────────────────────────────────────────────╯
-
-? Use ↑↓ para navegar e Enter para abrir uma etapa:
-❯ 🤖 Modelo e autenticação
-    └─ Define IA padrão e login inicial de provedor
-  📡 Canais
-    └─ Liga/desliga Telegram e Discord
-  👀 Prévia, confirmação e salvar
-    └─ Revise tudo antes de gravar
+```bash
+clawlite model status
 ```
 
-Onboarding mantém o mesmo padrão visual em PT-BR, com progresso, validação e confirmação antes de persistir em `~/.clawlite/config.json`.
+## Cron por conversa
+
+```bash
+# listar
+clawlite cron list
+
+# criar job por conversa/chat/thread/label
+clawlite cron add --channel telegram --chat-id 123 --thread-id suporte --label general --name heartbeat --text "ping" --every-seconds 300
+
+# remover
+clawlite cron remove 1
+
+# rodar jobs vencidos (ou todos com --all)
+clawlite cron run
+clawlite cron run --all
+```
+
+## Notificações inteligentes (prioridade + dedupe)
+
+- Eventos críticos (falha de provedor/cron) geram prioridade `high`.
+- Eventos de fallback offline usam prioridade `normal`.
+- Execuções de cron com sucesso usam prioridade `low`.
+- Deduplicação evita spam de alertas repetidos na janela configurada.
+
+## Modo bateria com throttling
+
+```bash
+clawlite battery status
+clawlite battery set --enabled true --throttle-seconds 8
+```
+
+Com `battery_mode.enabled=true`, workers aumentam o intervalo de polling para economizar bateria.
+
+## Config de exemplo
+
+- Arquivo de referência: `docs/config.example.json`
+- Arquivo real de runtime: `~/.clawlite/config.json`
 
 ## MVP Multi-Agente Telegram (P0)
 
@@ -91,26 +114,6 @@ Template de configuração:
 clawlite channels template telegram-multiagent
 ```
 
-## Dashboard Web (MVP robusto)
-
-Abra `http://localhost:8787/dashboard` após subir o gateway.
-
-Inclui:
-
-- autenticação por token
-- chat em tempo real via WebSocket
-- status do gateway (online/modelo/uptime)
-- gerenciador de skills (listar/ativar/desativar/instalar/remover local)
-- histórico de sessões com busca
-- telemetria local estimada de tokens/custos
-- configurações (modelo/canais/hooks)
-- logs em tempo real
-- dark mode por padrão + responsivo mobile
-
-APIs do dashboard em `/api/dashboard/*` e websockets em `/ws/chat` e `/ws/logs`.
-
-Mais detalhes: `docs/DASHBOARD.md`.
-
 ## Documentação
 
 - PT-BR: https://eobarretooo.github.io/ClawLite/
@@ -128,13 +131,6 @@ clawlite/skills/<nome_modulo>.py
 Registro central:
 
 - `clawlite/skills/registry.py`
-
-## Roadmap curto
-
-1. Multi-agente nativo no Telegram
-2. Auto-update de skills
-3. Modo offline com Ollama
-4. Cron por conversa
 
 ## Contribuição
 

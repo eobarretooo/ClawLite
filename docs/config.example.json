@@ -1,0 +1,41 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "model_fallback": [
+    "openrouter/auto",
+    "ollama/llama3.1:8b"
+  ],
+  "offline_mode": {
+    "enabled": true,
+    "auto_fallback_to_ollama": true,
+    "connectivity_timeout_sec": 1.5
+  },
+  "ollama": {
+    "model": "llama3.1:8b"
+  },
+  "battery_mode": {
+    "enabled": false,
+    "throttle_seconds": 6.0
+  },
+  "notifications": {
+    "enabled": true,
+    "dedupe_window_seconds": 300
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8787,
+    "token": ""
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false
+    },
+    "discord": {
+      "enabled": false
+    }
+  },
+  "skills": [
+    "core-tools",
+    "memory",
+    "gateway"
+  ]
+}
