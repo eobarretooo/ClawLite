@@ -27,7 +27,30 @@
   },
   "channels": {
     "telegram": {
-      "enabled": false
+      "enabled": false,
+      "token": "",
+      "chat_id": "",
+      "stt_enabled": false,
+      "stt_model": "base",
+      "stt_language": "pt",
+      "tts_enabled": false,
+      "tts_provider": "local",
+      "tts_model": "gpt-4o-mini-tts",
+      "tts_voice": "alloy",
+      "tts_default_reply": false
+    },
+    "whatsapp": {
+      "enabled": false,
+      "token": "",
+      "phone": "",
+      "stt_enabled": false,
+      "stt_model": "base",
+      "stt_language": "pt",
+      "tts_enabled": false,
+      "tts_provider": "local",
+      "tts_model": "gpt-4o-mini-tts",
+      "tts_voice": "alloy",
+      "tts_default_reply": false
     },
     "discord": {
       "enabled": false

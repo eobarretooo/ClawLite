@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from clawlite.runtime.battery import effective_poll_seconds, get_battery_mode
+from clawlite.runtime.voice import send_telegram_audio_reply, synthesize_tts
 
 DB_DIR = Path.home() / ".clawlite"
 DB_PATH = DB_DIR / "multiagent.db"
@@ -303,7 +304,20 @@ def worker_loop(worker_id: int) -> None:
             command = _render_command(worker.command_template, payload)
             proc = subprocess.run(command, shell=True, capture_output=True, text=True)
             out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
-            _finish_task(task_id, proc.returncode == 0, out.strip())
+            ok = proc.returncode == 0
+
+            # Resposta em áudio opcional para Telegram
+            if ok and payload.get("reply_in_audio") and payload.get("channel") == "telegram":
+                ch_cfg = payload.get("channel_cfg") or {}
+                audio_path = synthesize_tts(out.strip() or "Resposta concluída.", ch_cfg)
+                send_telegram_audio_reply(
+                    telegram_token=str(ch_cfg.get("token", "")),
+                    chat_id=str(payload.get("chat_id", "")),
+                    audio_path=audio_path,
+                    caption="Resposta em áudio",
+                )
+
+            _finish_task(task_id, ok, out.strip())
         except Exception as exc:
             _finish_task(task_id, False, f"worker error: {exc}")
 

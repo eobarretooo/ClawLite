@@ -8,7 +8,12 @@ TEMPLATES = {
             "telegram": {
                 "enabled": True,
                 "token": "<TELEGRAM_BOT_TOKEN>",
-                "allowFrom": ["<TELEGRAM_USER_ID>"]
+                "allowFrom": ["<TELEGRAM_USER_ID>"],
+                "stt_enabled": True,
+                "tts_enabled": False,
+                "stt_model": "base",
+                "stt_language": "pt",
+                "tts_provider": "local"
             }
         }
     },
@@ -36,7 +41,12 @@ TEMPLATES = {
         "channels": {
             "whatsapp": {
                 "enabled": True,
-                "allowFrom": ["+5511999999999"]
+                "allowFrom": ["+5511999999999"],
+                "stt_enabled": True,
+                "tts_enabled": False,
+                "stt_model": "base",
+                "stt_language": "pt",
+                "tts_provider": "local"
             }
         }
     },

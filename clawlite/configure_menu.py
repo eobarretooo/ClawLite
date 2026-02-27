@@ -81,8 +81,8 @@ def _autosave(cfg: dict[str, Any]) -> None:
 def _ensure_defaults(cfg: dict[str, Any]) -> None:
     cfg.setdefault("language", detect_language("pt-br"))
     cfg.setdefault("channels", {})
-    cfg["channels"].setdefault("telegram", {"enabled": False, "token": "", "chat_id": ""})
-    cfg["channels"].setdefault("whatsapp", {"enabled": False, "token": "", "phone": ""})
+    cfg["channels"].setdefault("telegram", {"enabled": False, "token": "", "chat_id": "", "stt_enabled": False, "stt_model": "base", "stt_language": "pt", "tts_enabled": False, "tts_provider": "local", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_default_reply": False})
+    cfg["channels"].setdefault("whatsapp", {"enabled": False, "token": "", "phone": "", "stt_enabled": False, "stt_model": "base", "stt_language": "pt", "tts_enabled": False, "tts_provider": "local", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_default_reply": False})
     cfg["channels"].setdefault("discord", {"enabled": False, "token": "", "guild_id": ""})
     cfg.setdefault("hooks", {"boot": True, "session_memory": True, "command_logger": False})
     cfg.setdefault("gateway", {"host": "0.0.0.0", "port": 8787, "token": "", "dashboard_enabled": True})
@@ -126,6 +126,8 @@ def _section_channels(cfg: dict[str, Any]) -> None:
         cfg["channels"]["telegram"]["chat_id"] = questionary.text(
             "Chat ID padrão:", default=cfg["channels"]["telegram"].get("chat_id", "")
         ).ask()
+        cfg["channels"]["telegram"]["stt_enabled"] = bool(questionary.confirm("Ativar STT (voz->texto) no Telegram?", default=cfg["channels"]["telegram"].get("stt_enabled", False)).ask())
+        cfg["channels"]["telegram"]["tts_enabled"] = bool(questionary.confirm("Ativar TTS (texto->voz) no Telegram?", default=cfg["channels"]["telegram"].get("tts_enabled", False)).ask())
 
     if cfg["channels"]["whatsapp"]["enabled"]:
         cfg["channels"]["whatsapp"]["token"] = questionary.text(
@@ -134,6 +136,8 @@ def _section_channels(cfg: dict[str, Any]) -> None:
         cfg["channels"]["whatsapp"]["phone"] = questionary.text(
             "Número padrão (+55...):", default=cfg["channels"]["whatsapp"].get("phone", "")
         ).ask()
+        cfg["channels"]["whatsapp"]["stt_enabled"] = bool(questionary.confirm("Ativar STT (voz->texto) no WhatsApp?", default=cfg["channels"]["whatsapp"].get("stt_enabled", False)).ask())
+        cfg["channels"]["whatsapp"]["tts_enabled"] = bool(questionary.confirm("Ativar TTS (texto->voz) no WhatsApp?", default=cfg["channels"]["whatsapp"].get("tts_enabled", False)).ask())
 
     if cfg["channels"]["discord"]["enabled"]:
         cfg["channels"]["discord"]["token"] = questionary.text(

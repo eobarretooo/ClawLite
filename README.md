@@ -93,11 +93,20 @@ clawlite memory compact --max-daily-files 21
 - Site oficial: https://clawlite-site.vercel.app
 - Site de skills: https://clawlite-skills-site.vercel.app
 
+## Voz (STT/TTS) — pronto para uso
+
+- STT Telegram/WhatsApp com Whisper (local) + fallback OpenAI quando configurado
+- TTS por comando no prompt (`/audio`, `#audio`, `responda em áudio`) ou por config
+- Envio de áudio no Telegram (`sendVoice`) com arquivo temporário seguro
+- Config por canal (`stt_enabled`, `tts_enabled`, `tts_provider`, etc.)
+
+Detalhes e limitações: `docs/VOICE.md` e `docs/config.example.json`.
+
 ## Roadmap ativo
 
 1. Evolução do learning system no core (melhoria contínua)
-2. Voz (STT/TTS) para Telegram/WhatsApp
-3. Evolução do ecossistema de skills (site + experiência de publicação)
+2. Evolução do ecossistema de skills (site + experiência de publicação)
+3. Hardening de conectores de canais (Telegram/WhatsApp)
 
 ## Contribuição
 

@@ -161,7 +161,13 @@ def whisper_transcribe(audio_path: str, model: str = "base", language: str = "")
 
     backend = _detect_backend()
     if backend:
-        return _transcribe_local(audio_path, model, language, backend)
+        local_result = _transcribe_local(audio_path, model, language, backend)
+        # Fallback para API caso backend local falhe e haja chave configurada
+        if local_result.get("error") and _openai_api_key():
+            api_result = _transcribe_openai_api(audio_path, model, language)
+            if not api_result.get("error"):
+                return api_result
+        return local_result
 
     # Fallback para API
     return _transcribe_openai_api(audio_path, model, language)
