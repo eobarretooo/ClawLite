@@ -47,3 +47,14 @@ Estrutura:
 
 - `clawlite skill update`
   - Atualiza skills instaladas comparando manifesto local com índice remoto.
+
+- `clawlite skill auto-update --dry-run`
+  - Simula atualizações com saída por skill (`updated`/`skipped`/`blocked`) sem alterar arquivos.
+
+- `clawlite skill auto-update --apply [--strict]`
+  - Aplica atualizações com política de confiança (allowlist + checksum).
+  - `--strict` bloqueia updates sem checksum válido no índice remoto.
+  - Em falha, rollback automático mantém a versão anterior ativa.
+
+- `clawlite skill auto-update --apply --schedule-seconds 3600`
+  - Agenda execução periódica no runtime reutilizando `conversation_cron` (job `system/skills/auto-update`).

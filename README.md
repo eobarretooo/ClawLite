@@ -61,7 +61,19 @@ clawlite stats --period week
 clawlite reddit status
 clawlite skill install find-skills
 clawlite skill update
+clawlite skill auto-update --dry-run
+clawlite skill auto-update --apply --strict
+clawlite skill auto-update --apply --schedule-seconds 3600
 ```
+
+## Auto-update de skills (issue #2)
+
+- Compara manifesto local (`~/.clawlite/marketplace/installed.json`) com índice remoto
+- Política de confiança com allowlist de hosts + checksum SHA-256
+- `--strict` bloqueia updates sem checksum válido (status `blocked`)
+- `--dry-run` simula sem alterar disco
+- rollback automático em falha de instalação (mantém versão anterior ativa)
+- agendamento simples via runtime/cron com `--schedule-seconds`
 
 ## Memória persistente entre sessões
 

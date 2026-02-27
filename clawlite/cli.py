@@ -57,6 +57,7 @@ from clawlite.skills.marketplace import (
     SkillMarketplaceError,
     install_skill,
     publish_skill,
+    schedule_auto_update,
     update_skills,
 )
 
@@ -258,6 +259,17 @@ def main() -> None:
     sk_publish.add_argument("--manifest-path", default=None)
     sk_publish.add_argument("--download-base-url", default=DEFAULT_DOWNLOAD_BASE_URL)
 
+    sk_autoupdate = sk_sub.add_parser("auto-update")
+    sk_autoupdate.add_argument("--index-url", default=DEFAULT_INDEX_URL)
+    sk_autoupdate.add_argument("--allow-host", action="append", default=[])
+    sk_autoupdate.add_argument("--install-dir", default=None)
+    sk_autoupdate.add_argument("--manifest-path", default=None)
+    sk_autoupdate.add_argument("--strict", action="store_true")
+    sk_autoupdate.add_argument("--dry-run", action="store_true")
+    sk_autoupdate.add_argument("--apply", action="store_true")
+    sk_autoupdate.add_argument("--allow-file-urls", action="store_true")
+    sk_autoupdate.add_argument("--schedule-seconds", type=int, default=None)
+
     st = sub.add_parser("stats")
     st.add_argument("--period", choices=["today", "week", "month", "all"], default="all")
     st.add_argument("--skill", default=None)
@@ -386,6 +398,48 @@ def main() -> None:
                 print(f"📦 skill publicada: {result['slug']}@{result['version']}")
                 print(f"pacote: {result['package_path']}")
                 print(f"manifesto: {result['manifest_path']}")
+                return
+
+            if args.scmd == "auto-update":
+                if args.apply and args.dry_run:
+                    _fail("Use apenas um modo: --dry-run ou --apply")
+                dry_run = (not args.apply) or args.dry_run
+                result = update_skills(
+                    index_url=args.index_url,
+                    allow_hosts=args.allow_host,
+                    install_dir=args.install_dir,
+                    manifest_path=args.manifest_path,
+                    dry_run=dry_run,
+                    allow_file_urls=args.allow_file_urls,
+                    strict=args.strict,
+                )
+                for updated in result["updated"]:
+                    if updated.get("dry_run"):
+                        print(f"🔎 {updated['slug']}: {updated['from_version']} -> {updated['to_version']} (simulação)")
+                    else:
+                        print(f"⬆️ {updated['slug']}: {updated.get('from_version', '?')} -> {updated['version']} (updated)")
+                for skipped in result["skipped"]:
+                    print(f"⏭️ {skipped['slug']}: {skipped['reason']} (skipped)")
+                for blocked in result.get("blocked", []):
+                    print(f"⛔ {blocked['slug']}: {blocked['reason']} (blocked)")
+                for missing in result["missing"]:
+                    print(f"❓ {missing}: não instalada localmente")
+                if not result["updated"]:
+                    print("ℹ️ Nenhuma skill foi atualizada.")
+
+                if args.schedule_seconds is not None:
+                    if dry_run:
+                        _fail("Agendamento exige --apply")
+                    job_id = schedule_auto_update(
+                        every_seconds=args.schedule_seconds,
+                        index_url=args.index_url,
+                        strict=args.strict,
+                        allow_hosts=args.allow_host,
+                        manifest_path=args.manifest_path,
+                        install_dir=args.install_dir,
+                        allow_file_urls=args.allow_file_urls,
+                    )
+                    print(f"🗓️ Auto-update agendado: job_id={job_id} a cada {args.schedule_seconds}s")
                 return
             _fail("Subcomando obrigatório para 'skill'.")
         except SkillMarketplaceError as exc:

@@ -209,8 +209,18 @@ def run_cron_jobs(job_id: int | None = None, run_all: bool = False) -> list[Cron
         task_id: int | None = None
         message = "ok"
         try:
-            task_id = multiagent.enqueue_task(job.channel, job.chat_id, job.thread_id, job.label, payload)
-            last_result = f"task:{task_id}"
+            if job.channel == "system" and job.label == "skills" and job.name == "auto-update":
+                from clawlite.skills.marketplace import run_runtime_auto_update
+
+                run_result = run_runtime_auto_update(job.text)
+                updated_count = len(run_result.get("updated", []))
+                blocked_count = len(run_result.get("blocked", []))
+                status = "executed"
+                message = f"updated={updated_count}, blocked={blocked_count}"
+                last_result = f"runtime:{message}"
+            else:
+                task_id = multiagent.enqueue_task(job.channel, job.chat_id, job.thread_id, job.label, payload)
+                last_result = f"task:{task_id}"
         except Exception as exc:
             status = "failed"
             message = str(exc)
@@ -228,11 +238,12 @@ def run_cron_jobs(job_id: int | None = None, run_all: bool = False) -> list[Cron
             )
 
         dedupe_window = int(job.interval_seconds) if int(job.interval_seconds) > 0 else 60
+        is_ok = status in {"enqueued", "executed"}
         create_notification(
             event=f"cron_{status}",
-            message=(f"Cron job {job.name} -> {status}" if status == "enqueued" else f"Cron job {job.name} falhou: {message}"),
-            priority=("low" if status == "enqueued" else "high"),
-            dedupe_key=(f"cron:{status}:{job.id}" if status == "enqueued" else f"cron:failed:{job.id}:{message}"),
+            message=(f"Cron job {job.name} -> {status} ({message})" if is_ok else f"Cron job {job.name} falhou: {message}"),
+            priority=("low" if is_ok else "high"),
+            dedupe_key=(f"cron:{status}:{job.id}" if is_ok else f"cron:failed:{job.id}:{message}"),
             dedupe_window_seconds=min(dedupe_window, 600),
             channel=job.channel,
             chat_id=job.chat_id,

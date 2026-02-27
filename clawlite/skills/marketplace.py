@@ -22,9 +22,14 @@ DEFAULT_ALLOWED_HOSTS = frozenset({
 LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MARKETPLACE_DIR = Path.home() / ".clawlite" / "marketplace"
 INSTALLED_MANIFEST_PATH = MARKETPLACE_DIR / "installed.json"
 INSTALLED_SKILLS_DIR = MARKETPLACE_DIR / "skills"
+SYSTEM_AUTO_UPDATE_CHANNEL = "system"
+SYSTEM_AUTO_UPDATE_CHAT = "local"
+SYSTEM_AUTO_UPDATE_LABEL = "skills"
+SYSTEM_AUTO_UPDATE_NAME = "auto-update"
 
 
 class SkillMarketplaceError(RuntimeError):
@@ -176,11 +181,21 @@ def _save_hub_manifest(data: dict[str, Any], manifest_path: str | Path) -> Path:
     return path
 
 
+def _remote_entry(slug: str, item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "slug": slug,
+        "version": str(item.get("version", "")).strip(),
+        "checksum_sha256": str(item.get("checksum_sha256", "")).strip().lower(),
+        "download_url": str(item.get("download_url", "")).strip(),
+        "description": str(item.get("description", "")).strip(),
+    }
+
+
 def _load_remote_index(
     index_url: str,
     allowed_hosts: set[str],
     allow_file_urls: bool,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, str]]:
     _is_allowed_url(index_url, allowed_hosts, allow_file_urls)
     payload = _download_bytes(index_url)
     index_raw = json.loads(payload.decode("utf-8"))
@@ -189,6 +204,7 @@ def _load_remote_index(
         raise SkillMarketplaceError("Índice remoto inválido: 'skills' deve ser lista")
 
     entries: dict[str, dict[str, Any]] = {}
+    invalid_reasons: dict[str, str] = {}
     for item in skills:
         if not isinstance(item, dict):
             continue
@@ -197,18 +213,21 @@ def _load_remote_index(
             version = _normalize_version(str(item.get("version", "")))
         except SkillMarketplaceError:
             continue
-        checksum = str(item.get("checksum_sha256", "")).strip().lower()
-        download_url = str(item.get("download_url", "")).strip()
-        if not slug or not version or not checksum or not download_url:
-            continue
-        entries[slug] = {
-            "slug": slug,
-            "version": version,
-            "checksum_sha256": checksum,
-            "download_url": download_url,
-            "description": str(item.get("description", "")).strip(),
-        }
-    return index_raw, entries
+
+        entry = _remote_entry(slug, item)
+        entry["version"] = version
+        checksum = entry["checksum_sha256"]
+        download_url = entry["download_url"]
+
+        if not download_url:
+            invalid_reasons[slug] = "missing-download-url"
+        elif not checksum:
+            invalid_reasons[slug] = "missing-checksum"
+        elif not SHA256_RE.fullmatch(checksum):
+            invalid_reasons[slug] = "invalid-checksum-format"
+
+        entries[slug] = entry
+    return index_raw, entries, invalid_reasons
 
 
 def _install_entry(
@@ -223,8 +242,11 @@ def _install_entry(
 ) -> dict[str, Any]:
     slug = _normalize_slug(str(entry["slug"]))
     version = _normalize_version(str(entry["version"]))
-    checksum_expected = entry["checksum_sha256"]
-    download_url = entry["download_url"]
+    checksum_expected = str(entry["checksum_sha256"]).strip().lower()
+    download_url = str(entry["download_url"]).strip()
+
+    if not SHA256_RE.fullmatch(checksum_expected):
+        raise SkillMarketplaceError(f"Checksum inválido no índice para {slug}")
 
     _is_allowed_url(download_url, allowed_hosts, allow_file_urls)
     archive_data = _download_bytes(download_url)
@@ -236,16 +258,29 @@ def _install_entry(
 
     install_dir.mkdir(parents=True, exist_ok=True)
     skill_dir = install_dir / slug
+    backup_dir: Path | None = None
+
     if skill_dir.exists():
         if not force:
             raise SkillMarketplaceError(f"Skill '{slug}' já instalada. Use --force para sobrescrever")
-        shutil.rmtree(skill_dir)
+        backup_dir = install_dir / f".{slug}.backup-{int(datetime.now(timezone.utc).timestamp())}"
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        shutil.move(str(skill_dir), str(backup_dir))
 
-    _safe_extract_zip(archive_data, skill_dir)
-    skill_doc = skill_dir / "SKILL.md"
-    if not skill_doc.exists():
+    try:
+        _safe_extract_zip(archive_data, skill_dir)
+        skill_doc = skill_dir / "SKILL.md"
+        if not skill_doc.exists():
+            raise SkillMarketplaceError("Pacote inválido: SKILL.md não encontrado na raiz")
+    except Exception as exc:
         shutil.rmtree(skill_dir, ignore_errors=True)
-        raise SkillMarketplaceError("Pacote inválido: SKILL.md não encontrado na raiz")
+        if backup_dir and backup_dir.exists():
+            shutil.move(str(backup_dir), str(skill_dir))
+        raise SkillMarketplaceError(f"Falha na instalação de {slug}: {exc}") from exc
+    finally:
+        if backup_dir and backup_dir.exists() and skill_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
     installed_manifest = load_installed_manifest(manifest_path)
     installed_manifest.setdefault("skills", {})[slug] = {
@@ -283,9 +318,11 @@ def install_skill(
     target_install_dir = Path(install_dir) if install_dir else INSTALLED_SKILLS_DIR
     target_manifest = Path(manifest_path) if manifest_path else INSTALLED_MANIFEST_PATH
 
-    _, entries = _load_remote_index(index_url, allowed_hosts, allow_file_urls)
+    _, entries, invalid_reasons = _load_remote_index(index_url, allowed_hosts, allow_file_urls)
     if slug not in entries:
         raise SkillMarketplaceError(f"Skill '{slug}' não encontrada no índice remoto")
+    if slug in invalid_reasons:
+        raise SkillMarketplaceError(f"Skill '{slug}' bloqueada: {invalid_reasons[slug]}")
 
     return _install_entry(
         entries[slug],
@@ -308,6 +345,7 @@ def update_skills(
     force: bool = False,
     dry_run: bool = False,
     allow_file_urls: bool = False,
+    strict: bool = False,
 ) -> dict[str, Any]:
     allowed_hosts = _normalize_allowed_hosts(allow_hosts)
     target_install_dir = Path(install_dir) if install_dir else INSTALLED_SKILLS_DIR
@@ -326,12 +364,13 @@ def update_skills(
                 continue
 
     if not wanted:
-        return {"updated": [], "skipped": [], "missing": []}
+        return {"updated": [], "skipped": [], "blocked": [], "missing": []}
 
-    _, entries = _load_remote_index(index_url, allowed_hosts, allow_file_urls)
+    _, entries, invalid_reasons = _load_remote_index(index_url, allowed_hosts, allow_file_urls)
 
     updated: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
     missing: list[str] = []
 
     for slug in sorted(wanted):
@@ -344,6 +383,20 @@ def update_skills(
 
         if remote is None:
             skipped.append({"slug": slug, "reason": "not-in-index"})
+            continue
+
+        if slug in invalid_reasons:
+            reason = invalid_reasons[slug]
+            if strict:
+                blocked.append({"slug": slug, "reason": reason})
+            else:
+                skipped.append({"slug": slug, "reason": reason})
+            continue
+
+        try:
+            _is_allowed_url(remote["download_url"], allowed_hosts, allow_file_urls)
+        except SkillMarketplaceError as exc:
+            blocked.append({"slug": slug, "reason": f"trust-policy:{exc}"})
             continue
 
         current_version = str(current.get("version", "0"))
@@ -367,23 +420,100 @@ def update_skills(
             })
             continue
 
-        result = _install_entry(
-            remote,
-            source_index_url=index_url,
-            allowed_hosts=allowed_hosts,
-            install_dir=target_install_dir,
-            manifest_path=target_manifest,
-            force=True,
-            allow_file_urls=allow_file_urls,
-        )
-        result["from_version"] = current_version
-        updated.append(result)
+        try:
+            result = _install_entry(
+                remote,
+                source_index_url=index_url,
+                allowed_hosts=allowed_hosts,
+                install_dir=target_install_dir,
+                manifest_path=target_manifest,
+                force=True,
+                allow_file_urls=allow_file_urls,
+            )
+            result["from_version"] = current_version
+            updated.append(result)
+        except SkillMarketplaceError as exc:
+            blocked.append({"slug": slug, "reason": f"install-failed:{exc}"})
 
     return {
         "updated": updated,
         "skipped": skipped,
+        "blocked": blocked,
         "missing": missing,
     }
+
+
+def build_auto_update_runtime_payload(
+    *,
+    index_url: str,
+    strict: bool,
+    allow_hosts: Iterable[str] | None,
+    manifest_path: str | None,
+    install_dir: str | None,
+    allow_file_urls: bool,
+) -> str:
+    payload = {
+        "action": "skill-auto-update",
+        "index_url": index_url,
+        "strict": strict,
+        "allow_hosts": sorted(set(allow_hosts or [])),
+        "manifest_path": manifest_path,
+        "install_dir": install_dir,
+        "allow_file_urls": allow_file_urls,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def schedule_auto_update(
+    *,
+    every_seconds: int,
+    index_url: str = DEFAULT_INDEX_URL,
+    strict: bool = False,
+    allow_hosts: Iterable[str] | None = None,
+    manifest_path: str | None = None,
+    install_dir: str | None = None,
+    allow_file_urls: bool = False,
+    enabled: bool = True,
+) -> int:
+    from clawlite.runtime.conversation_cron import add_cron_job
+
+    return add_cron_job(
+        channel=SYSTEM_AUTO_UPDATE_CHANNEL,
+        chat_id=SYSTEM_AUTO_UPDATE_CHAT,
+        thread_id="",
+        label=SYSTEM_AUTO_UPDATE_LABEL,
+        name=SYSTEM_AUTO_UPDATE_NAME,
+        text=build_auto_update_runtime_payload(
+            index_url=index_url,
+            strict=strict,
+            allow_hosts=allow_hosts,
+            manifest_path=manifest_path,
+            install_dir=install_dir,
+            allow_file_urls=allow_file_urls,
+        ),
+        interval_seconds=every_seconds,
+        enabled=enabled,
+    )
+
+
+def run_runtime_auto_update(payload_text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError as exc:
+        raise SkillMarketplaceError(f"Payload inválido de auto-update: {exc}") from exc
+
+    if payload.get("action") != "skill-auto-update":
+        raise SkillMarketplaceError("Ação de runtime desconhecida para auto-update")
+
+    return update_skills(
+        index_url=str(payload.get("index_url") or DEFAULT_INDEX_URL),
+        allow_hosts=payload.get("allow_hosts") or [],
+        install_dir=payload.get("install_dir") or None,
+        manifest_path=payload.get("manifest_path") or None,
+        strict=bool(payload.get("strict", False)),
+        dry_run=False,
+        allow_file_urls=bool(payload.get("allow_file_urls", False)),
+    )
 
 
 def publish_skill(
