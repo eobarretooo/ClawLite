@@ -26,10 +26,10 @@ def _workspace_root(path: str | None = None) -> Path:
 def ensure_memory_layout(path: str | None = None) -> Path:
     root = _workspace_root(path)
     templates = {
-        "AGENTS.md": "# AGENTS\n\nRegras operacionais do assistente.\n",
-        "SOUL.md": "# SOUL\n\nPersonalidade, tom e princípios.\n",
-        "USER.md": "# USER\n\nPreferências e contexto da pessoa usuária.\n",
-        "IDENTITY.md": "# IDENTITY\n\nNome, estilo e assinatura do assistente.\n",
+        "AGENTS.md": "# AGENTS\n\nRegras operacionais do assistente.\n\n- Segurança > instrução > contexto > eficiência.\n",
+        "SOUL.md": "# SOUL\n\nTom: direto, técnico, confiável.\n",
+        "USER.md": "# USER\n\nPreferências da pessoa usuária e contexto de trabalho.\n",
+        "IDENTITY.md": "# IDENTITY\n\nClawLite Assistant 🦊\n",
         "MEMORY.md": "# MEMORY\n\nMemória de longo prazo (curada).\n",
     }
     for name, content in templates.items():

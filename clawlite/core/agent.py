@@ -21,6 +21,7 @@ from clawlite.runtime.session_memory import (
     semantic_search_memory,
     startup_context_text,
 )
+from clawlite.runtime.system_prompt import build_system_prompt
 
 MAX_RETRIES = 3
 ATTEMPT_TIMEOUT_S = float(os.getenv("CLAWLITE_ATTEMPT_TIMEOUT_S", "90"))
@@ -116,12 +117,15 @@ def run_task(prompt: str) -> str:
 def run_task_with_learning(prompt: str, skill: str = "") -> str:
     """Executa task com aprendizado contínuo: preferências, histórico e auto-retry."""
     # Injetar preferências + contexto de memória de sessão
+    base_system = build_system_prompt()
     prefix = build_preference_prefix()
     startup_ctx = startup_context_text()
     mem_hits = semantic_search_memory(prompt, max_results=3)
     mem_snippets = "\n".join([f"- {h.snippet}" for h in mem_hits])
 
     context_prefix_parts = []
+    if base_system.strip():
+        context_prefix_parts.append("[System Prompt]\n" + base_system[:3200])
     if startup_ctx.strip():
         context_prefix_parts.append("[Contexto de Sessão]\n" + startup_ctx[:2200])
     if mem_snippets.strip():
