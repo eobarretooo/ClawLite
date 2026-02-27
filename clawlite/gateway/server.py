@@ -14,6 +14,11 @@ from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketD
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
+try:
+    from rich.console import Console
+except Exception:
+    Console = None  # type: ignore
+
 from clawlite.config.settings import CONFIG_DIR, load_config, save_config
 from clawlite.core.agent import run_task_with_meta
 from clawlite.mcp import add_server, install_template, list_servers, remove_server, search_marketplace
@@ -33,6 +38,10 @@ log_connections: dict[WebSocket, dict[str, str]] = {}
 STARTED_AT = datetime.now(timezone.utc)
 
 LOG_RING: deque[dict[str, Any]] = deque(maxlen=500)
+
+_LOGS_DIR = CONFIG_DIR / "logs"
+_GATEWAY_LOG_FILE = _LOGS_DIR / "gateway.log"
+_CONSOLE = Console() if Console else None
 
 
 DASHBOARD_DIR = CONFIG_DIR / "dashboard"
@@ -252,6 +261,51 @@ def _record_telemetry(
     return row
 
 
+def _format_log_line(entry: dict[str, Any]) -> tuple[str, str]:
+    dt = _parse_ts(entry.get("ts")) or datetime.now(timezone.utc)
+    ts = dt.strftime("%Y-%m-%d %H:%M:%S")
+    level = str(entry.get("level", "info")).upper()
+    event = str(entry.get("event", "system"))
+    data = entry.get("data", {}) if isinstance(entry.get("data"), dict) else {}
+    category = (event.split(".", 1)[0] if "." in event else event).lower()
+
+    if event == "gateway.started":
+        msg = f"gateway started on {data.get('host', '0.0.0.0')}:{data.get('port', '-') }"
+        category = "gateway"
+    elif event == "chat.message":
+        msg = f"chat session={data.get('session_id','-')} model={data.get('model','-')} mode={data.get('mode','-')}"
+        category = "chat"
+    elif event.startswith("skills."):
+        slug = data.get("slug", "-")
+        verb = event.split(".", 1)[1] if "." in event else "action"
+        msg = f"skill {slug}.{verb} → ok"
+        category = "skill"
+    else:
+        suffix = ""
+        if data:
+            try:
+                suffix = " " + json.dumps(data, ensure_ascii=False)
+            except Exception:
+                suffix = ""
+        msg = f"{event}{suffix}"
+
+    plain = f"[{ts}] {level} {category} {msg}".strip()
+
+    color = "cyan"
+    if level == "WARN":
+        color = "yellow"
+    elif level == "ERROR":
+        color = "red"
+    rich_line = f"[{ts}] [{color}]{level}[/{color}] [bold]{category}[/bold] {msg}"
+    return plain, rich_line
+
+
+def _persist_log_line(text: str) -> None:
+    _LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    with _GATEWAY_LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(text + "\n")
+
+
 def _log(event: str, level: str = "info", data: dict[str, Any] | None = None) -> dict[str, Any]:
     entry = {
         "ts": _iso_now(),
@@ -260,6 +314,14 @@ def _log(event: str, level: str = "info", data: dict[str, Any] | None = None) ->
         "data": data or {},
     }
     LOG_RING.append(entry)
+
+    plain, rich_line = _format_log_line(entry)
+    _persist_log_line(plain)
+    if _CONSOLE is not None:
+        _CONSOLE.print(rich_line)
+    else:
+        print(plain)
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -1040,4 +1102,10 @@ def run_gateway(host: str | None = None, port: int | None = None) -> None:
     h = host or cfg.get("gateway", {}).get("host", "0.0.0.0")
     p = port or int(cfg.get("gateway", {}).get("port", 8787))
     _log("gateway.started", data={"host": h, "port": p})
-    uvicorn.run(app, host=h, port=p)
+    uvicorn.run(
+        app,
+        host=h,
+        port=p,
+        access_log=False,
+        log_level="warning",
+    )
