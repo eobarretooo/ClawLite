@@ -31,6 +31,24 @@ fi
 mkdir -p "$BIN_DIR"
 ln -sf "$VENV_DIR/bin/clawlite" "$BIN_DIR/clawlite"
 
+# Ajustes automáticos pós-instalação (sem interação)
+"$VENV_DIR/bin/python" - <<'PY'
+import secrets
+from clawlite.config.settings import load_config, save_config
+from clawlite.runtime.workspace import init_workspace
+
+cfg = load_config()
+init_workspace()
+if not cfg.get('gateway', {}).get('token'):
+    cfg.setdefault('gateway', {})['token'] = secrets.token_urlsafe(24)
+save_config(cfg)
+print('[OK] Configuração inicial aplicada (workspace + gateway token).')
+PY
+
 echo "[OK] ClawLite instalado em $VENV_DIR"
 echo "[INFO] Adicione ao PATH se necessário: export PATH=\"$HOME/.local/bin:$PATH\""
-echo "Teste: clawlite doctor"
+
+echo "[INFO] Rodando diagnóstico automático..."
+"$VENV_DIR/bin/clawlite" doctor || true
+
+echo "[NEXT] Rode: clawlite onboarding"

@@ -37,3 +37,11 @@ def test_load_dotenv_and_vault_json():
         vp.write_text('{"TOKEN":"abc"}', encoding="utf-8")
         v = load_vault_json(str(vp))
         assert v["TOKEN"] == "abc"
+
+
+def test_load_vault_json_ignores_empty_or_dir(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.delenv("CLAWLITE_VAULT_FILE", raising=False)
+        assert load_vault_json() == {}
+        monkeypatch.setenv("CLAWLITE_VAULT_FILE", td)
+        assert load_vault_json() == {}

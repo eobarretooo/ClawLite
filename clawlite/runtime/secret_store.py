@@ -26,10 +26,11 @@ def load_vault_json(path: str | None = None) -> dict[str, Any]:
 
     Pode ser apontado por CLAWLITE_VAULT_FILE.
     """
-    p = Path(path or os.getenv("CLAWLITE_VAULT_FILE", ""))
-    if not p or not str(p):
+    raw = path if path is not None else os.getenv("CLAWLITE_VAULT_FILE", "")
+    if not raw:
         return {}
-    if not p.exists():
+    p = Path(raw).expanduser()
+    if not p.exists() or p.is_dir():
         return {}
     data = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
