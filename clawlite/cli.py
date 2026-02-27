@@ -1,5 +1,8 @@
 from __future__ import annotations
 import argparse
+import atexit
+import sys
+import time
 
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
 from clawlite.core.agent import run_task
@@ -74,6 +77,21 @@ def _exc_message(exc: Exception) -> str:
 
 
 def main() -> None:
+    _started_at = time.time()
+    _raw_cmd = " ".join(sys.argv[1:]).strip() or "help"
+
+    def _autosave_session_summary() -> None:
+        try:
+            elapsed = time.time() - _started_at
+            save_session_summary(
+                f"Sessão CLI encerrada: `{_raw_cmd}` em {elapsed:.1f}s",
+                important=False,
+            )
+        except Exception:
+            pass
+
+    atexit.register(_autosave_session_summary)
+
     p = argparse.ArgumentParser(prog="clawlite")
     sub = p.add_subparsers(dest="cmd")
 
