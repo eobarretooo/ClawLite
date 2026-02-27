@@ -45,6 +45,16 @@ def cmd_doctor() -> int:
     return 0
 
 
+def _fail(message: str) -> None:
+    print(f"❌ {message}")
+    raise SystemExit(1)
+
+
+def _exc_message(exc: Exception) -> str:
+    msg = str(exc).strip()
+    return msg or exc.__class__.__name__
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="clawlite")
     sub = p.add_subparsers(dest="cmd")
@@ -210,18 +220,27 @@ def main() -> None:
         run_gateway(args.host, args.port)
         return
     if args.cmd == "auth":
-        if args.acmd == "login":
-            ok, msg = auth_login(args.provider)
-            print(("✅ " if ok else "❌ ") + msg)
-            return
-        if args.acmd == "status":
-            for row in auth_status():
-                print(f"- {row['provider']}: {'logged-in' if row['logged_in'] else 'not logged'}")
-            return
-        if args.acmd == "logout":
-            done = auth_logout(args.provider)
-            print("✅ logout" if done else "ℹ️ already logged out")
-            return
+        try:
+            if args.acmd == "login":
+                ok, msg = auth_login(args.provider)
+                print(("✅ " if ok else "❌ ") + msg)
+                if not ok:
+                    raise SystemExit(1)
+                return
+            if args.acmd == "status":
+                for row in auth_status():
+                    status = "autenticado" if row["logged_in"] else "não autenticado"
+                    print(f"- {row['provider']} ({row['display']}): {status}")
+                return
+            if args.acmd == "logout":
+                done = auth_logout(args.provider)
+                print("✅ Logout realizado." if done else "ℹ️ Provedor já estava desconectado.")
+                return
+            _fail("Subcomando obrigatório para 'auth'.")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'auth': {_exc_message(exc)}")
 
     if args.cmd == "skill":
         try:
@@ -236,7 +255,7 @@ def main() -> None:
                     allow_file_urls=args.allow_file_urls,
                 )
                 print(f"✅ skill instalada: {result['slug']}@{result['version']}")
-                print(f"path: {result['install_path']}")
+                print(f"caminho: {result['install_path']}")
                 return
 
             if args.scmd == "update":
@@ -253,7 +272,7 @@ def main() -> None:
                 for updated in result["updated"]:
                     if updated.get("dry_run"):
                         print(
-                            f"🔎 {updated['slug']}: {updated['from_version']} -> {updated['to_version']} (dry-run)"
+                            f"🔎 {updated['slug']}: {updated['from_version']} -> {updated['to_version']} (simulação)"
                         )
                     else:
                         print(f"⬆️ {updated['slug']}: {updated.get('from_version', '?')} -> {updated['version']}")
@@ -262,7 +281,7 @@ def main() -> None:
                 for missing in result["missing"]:
                     print(f"❓ {missing}: não instalada localmente")
                 if not result["updated"]:
-                    print("ℹ️ Nenhuma skill atualizada.")
+                    print("ℹ️ Nenhuma skill foi atualizada.")
                 return
 
             if args.scmd == "publish":
@@ -276,14 +295,16 @@ def main() -> None:
                     download_base_url=args.download_base_url,
                 )
                 print(f"📦 skill publicada: {result['slug']}@{result['version']}")
-                print(f"package: {result['package_path']}")
-                print(f"manifest: {result['manifest_path']}")
+                print(f"pacote: {result['package_path']}")
+                print(f"manifesto: {result['manifest_path']}")
                 return
+            _fail("Subcomando obrigatório para 'skill'.")
         except SkillMarketplaceError as exc:
-            print(f"❌ {exc}")
-            raise SystemExit(1) from exc
-        sk.print_help()
-        return
+            _fail(f"Falha no comando 'skill': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'skill': {_exc_message(exc)}")
 
     if args.cmd == "workspace" and args.wcmd == "init":
         path = init_workspace(args.path)
@@ -304,97 +325,114 @@ def main() -> None:
         return
 
     if args.cmd == "battery":
-        if args.bacmd == "status":
-            mode = get_battery_mode()
-            print(f"battery.enabled: {mode['enabled']}")
-            print(f"battery.throttle_seconds: {mode['throttle_seconds']}")
-            return
-        if args.bacmd == "set":
-            enabled = None
-            if args.enabled is not None:
-                enabled = args.enabled.lower() == "true"
-            mode = set_battery_mode(enabled=enabled, throttle_seconds=args.throttle_seconds)
-            print("✅ battery mode atualizado")
-            print(f"battery.enabled: {mode['enabled']}")
-            print(f"battery.throttle_seconds: {mode['throttle_seconds']}")
-            return
+        try:
+            if args.bacmd == "status":
+                mode = get_battery_mode()
+                print(f"modo_bateria.ativo: {mode['enabled']}")
+                print(f"modo_bateria.intervalo_segundos: {mode['throttle_seconds']}")
+                return
+            if args.bacmd == "set":
+                enabled = None
+                if args.enabled is not None:
+                    enabled = args.enabled.lower() == "true"
+                mode = set_battery_mode(enabled=enabled, throttle_seconds=args.throttle_seconds)
+                print("✅ Modo bateria atualizado.")
+                print(f"modo_bateria.ativo: {mode['enabled']}")
+                print(f"modo_bateria.intervalo_segundos: {mode['throttle_seconds']}")
+                return
+            _fail("Subcomando obrigatório para 'battery'.")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'battery': {_exc_message(exc)}")
 
     if args.cmd == "cron":
-        init_cron_db()
-        if args.crcmd == "list":
-            rows = list_cron_jobs(args.channel, args.chat_id, args.thread_id, args.label)
-            print(format_cron_jobs_table(rows))
-            return
+        try:
+            init_cron_db()
+            if args.crcmd == "list":
+                rows = list_cron_jobs(args.channel, args.chat_id, args.thread_id, args.label)
+                print(format_cron_jobs_table(rows))
+                return
 
-        if args.crcmd == "add":
-            job_id = add_cron_job(
-                channel=args.channel,
-                chat_id=args.chat_id,
-                thread_id=args.thread_id,
-                label=args.label,
-                name=args.name,
-                text=args.text,
-                interval_seconds=args.every_seconds,
-                enabled=(not args.disabled),
-            )
-            print(f"✅ cron job salvo: {job_id}")
-            return
+            if args.crcmd == "add":
+                job_id = add_cron_job(
+                    channel=args.channel,
+                    chat_id=args.chat_id,
+                    thread_id=args.thread_id,
+                    label=args.label,
+                    name=args.name,
+                    text=args.text,
+                    interval_seconds=args.every_seconds,
+                    enabled=(not args.disabled),
+                )
+                print(f"✅ Tarefa cron salva: {job_id}")
+                return
 
-        if args.crcmd == "remove":
-            removed = remove_cron_job(args.job_id)
-            if removed:
-                print(f"✅ cron job removido: {args.job_id}")
-            else:
-                print(f"❌ cron job não encontrado: {args.job_id}")
-                raise SystemExit(1)
-            return
+            if args.crcmd == "remove":
+                removed = remove_cron_job(args.job_id)
+                if removed:
+                    print(f"✅ Tarefa cron removida: {args.job_id}")
+                else:
+                    _fail(f"Tarefa cron não encontrada: {args.job_id}")
+                return
 
-        if args.crcmd == "run":
-            rows = run_cron_jobs(job_id=args.job_id, run_all=args.all)
-            print(format_cron_run_results(rows))
-            return
+            if args.crcmd == "run":
+                rows = run_cron_jobs(job_id=args.job_id, run_all=args.all)
+                print(format_cron_run_results(rows))
+                return
+            _fail("Subcomando obrigatório para 'cron'.")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'cron': {_exc_message(exc)}")
 
     if args.cmd == "agents":
-        init_db()
-        if args.agcmd in {"list", "start", "tasks", "telegram-dispatch"}:
-            recover_workers()
+        try:
+            init_db()
+            if args.agcmd in {"list", "start", "tasks", "telegram-dispatch"}:
+                recover_workers()
 
-        if args.agcmd == "register":
-            worker_id = upsert_worker(args.channel, args.chat_id, args.thread_id, args.label, args.command_template)
-            print(f"✅ worker registrado: {worker_id}")
-            return
+            if args.agcmd == "register":
+                worker_id = upsert_worker(args.channel, args.chat_id, args.thread_id, args.label, args.command_template)
+                print(f"✅ Worker registrado: {worker_id}")
+                return
 
-        if args.agcmd == "start":
-            pid = start_worker(args.worker_id)
-            print(f"✅ worker {args.worker_id} em execução (pid={pid})")
-            return
+            if args.agcmd == "start":
+                pid = start_worker(args.worker_id)
+                print(f"✅ Worker {args.worker_id} em execução (pid={pid})")
+                return
 
-        if args.agcmd == "stop":
-            stop_worker(args.worker_id)
-            print(f"✅ worker {args.worker_id} parado")
-            return
+            if args.agcmd == "stop":
+                stop_worker(args.worker_id)
+                print(f"✅ Worker {args.worker_id} parado")
+                return
 
-        if args.agcmd == "list":
-            print(format_workers_table(list_workers()))
-            return
+            if args.agcmd == "list":
+                print(format_workers_table(list_workers()))
+                return
 
-        if args.agcmd == "recover":
-            restarted = recover_workers()
-            print("✅ recover concluído; reiniciados:", restarted if restarted else "nenhum")
-            return
+            if args.agcmd == "recover":
+                restarted = recover_workers()
+                print("✅ Recuperação concluída; reiniciados:", restarted if restarted else "nenhum")
+                return
 
-        if args.agcmd == "worker":
-            worker_loop(args.worker_id)
-            return
+            if args.agcmd == "worker":
+                worker_loop(args.worker_id)
+                return
 
-        if args.agcmd == "tasks":
-            print(task_status(args.limit))
-            return
+            if args.agcmd == "tasks":
+                print(task_status(args.limit))
+                return
 
-        if args.agcmd == "telegram-dispatch":
-            task_id = dispatch_local(args.config, args.chat_id, args.text, args.thread_id, args.label)
-            print(f"✅ task enfileirada: {task_id}")
-            return
+            if args.agcmd == "telegram-dispatch":
+                task_id = dispatch_local(args.config, args.chat_id, args.text, args.thread_id, args.label)
+                print(f"✅ Tarefa enfileirada: {task_id}")
+                return
+            _fail("Subcomando obrigatório para 'agents'.")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'agents': {_exc_message(exc)}")
 
     if args.cmd == "memory":
         if args.mcmd == "add":

@@ -76,11 +76,11 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             _CallbackHandler.result = {"token": token}
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"ClawLite auth success. You can close this tab.")
+            self.wfile.write("Autenticação ClawLite concluída. Pode fechar esta aba.".encode("utf-8"))
         else:
             self.send_response(400)
             self.end_headers()
-            self.wfile.write(b"Missing token/code.")
+            self.wfile.write("Token/código ausente.".encode("utf-8"))
 
     def log_message(self, format, *args):  # noqa: A003
         return
