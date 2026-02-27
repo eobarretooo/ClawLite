@@ -1,4 +1,43 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtualenv / packaging
 .venv/
+venv/
 *.egg-info/
+dist/
+build/
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+**/secrets*
+.clawlite/
+~/.clawlite/
+
+# Local databases
+*.sqlite
+*.db
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# JS / frontend
+node_modules/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Runtime temp
+tmp/
