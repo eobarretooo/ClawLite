@@ -22,9 +22,7 @@
 ## ⚡ Demo rápida
 
 ```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh \
-  | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 clawlite doctor
 clawlite onboarding
 clawlite start --port 8787
@@ -62,9 +60,7 @@ ClawLite é um assistente de IA focado em **execução real**: CLI produtiva, ga
 ## 🚀 Instalação
 
 ```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh \
-  | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
 ### Quickstart guiado (padrão)
