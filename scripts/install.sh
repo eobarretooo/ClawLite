@@ -6,13 +6,13 @@ VENV_DIR="${HOME}/.clawlite/venv"
 BIN_DIR="${HOME}/.local/bin"
 REPO_URL="https://github.com/eobarretooo/ClawLite.git"
 
-command -v python3 >/dev/null 2>&1 || { echo "[ERRO] python3 não encontrado"; exit 1; }
-command -v git >/dev/null 2>&1 || { echo "[ERRO] git não encontrado"; exit 1; }
-command -v curl >/dev/null 2>&1 || { echo "[ERRO] curl não encontrado"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "✗ python3 não encontrado"; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "✗ git não encontrado"; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "✗ curl não encontrado"; exit 1; }
 
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
-"$VENV_DIR/bin/python" -m pip install --upgrade rich alive-progress halo >/dev/null 2>&1 || true
+"$VENV_DIR/bin/python" -m pip install --upgrade rich >/dev/null 2>&1 || true
 
 TMP_PY="$(mktemp)"
 cat > "$TMP_PY" <<'PY'
@@ -31,75 +31,23 @@ BIN_DIR = Path(os.environ["BIN_DIR"])
 
 PYBIN = str(VENV_DIR / "bin" / "python")
 PIP = [PYBIN, "-m", "pip"]
-IS_TERMUX = ("com.termux" in os.environ.get("PREFIX", "")) and (subprocess.call(["bash", "-lc", "command -v pkg >/dev/null"]) == 0)
+IS_TERMUX = "com.termux" in os.environ.get("PREFIX", "")
 
-# UI fallback
-IS_TTY = sys.stdout.isatty() and sys.stdin.isatty()
-USE_RICH = USE_ALIVE = USE_HALO = False
+USE_RICH = False
 try:
     from rich.console import Console
     from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
     console = Console()
-    USE_RICH = IS_TTY
+    USE_RICH = sys.stdout.isatty()
 except Exception:
     console = None
 
-# alive-progress/halo podem gerar glitches em alguns terminais (Termux/loggers).
-# Mantemos import para compatibilidade, mas desativamos por padrão para estabilidade.
-try:
-    from alive_progress import alive_bar
-except Exception:
-    alive_bar = None
-USE_ALIVE = False
 
-try:
-    from halo import Halo
-except Exception:
-    Halo = None
-USE_HALO = False
-
-
-def print_line(msg: str):
-    print(msg, flush=True)
-
-
-def ok(msg: str):
-    if USE_RICH:
-        console.print(f"[green]✓[/green] {msg}")
-    else:
-        print_line(f"✓ {msg}")
-
-
-def fail(msg: str):
-    if USE_RICH:
-        console.print(f"[red]✗[/red] {msg}")
-    else:
-        print_line(f"✗ {msg}")
-
-
-def info(msg: str):
-    if USE_RICH:
-        console.print(f"[cyan]ℹ[/cyan] {msg}")
-    else:
-        print_line(f"ℹ {msg}")
-
-
-def run(cmd: list[str], desc: str, shell: bool = False):
-    if USE_HALO:
-        spinner = Halo(text=desc, spinner="dots")
-        spinner.start()
-        p = subprocess.run(cmd if not shell else " ".join(cmd), shell=shell, capture_output=True, text=True)
-        if p.returncode == 0:
-            spinner.succeed(desc)
-            return
-        spinner.fail(desc)
-        raise RuntimeError((p.stderr or p.stdout or "erro").strip())
-    else:
-        info(desc)
-        p = subprocess.run(cmd if not shell else " ".join(cmd), shell=shell, capture_output=True, text=True)
-        if p.returncode != 0:
-            raise RuntimeError((p.stderr or p.stdout or "erro").strip())
+def run(cmd: list[str], desc: str):
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise RuntimeError((p.stderr or p.stdout or f"Falha em {desc}").strip())
 
 
 def ensure_path():
@@ -110,8 +58,7 @@ def ensure_path():
     target.symlink_to(VENV_DIR / "bin" / "clawlite")
 
     export_line = 'export PATH="$HOME/.local/bin:$PATH"'
-    shell = os.environ.get("SHELL", "")
-    rc = Path.home() / (".zshrc" if "zsh" in shell else ".bashrc")
+    rc = Path.home() / (".zshrc" if "zsh" in os.environ.get("SHELL", "") else ".bashrc")
     rc.touch(exist_ok=True)
     if export_line not in rc.read_text(encoding="utf-8", errors="ignore"):
         with rc.open("a", encoding="utf-8") as fh:
@@ -133,85 +80,119 @@ def bootstrap_workspace():
         "cfg.setdefault('gateway',{}).setdefault('token',secrets.token_urlsafe(24));"
         "save_config(cfg)"
     )
-    run([PYBIN, "-c", code], "Aplicando configuração inicial")
+    run([PYBIN, "-c", code], "bootstrap")
 
 
-def show_bar(pct: int):
-    filled = max(0, min(10, pct // 10))
-    bar = "█" * filled + "░" * (10 - filled)
-    print_line(f"  {bar} {pct}%")
+def install_deps():
+    if IS_TERMUX:
+        run(["pkg", "update", "-y"], "pkg update")
+        run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install deps")
+    run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+
+
+def install_package():
+    if ROOT_DIR and Path(ROOT_DIR, "pyproject.toml").exists():
+        run(PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", "-e", ROOT_DIR], "install local")
+    else:
+        run(PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", f"git+{REPO_URL}"], "install git")
+
+
+def doctor_check():
+    run([str(VENV_DIR / "bin" / "clawlite"), "doctor"], "doctor")
+
+
+def rich_flow():
+    console.print("[bold #ff6b2b]🦊 ClawLite Installer v0.4.1[/bold #ff6b2b]")
+    console.print("[bold #00f5ff]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold #00f5ff]")
+    console.print(f"[cyan]Plataforma: {'Termux' if IS_TERMUX else 'Linux'} | Python: {platform.python_version()}[/cyan]")
+
+    # [1/5]
+    with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
+        t = sp.add_task("[1/5] Detectando ambiente...", total=None)
+        sp.update(t, completed=1)
+    console.print("[green]✓[/green]")
+
+    # [2/5] com barra
+    with Progress(
+        SpinnerColumn(style="#00f5ff"),
+        TextColumn("[bold][2/5] Instalando dependências..."),
+        BarColumn(complete_style="#ff6b2b", finished_style="#ff6b2b"),
+        TaskProgressColumn(),
+        transient=True,
+        console=console,
+    ) as pb:
+        t = pb.add_task("deps", total=100)
+        if IS_TERMUX:
+            run(["pkg", "update", "-y"], "pkg update")
+            pb.advance(t, 40)
+            run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install")
+            pb.advance(t, 40)
+            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+            pb.advance(t, 20)
+        else:
+            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+            pb.advance(t, 100)
+    console.print("[green]✓[/green]")
+
+    # [3/5]
+    with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
+        t = sp.add_task("[3/5] Instalando ClawLite...", total=None)
+        install_package()
+        sp.update(t, completed=1)
+    console.print("[green]✓[/green]")
+
+    # [4/5]
+    with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
+        t = sp.add_task("[4/5] Configurando workspace...", total=None)
+        ensure_path()
+        bootstrap_workspace()
+        sp.update(t, completed=1)
+    console.print("[green]✓[/green]")
+
+    # [5/5]
+    with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
+        t = sp.add_task("[5/5] Verificando instalação...", total=None)
+        doctor_check()
+        sp.update(t, completed=1)
+    console.print("[green]✓[/green]")
+
+    console.print(Panel.fit("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding", border_style="#ff6b2b"))
+
+
+def simple_flow():
+    print("🦊 ClawLite Installer v0.4.1")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"Plataforma: {'Termux' if IS_TERMUX else 'Linux'} | Python: {platform.python_version()}")
+
+    print("[1/5] Detectando ambiente... ✓")
+    print("[2/5] Instalando dependências...")
+    install_deps()
+    print("✓")
+    print("[3/5] Instalando ClawLite...")
+    install_package(); print("✓")
+    print("[4/5] Configurando workspace...")
+    ensure_path(); bootstrap_workspace(); print("✓")
+    print("[5/5] Verificando instalação...")
+    doctor_check(); print("✓")
+    print("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding")
 
 
 def main():
     if USE_RICH:
-        console.print("[bold orange1]🦊 ClawLite Installer v0.4.1[/bold orange1]")
-        console.print("[cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/cyan]")
-        console.print(Panel.fit(f"Plataforma: {'Termux' if IS_TERMUX else 'Linux'}\nPython: {platform.python_version()}"))
+        # etapa 2 precisa vir na ordem visual definida, então fazemos detect antes e deps já no fluxo rich
+        rich_flow()
     else:
-        print_line("🦊 ClawLite Installer v0.4.1")
-        print_line("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print_line(f"Plataforma: {'Termux' if IS_TERMUX else 'Linux'} | Python: {platform.python_version()}")
-
-    # [1/5]
-    info("[1/5] Detectando ambiente...")
-    ok("Termux detectado" if IS_TERMUX else "Linux detectado")
-
-    # [2/5]
-    info("[2/5] Instalando dependências...")
-    if USE_ALIVE:
-        with alive_bar(100, title="dependências") as bar:
-            done = 0
-            bar(10); done += 10
-            if IS_TERMUX:
-                run(["pkg", "update", "-y"], "Atualizando pacotes do Termux")
-                bar(35); done += 35
-                run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "Instalando rust/clang/python/git/curl")
-                bar(25); done += 25
-            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "alive-progress", "halo"], "Instalando libs Python essenciais")
-            bar(20); done += 20
-            if done < 100:
-                bar(100 - done)
-    else:
-        show_bar(20)
-        if IS_TERMUX:
-            run(["pkg", "update", "-y"], "Atualizando pacotes do Termux")
-            show_bar(50)
-            run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "Instalando rust/clang/python/git/curl")
-            show_bar(80)
-        run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "alive-progress", "halo"], "Instalando libs Python essenciais")
-        show_bar(100)
-    ok("Dependências instaladas")
-
-    # [3/5]
-    info("[3/5] Instalando ClawLite...")
-    if ROOT_DIR and Path(ROOT_DIR, "pyproject.toml").exists():
-        run(PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", "-e", ROOT_DIR], "Instalando pacote local")
-    else:
-        run(PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", f"git+{REPO_URL}"], "Instalando pacote do GitHub")
-    ok("v0.4.1")
-
-    # [4/5]
-    info("[4/5] Configurando workspace...")
-    ensure_path()
-    bootstrap_workspace()
-    ok("Pronto")
-
-    # [5/5]
-    info("[5/5] Verificando instalação...")
-    run([str(VENV_DIR / "bin" / "clawlite"), "doctor"], "Rodando doctor")
-    ok("Tudo ok")
-
-    if USE_RICH:
-        console.print(Panel.fit("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding", border_style="green"))
-    else:
-        print_line("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding")
+        simple_flow()
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        fail(str(e))
+        if USE_RICH:
+            console.print(f"[red]✗[/red] {e}")
+        else:
+            print(f"✗ {e}")
         sys.exit(1)
 PY
 
