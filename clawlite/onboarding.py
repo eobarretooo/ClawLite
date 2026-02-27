@@ -8,9 +8,20 @@ from clawlite.auth import PROVIDERS, auth_login
 from clawlite.config.settings import load_config, save_config
 
 
+MASCOT = r'''
+┌───────────────────────────────┐
+│      /\_/\    ClawLite        │
+│     ( =^.^= )  initialized    │
+│     /  _  \   swift • smart   │
+│    (__/ \__)  terminal-ready  │
+└───────────────────────────────┘
+'''
+
+
 def run_onboarding() -> None:
     cfg = load_config()
-    print("\n=== ClawLite Onboarding ===")
+    print("\n" + MASCOT)
+    print("=== ClawLite Onboarding ===")
 
     model = questionary.text("Modelo padrão", default=cfg.get("model", "openai/gpt-4o-mini")).ask()
     if model:

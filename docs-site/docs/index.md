@@ -20,6 +20,10 @@ slug: /
   </div>
 </div>
 
+<p align="center">
+  <img src="/ClawLite/img/mascot.svg" alt="Mascote ClawLite" width="180" />
+</p>
+
 ## O que as pessoas estão construindo
 
 - Assistentes pessoais no Termux

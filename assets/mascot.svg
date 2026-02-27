@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="ClawLite lynx mascot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M118 180l46-70 52 64M394 180l-46-70-52 64" fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M112 230c0-80 64-130 144-130s144 50 144 130v78c0 72-58 130-130 130h-28c-72 0-130-58-130-130v-78z" fill="#ffffff" opacity="0.95"/>
+  <ellipse cx="206" cy="266" rx="18" ry="24" fill="#1f2937"/>
+  <ellipse cx="306" cy="266" rx="18" ry="24" fill="#1f2937"/>
+  <path d="M236 325l20 18 20-18" fill="#fb7185"/>
+  <path d="M206 364c24 22 76 22 100 0" fill="none" stroke="#1f2937" stroke-width="12" stroke-linecap="round"/>
+  <path d="M146 286h-28M140 318h-30M366 286h28M372 318h30" stroke="#ffffff" stroke-width="10" stroke-linecap="round"/>
+</svg>

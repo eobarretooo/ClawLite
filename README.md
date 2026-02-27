@@ -1,5 +1,9 @@
 # ClawLite
 
+<p align="center">
+  <img src="assets/mascot.svg" alt="Mascote ClawLite" width="180"/>
+</p>
+
 > O assistente de IA open source para Linux + Termux, com gateway nativo, skills modulares e operação portátil.
 
 [![Docs](https://img.shields.io/badge/docs-online-7c3aed?style=for-the-badge)](https://eobarretooo.github.io/ClawLite/)
