@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ClawLite Gateway</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
+    .card { border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <h1>ClawLite Gateway Dashboard</h1>
+  <div class="card" id="status">Carregando status...</div>
+  <script>
+    async function loadStatus(){
+      const token = prompt('Cole o token do gateway para consultar status:');
+      const r = await fetch('/api/status', {headers:{Authorization:`Bearer ${token}`}});
+      const data = await r.json();
+      document.getElementById('status').textContent = JSON.stringify(data, null, 2);
+    }
+    loadStatus();
+  </script>
+</body>
+</html>

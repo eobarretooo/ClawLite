@@ -9,7 +9,10 @@ description = "Portable agentic assistant for Linux and Termux"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{name = "BarretoClaw"}]
-dependencies = []
+dependencies = ["fastapi>=0.112", "uvicorn>=0.30"]
 
 [project.scripts]
 clawlite = "clawlite.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clawlite*"]

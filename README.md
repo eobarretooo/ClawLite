@@ -1,64 +1,84 @@
 # ClawLite
 
-Assistente open source em Python, portátil para **Linux** e **Termux** (ARM), com instalação simples e arquitetura modular de tools/skills/memória.
+[![PyPI Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](#)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
+[![GitHub stars](https://img.shields.io/github/stars/eobarretooo/ClawLite?style=social)](https://github.com/eobarretooo/ClawLite)
 
-## Objetivo
+```text
+  ____ _                 _     _ _ _
+ / ___| | __ ___      _| |   (_) | |_ ___
+| |   | |/ _` \ \ /\ / / |   | | | __/ _ \
+| |___| | (_| |\ V  V /| |___| | | ||  __/
+ \____|_|\__,_| \_/\_/ |_____|_|_|\__\___|
+```
 
-Ser um assistente universal estilo "agentic CLI":
-- execução de comandos locais
-- memória em arquivos
-- skills modulares
-- suporte a múltiplos provedores LLM
-- operação confiável sem Homebrew
+Assistente open source portátil para **Linux + Termux**, com **gateway WebSocket**, onboarding guiado e arquitetura modular.
 
-## Status
-
-MVP em construção (Milestone 1: bootstrap de arquitetura + CLI).
-
-## Instalação (Linux/Termux)
+## 🚀 Instalação (1 comando)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-> Durante o desenvolvimento, use instalação local:
+## 📸 Terminal em ação
+
+![ClawLite Demo](assets/demo.svg)
+
+## Quickstart
 
 ```bash
-git clone https://github.com/eobarretooo/ClawLite.git
-cd ClawLite
-bash scripts/install.sh
-clawlite --help
-```
-
-## Requisitos
-
-- Python 3.10+
-- git
-- curl
-
-## Comandos iniciais
-
-```bash
+clawlite onboarding
 clawlite doctor
-clawlite run "Resuma o diretório atual"
-clawlite memory add "preferência: respostas diretas"
-clawlite memory search "preferência"
+clawlite gateway --port 8787
 ```
 
-## Estrutura
+Health check:
 
-- `clawlite/cli.py` — entrada principal
-- `clawlite/core/agent.py` — loop do agente
-- `clawlite/core/tools.py` — registro/execução de tools locais
-- `clawlite/core/memory.py` — memória local (sqlite)
-- `clawlite/providers/` — provedores de LLM
-- `clawlite/skills/` — skills locais em markdown
-- `scripts/install.sh` — instalador Linux/Termux
+```bash
+curl http://127.0.0.1:8787/health
+```
 
-## Próximos marcos
+## Gateway (server mode)
 
-1. Tooling local robusto (`read/write/edit/exec`)
-2. Provider OpenAI-compatible + fallback
-3. Skill loader + roteamento por descrição
-4. Sessões/subagentes locais (processos isolados)
-5. Conectores Telegram/Discord opcionais
+- WebSocket: `/ws?token=...`
+- Auth por token
+- Dashboard web: `/dashboard`
+- Health check: `/health`
+- Status protegido: `/api/status` (Bearer token)
+
+## Skills disponíveis (MVP)
+
+| Skill | Status | Descrição |
+|---|---|---|
+| core-tools | ✅ | read/write/exec local |
+| memory | ✅ | memória local SQLite |
+| gateway | ✅ | servidor WS + dashboard + health |
+| onboarding | ✅ | setup interativo de modelo/canais/skills |
+| subagents | 🟡 | planejado |
+| messaging connectors | 🟡 | planejado |
+
+## What People Are Building
+
+- Assistente pessoal local para Termux
+- Gateway de automação para bots de chat
+- Shell copiloto para scripts Linux
+
+## ClawLite vs OpenClaw
+
+| Item | ClawLite | OpenClaw |
+|---|---|---|
+| Foco | Portabilidade Linux/Termux | Plataforma completa multiambiente |
+| Setup | 1 comando + onboarding CLI | Infra/serviços mais completos |
+| Dependências | Python puro + libs leves | Stack maior de runtime |
+| Gateway | WS + dashboard embutidos | Gateway avançado nativo |
+
+## Contribuição
+
+1. Fork do repositório
+2. Crie branch: `feat/minha-feature`
+3. Commit e push
+4. Abra PR com contexto + testes
+
+## Licença
+
+MIT

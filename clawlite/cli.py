@@ -5,6 +5,8 @@ import shutil
 import sys
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
+from clawlite.onboarding import run_onboarding
+from clawlite.gateway.server import run_gateway
 
 
 def cmd_doctor() -> int:
@@ -31,6 +33,11 @@ def main() -> None:
     ms.add_argument("query")
 
     sub.add_parser("doctor")
+    sub.add_parser("onboarding")
+
+    gw = sub.add_parser("gateway")
+    gw.add_argument("--host", default=None)
+    gw.add_argument("--port", type=int, default=None)
 
     args = p.parse_args()
 
@@ -38,6 +45,12 @@ def main() -> None:
         raise SystemExit(cmd_doctor())
     if args.cmd == "run":
         print(run_task(args.prompt))
+        return
+    if args.cmd == "onboarding":
+        run_onboarding()
+        return
+    if args.cmd == "gateway":
+        run_gateway(args.host, args.port)
         return
     if args.cmd == "memory":
         if args.mcmd == "add":
