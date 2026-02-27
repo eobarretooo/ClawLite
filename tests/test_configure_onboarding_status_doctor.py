@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from clawlite.config import settings
-from clawlite.configure_menu import _ensure_defaults
+from clawlite.configure_menu import _ensure_defaults, run_configure_menu
 from clawlite.onboarding import run_onboarding
 from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.locale import detect_language
@@ -45,6 +45,26 @@ def test_doctor_and_status_minimum_output():
         assert "sqlite:" in out_doctor
         assert "ClawLite Status" in out_status
         assert "gateway:" in out_status
+    finally:
+        settings.CONFIG_DIR = old_dir
+        settings.CONFIG_PATH = old_path
+        tmp.cleanup()
+
+
+def test_configure_menu_non_tty_fallback(monkeypatch):
+    import clawlite.configure_menu as configure_menu
+
+    tmp = tempfile.TemporaryDirectory()
+    old_dir, old_path = _patch_config_home(tmp.name)
+
+    try:
+        settings.save_config(settings.DEFAULT_CONFIG)
+        monkeypatch.setattr(configure_menu.sys.stdin, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(configure_menu.sys.stdout, "isatty", lambda: False, raising=False)
+        run_configure_menu()
+        cfg = settings.load_config()
+        assert "gateway" in cfg
+        assert "language" in cfg
     finally:
         settings.CONFIG_DIR = old_dir
         settings.CONFIG_PATH = old_path

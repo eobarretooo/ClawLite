@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 from typing import Any
 
 import questionary
@@ -26,6 +27,7 @@ I18N = {
         "preview": "👀 Prévia final",
         "confirm": "Salvar esta configuração?",
         "bye": "👋 Saindo do configurador.",
+        "non_tty": "ℹ️ Ambiente sem TTY detectado; aplicando defaults e salvando configuração atual.",
     },
     "en": {
         "title": "⚙️ ClawLite Configure",
@@ -34,6 +36,7 @@ I18N = {
         "preview": "👀 Final preview",
         "confirm": "Save this configuration?",
         "bye": "👋 Leaving configurator.",
+        "non_tty": "ℹ️ Non-interactive environment detected; applying defaults and saving current configuration.",
     },
 }
 
@@ -246,6 +249,13 @@ def run_configure_menu() -> None:
     _ensure_defaults(cfg)
     if not cfg.get("language"):
         cfg["language"] = detect_language("pt-br")
+
+    lang = cfg.get("language", "pt-br")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        console.print(I18N.get(lang, I18N["pt-br"])["non_tty"])
+        save_config(cfg)
+        console.print("[green]✅ Configuração salva.[/green]")
+        return
 
     sections = [
         Choice("Model", "model"),
