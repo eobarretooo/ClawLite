@@ -84,6 +84,10 @@ def main() -> None:
     sub.add_parser("onboarding")
     sub.add_parser("configure")
 
+    start = sub.add_parser("start")
+    start.add_argument("--host", default=None)
+    start.add_argument("--port", type=int, default=None)
+
     ws = sub.add_parser("workspace")
     ws_sub = ws.add_subparsers(dest="wcmd")
     ws_init = ws_sub.add_parser("init")
@@ -247,6 +251,11 @@ def main() -> None:
         from clawlite.configure_menu import run_configure_menu
 
         run_configure_menu()
+        return
+    if args.cmd == "start":
+        from clawlite.gateway.server import run_gateway
+
+        run_gateway(args.host, args.port)
         return
     if args.cmd == "gateway":
         from clawlite.gateway.server import run_gateway
