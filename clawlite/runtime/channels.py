@@ -12,6 +12,17 @@ TEMPLATES = {
             }
         }
     },
+    "telegram-multiagent": {
+        "telegram": {
+            "enabled": True,
+            "token": "<TELEGRAM_BOT_TOKEN>",
+            "defaultLabel": "general",
+            "routing": {
+                "general": {"commandTemplate": "clawlite run \"{text}\""},
+                "code": {"commandTemplate": "clawlite run \"[code] {text}\""}
+            }
+        }
+    },
     "discord": {
         "channels": {
             "discord": {
