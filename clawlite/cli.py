@@ -14,6 +14,7 @@ from clawlite.runtime.conversation_cron import (
     run_cron_jobs,
 )
 from clawlite.runtime.doctor import run_doctor
+from clawlite.runtime.status import runtime_status
 from clawlite.runtime.workspace import init_workspace
 from clawlite.runtime.channels import channel_template
 from clawlite.runtime.models import model_status, set_model_fallback
@@ -77,6 +78,7 @@ def main() -> None:
     ms.add_argument("query")
 
     sub.add_parser("doctor")
+    sub.add_parser("status")
     sub.add_parser("onboarding")
     sub.add_parser("configure")
 
@@ -224,6 +226,9 @@ def main() -> None:
 
     if args.cmd == "doctor":
         raise SystemExit(cmd_doctor())
+    if args.cmd == "status":
+        print(runtime_status())
+        return
     if args.cmd == "run":
         print(run_task(args.prompt))
         return
