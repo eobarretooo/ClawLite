@@ -1,11 +1,10 @@
 ---
 name: github
-description: Gerenciar repositórios, issues, PRs e commits
+description: Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.
 ---
 
 # github
 
-Compatível com Linux/Termux (MVP do ClawLite).
+Port da skill para ClawLite (Linux/Termux).
 
-## Status
-Implementado como skill base com validações de ambiente e comandos seguros.
+Origem: /root/projetos/openclaw-skills/skills/steipete/github/SKILL.md
