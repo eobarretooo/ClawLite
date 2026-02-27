@@ -6,177 +6,201 @@ VENV_DIR="${HOME}/.clawlite/venv"
 BIN_DIR="${HOME}/.local/bin"
 REPO_URL="https://github.com/eobarretooo/ClawLite.git"
 
-C_RESET='\033[0m'
-C_ORANGE='\033[38;5;208m'
-C_CYAN='\033[36m'
-C_GREEN='\033[32m'
-C_RED='\033[31m'
-C_DIM='\033[2m'
+command -v python3 >/dev/null 2>&1 || { echo "[ERRO] python3 não encontrado"; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "[ERRO] git não encontrado"; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "[ERRO] curl não encontrado"; exit 1; }
 
-ok()   { echo -e "${C_GREEN}✓${C_RESET} $*"; }
-info() { echo -e "${C_CYAN}ℹ${C_RESET} $*"; }
-err()  { echo -e "${C_RED}✗${C_RESET} $*"; }
+python3 -m venv "$VENV_DIR"
+"$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
+"$VENV_DIR/bin/python" -m pip install --upgrade rich alive-progress halo >/dev/null 2>&1 || true
 
-print_banner() {
-  echo -e "${C_ORANGE}"
-  cat <<'EOF'
-   =^.^=  ClawLite Installer v0.4.1
-      /\_/\
-     ( o.o )   Linux + Termux First
-      > ^ <
-EOF
-  echo -e "${C_RESET}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-}
-
-progress_bar() {
-  local pct="$1"
-  local filled=$((pct/10))
-  local empty=$((10-filled))
-  local bar=""
-  for _ in $(seq 1 "$filled"); do bar+="█"; done
-  for _ in $(seq 1 "$empty"); do bar+="░"; done
-  echo -e "${bar} ${pct}%"
-}
-
-run_step() {
-  local title="$1"
-  shift
-  echo -e "${C_CYAN}${title}${C_RESET}"
-  "$@"
-}
-
-run_with_spinner() {
-  local msg="$1"
-  shift
-  local logfile
-  logfile="$(mktemp)"
-  ("$@") >"$logfile" 2>&1 &
-  local pid=$!
-  local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  local i=0
-  while kill -0 "$pid" 2>/dev/null; do
-    i=$(( (i + 1) % 10 ))
-    printf "\r${C_DIM}%s %s${C_RESET}" "${spin:$i:1}" "$msg"
-    sleep 0.12
-  done
-  wait "$pid" || {
-    printf "\r"
-    cat "$logfile" >&2
-    rm -f "$logfile"
-    return 1
-  }
-  rm -f "$logfile"
-  printf "\r"
-}
-
-is_termux() {
-  [[ "${PREFIX:-}" == *"com.termux"* ]] && command -v pkg >/dev/null 2>&1
-}
-
-ensure_path() {
-  mkdir -p "$BIN_DIR"
-  ln -sf "$VENV_DIR/bin/clawlite" "$BIN_DIR/clawlite"
-
-  local export_line='export PATH="$HOME/.local/bin:$PATH"'
-  local rc_file
-  if [[ "${SHELL:-}" == *"zsh" ]]; then
-    rc_file="$HOME/.zshrc"
-  else
-    rc_file="$HOME/.bashrc"
-  fi
-  touch "$rc_file"
-  if ! grep -Fq "$export_line" "$rc_file"; then
-    echo "$export_line" >> "$rc_file"
-  fi
-
-  touch "$HOME/.profile"
-  if ! grep -Fq "$export_line" "$HOME/.profile"; then
-    echo "$export_line" >> "$HOME/.profile"
-  fi
-}
-
-install_termux_deps() {
-  run_with_spinner "Atualizando pacotes do Termux..." pkg update -y
-  run_with_spinner "Instalando dependências base (rust/clang/python/git/curl)..." pkg install -y rust clang python git curl
-}
-
-install_clawlite() {
-  python3 -m venv "$VENV_DIR"
-  "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
-
-  if [ -n "${ROOT_DIR}" ] && [ -f "$ROOT_DIR/pyproject.toml" ]; then
-    "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall --no-deps -e "$ROOT_DIR" >/dev/null
-  else
-    "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall --no-deps "git+${REPO_URL}" >/dev/null
-  fi
-
-  "$VENV_DIR/bin/python" -m pip install --upgrade rich questionary fastapi uvicorn >/dev/null
-}
-
-bootstrap_workspace() {
-  "$VENV_DIR/bin/python" - <<'PY'
+TMP_PY="$(mktemp)"
+cat > "$TMP_PY" <<'PY'
+from __future__ import annotations
+import os
+import platform
 import secrets
-from clawlite.config.settings import load_config, save_config
-from clawlite.runtime.workspace import init_workspace
+import subprocess
+import sys
+from pathlib import Path
 
-cfg = load_config()
-init_workspace()
-if not cfg.get('gateway', {}).get('token'):
-    cfg.setdefault('gateway', {})['token'] = secrets.token_urlsafe(24)
-save_config(cfg)
+VENV_DIR = Path(os.environ["VENV_DIR"])
+ROOT_DIR = os.environ.get("ROOT_DIR", "")
+REPO_URL = os.environ["REPO_URL"]
+BIN_DIR = Path(os.environ["BIN_DIR"])
+
+PYBIN = str(VENV_DIR / "bin" / "python")
+PIP = [PYBIN, "-m", "pip"]
+IS_TERMUX = ("com.termux" in os.environ.get("PREFIX", "")) and (subprocess.call(["bash", "-lc", "command -v pkg >/dev/null"]) == 0)
+
+# UI fallback
+USE_RICH = USE_ALIVE = USE_HALO = False
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+    console = Console()
+    USE_RICH = True
+except Exception:
+    console = None
+
+try:
+    from alive_progress import alive_bar
+    USE_ALIVE = True
+except Exception:
+    alive_bar = None
+
+try:
+    from halo import Halo
+    USE_HALO = True
+except Exception:
+    Halo = None
+
+
+def print_line(msg: str):
+    print(msg, flush=True)
+
+
+def ok(msg: str):
+    if USE_RICH:
+        console.print(f"[green]✓[/green] {msg}")
+    else:
+        print_line(f"✓ {msg}")
+
+
+def fail(msg: str):
+    if USE_RICH:
+        console.print(f"[red]✗[/red] {msg}")
+    else:
+        print_line(f"✗ {msg}")
+
+
+def info(msg: str):
+    if USE_RICH:
+        console.print(f"[cyan]ℹ[/cyan] {msg}")
+    else:
+        print_line(f"ℹ {msg}")
+
+
+def run(cmd: list[str], desc: str, shell: bool = False):
+    if USE_HALO:
+        spinner = Halo(text=desc, spinner="dots")
+        spinner.start()
+        p = subprocess.run(cmd if not shell else " ".join(cmd), shell=shell, capture_output=True, text=True)
+        if p.returncode == 0:
+            spinner.succeed(desc)
+            return
+        spinner.fail(desc)
+        raise RuntimeError((p.stderr or p.stdout or "erro").strip())
+    else:
+        info(desc)
+        p = subprocess.run(cmd if not shell else " ".join(cmd), shell=shell, capture_output=True, text=True)
+        if p.returncode != 0:
+            raise RuntimeError((p.stderr or p.stdout or "erro").strip())
+
+
+def ensure_path():
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    target = BIN_DIR / "clawlite"
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    target.symlink_to(VENV_DIR / "bin" / "clawlite")
+
+    export_line = 'export PATH="$HOME/.local/bin:$PATH"'
+    shell = os.environ.get("SHELL", "")
+    rc = Path.home() / (".zshrc" if "zsh" in shell else ".bashrc")
+    rc.touch(exist_ok=True)
+    if export_line not in rc.read_text(encoding="utf-8", errors="ignore"):
+        with rc.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + export_line + "\n")
+
+    profile = Path.home() / ".profile"
+    profile.touch(exist_ok=True)
+    if export_line not in profile.read_text(encoding="utf-8", errors="ignore"):
+        with profile.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + export_line + "\n")
+
+
+def bootstrap_workspace():
+    code = (
+        "import secrets;"
+        "from clawlite.config.settings import load_config,save_config;"
+        "from clawlite.runtime.workspace import init_workspace;"
+        "cfg=load_config();init_workspace();"
+        "cfg.setdefault('gateway',{}).setdefault('token',secrets.token_urlsafe(24));"
+        "save_config(cfg)"
+    )
+    run([PYBIN, "-c", code], "Aplicando configuração inicial")
+
+
+def main():
+    if USE_RICH:
+        console.print("[bold orange1]🦊 ClawLite Installer v0.4.1[/bold orange1]")
+        console.print("[cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/cyan]")
+        console.print(Panel.fit(f"Plataforma: {'Termux' if IS_TERMUX else 'Linux'}\nPython: {platform.python_version()}"))
+    else:
+        print_line("🦊 ClawLite Installer v0.4.1")
+        print_line("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print_line(f"Plataforma: {'Termux' if IS_TERMUX else 'Linux'} | Python: {platform.python_version()}")
+
+    # [1/5]
+    info("[1/5] Detectando ambiente...")
+    ok("Termux detectado" if IS_TERMUX else "Linux detectado")
+
+    # [2/5]
+    info("[2/5] Instalando dependências...")
+    if USE_ALIVE:
+        with alive_bar(100, title="dependências") as bar:
+            done = 0
+            bar(10); done += 10
+            if IS_TERMUX:
+                run(["pkg", "update", "-y"], "Atualizando pacotes do Termux")
+                bar(35); done += 35
+                run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "Instalando rust/clang/python/git/curl")
+                bar(25); done += 25
+            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "alive-progress", "halo"], "Instalando libs Python essenciais")
+            bar(20); done += 20
+            if done < 100:
+                bar(100 - done)
+    else:
+        if IS_TERMUX:
+            run(["pkg", "update", "-y"], "Atualizando pacotes do Termux")
+            run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "Instalando rust/clang/python/git/curl")
+        run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "alive-progress", "halo"], "Instalando libs Python essenciais")
+    ok("Dependências instaladas")
+
+    # [3/5]
+    info("[3/5] Instalando ClawLite...")
+    if ROOT_DIR and Path(ROOT_DIR, "pyproject.toml").exists():
+        run(PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", "-e", ROOT_DIR], "Instalando pacote local")
+    else:
+        run(PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", f"git+{REPO_URL}"], "Instalando pacote do GitHub")
+    ok("v0.4.1")
+
+    # [4/5]
+    info("[4/5] Configurando workspace...")
+    ensure_path()
+    bootstrap_workspace()
+    ok("Pronto")
+
+    # [5/5]
+    info("[5/5] Verificando instalação...")
+    run([str(VENV_DIR / "bin" / "clawlite"), "doctor"], "Rodando doctor")
+    ok("Tudo ok")
+
+    if USE_RICH:
+        console.print(Panel.fit("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding", border_style="green"))
+    else:
+        print_line("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        fail(str(e))
+        sys.exit(1)
 PY
-}
 
-verify_install() {
-  "$VENV_DIR/bin/clawlite" doctor >/tmp/clawlite-doctor.out 2>&1 || return 1
-}
-
-main() {
-  print_banner
-
-  echo -e "${C_CYAN}[1/5] Detectando ambiente...${C_RESET}"
-  if is_termux; then
-    ok "Termux detectado"
-  else
-    ok "Linux detectado"
-  fi
-
-  echo -e "${C_CYAN}[2/5] Instalando dependências...${C_RESET}"
-  echo -n "  "
-  progress_bar 20
-  if is_termux; then
-    install_termux_deps || { err "Falha ao instalar dependências no Termux"; exit 1; }
-  else
-    command -v python3 >/dev/null 2>&1 || { err "python3 não encontrado"; exit 1; }
-    command -v git >/dev/null 2>&1 || { err "git não encontrado"; exit 1; }
-    command -v curl >/dev/null 2>&1 || { err "curl não encontrado"; exit 1; }
-  fi
-  echo -n "  "
-  progress_bar 80
-  ok "Dependências prontas"
-
-  echo -e "${C_CYAN}[3/5] Instalando ClawLite...${C_RESET}"
-  run_with_spinner "Instalando pacote e dependências Python..." install_clawlite || { err "Falha na instalação do ClawLite"; exit 1; }
-  ok "v0.4.1"
-
-  echo -e "${C_CYAN}[4/5] Configurando workspace...${C_RESET}"
-  run_with_spinner "Aplicando configuração inicial..." bootstrap_workspace || { err "Falha ao configurar workspace"; exit 1; }
-  ensure_path
-  ok "Pronto"
-
-  echo -e "${C_CYAN}[5/5] Verificando instalação...${C_RESET}"
-  run_with_spinner "Rodando clawlite doctor..." verify_install || { err "Verificação final falhou"; cat /tmp/clawlite-doctor.out; exit 1; }
-  ok "Tudo ok"
-
-  echo
-  echo -e "${C_GREEN}🎉 ClawLite instalado com sucesso!${C_RESET}"
-  echo -e "${C_CYAN}👉 Próximo passo:${C_RESET} clawlite onboarding"
-  echo
-  echo -e "${C_DIM}Resumo:${C_RESET}"
-  echo "- Ambiente: $(is_termux && echo Termux || echo Linux)"
-  echo "- Venv: $VENV_DIR"
-  echo "- Binário: $BIN_DIR/clawlite"
-  echo "- PATH: configurado em ~/.bashrc|~/.zshrc e ~/.profile"
-}
-
-main "$@"
+VENV_DIR="$VENV_DIR" ROOT_DIR="$ROOT_DIR" REPO_URL="$REPO_URL" BIN_DIR="$BIN_DIR" "$VENV_DIR/bin/python" "$TMP_PY"
+rm -f "$TMP_PY"
