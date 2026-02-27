@@ -1,11 +1,10 @@
 ---
 name: docker
-description: Gerenciar containers e imagens Docker
+description: Build, secure, and deploy Docker containers with image optimization, networking, and production-ready patterns.
 ---
 
 # docker
 
-Compatível com Linux/Termux (MVP do ClawLite).
+Port da skill para ClawLite (Linux/Termux).
 
-## Status
-Implementado como skill base com validações de ambiente e comandos seguros.
+Origem: /root/projetos/openclaw-skills/skills/ivangdavila/docker/SKILL.md
