@@ -1,12 +1,8 @@
 ---
 name: rss
-description: Monitorar feeds RSS
+description: Agentic RSS digest using the feed CLI. Fetch, triage, and summarize RSS feeds to surface high-signal posts. Use when: (1) reading RSS feeds or catching up on news, (2) user asks for a digest, roundup, or summary of recent posts, (3) user asks what's new or interesting today, (4) user mentions feed, RSS, or blogs.
 ---
 
 # rss
 
-Categorias: conteúdo
-
-Compatível com Linux/Termux no ClawLite.
-
-
+Port da skill para ClawLite.
