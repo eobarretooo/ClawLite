@@ -47,9 +47,13 @@ clawlite start --port 8787
 ## 📚 Tabela de conteúdo
 
 - [Por que ClawLite](#-por-que-clawlite)
+- [Pré-requisitos](#-pré-requisitos)
 - [Instalação](#-instalação)
 - [Features](#-features)
 - [Exemplos reais de uso](#-exemplos-reais-de-uso)
+- [Comparação rápida](#-comparação-rápida)
+- [Troubleshooting](#-troubleshooting)
+- [Comunidade e suporte](#-comunidade-e-suporte)
 - [Roadmap](#-roadmap)
 - [Contribuindo](#-contribuindo)
 - [Star History](#-star-history)
@@ -66,6 +70,12 @@ ClawLite é um assistente de IA focado em **execução real**: CLI produtiva, ga
 - Catálogo de skills: https://clawlite-skills-site.vercel.app
 
 ---
+
+## ✅ Pré-requisitos
+
+- Python **3.10+**
+- Sistema **Linux** (Ubuntu/Debian/Arch etc.) ou **Termux**
+- `curl` disponível no ambiente
 
 ## 🚀 Instalação
 
@@ -113,6 +123,12 @@ clawlite start --port 8787
 # abrir http://127.0.0.1:8787
 ```
 
+Preview do runtime (terminal/status):
+
+<p align="center">
+  <img src="docs/media/clawlite-status-snapshot.png" alt="ClawLite status preview" width="820" />
+</p>
+
 ### 3) Automação de skills
 ```bash
 clawlite skill search github
@@ -125,6 +141,41 @@ clawlite skill auto-update --apply --strict
 clawlite memory semantic-search "preferências do usuário"
 clawlite memory save-session "Resumo da sessão"
 ```
+
+### 5) Exemplos de skills na prática
+```bash
+# GitHub: listar issues
+clawlite run "use a skill github para listar issues abertas do repo"
+
+# Whisper: transcrever áudio local
+clawlite run "use whisper para transcrever ./audio/nota.ogg"
+```
+
+---
+
+## 🆚 Comparação rápida
+
+- **ClawLite**: quickstart guiado PT-BR, Linux/Termux-first, memória persistente e runtime com fallback offline.
+- **Alternativas genéricas**: muitas focam só em chat, com menos operação real (cron, dashboard integrado, pipeline de skills).
+
+---
+
+## 🛠️ Troubleshooting
+
+Problemas comuns:
+- Erro de dependência no ambiente Python
+- Gateway não sobe na porta padrão
+- Fallback offline não acionando como esperado
+
+Guia completo: `docs/TROUBLESHOOTING.md`
+
+---
+
+## 💬 Comunidade e suporte
+
+- Issues: https://github.com/eobarretooo/ClawLite/issues
+- Discussões: https://github.com/eobarretooo/ClawLite/discussions
+- Docs: https://eobarretooo.github.io/ClawLite/
 
 ---
 
