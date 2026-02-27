@@ -82,3 +82,24 @@ curl http://127.0.0.1:8787/health
 ## Licença
 
 MIT
+
+
+## Skills implementadas do catálogo
+
+- `coding-agent`
+- `github`
+- `gmail`
+- `google-calendar`
+- `obsidian`
+- `slack`
+- `discord`
+- `twitter`
+- `threads`
+- `web-search`
+- `web-fetch`
+- `browser`
+- `docker`
+- `ssh`
+- `supabase`
+- `firebase`
+- `aws`
