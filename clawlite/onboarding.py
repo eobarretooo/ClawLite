@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import questionary
 from rich.console import Console
@@ -55,10 +56,39 @@ def _skills_quickstart_profile(cfg: dict) -> None:
         cfg["skills"] = SKILL_PRESETS["ops"]
 
 
+def _run_onboarding_simple(cfg: dict) -> None:
+    console.print("🛠️ Modo simples ativado (compatibilidade de terminal).")
+    lang = input("Idioma [pt-br/en] (padrão pt-br): ").strip().lower() or "pt-br"
+    cfg["language"] = "en" if lang.startswith("en") else "pt-br"
+
+    model = input(f"Modelo [{cfg.get('model','openai/gpt-4o-mini')}]: ").strip()
+    if model:
+        cfg["model"] = model
+
+    tg = input("Ativar Telegram? [s/N]: ").strip().lower().startswith("s")
+    cfg.setdefault("channels", {}).setdefault("telegram", {})["enabled"] = tg
+    if tg:
+        tok = input("Token Telegram (opcional agora): ").strip()
+        if tok:
+            cfg["channels"]["telegram"]["token"] = tok
+
+    profile = input("Perfil de skills [dev/creator/ops/custom] (dev): ").strip().lower() or "dev"
+    if profile in SKILL_PRESETS:
+        cfg["skills"] = SKILL_PRESETS[profile]
+
+    save_config(cfg)
+    console.print("✅ Onboarding simples concluído.")
+
+
 def run_onboarding() -> None:
     ensure_memory_layout()
     cfg = load_config()
     _ensure_defaults(cfg)
+
+    simple_ui = os.getenv("CLAWLITE_SIMPLE_UI") == "1" or os.getenv("TERM", "").lower() in {"", "dumb", "unknown"}
+    if simple_ui:
+        _run_onboarding_simple(cfg)
+        return
 
     steps = [
         ("Idioma", _section_language),

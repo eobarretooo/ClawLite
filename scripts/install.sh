@@ -63,7 +63,7 @@ def ensure_path():
         if str(prefix_bin) and prefix_bin.exists():
             launcher = prefix_bin / "clawlite"
             launcher.write_text(
-                f"#!/usr/bin/env bash\nexec '{VENV_DIR / 'bin' / 'clawlite'}' \"$@\"\n",
+                f"#!/usr/bin/env bash\nexport CLAWLITE_SIMPLE_UI=1\nexec '{VENV_DIR / 'bin' / 'clawlite'}' \"$@\"\n",
                 encoding="utf-8",
             )
             launcher.chmod(0o755)
