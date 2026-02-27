@@ -9,15 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/eobarretooo/ClawLite/releases/tag/v0.4.1">
-    <img src="https://img.shields.io/badge/versão-v0.4.1-ff6b2b?style=for-the-badge" />
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/licença-MIT-10b981?style=for-the-badge" />
-  </a>
-  <a href="https://github.com/eobarretooo/ClawLite/stargazers">
-    <img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge&color=00f5ff" />
-  </a>
+  <a href="https://github.com/eobarretooo/ClawLite/releases/tag/v0.4.1"><img src="https://img.shields.io/badge/versão-v0.4.1-ff6b2b?style=for-the-badge" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licença-MIT-10b981?style=for-the-badge" /></a>
+  <a href="https://github.com/eobarretooo/ClawLite/stargazers"><img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge&color=00f5ff" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/Termux-nativo-1f8b4c?style=for-the-badge" />
   <img src="https://img.shields.io/badge/PT--BR-padrão-009c3b?style=for-the-badge" />
@@ -110,46 +104,144 @@ clawlite status
 clawlite start --host 0.0.0.0 --port 8787
 ```
 
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ $ clawlite doctor                                            │
+│ python: ✓ sqlite: ✓ runtime: ✓                              │
+│                                                              │
+│ $ clawlite onboarding                                        │
+│ [1/9] Idioma [2/9] Modelo [3/9] Canais ...                  │
+│ ✅ Configuração salva                                         │
+│                                                              │
+│ $ clawlite start --port 8787                                │
+│ 🦊 Gateway online → http://127.0.0.1:8787                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+> 💡 O fluxo recomendado é o wizard interativo — sem editar JSON manualmente.
+
 ---
 
 ## ✨ Features
 
-- Onboarding e configure interativos (PT-BR default)
-- Gateway com dashboard web e WebSocket
-- Multi-agente multi-canal
-- Memória persistente (AGENTS, SOUL, USER, IDENTITY, MEMORY)
-- Skills marketplace com install/publish/auto-update
-- Learning system com métricas de execução
-- MCP client + MCP server
+| Feature | Descrição |
+|---|---|
+| ⚙️ Onboarding interativo | Wizard estilo OpenClaw — Model, Channels, Skills, Hooks, Gateway, Security |
+| 🌐 Gateway + Dashboard | WebSocket com chat ao vivo, logs filtráveis e telemetria em tempo real |
+| 🧩 37 Skills | Marketplace com install/update/publish e trust policy |
+| 🧠 Memória persistente | AGENTS/SOUL/USER/IDENTITY/MEMORY + diário + busca semântica |
+| 📊 Learning system | Aprende com uso: métricas de sucesso, retry e preferências do usuário |
+| 🔋 Runtime resiliente | Fallback offline com Ollama, cron por conversa, modo bateria |
+| 🎙️ Voz STT/TTS | Pipeline de áudio integrado aos canais |
+| 🤖 Multi-agente multi-canal | Agentes com identidade própria em Telegram, Slack, Discord, WhatsApp, Teams |
+| 🔌 MCP | Suporte completo ao Model Context Protocol da Anthropic |
+| 🌍 Idioma universal | PT-BR padrão + detecção automática de idioma do sistema |
 
 ---
 
 ## 💡 Exemplos reais de uso
 
+### 1) Diagnóstico e setup inicial
 ```bash
-clawlite run "resuma o diretório"
+clawlite doctor
+clawlite onboarding
+```
+
+### 2) Dashboard web local
+```bash
+clawlite start --port 8787
+# Abrir: http://127.0.0.1:8787
+```
+
+### 3) Gerenciar skills
+```bash
 clawlite skill search github
 clawlite skill install github
-clawlite mcp list
-clawlite stats --period week
+clawlite skill auto-update --apply --strict
 ```
+
+### 4) Memória semântica
+```bash
+clawlite memory semantic-search "preferências do usuário"
+clawlite memory save-session "Resumo da sessão de hoje"
+```
+
+### 5) Skills na prática
+```bash
+# Listar issues do GitHub
+clawlite run "use a skill github para listar issues abertas do repo"
+
+# Transcrever áudio com Whisper
+clawlite run "use whisper para transcrever ./audio/nota.ogg"
+```
+
+### 6) Multi-agente multi-canal
+```bash
+# Criar agentes especializados
+clawlite agents create orchestrator --channel telegram --account main-bot --orchestrator
+clawlite agents create dev --channel telegram --account dev-bot \
+  --personality "engenheiro pragmático" --tag code --tag bug
+
+# Vincular agente a múltiplos canais
+clawlite agents bind dev --channel slack --account workspace-dev
+
+# Listar agentes ativos
+clawlite agents list
+```
+
+> 📖 Guia completo: [docs/MULTIAGENTE_MULTICANAL_PTBR.md](docs/MULTIAGENTE_MULTICANAL_PTBR.md)
+
+### 7) MCP (Model Context Protocol)
+```bash
+# Instalar servidor MCP oficial
+clawlite mcp install filesystem
+clawlite mcp install github
+
+# Gerenciar servidores
+clawlite mcp list
+clawlite mcp add meu-server https://example.com/mcp
+clawlite mcp remove meu-server
+```
+
+> 📖 Docs MCP: [docs/MCP.md](docs/MCP.md)
 
 ---
 
 ## 🆚 Comparação
 
-- **ClawLite:** execução real, quickstart guiado, memória persistente, MCP e foco Linux/Termux.
-- **Alternativas genéricas:** geralmente mais focadas em chat e menos em operação prática multi-canal.
+| Feature | ClawLite | OpenClaw | nanobot |
+|---|:---:|:---:|:---:|
+| Python puro | ✅ | ❌ Node.js | ✅ |
+| Termux nativo (sem proot) | ✅ | ❌ | ✅ |
+| Onboarding interativo PT-BR | ✅ | ✅ EN | ⚠️ |
+| Learning system | ✅ | ❌ | ❌ |
+| Multi-agente multi-canal | ✅ | ⚠️ parcial | ❌ |
+| Offline com Ollama | ✅ | ❌ | ❌ |
+| Dashboard web | ✅ | ✅ | ❌ |
+| MCP suportado | ✅ | ❌ | ❌ |
+| Skills marketplace | ✅ 37 | ✅ 5700+ | ⚠️ ~10 |
 
 ---
 
 ## 🛠️ Troubleshooting
 
-Problemas comuns e soluções:
-- `clawlite doctor` para diagnóstico inicial
-- conflito de porta no gateway
-- falha de autenticação em canais
-- fallback offline/Ollama
+<details>
+<summary>Gateway não sobe na porta padrão</summary>
+
+```bash
+clawlite doctor
+clawlite start --port 9090
+```
+</details>
+
+<details>
+<summary>Erro de dependência Python</summary>
+
+```bash
+python3 -m venv ~/.clawlite/venv
+~/.clawlite/venv/bin/pip install -e .
+```
+</details>
 
 Guia completo: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
 
