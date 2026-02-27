@@ -13,6 +13,7 @@ from clawlite.gateway.server import run_gateway
 from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.workspace import init_workspace
 from clawlite.runtime.channels import channel_template
+from clawlite.runtime.models import model_status, set_model_fallback
 
 
 def cmd_doctor() -> int:
@@ -47,6 +48,12 @@ def main() -> None:
     ch_sub = ch.add_subparsers(dest="ccmd")
     ch_t = ch_sub.add_parser("template")
     ch_t.add_argument("name", choices=["telegram", "discord", "whatsapp"])
+
+    md = sub.add_parser("model")
+    md_sub = md.add_subparsers(dest="mocmd")
+    md_sub.add_parser("status")
+    md_f = md_sub.add_parser("set-fallback")
+    md_f.add_argument("models", nargs="+")
 
     gw = sub.add_parser("gateway")
     gw.add_argument("--host", default=None)
@@ -97,6 +104,15 @@ def main() -> None:
 
     if args.cmd == "channels" and args.ccmd == "template":
         print(channel_template(args.name))
+        return
+
+    if args.cmd == "model" and args.mocmd == "status":
+        print(model_status())
+        return
+
+    if args.cmd == "model" and args.mocmd == "set-fallback":
+        set_model_fallback(args.models)
+        print("✅ model fallback atualizado")
         return
 
     if args.cmd == "memory":
