@@ -28,9 +28,19 @@ clawlite onboarding
 clawlite start --port 8787
 ```
 
-<p align="center">
-  <img src="docs/media/quickstart-demo.gif" alt="ClawLite Quickstart GIF" width="900" />
-</p>
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ $ clawlite doctor                                            │
+│ python: ok | sqlite: ok | runtime: ok                      │
+│                                                              │
+│ $ clawlite onboarding                                        │
+│ [1/9] Idioma  [2/9] Modelo  [3/9] Canais ...               │
+│ ✅ Configuração salva                                        │
+│                                                              │
+│ $ clawlite start --port 8787                                │
+│ Gateway online em http://127.0.0.1:8787                     │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -41,7 +51,7 @@ clawlite start --port 8787
 - [Features](#-features)
 - [Exemplos reais de uso](#-exemplos-reais-de-uso)
 - [Roadmap](#-roadmap)
-- [Contributors](#-contributors)
+- [Contribuindo](#-contribuindo)
 - [Star History](#-star-history)
 - [Licença](#-licença)
 
@@ -131,11 +141,9 @@ clawlite memory save-session "Resumo da sessão"
 
 ---
 
-## 👥 Contributors
+## 🤝 Contribuindo
 
-<a href="https://github.com/eobarretooo/ClawLite/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=eobarretooo/ClawLite" />
-</a>
+PRs são bem-vindos! Leia `CONTRIBUTING.md`.
 
 ---
 
