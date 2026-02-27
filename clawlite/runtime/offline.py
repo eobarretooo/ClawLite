@@ -5,8 +5,11 @@ import socket
 import subprocess
 from typing import Any, Callable
 
+import httpx
+
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_CONNECTIVITY_TIMEOUT = 1.5
+DEFAULT_REMOTE_TIMEOUT = 30.0
 _CONNECTIVITY_PROBE = ("1.1.1.1", 53)
 
 
@@ -47,17 +50,164 @@ def check_connectivity(timeout_seconds: float = DEFAULT_CONNECTIVITY_TIMEOUT) ->
 
 
 def _provider_token(cfg: dict[str, Any], provider: str) -> str:
+    env_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    env_name = env_map.get(provider, "")
+    if env_name:
+        env_value = os.getenv(env_name, "").strip()
+        if env_value:
+            return env_value
+
     providers = cfg.get("auth", {}).get("providers", {})
     token = providers.get(provider, {}).get("token", "")
     return str(token).strip()
 
 
+def _model_name_without_provider(model: str) -> str:
+    value = (model or "").strip()
+    if "/" not in value:
+        return value
+    return value.split("/", 1)[1].strip()
+
+
+def _extract_chat_content(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ProviderExecutionError("resposta inválida do provedor remoto (choices ausente)")
+
+    message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        if parts:
+            return "\n".join(parts)
+
+    raise ProviderExecutionError("resposta sem conteúdo textual do provedor remoto")
+
+
+def _extract_anthropic_content(payload: dict[str, Any]) -> str:
+    content = payload.get("content")
+    if not isinstance(content, list) or not content:
+        raise ProviderExecutionError("resposta inválida do provedor remoto (content ausente)")
+
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "text":
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+
+    if not parts:
+        raise ProviderExecutionError("resposta sem conteúdo textual do provedor remoto")
+    return "\n".join(parts)
+
+
+def _remote_timeout_seconds() -> float:
+    raw = os.getenv("CLAWLITE_REMOTE_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_REMOTE_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_REMOTE_TIMEOUT
+    return value if value > 0 else DEFAULT_REMOTE_TIMEOUT
+
+
 def run_remote_provider(prompt: str, model: str, token: str) -> str:
     if os.getenv("CLAWLITE_SIMULATE_PROVIDER_FAILURE", "").strip() == "1":
         raise ProviderExecutionError("falha simulada de provedor")
-    if not token:
-        raise ProviderExecutionError("token ausente para provedor remoto")
-    return f"[{model}] {prompt}"
+
+    provider = provider_from_model(model)
+    model_name = _model_name_without_provider(model)
+    if not provider or not model_name:
+        raise ProviderExecutionError("modelo remoto inválido; use provider/model")
+
+    env_map = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    env_name = env_map.get(provider)
+    resolved_token = (os.getenv(env_name, "").strip() if env_name else "") or str(token or "").strip()
+    if not resolved_token:
+        raise ProviderExecutionError(f"token ausente para provedor remoto '{provider}'")
+
+    timeout = _remote_timeout_seconds()
+
+    if provider == "openai":
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {resolved_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    elif provider == "anthropic":
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {
+            "x-api-key": resolved_token,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_name,
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    elif provider == "openrouter":
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {resolved_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    else:
+        raise ProviderExecutionError(f"provedor remoto não suportado: '{provider}'")
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.TimeoutException as exc:
+        raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response is not None else "desconhecido"
+        detail = ""
+        if exc.response is not None:
+            detail = (exc.response.text or "").strip()
+            if len(detail) > 240:
+                detail = detail[:240] + "..."
+        msg = f"erro HTTP do provedor remoto '{provider}' (status {status_code})"
+        if detail:
+            msg = f"{msg}: {detail}"
+        raise ProviderExecutionError(msg) from exc
+    except httpx.RequestError as exc:
+        raise ProviderExecutionError(f"erro de rede ao chamar provedor remoto '{provider}': {exc}") from exc
+    except ValueError as exc:
+        raise ProviderExecutionError(f"resposta JSON inválida do provedor remoto '{provider}'") from exc
+
+    if provider == "anthropic":
+        return _extract_anthropic_content(data)
+    return _extract_chat_content(data)
 
 
 def run_ollama(prompt: str, model: str, timeout_seconds: int = 90) -> str:

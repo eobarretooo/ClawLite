@@ -84,3 +84,21 @@ clawlite battery set --enabled true --throttle-seconds 8
 ```text
 Authorization: Bearer <token>
 ```
+
+## 8) Provedor remoto falha por token ausente (OpenAI/Anthropic/OpenRouter)
+
+**Sintoma**
+- Erros como `token ausente para provedor remoto 'openai'`.
+
+**Solução**
+1. Defina o token por variável de ambiente (prioridade mais alta):
+```bash
+export OPENAI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."
+export OPENROUTER_API_KEY="..."
+```
+2. Ou configure via `clawlite auth login <provider>` para salvar no arquivo de config.
+
+**Observações**
+- Precedência de token: variável de ambiente → token salvo na config.
+- Timeout remoto pode ser ajustado com `CLAWLITE_REMOTE_TIMEOUT` (segundos).
