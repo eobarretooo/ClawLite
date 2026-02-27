@@ -48,27 +48,35 @@ def test_create_list_bind_and_routing():
 
 def test_gateway_agents_endpoints(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    client = TestClient(server.app)
-    token = server._token()
-    headers = {"Authorization": f"Bearer {token}"}
+    # DB_DIR/DB_PATH são variáveis de módulo definidas no import; precisam ser patchadas
+    # diretamente para isolar o SQLite entre execuções de teste (evita UNIQUE constraint
+    # na segunda execução contra ~/.clawlite/multiagent.db real).
+    old_dir, old_path = _patch_db(str(tmp_path))
+    try:
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
 
-    created = client.post(
-        "/api/agents",
-        headers=headers,
-        json={"name": "docs", "channel": "telegram", "account": "docs-bot"},
-    )
-    assert created.status_code == 200
-    assert created.json()["ok"] is True
+        created = client.post(
+            "/api/agents",
+            headers=headers,
+            json={"name": "docs", "channel": "telegram", "account": "docs-bot"},
+        )
+        assert created.status_code == 200
+        assert created.json()["ok"] is True
 
-    bound = client.post(
-        "/api/agents/bind",
-        headers=headers,
-        json={"agent": "docs", "channel": "discord", "account": "guild-1"},
-    )
-    assert bound.status_code == 200
+        bound = client.post(
+            "/api/agents/bind",
+            headers=headers,
+            json={"agent": "docs", "channel": "discord", "account": "guild-1"},
+        )
+        assert bound.status_code == 200
 
-    listed = client.get("/api/agents", headers=headers)
-    assert listed.status_code == 200
-    payload = listed.json()
-    assert payload["ok"] is True
-    assert any(a["name"] == "docs" for a in payload["agents"])
+        listed = client.get("/api/agents", headers=headers)
+        assert listed.status_code == 200
+        payload = listed.json()
+        assert payload["ok"] is True
+        assert any(a["name"] == "docs" for a in payload["agents"])
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path

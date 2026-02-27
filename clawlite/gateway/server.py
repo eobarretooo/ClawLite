@@ -24,6 +24,7 @@ from clawlite.core.agent import run_task_with_meta
 from clawlite.mcp import add_server, install_template, list_servers, remove_server, search_marketplace
 from clawlite.mcp_server import handle_mcp_jsonrpc
 from clawlite.runtime.multiagent import bind_agent, create_agent, list_agent_bindings, list_agents
+from clawlite.runtime.conversation_cron import add_cron_job, list_cron_jobs, remove_cron_job
 from clawlite.skills.marketplace import (
     DEFAULT_DOWNLOAD_BASE_URL,
     SkillMarketplaceError,
@@ -1095,6 +1096,132 @@ async def api_learning_stats(
     stats["preferences"] = get_preferences()
     stats["templates_count"] = sum(len(v) for v in get_templates().values())
     return JSONResponse(stats)
+
+
+# ---------------------------------------------------------------------------
+# Cron endpoints (paridade dashboard OpenClaw)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/cron")
+def api_cron_list(
+    channel: str | None = Query(default=None),
+    chat_id: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    jobs = list_cron_jobs(channel=channel, chat_id=chat_id)
+    return JSONResponse({"ok": True, "jobs": [j.__dict__ for j in jobs]})
+
+
+@app.post("/api/cron")
+def api_cron_add(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    try:
+        job_id = add_cron_job(
+            channel=str(payload.get("channel", "telegram")),
+            chat_id=str(payload.get("chat_id", "")),
+            thread_id=str(payload.get("thread_id", "")),
+            label=str(payload.get("label", "default")),
+            name=str(payload.get("name", "")),
+            text=str(payload.get("text", "")),
+            interval_seconds=int(payload.get("interval_seconds", 3600)),
+            enabled=bool(payload.get("enabled", True)),
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log("cron.added", data={"id": job_id, "name": payload.get("name")})
+    return JSONResponse({"ok": True, "id": job_id})
+
+
+@app.delete("/api/cron/{job_id}")
+def api_cron_remove(job_id: int, authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    removed = remove_cron_job(job_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Cron job {job_id} não encontrado")
+    _log("cron.removed", data={"id": job_id})
+    return JSONResponse({"ok": True, "id": job_id})
+
+
+# ---------------------------------------------------------------------------
+# Channels status endpoint (paridade dashboard OpenClaw)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/channels/status")
+def api_channels_status(authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    cfg = load_config()
+    channels_cfg = cfg.get("channels", {})
+    result: list[dict[str, Any]] = []
+    for name, ch_cfg in channels_cfg.items():
+        if not isinstance(ch_cfg, dict):
+            continue
+        enabled = bool(ch_cfg.get("enabled", False))
+        has_token = bool(ch_cfg.get("token") or ch_cfg.get("accounts"))
+        result.append({
+            "channel": name,
+            "enabled": enabled,
+            "configured": has_token,
+            "stt_enabled": bool(ch_cfg.get("stt_enabled", False)),
+            "tts_enabled": bool(ch_cfg.get("tts_enabled", False)),
+        })
+    return JSONResponse({"ok": True, "channels": result})
+
+
+# ---------------------------------------------------------------------------
+# Metrics endpoint (observabilidade P0)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/metrics")
+def api_metrics(authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    from clawlite.runtime.multiagent import list_workers, DB_PATH
+    import sqlite3 as _sqlite3
+
+    workers = list_workers()
+    running_workers = [w for w in workers if w.status == "running" and w.pid]
+
+    queued_tasks = 0
+    running_tasks = 0
+    if DB_PATH.exists():
+        try:
+            with _sqlite3.connect(DB_PATH) as c:
+                queued_tasks = c.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE status='queued'"
+                ).fetchone()[0]
+                running_tasks = c.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE status='running'"
+                ).fetchone()[0]
+        except _sqlite3.Error:
+            pass
+
+    uptime_s = (datetime.now(timezone.utc) - STARTED_AT).total_seconds()
+    total_logs = len(LOG_RING)
+    error_logs = sum(1 for e in LOG_RING if e.get("level") == "error")
+    warn_logs = sum(1 for e in LOG_RING if e.get("level") == "warn")
+
+    return JSONResponse({
+        "ok": True,
+        "uptime_seconds": round(uptime_s, 1),
+        "workers": {
+            "total": len(workers),
+            "running": len(running_workers),
+        },
+        "tasks": {
+            "queued": queued_tasks,
+            "running": running_tasks,
+        },
+        "log_ring": {
+            "total": total_logs,
+            "errors": error_logs,
+            "warnings": warn_logs,
+        },
+        "websocket_connections": {
+            "ws": len(connections),
+            "chat": len(chat_connections),
+            "logs": len(log_connections),
+        },
+    })
 
 
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
