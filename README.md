@@ -1,30 +1,26 @@
 # ClawLite
 
 <p align="center">
-  <img src="assets/mascot-animated.svg" alt="Mascote animado oficial ClawLite" width="180"/>
+  <img src="assets/mascot-animated.svg" alt="Mascote oficial ClawLite" width="180"/>
 </p>
 
-> O assistente de IA open source para Linux + Termux, com gateway nativo, skills modulares e operação portátil.
+> Assistente de IA open source para Linux + Termux, com runtime real (CLI + Gateway + Dashboard + Skills).
 
 [![Docs](https://img.shields.io/badge/docs-online-7c3aed?style=for-the-badge)](https://eobarretooo.github.io/ClawLite/)
-[![Site](https://img.shields.io/badge/site-vercel-000000?style=for-the-badge&logo=vercel)](https://clawlite-site.vercel.app)
+[![Site](https://img.shields.io/badge/site-oficial-000000?style=for-the-badge&logo=vercel)](https://clawlite-site.vercel.app)
 [![License](https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge)](https://github.com/eobarretooo/ClawLite)
 
-## Por que ClawLite
+## Status real do projeto (v0.4.x)
 
-- **Linux + Termux first** (ARM e x86)
-- **Instalação em 1 comando**
-- **Gateway WebSocket** com autenticação por token
-- **Configure estilo OpenClaw** (`clawlite configure`) com seções, autosave e preview JSON
-- **Onboarding wizard guiado** (`clawlite onboarding`) com etapas + barra de progresso
-- **Diagnóstico amigável** (`clawlite doctor`) com validações de dependências e runtime
-- **Status local de runtime** (`clawlite status`) para gateway/workers/cron/reddit
-- **Bootstrap rápido de servidor** (`clawlite start`) para subir gateway local
-- **Learning analytics** (`clawlite stats`) com taxa de sucesso, top skills e preferências aprendidas
-- **Integração Reddit** (`clawlite reddit ...`) com OAuth, postagem de milestone e monitor de menções
-- **Ecossistema de skills** em expansão contínua
-- **Marketplace de skills** com índice remoto, checksum e allowlist de hosts
+- ✅ CLI principal operacional (`doctor`, `status`, `start`, `onboarding`, `configure`, `run`)
+- ✅ Gateway FastAPI + WebSocket + dashboard web
+- ✅ Memória persistente entre sessões (workspace + logs diários + busca semântica)
+- ✅ Learning analytics (`clawlite stats`) + tracking de tasks
+- ✅ Multi-agente Telegram (MVP persistente)
+- ✅ Cron por conversa + modo bateria + notificações inteligentes
+- ✅ Marketplace de skills + auto-update com trust policy/rollback
+- ✅ 37 skills registradas
 
 ## Instalação
 
@@ -32,22 +28,22 @@
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Quickstart (estado atual)
+## Quickstart
 
 ```bash
-# 1) validar ambiente
+# 1) Diagnóstico
 clawlite doctor
 
-# 2) onboarding guiado (primeira execução)
+# 2) Primeira configuração (wizard)
 clawlite onboarding
 
-# 3) ajuste fino no estilo OpenClaw
+# 3) Ajuste fino por seções
 clawlite configure
 
-# 4) conferir runtime local
+# 4) Status local
 clawlite status
 
-# 5) subir gateway HTTP/WebSocket
+# 5) Subir gateway + dashboard
 clawlite start --host 0.0.0.0 --port 8787
 ```
 
@@ -58,34 +54,19 @@ clawlite doctor
 clawlite status
 clawlite start --port 8787
 clawlite auth status
+clawlite run "resuma o diretório"
 clawlite stats --period week
-clawlite reddit status
-clawlite skill install find-skills
-clawlite skill update
 clawlite skill auto-update --dry-run
 clawlite skill auto-update --apply --strict
-clawlite skill auto-update --apply --schedule-seconds 3600
 ```
 
-## Auto-update de skills (issue #2)
+## Memória de sessão (persistente)
 
-- Compara manifesto local (`~/.clawlite/marketplace/installed.json`) com índice remoto
-- Política de confiança com allowlist de hosts + checksum SHA-256
-- `--strict` bloqueia updates sem checksum válido (status `blocked`)
-- `--dry-run` simula sem alterar disco
-- rollback automático em falha de instalação (mantém versão anterior ativa)
-- agendamento simples via runtime/cron com `--schedule-seconds`
-
-## Memória persistente entre sessões
-
-ClawLite agora replica a estrutura de memória de sessão em workspace próprio:
-
+Estrutura automática em `~/.clawlite/workspace`:
 - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `MEMORY.md`
-- logs diários automáticos em `memory/YYYY-MM-DD.md`
-- busca semântica local por contexto relevante
-- compactação automática de histórico diário para evitar crescimento sem controle
+- `memory/YYYY-MM-DD.md` (log diário)
 
-Comandos úteis:
+Comandos:
 
 ```bash
 clawlite memory init
@@ -95,89 +76,32 @@ clawlite memory save-session "Resumo da sessão"
 clawlite memory compact --max-daily-files 21
 ```
 
-## Learning / Stats
+## Skills e marketplace
 
-A telemetria local de aprendizado pode ser consultada via CLI:
+- Catálogo local: 37 skills (`clawlite/skills/registry.py`)
+- Install/update/publish via CLI
+- Auto-update com:
+  - allowlist de hosts
+  - checksum SHA-256
+  - modo `--strict`
+  - rollback automático em falha
 
-```bash
-clawlite stats --period all
-clawlite stats --period month --skill github
-```
+## Documentação e sites
 
-Saída inclui: total de tasks, taxa de sucesso, tempo médio, tokens, streak, top skills e preferências aprendidas.
+- Docs PT-BR: https://eobarretooo.github.io/ClawLite/
+- Docs EN: https://eobarretooo.github.io/ClawLite/en/
+- Site oficial: https://clawlite-site.vercel.app
+- Site de skills: https://clawlite-skills-site.vercel.app
 
-## Reddit
+## Roadmap ativo
 
-Fluxo completo:
-
-```bash
-clawlite reddit status
-clawlite reddit auth-url
-clawlite reddit exchange-code "SEU_CODE"
-clawlite reddit post-milestone --title "ClawLite v0.4.0" --text "..."
-clawlite reddit monitor-once
-```
-
-Guia detalhado: `docs/REDDIT_INTEGRATION.md`
-
-## Dashboard v2
-
-- Chat em tempo real integrado ao pipeline do agente (`/ws/chat`)
-- Telemetria de tokens/custo por sessao e por periodo (`/api/dashboard/telemetry`)
-- Acoes de skills com feedback de loading/sucesso/erro
-- Logs realtime com filtros basicos e busca (`/api/dashboard/logs`, `/ws/logs`)
-
-Guia completo: `docs/DASHBOARD.md`
-
-## Offline automático com Ollama
-
-- Se `offline_mode.enabled=true`, o runtime tenta o modelo remoto e faz fallback automático para Ollama em dois casos:
-  - sem conectividade
-  - falha do provedor
-- Fallback usa o primeiro `ollama/...` em `model_fallback`.
-
-Status rápido de modelo/fallback:
-
-```bash
-clawlite model status
-```
-
-## Cron por conversa
-
-```bash
-clawlite cron list
-clawlite cron add --channel telegram --chat-id 123 --thread-id suporte --label general --name heartbeat --text "ping" --every-seconds 300
-clawlite cron remove 1
-clawlite cron run
-clawlite cron run --all
-```
-
-## Config de exemplo
-
-- Arquivo de referência: `docs/config.example.json`
-- Arquivo real de runtime: `~/.clawlite/config.json`
-
-## Documentação
-
-- PT-BR: https://eobarretooo.github.io/ClawLite/
-- EN: https://eobarretooo.github.io/ClawLite/en/
-- Site oficial (Vercel): https://clawlite-site.vercel.app
-- Guia de configuração UX: `docs/CONFIGURE_UX_PTBR.md`
-- Troubleshooting técnico: `docs/TROUBLESHOOTING.md`
+1. Evolução do learning system no core (melhoria contínua)
+2. Voz (STT/TTS) para Telegram/WhatsApp
+3. Evolução do ecossistema de skills (site + experiência de publicação)
 
 ## Contribuição
 
 1. Fork do repositório
 2. Branch: `feat/minha-feature`
 3. Commit + push
-4. Pull Request com contexto, screenshots/logs e teste
-
-## Community Automation (Reddit + Threads + GitHub)
-
-- Playbook consolidado: `docs/COMMUNITY_AUTOMATION.md`
-- Templates: `templates/community/`
-- Gerador de pacote por milestone:
-
-```bash
-python3 scripts/community_pack.py --version v0.5.0 --date 2026-02-27 --highlights "Multiagent por thread" "Cron por conversa" "Reddit monitor"
-```
+4. PR com contexto e testes
