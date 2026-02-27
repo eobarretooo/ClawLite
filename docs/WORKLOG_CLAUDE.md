@@ -37,7 +37,8 @@
 - `python -m pytest tests/ -x -q` → 44 pass, 1 fail (antes das correções)
 
 ### Commit(s)
-- (pendente)
+- `5dbf48d` — fix(tests)+feat(gateway): isolamento DB + endpoints cron/channels/metrics
+- `d205865` — ci: CI pipeline + smoke_test.sh
 
 ### Riscos/pendências
 - `runtime/multiagent.py` usa `DB_DIR`/`DB_PATH` como variáveis de módulo → testes precisam fazer patch direto
