@@ -3,227 +3,643 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ClawLite Dashboard</title>
+  <title>ClawLite Dashboard v2</title>
   <style>
-    :root { color-scheme: dark; --bg:#0b1020; --panel:#141b2f; --line:#2a3558; --text:#e6ecff; --muted:#9eb0dd; --ok:#3ddc97; --warn:#ffbd59; --danger:#ff6b6b; }
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text)}
-    .layout{display:grid;grid-template-columns:280px 1fr;min-height:100vh}
-    .sidebar{border-right:1px solid var(--line);padding:16px;background:#0e1528}
-    .main{padding:16px;display:grid;gap:12px}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
-    h1,h2,h3{margin:.2rem 0 .6rem} h1{font-size:1.1rem} h2{font-size:1rem}
-    .grid{display:grid;gap:12px;grid-template-columns:repeat(3,minmax(0,1fr))}
-    .muted{color:var(--muted);font-size:.9rem}
-    input,textarea,button,select{width:100%;background:#0f1830;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px}
-    button{cursor:pointer;background:#1d2a4f} button:hover{filter:brightness(1.1)}
-    .row{display:flex;gap:8px}.row>*{flex:1}
-    .chat{height:240px;overflow:auto;background:#0f1830;border:1px solid var(--line);border-radius:8px;padding:8px}
-    .msg{margin:6px 0;padding:6px 8px;border-radius:6px} .user{background:#243860} .assistant{background:#1a2f23}
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#203357;font-size:.8rem}
-    .ok{color:var(--ok)} .warn{color:var(--warn)} .danger{color:var(--danger)}
-    .list{max-height:180px;overflow:auto}
-    @media (max-width: 980px){ .layout{grid-template-columns:1fr} .grid{grid-template-columns:1fr} }
+    :root {
+      color-scheme: dark;
+      --bg: #060a17;
+      --bg-soft: #0c1428;
+      --panel: #121c35;
+      --line: #26365f;
+      --text: #ecf2ff;
+      --muted: #a6b8e6;
+      --ok: #44d487;
+      --warn: #f4c16a;
+      --danger: #ff7373;
+      --accent: #5fa9ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 0 0, #173366, var(--bg) 58%);
+      color: var(--text);
+    }
+    .layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 300px 1fr;
+    }
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: rgba(8, 14, 29, 0.9);
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+    .main {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+    .card {
+      background: linear-gradient(180deg, #101931 0%, var(--panel) 100%);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    h1, h2, h3 { margin: 0 0 10px 0; }
+    h1 { font-size: 1.12rem; letter-spacing: .02em; }
+    h2 { font-size: 1rem; }
+    h3 { font-size: .88rem; color: var(--muted); }
+    .muted { color: var(--muted); font-size: .9rem; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .danger { color: var(--danger); }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: .74rem;
+      color: var(--muted);
+    }
+    input, textarea, button, select {
+      width: 100%;
+      background: #0d1630;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+    }
+    button {
+      cursor: pointer;
+      background: #1c2c56;
+      transition: filter .15s ease, transform .15s ease;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:disabled {
+      cursor: wait;
+      opacity: .65;
+      transform: none;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .row > * { flex: 1; }
+    .grid-3 { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+    .chat {
+      height: 240px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b1328;
+      padding: 8px;
+      margin-bottom: 8px;
+    }
+    .msg {
+      margin: 8px 0;
+      padding: 8px;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      line-height: 1.35;
+      font-size: .92rem;
+    }
+    .msg.user { background: #1d3768; }
+    .msg.assistant { background: #1b3221; }
+    .meta {
+      margin-top: 4px;
+      font-size: .76rem;
+      color: var(--muted);
+    }
+    .list {
+      max-height: 220px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b1328;
+      padding: 8px;
+    }
+    .list-item {
+      border-bottom: 1px solid #1b2a4d;
+      padding: 8px 0;
+    }
+    .list-item:last-child { border-bottom: 0; }
+    .skill-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 108px 86px;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1b2a4d;
+    }
+    .skill-row:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+    .skill-name { font-size: .9rem; }
+    .mono { font-family: "IBM Plex Mono", "Courier New", monospace; font-size: .85rem; }
+    .status-line { min-height: 20px; font-size: .85rem; }
+    .telemetry-grid { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .telemetry-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b1328;
+      padding: 8px;
+      font-size: .88rem;
+    }
+    @media (max-width: 1024px) {
+      .layout { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+      .skill-row { grid-template-columns: minmax(0, 1fr); }
+    }
   </style>
 </head>
 <body>
-<div class="layout">
-  <aside class="sidebar">
-    <h1>ClawLite Dashboard</h1>
-    <p class="muted">MVP robusto (dark mode + mobile)</p>
-    <label>Token</label>
-    <input id="token" placeholder="Bearer token" />
-    <button onclick="connectAll()">Conectar</button>
-    <p id="authState" class="muted">Aguardando autenticação</p>
-    <hr style="border-color:var(--line)">
-    <div>
-      <span class="pill">Gateway</span>
-      <div id="gatewayState" class="muted">offline</div>
-      <div id="modelState" class="muted">model: -</div>
-      <div id="uptimeState" class="muted">uptime: -</div>
-    </div>
-  </aside>
+  <div class="layout">
+    <aside class="sidebar">
+      <div>
+        <h1>ClawLite Dashboard v2</h1>
+        <p class="muted">Chat real + telemetria de sessao + logs filtraveis</p>
+      </div>
 
-  <main class="main">
-    <div class="grid">
+      <div class="card">
+        <label class="muted">Token</label>
+        <input id="token" placeholder="Bearer token" />
+        <div class="row" style="margin-top:8px;">
+          <button id="connectBtn" onclick="connectAll()">Conectar</button>
+        </div>
+        <div id="authState" class="status-line muted">Aguardando autenticacao</div>
+      </div>
+
+      <div class="card">
+        <span class="pill">Gateway</span>
+        <div id="gatewayState" class="status-line muted">offline</div>
+        <div id="modelState" class="muted">model: -</div>
+        <div id="uptimeState" class="muted">uptime: -</div>
+      </div>
+    </aside>
+
+    <main class="main">
       <section class="card">
         <h2>Chat em tempo real</h2>
         <div id="chatBox" class="chat"></div>
         <div class="row">
           <input id="sessionId" value="dashboard-session" />
           <input id="chatInput" placeholder="Digite mensagem" />
-          <button onclick="sendChat()">Enviar</button>
+          <button id="sendChatBtn" onclick="sendChat()">Enviar</button>
         </div>
       </section>
 
-      <section class="card">
-        <h2>Skills</h2>
-        <div class="row">
-          <input id="skillSlug" placeholder="slug skill" />
-          <button onclick="installSkill()">Instalar</button>
-        </div>
-        <div id="skillsList" class="list muted"></div>
-      </section>
+      <div class="grid-3">
+        <section class="card">
+          <h2>Skills</h2>
+          <div class="row">
+            <input id="skillSlug" placeholder="slug skill" />
+            <button id="installSkillBtn" onclick="installSkill()">Instalar</button>
+          </div>
+          <div id="skillsState" class="status-line muted">-</div>
+          <div id="skillsList" class="list"></div>
+        </section>
 
-      <section class="card">
-        <h2>Telemetria</h2>
-        <div id="telemetry" class="muted">-</div>
-      </section>
-    </div>
+        <section class="card">
+          <h2>Telemetria</h2>
+          <div class="row">
+            <select id="telemetryPeriod">
+              <option value="24h">24h</option>
+              <option value="7d" selected>7d</option>
+              <option value="30d">30d</option>
+              <option value="month">mes atual</option>
+              <option value="all">tudo</option>
+            </select>
+            <input id="telemetrySession" placeholder="session_id (opcional)" />
+            <button onclick="loadTelemetry()">Atualizar</button>
+          </div>
+          <div id="telemetrySummary" class="telemetry-box muted">-</div>
+          <div class="telemetry-grid" style="margin-top:8px;">
+            <div id="telemetrySessions" class="telemetry-box muted"></div>
+            <div id="telemetryTimeline" class="telemetry-box muted"></div>
+          </div>
+        </section>
 
-    <div class="grid">
-      <section class="card">
-        <h2>Sessões</h2>
-        <div class="row"><input id="sessionQuery" placeholder="buscar" /><button onclick="loadSessions()">Buscar</button></div>
-        <div id="sessions" class="list muted"></div>
-      </section>
+        <section class="card">
+          <h2>Configuracoes</h2>
+          <label class="muted">Model</label>
+          <input id="cfgModel" />
+          <label class="muted">Hook pre</label>
+          <textarea id="hookPre" rows="3"></textarea>
+          <label class="muted">Hook post</label>
+          <textarea id="hookPost" rows="3"></textarea>
+          <button onclick="saveSettings()">Salvar</button>
+        </section>
+      </div>
 
-      <section class="card">
-        <h2>Configurações</h2>
-        <label>Model</label><input id="cfgModel" />
-        <label>Hook pre</label><textarea id="hookPre"></textarea>
-        <label>Hook post</label><textarea id="hookPost"></textarea>
-        <button onclick="saveSettings()">Salvar</button>
-      </section>
+      <div class="grid-2">
+        <section class="card">
+          <h2>Sessoes</h2>
+          <div class="row">
+            <input id="sessionQuery" placeholder="buscar por id/preview" />
+            <button onclick="loadSessions()">Buscar</button>
+          </div>
+          <div id="sessions" class="list muted">-</div>
+        </section>
 
-      <section class="card">
-        <h2>Logs em tempo real</h2>
-        <div id="logs" class="list muted"></div>
-      </section>
-    </div>
-  </main>
-</div>
+        <section class="card">
+          <h2>Logs em tempo real</h2>
+          <div class="row">
+            <select id="logLevel">
+              <option value="">nivel: todos</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+            </select>
+            <input id="logEvent" placeholder="evento (ex: chat.message)" />
+          </div>
+          <div class="row">
+            <input id="logQuery" placeholder="busca livre" />
+            <button onclick="applyLogFilters()">Filtrar</button>
+          </div>
+          <div id="logs" class="list muted">-</div>
+        </section>
+      </div>
+    </main>
+  </div>
 
-<script>
-let token = '';
-let wsChat = null;
-let wsLogs = null;
+  <script>
+    const state = {
+      token: "",
+      wsChat: null,
+      wsLogs: null,
+      logs: [],
+      logFilters: { level: "", event: "", q: "" },
+      connected: false,
+      pendingSkill: false,
+      pendingSkillButtons: new Set(),
+    };
 
-const api = async (path, opts={}) => {
-  const res = await fetch(path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${token}`, ...(opts.headers||{}) } });
-  return await res.json();
-};
+    const chatBox = document.getElementById("chatBox");
 
-function addChat(role, text){
-  const box = document.getElementById('chatBox');
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-  div.textContent = `${role}: ${text}`;
-  box.appendChild(div); box.scrollTop = box.scrollHeight;
-}
+    function setStatus(elId, message, tone = "muted") {
+      const el = document.getElementById(elId);
+      el.className = `status-line ${tone}`;
+      el.textContent = message;
+    }
 
-function addLog(line){
-  const el = document.getElementById('logs');
-  const div = document.createElement('div');
-  div.textContent = line;
-  el.prepend(div);
-}
+    function escapeHtml(value) {
+      return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
 
-async function connectAll(){
-  token = document.getElementById('token').value.trim();
-  const auth = await fetch('/api/dashboard/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token})}).then(r=>r.json());
-  if(!auth.ok){ document.getElementById('authState').textContent = 'Token inválido'; return; }
-  document.getElementById('authState').textContent = 'Autenticado';
+    function setBusy(button, busy, busyLabel = "Carregando...") {
+      if (!button) return;
+      if (busy) {
+        button.dataset.originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = busyLabel;
+        return;
+      }
+      button.disabled = false;
+      if (button.dataset.originalText) {
+        button.textContent = button.dataset.originalText;
+      }
+    }
 
-  const boot = await api('/api/dashboard/bootstrap');
-  document.getElementById('gatewayState').innerHTML = '<span class="ok">online</span>';
-  document.getElementById('modelState').textContent = `model: ${boot.status.model}`;
-  document.getElementById('uptimeState').textContent = `uptime: ${boot.status.uptime_seconds}s`;
-  document.getElementById('cfgModel').value = boot.settings.model || '';
-  document.getElementById('hookPre').value = boot.settings.hooks?.pre || '';
-  document.getElementById('hookPost').value = boot.settings.hooks?.post || '';
+    async function api(path, opts = {}) {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(opts.headers || {}),
+      };
+      if (state.token) headers.Authorization = `Bearer ${state.token}`;
+      const response = await fetch(path, { ...opts, headers });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.detail || data.message || `HTTP ${response.status}`);
+      }
+      return data;
+    }
 
-  await loadSkills();
-  await loadSessions();
-  await loadTelemetry();
-  await loadLogs();
-  connectWs();
-}
+    function addChat(role, text, meta = null) {
+      const node = document.createElement("div");
+      node.className = `msg ${role}`;
+      node.innerHTML = `<div>${escapeHtml(role)}: ${escapeHtml(text)}</div>`;
+      if (meta && role === "assistant") {
+        const metaNode = document.createElement("div");
+        metaNode.className = "meta mono";
+        const model = meta.model || "-";
+        const mode = meta.mode || "-";
+        const reason = meta.reason || "-";
+        metaNode.textContent = `mode=${mode} | model=${model} | reason=${reason}`;
+        node.appendChild(metaNode);
+      }
+      chatBox.appendChild(node);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
 
-function connectWs(){
-  if(wsChat) wsChat.close();
-  if(wsLogs) wsLogs.close();
+    async function connectAll() {
+      const btn = document.getElementById("connectBtn");
+      setBusy(btn, true, "Conectando...");
+      try {
+        state.token = document.getElementById("token").value.trim();
+        if (!state.token) {
+          throw new Error("Token obrigatorio");
+        }
 
-  wsChat = new WebSocket(`${location.origin.replace('http','ws')}/ws/chat?token=${encodeURIComponent(token)}`);
-  wsChat.onmessage = (ev)=> {
-    const msg = JSON.parse(ev.data);
-    if(msg.type === 'chat') addChat('assistant', msg.message.text);
-  };
+        const auth = await fetch("/api/dashboard/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: state.token }),
+        }).then((r) => r.json());
+        if (!auth.ok) throw new Error("Token invalido");
+        setStatus("authState", "Autenticado", "ok");
 
-  wsLogs = new WebSocket(`${location.origin.replace('http','ws')}/ws/logs?token=${encodeURIComponent(token)}`);
-  wsLogs.onmessage = (ev)=> {
-    const msg = JSON.parse(ev.data);
-    if(msg.type === 'snapshot') (msg.logs||[]).slice(-20).forEach(l=>addLog(`${l.ts} ${l.event}`));
-    if(msg.type === 'log') addLog(`${msg.payload.ts} ${msg.payload.event}`);
-  };
-}
+        const boot = await api("/api/dashboard/bootstrap");
+        state.connected = true;
+        document.getElementById("gatewayState").innerHTML = '<span class="ok">online</span>';
+        document.getElementById("modelState").textContent = `model: ${boot.status.model}`;
+        document.getElementById("uptimeState").textContent = `uptime: ${boot.status.uptime_seconds}s`;
+        document.getElementById("cfgModel").value = boot.settings.model || "";
+        document.getElementById("hookPre").value = boot.settings.hooks?.pre || "";
+        document.getElementById("hookPost").value = boot.settings.hooks?.post || "";
 
-function sendChat(){
-  const text = document.getElementById('chatInput').value.trim();
-  const session_id = document.getElementById('sessionId').value.trim() || 'dashboard-session';
-  if(!text || !wsChat) return;
-  addChat('user', text);
-  wsChat.send(JSON.stringify({type:'chat', session_id, text}));
-  document.getElementById('chatInput').value = '';
-}
+        await Promise.all([loadSkills(), loadSessions(), loadTelemetry(), loadLogs()]);
+        connectWs();
+      } catch (error) {
+        setStatus("authState", error.message || "Falha na autenticacao", "danger");
+      } finally {
+        setBusy(btn, false);
+      }
+    }
 
-async function loadSkills(){
-  const data = await api('/api/dashboard/skills');
-  const list = document.getElementById('skillsList');
-  list.innerHTML = '';
-  (data.skills||[]).forEach(s=>{
-    const row = document.createElement('div');
-    row.innerHTML = `${s.slug} - ${s.enabled ? '<span class="ok">ativo</span>' : '<span class="warn">inativo</span>'}
-    <button onclick="toggleSkill('${s.slug}', ${s.enabled})">${s.enabled ? 'Desativar':'Ativar'}</button>
-    <button onclick="removeSkill('${s.slug}')">Remover</button>`;
-    list.appendChild(row);
-  })
-}
+    function connectWs() {
+      if (state.wsChat) state.wsChat.close();
+      if (state.wsLogs) state.wsLogs.close();
 
-async function toggleSkill(slug, enabled){
-  await api(`/api/dashboard/skills/${enabled?'disable':'enable'}`, {method:'POST', body: JSON.stringify({slug})});
-  loadSkills();
-}
+      const wsBase = location.origin.replace("http", "ws");
+      state.wsChat = new WebSocket(`${wsBase}/ws/chat?token=${encodeURIComponent(state.token)}`);
+      state.wsChat.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "chat") {
+          addChat("assistant", msg.message?.text || "", msg.meta || {});
+          loadTelemetry();
+          loadSessions();
+        }
+        if (msg.type === "error") {
+          addChat("assistant", `Erro: ${msg.detail || "falha no chat"}`);
+        }
+      };
+      state.wsChat.onclose = () => {
+        if (state.connected) setStatus("authState", "Chat desconectado", "warn");
+      };
 
-async function installSkill(){
-  const slug = document.getElementById('skillSlug').value.trim();
-  if(!slug) return;
-  await api('/api/dashboard/skills/install', {method:'POST', body: JSON.stringify({slug})});
-  document.getElementById('skillSlug').value = '';
-  loadSkills();
-}
+      const query = new URLSearchParams({
+        token: state.token,
+        level: state.logFilters.level || "",
+        event: state.logFilters.event || "",
+        q: state.logFilters.q || "",
+      }).toString();
+      state.wsLogs = new WebSocket(`${wsBase}/ws/logs?${query}`);
+      state.wsLogs.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "snapshot") {
+          state.logs = (msg.logs || []).slice(-500);
+          renderLogs();
+          return;
+        }
+        if (msg.type === "log" && msg.payload) {
+          state.logs.push(msg.payload);
+          if (state.logs.length > 500) state.logs.shift();
+          renderLogs();
+        }
+      };
+    }
 
-async function removeSkill(slug){
-  await api('/api/dashboard/skills/remove', {method:'POST', body: JSON.stringify({slug})});
-  loadSkills();
-}
+    function sendChat() {
+      const text = document.getElementById("chatInput").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim() || "dashboard-session";
+      if (!text) return;
+      if (!state.wsChat || state.wsChat.readyState !== 1) {
+        addChat("assistant", "Chat nao conectado");
+        return;
+      }
+      addChat("user", text);
+      state.wsChat.send(JSON.stringify({ type: "chat", session_id: sessionId, text }));
+      document.getElementById("chatInput").value = "";
+    }
 
-async function loadSessions(){
-  const q = document.getElementById('sessionQuery').value.trim();
-  const data = await api(`/api/dashboard/sessions?q=${encodeURIComponent(q)}`);
-  const el = document.getElementById('sessions');
-  el.innerHTML = (data.sessions||[]).map(s=>`${s.session_id} (${s.messages}) - ${s.preview || ''}`).join('<br>') || '-';
-}
+    function skillRow(slug, enabled) {
+      const row = document.createElement("div");
+      row.className = "skill-row";
 
-async function loadTelemetry(){
-  const data = await api('/api/dashboard/telemetry');
-  const s = data.summary || {};
-  document.getElementById('telemetry').textContent = `events=${s.events||0} | tokens=${s.tokens||0} | cost_usd=${s.cost_usd||0}`;
-}
+      const title = document.createElement("div");
+      title.className = "skill-name";
+      title.innerHTML = `<span class="mono">${escapeHtml(slug)}</span> ${enabled ? '<span class="ok">ativo</span>' : '<span class="warn">inativo</span>'}`;
 
-async function loadLogs(){
-  const data = await api('/api/dashboard/logs?limit=20');
-  const el = document.getElementById('logs');
-  el.innerHTML = (data.logs||[]).map(l=>`${l.ts} ${l.event}`).reverse().join('<br>') || '-';
-}
+      const toggleBtn = document.createElement("button");
+      toggleBtn.textContent = enabled ? "Desativar" : "Ativar";
+      toggleBtn.onclick = () => toggleSkill(slug, enabled, toggleBtn);
 
-async function saveSettings(){
-  await api('/api/dashboard/settings', {method:'PUT', body: JSON.stringify({
-    model: document.getElementById('cfgModel').value.trim(),
-    hooks: { pre: document.getElementById('hookPre').value, post: document.getElementById('hookPost').value },
-    theme: 'dark'
-  })});
-  addLog(`${new Date().toISOString()} settings.saved`);
-}
-</script>
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "Remover";
+      removeBtn.onclick = () => removeSkill(slug, removeBtn, toggleBtn);
+
+      row.appendChild(title);
+      row.appendChild(toggleBtn);
+      row.appendChild(removeBtn);
+      return row;
+    }
+
+    async function loadSkills() {
+      const list = document.getElementById("skillsList");
+      list.innerHTML = '<div class="muted">Carregando...</div>';
+      try {
+        const data = await api("/api/dashboard/skills");
+        list.innerHTML = "";
+        const skills = data.skills || [];
+        if (!skills.length) {
+          list.innerHTML = '<div class="muted">Nenhuma skill encontrada.</div>';
+          return;
+        }
+        skills.forEach((item) => list.appendChild(skillRow(item.slug, !!item.enabled)));
+      } catch (error) {
+        list.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function withSkillFeedback(fn, successMessage) {
+      if (state.pendingSkill) return;
+      state.pendingSkill = true;
+      setStatus("skillsState", "Executando acao...", "warn");
+      try {
+        await fn();
+        setStatus("skillsState", successMessage, "ok");
+        await loadSkills();
+      } catch (error) {
+        setStatus("skillsState", error.message || "Falha ao executar acao", "danger");
+      } finally {
+        state.pendingSkill = false;
+      }
+    }
+
+    async function installSkill() {
+      const slugInput = document.getElementById("skillSlug");
+      const slug = slugInput.value.trim();
+      if (!slug) {
+        setStatus("skillsState", "Informe um slug para instalar", "warn");
+        return;
+      }
+      const btn = document.getElementById("installSkillBtn");
+      setBusy(btn, true, "Instalando...");
+      await withSkillFeedback(async () => {
+        await api("/api/dashboard/skills/install", { method: "POST", body: JSON.stringify({ slug }) });
+        slugInput.value = "";
+      }, `Skill ${slug} instalada.`);
+      setBusy(btn, false);
+    }
+
+    async function toggleSkill(slug, enabled, button) {
+      setBusy(button, true, enabled ? "Desativando..." : "Ativando...");
+      await withSkillFeedback(async () => {
+        await api(`/api/dashboard/skills/${enabled ? "disable" : "enable"}`, {
+          method: "POST",
+          body: JSON.stringify({ slug }),
+        });
+      }, `Skill ${slug} ${enabled ? "desativada" : "ativada"}.`);
+      setBusy(button, false);
+    }
+
+    async function removeSkill(slug, button, toggleButton) {
+      setBusy(button, true, "Removendo...");
+      if (toggleButton) toggleButton.disabled = true;
+      await withSkillFeedback(async () => {
+        await api("/api/dashboard/skills/remove", { method: "POST", body: JSON.stringify({ slug }) });
+      }, `Skill ${slug} removida.`);
+      setBusy(button, false);
+      if (toggleButton) toggleButton.disabled = false;
+    }
+
+    async function loadSessions() {
+      const q = document.getElementById("sessionQuery").value.trim();
+      const data = await api(`/api/dashboard/sessions?q=${encodeURIComponent(q)}`);
+      const sessions = data.sessions || [];
+      const el = document.getElementById("sessions");
+      if (!sessions.length) {
+        el.innerHTML = '<div class="muted">Nenhuma sessao encontrada.</div>';
+        return;
+      }
+      el.innerHTML = sessions
+        .map((s) => `<div class="list-item"><div class="mono">${escapeHtml(s.session_id)}</div><div>${s.messages} msgs</div><div class="muted">${escapeHtml(s.preview || "-")}</div></div>`)
+        .join("");
+    }
+
+    function telemetrySessionsHtml(rows) {
+      if (!rows.length) return "<div class='muted'>Sem sessoes no periodo.</div>";
+      return rows
+        .slice(0, 5)
+        .map((row) => `<div class="list-item"><div class="mono">${escapeHtml(row.session_id)}</div><div>tokens=${row.tokens} | cost=$${Number(row.cost_usd || 0).toFixed(6)}</div></div>`)
+        .join("");
+    }
+
+    function telemetryTimelineHtml(rows) {
+      if (!rows.length) return "<div class='muted'>Sem buckets no periodo.</div>";
+      return rows
+        .slice(-6)
+        .reverse()
+        .map((row) => `<div class="list-item"><div class="mono">${escapeHtml(row.bucket)}</div><div>events=${row.events} | tokens=${row.tokens} | cost=$${Number(row.cost_usd || 0).toFixed(6)}</div></div>`)
+        .join("");
+    }
+
+    async function loadTelemetry() {
+      const period = document.getElementById("telemetryPeriod").value;
+      const sessionId = document.getElementById("telemetrySession").value.trim();
+      const params = new URLSearchParams({ period, session_id: sessionId, limit: "200" });
+      const data = await api(`/api/dashboard/telemetry?${params.toString()}`);
+      const summary = data.summary || {};
+      document.getElementById("telemetrySummary").innerHTML =
+        `<div>events=${summary.events || 0} | sessions=${summary.sessions || 0}</div>` +
+        `<div>prompt_tokens=${summary.prompt_tokens || 0} | completion_tokens=${summary.completion_tokens || 0}</div>` +
+        `<div>tokens_total=${summary.tokens || 0} | cost_total=$${Number(summary.cost_usd || 0).toFixed(6)}</div>`;
+      document.getElementById("telemetrySessions").innerHTML =
+        `<h3>Por sessao</h3>${telemetrySessionsHtml(data.sessions || [])}`;
+      document.getElementById("telemetryTimeline").innerHTML =
+        `<h3>Por periodo (${escapeHtml(data.filters?.granularity || "-")})</h3>${telemetryTimelineHtml(data.timeline || [])}`;
+    }
+
+    function formatLog(entry) {
+      const ts = entry.ts || "-";
+      const level = String(entry.level || "info").toUpperCase();
+      const event = entry.event || "-";
+      const data = entry.data ? JSON.stringify(entry.data) : "";
+      return `<div class="list-item"><div class="mono">${escapeHtml(ts)}</div><div>[${escapeHtml(level)}] ${escapeHtml(event)}</div><div class="muted">${escapeHtml(data)}</div></div>`;
+    }
+
+    function renderLogs() {
+      const el = document.getElementById("logs");
+      if (!state.logs.length) {
+        el.innerHTML = '<div class="muted">Sem logs.</div>';
+        return;
+      }
+      el.innerHTML = state.logs.slice().reverse().map(formatLog).join("");
+    }
+
+    async function loadLogs() {
+      const p = new URLSearchParams({
+        limit: "200",
+        level: state.logFilters.level,
+        event: state.logFilters.event,
+        q: state.logFilters.q,
+      });
+      const data = await api(`/api/dashboard/logs?${p.toString()}`);
+      state.logs = data.logs || [];
+      renderLogs();
+    }
+
+    async function applyLogFilters() {
+      state.logFilters = {
+        level: document.getElementById("logLevel").value.trim(),
+        event: document.getElementById("logEvent").value.trim(),
+        q: document.getElementById("logQuery").value.trim(),
+      };
+      await loadLogs();
+      if (state.wsLogs && state.wsLogs.readyState === 1) {
+        state.wsLogs.send(JSON.stringify({ type: "filters", ...state.logFilters }));
+      } else if (state.connected) {
+        connectWs();
+      }
+    }
+
+    async function saveSettings() {
+      try {
+        await api("/api/dashboard/settings", {
+          method: "PUT",
+          body: JSON.stringify({
+            model: document.getElementById("cfgModel").value.trim(),
+            hooks: {
+              pre: document.getElementById("hookPre").value || "",
+              post: document.getElementById("hookPost").value || "",
+            },
+            theme: "dark",
+          }),
+        });
+        setStatus("authState", "Configuracoes salvas", "ok");
+      } catch (error) {
+        setStatus("authState", error.message || "Falha ao salvar configuracoes", "danger");
+      }
+    }
+
+    document.getElementById("chatInput").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        sendChat();
+      }
+    });
+  </script>
 </body>
 </html>
