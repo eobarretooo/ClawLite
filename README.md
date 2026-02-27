@@ -151,7 +151,21 @@ clawlite run "use a skill github para listar issues abertas do repo"
 clawlite run "use whisper para transcrever ./audio/nota.ogg"
 ```
 
-### 6) MCP (Model Context Protocol)
+### 6) Multi-agente multi-canal
+```bash
+clawlite agents create orchestrator --channel telegram --account main-bot --orchestrator
+clawlite agents create dev --channel telegram --account dev-bot --personality "engenheiro pragmático" --tag code --tag bug
+clawlite agents bind dev --channel slack --account workspace-dev
+clawlite agents list
+```
+
+- Roteamento por menção: `@dev` prioriza agente `dev`
+- Handoff por intenção/tag: orquestrador delega para especialista por tags
+- Chaves de contexto por thread/grupo para continuidade de conversa
+
+Guia completo: `docs/MULTIAGENTE_MULTICANAL_PTBR.md`
+
+### 7) MCP (Model Context Protocol)
 ```bash
 clawlite mcp add local https://example.com/mcp
 clawlite mcp list
@@ -193,7 +207,7 @@ Guia completo: `docs/TROUBLESHOOTING.md`
 ## 🗺️ Roadmap
 
 - [x] Gateway + dashboard v2
-- [x] Multi-agente Telegram (MVP)
+- [x] Multi-agente multi-canal (Telegram, Slack, Discord, WhatsApp, Teams)
 - [x] Learning hardening em produção
 - [x] STT/TTS no pipeline
 - [x] Auto-update de skills com trust policy + rollback

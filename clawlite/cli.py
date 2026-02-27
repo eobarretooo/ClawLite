@@ -31,8 +31,14 @@ from clawlite.runtime.channels import channel_template
 from clawlite.runtime.models import model_status, set_model_fallback
 from clawlite.runtime.battery import get_battery_mode, set_battery_mode
 from clawlite.runtime.multiagent import (
+    bind_agent,
+    create_agent,
+    format_agents_table,
+    format_bindings_table,
     format_workers_table,
     init_db,
+    list_agent_bindings,
+    list_agents,
     list_workers,
     recover_workers,
     start_worker,
@@ -145,7 +151,7 @@ def main() -> None:
     ch = sub.add_parser("channels")
     ch_sub = ch.add_subparsers(dest="ccmd")
     ch_t = ch_sub.add_parser("template")
-    ch_t.add_argument("name", choices=["telegram", "telegram-multiagent", "discord", "whatsapp"])
+    ch_t.add_argument("name", choices=["telegram", "telegram-multiagent", "slack", "discord", "whatsapp", "teams"])
 
     ag = sub.add_parser("agents")
     ag_sub = ag.add_subparsers(dest="agcmd")
@@ -163,7 +169,24 @@ def main() -> None:
     ag_stop = ag_sub.add_parser("stop")
     ag_stop.add_argument("worker_id", type=int)
 
+    ag_create = ag_sub.add_parser("create")
+    ag_create.add_argument("name")
+    ag_create.add_argument("--channel", required=True, choices=["telegram", "slack", "discord", "whatsapp", "teams"])
+    ag_create.add_argument("--token", default="")
+    ag_create.add_argument("--account", default="")
+    ag_create.add_argument("--personality", default="")
+    ag_create.add_argument("--role", default="")
+    ag_create.add_argument("--tag", action="append", default=[])
+    ag_create.add_argument("--orchestrator", action="store_true")
+
     ag_sub.add_parser("list")
+
+    ag_bind = ag_sub.add_parser("bind")
+    ag_bind.add_argument("agent")
+    ag_bind.add_argument("--channel", required=True, choices=["telegram", "slack", "discord", "whatsapp", "teams"])
+    ag_bind.add_argument("--account", required=True)
+
+    ag_sub.add_parser("bindings")
     ag_sub.add_parser("recover")
 
     ag_worker = ag_sub.add_parser("worker")
@@ -593,8 +616,31 @@ def main() -> None:
     if args.cmd == "agents":
         try:
             init_db()
-            if args.agcmd in {"list", "start", "tasks", "telegram-dispatch"}:
+            if args.agcmd in {"start", "tasks", "telegram-dispatch", "workers"}:
                 recover_workers()
+
+            if args.agcmd == "create":
+                agent_id = create_agent(
+                    args.name,
+                    channel=args.channel,
+                    role=args.role,
+                    personality=args.personality,
+                    credentials=args.token,
+                    account=args.account,
+                    orchestrator=args.orchestrator,
+                    tags=args.tag,
+                )
+                print(f"✅ Agente criado: {agent_id}")
+                return
+
+            if args.agcmd == "bind":
+                agent_id = bind_agent(args.agent, channel=args.channel, account=args.account)
+                print(f"✅ Agente vinculado: {args.agent} (id={agent_id})")
+                return
+
+            if args.agcmd == "bindings":
+                print(format_bindings_table(list_agent_bindings()))
+                return
 
             if args.agcmd == "register":
                 worker_id = upsert_worker(args.channel, args.chat_id, args.thread_id, args.label, args.command_template)
@@ -612,7 +658,7 @@ def main() -> None:
                 return
 
             if args.agcmd == "list":
-                print(format_workers_table(list_workers()))
+                print(format_agents_table(list_agents()))
                 return
 
             if args.agcmd == "recover":

@@ -81,9 +81,11 @@ def _autosave(cfg: dict[str, Any]) -> None:
 def _ensure_defaults(cfg: dict[str, Any]) -> None:
     cfg.setdefault("language", detect_language("pt-br"))
     cfg.setdefault("channels", {})
-    cfg["channels"].setdefault("telegram", {"enabled": False, "token": "", "chat_id": "", "stt_enabled": False, "stt_model": "base", "stt_language": "pt", "tts_enabled": False, "tts_provider": "local", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_default_reply": False})
-    cfg["channels"].setdefault("whatsapp", {"enabled": False, "token": "", "phone": "", "stt_enabled": False, "stt_model": "base", "stt_language": "pt", "tts_enabled": False, "tts_provider": "local", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_default_reply": False})
-    cfg["channels"].setdefault("discord", {"enabled": False, "token": "", "guild_id": ""})
+    cfg["channels"].setdefault("telegram", {"enabled": False, "token": "", "chat_id": "", "accounts": [], "stt_enabled": False, "stt_model": "base", "stt_language": "pt", "tts_enabled": False, "tts_provider": "local", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_default_reply": False})
+    cfg["channels"].setdefault("whatsapp", {"enabled": False, "token": "", "phone": "", "accounts": [], "stt_enabled": False, "stt_model": "base", "stt_language": "pt", "tts_enabled": False, "tts_provider": "local", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_default_reply": False})
+    cfg["channels"].setdefault("discord", {"enabled": False, "token": "", "guild_id": "", "accounts": []})
+    cfg["channels"].setdefault("slack", {"enabled": False, "token": "", "workspace": "", "accounts": []})
+    cfg["channels"].setdefault("teams", {"enabled": False, "token": "", "tenant": "", "accounts": []})
     cfg.setdefault("hooks", {"boot": True, "session_memory": True, "command_logger": False})
     cfg.setdefault("gateway", {"host": "0.0.0.0", "port": 8787, "token": "", "dashboard_enabled": True})
     cfg.setdefault(
@@ -111,12 +113,14 @@ def _section_channels(cfg: dict[str, Any]) -> None:
         "Canais ativos (espaço para marcar):",
         choices=[
             Choice("telegram", checked=cfg["channels"]["telegram"].get("enabled", False)),
-            Choice("whatsapp", checked=cfg["channels"]["whatsapp"].get("enabled", False)),
+            Choice("slack", checked=cfg["channels"]["slack"].get("enabled", False)),
             Choice("discord", checked=cfg["channels"]["discord"].get("enabled", False)),
+            Choice("whatsapp", checked=cfg["channels"]["whatsapp"].get("enabled", False)),
+            Choice("teams", checked=cfg["channels"]["teams"].get("enabled", False)),
         ],
     ).ask() or []
 
-    for name in ["telegram", "whatsapp", "discord"]:
+    for name in ["telegram", "slack", "discord", "whatsapp", "teams"]:
         cfg["channels"][name]["enabled"] = name in selected
 
     if cfg["channels"]["telegram"]["enabled"]:
@@ -126,8 +130,32 @@ def _section_channels(cfg: dict[str, Any]) -> None:
         cfg["channels"]["telegram"]["chat_id"] = questionary.text(
             "Chat ID padrão:", default=cfg["channels"]["telegram"].get("chat_id", "")
         ).ask()
+        accounts = questionary.text(
+            "Contas Telegram (account:token, separadas por vírgula):",
+            default=", ".join([f"{a.get('account','')}:{a.get('token','')}" for a in cfg["channels"]["telegram"].get("accounts", []) if a.get("account")]),
+        ).ask() or ""
+        cfg["channels"]["telegram"]["accounts"] = [
+            {"account": p.split(":", 1)[0].strip(), "token": p.split(":", 1)[1].strip() if ":" in p else ""}
+            for p in accounts.split(",") if p.strip()
+        ]
         cfg["channels"]["telegram"]["stt_enabled"] = bool(questionary.confirm("Ativar STT (voz->texto) no Telegram?", default=cfg["channels"]["telegram"].get("stt_enabled", False)).ask())
         cfg["channels"]["telegram"]["tts_enabled"] = bool(questionary.confirm("Ativar TTS (texto->voz) no Telegram?", default=cfg["channels"]["telegram"].get("tts_enabled", False)).ask())
+
+    if cfg["channels"]["slack"]["enabled"]:
+        cfg["channels"]["slack"]["token"] = questionary.text(
+            "Token do Slack:", default=cfg["channels"]["slack"].get("token", "")
+        ).ask()
+        cfg["channels"]["slack"]["workspace"] = questionary.text(
+            "Workspace padrão:", default=cfg["channels"]["slack"].get("workspace", "")
+        ).ask()
+        accounts = questionary.text(
+            "Contas Slack (workspace:token, separadas por vírgula):",
+            default=", ".join([f"{a.get('account','')}:{a.get('token','')}" for a in cfg["channels"]["slack"].get("accounts", []) if a.get("account")]),
+        ).ask() or ""
+        cfg["channels"]["slack"]["accounts"] = [
+            {"account": p.split(":", 1)[0].strip(), "token": p.split(":", 1)[1].strip() if ":" in p else ""}
+            for p in accounts.split(",") if p.strip()
+        ]
 
     if cfg["channels"]["whatsapp"]["enabled"]:
         cfg["channels"]["whatsapp"]["token"] = questionary.text(
@@ -136,6 +164,14 @@ def _section_channels(cfg: dict[str, Any]) -> None:
         cfg["channels"]["whatsapp"]["phone"] = questionary.text(
             "Número padrão (+55...):", default=cfg["channels"]["whatsapp"].get("phone", "")
         ).ask()
+        accounts = questionary.text(
+            "Instâncias WhatsApp (account:token, separadas por vírgula):",
+            default=", ".join([f"{a.get('account','')}:{a.get('token','')}" for a in cfg["channels"]["whatsapp"].get("accounts", []) if a.get("account")]),
+        ).ask() or ""
+        cfg["channels"]["whatsapp"]["accounts"] = [
+            {"account": p.split(":", 1)[0].strip(), "token": p.split(":", 1)[1].strip() if ":" in p else ""}
+            for p in accounts.split(",") if p.strip()
+        ]
         cfg["channels"]["whatsapp"]["stt_enabled"] = bool(questionary.confirm("Ativar STT (voz->texto) no WhatsApp?", default=cfg["channels"]["whatsapp"].get("stt_enabled", False)).ask())
         cfg["channels"]["whatsapp"]["tts_enabled"] = bool(questionary.confirm("Ativar TTS (texto->voz) no WhatsApp?", default=cfg["channels"]["whatsapp"].get("tts_enabled", False)).ask())
 
@@ -146,6 +182,30 @@ def _section_channels(cfg: dict[str, Any]) -> None:
         cfg["channels"]["discord"]["guild_id"] = questionary.text(
             "Guild ID padrão:", default=cfg["channels"]["discord"].get("guild_id", "")
         ).ask()
+        accounts = questionary.text(
+            "Bots Discord (guild:token, separadas por vírgula):",
+            default=", ".join([f"{a.get('account','')}:{a.get('token','')}" for a in cfg["channels"]["discord"].get("accounts", []) if a.get("account")]),
+        ).ask() or ""
+        cfg["channels"]["discord"]["accounts"] = [
+            {"account": p.split(":", 1)[0].strip(), "token": p.split(":", 1)[1].strip() if ":" in p else ""}
+            for p in accounts.split(",") if p.strip()
+        ]
+
+    if cfg["channels"]["teams"]["enabled"]:
+        cfg["channels"]["teams"]["token"] = questionary.text(
+            "Token do Teams:", default=cfg["channels"]["teams"].get("token", "")
+        ).ask()
+        cfg["channels"]["teams"]["tenant"] = questionary.text(
+            "Tenant padrão:", default=cfg["channels"]["teams"].get("tenant", "")
+        ).ask()
+        accounts = questionary.text(
+            "Agentes Teams (tenant:token, separadas por vírgula):",
+            default=", ".join([f"{a.get('account','')}:{a.get('token','')}" for a in cfg["channels"]["teams"].get("accounts", []) if a.get("account")]),
+        ).ask() or ""
+        cfg["channels"]["teams"]["accounts"] = [
+            {"account": p.split(":", 1)[0].strip(), "token": p.split(":", 1)[1].strip() if ":" in p else ""}
+            for p in accounts.split(",") if p.strip()
+        ]
 
 
 def _section_skills(cfg: dict[str, Any]) -> None:

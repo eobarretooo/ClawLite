@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from clawlite.runtime.multiagent import enqueue_task
+from clawlite.runtime.multiagent import enqueue_task, select_agent_for_message
 from clawlite.runtime.voice import clean_audio_flags, inbound_to_prompt, wants_audio_reply
 
 
@@ -64,9 +64,21 @@ def dispatch_telegram_update(config_path: str, update: dict[str, Any], label: st
         raise ValueError("update sem chat_id")
 
     thread_id = str(msg.get("message_thread_id") or "")
-    selected_label = label or tcfg.get("defaultLabel", "general")
-
     prompt, meta = inbound_to_prompt("telegram", update, tcfg)
+    entities = msg.get("entities") or []
+    txt = str(msg.get("text") or "")
+    mentions: list[str] = []
+    for ent in entities:
+        if ent.get("type") == "mention":
+            off, ln = int(ent.get("offset", 0)), int(ent.get("length", 0))
+            mention = txt[off: off + ln].strip().lstrip("@")
+            if mention:
+                mentions.append(mention)
+
+    selected_label = label or tcfg.get("defaultLabel", "general")
+    selected_agent = select_agent_for_message(channel="telegram", text=prompt, mentions=mentions, thread_key=f"{chat_id}:{thread_id}")
+    if selected_agent:
+        selected_label = selected_agent.name
     reply_in_audio = wants_audio_reply(prompt, tcfg)
     payload = {
         "channel": "telegram",

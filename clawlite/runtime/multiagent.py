@@ -17,6 +17,7 @@ from clawlite.runtime.voice import send_telegram_audio_reply, synthesize_tts
 DB_DIR = Path.home() / ".clawlite"
 DB_PATH = DB_DIR / "multiagent.db"
 POLL_SECONDS = 2.0
+SUPPORTED_CHANNELS = {"telegram", "slack", "discord", "whatsapp", "teams"}
 
 
 @dataclass
@@ -34,6 +35,22 @@ class WorkerRow:
     updated_at: float
 
 
+@dataclass
+class AgentRow:
+    id: int
+    name: str
+    role: str
+    personality: str
+    channel: str
+    credentials: str
+    account: str
+    enabled: int
+    orchestrator: int
+    tags: str
+    created_at: float
+    updated_at: float
+
+
 def _now() -> float:
     return time.time()
 
@@ -45,6 +62,12 @@ def _conn() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
     return conn
+
+
+def _migrate_if_needed(c: sqlite3.Connection) -> None:
+    cols = {row["name"] for row in c.execute("PRAGMA table_info(workers)").fetchall()}
+    if "agent_id" not in cols:
+        c.execute("ALTER TABLE workers ADD COLUMN agent_id INTEGER")
 
 
 def init_db() -> None:
@@ -67,6 +90,7 @@ def init_db() -> None:
             )
             """
         )
+        _migrate_if_needed(c)
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
@@ -84,13 +108,40 @@ def init_db() -> None:
             )
             """
         )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agents (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              role TEXT NOT NULL DEFAULT '',
+              personality TEXT NOT NULL DEFAULT '',
+              channel TEXT NOT NULL,
+              credentials TEXT NOT NULL DEFAULT '',
+              account TEXT NOT NULL DEFAULT '',
+              enabled INTEGER NOT NULL DEFAULT 1,
+              orchestrator INTEGER NOT NULL DEFAULT 0,
+              tags TEXT NOT NULL DEFAULT '',
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            )
+            """
+        )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_bindings (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              agent_id INTEGER NOT NULL,
+              channel TEXT NOT NULL,
+              account TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              UNIQUE(agent_id, channel, account)
+            )
+            """
+        )
 
 
 def _pid_state(pid: int) -> str | None:
-    """Return Linux process state letter from /proc/<pid>/status (e.g. R/S/Z).
-
-    Returns None when unavailable (non-Linux, permission denied, missing proc entry).
-    """
     try:
         with open(f"/proc/{pid}/status", "r", encoding="utf-8") as fh:
             for line in fh:
@@ -112,7 +163,6 @@ def _is_pid_running(pid: int | None) -> bool:
     except OSError:
         return False
 
-    # Zombie/defunct process must be treated as unhealthy so recovery can restart.
     state = _pid_state(pid)
     if state == "Z":
         return False
@@ -121,6 +171,143 @@ def _is_pid_running(pid: int | None) -> bool:
 
 def _row_to_worker(row: sqlite3.Row) -> WorkerRow:
     return WorkerRow(**dict(row))
+
+
+def _row_to_agent(row: sqlite3.Row) -> AgentRow:
+    return AgentRow(**dict(row))
+
+
+def _normalize_channel(channel: str) -> str:
+    ch = str(channel or "").strip().lower()
+    if ch not in SUPPORTED_CHANNELS:
+        raise ValueError(f"canal inválido: {channel}")
+    return ch
+
+
+def create_agent(
+    name: str,
+    *,
+    channel: str,
+    role: str = "",
+    personality: str = "",
+    credentials: str = "",
+    account: str = "",
+    enabled: bool = True,
+    orchestrator: bool = False,
+    tags: list[str] | None = None,
+) -> int:
+    init_db()
+    ts = _now()
+    channel = _normalize_channel(channel)
+    if not name.strip():
+        raise ValueError("nome do agente é obrigatório")
+    with _conn() as c:
+        c.execute(
+            """
+            INSERT INTO agents (name, role, personality, channel, credentials, account, enabled, orchestrator, tags, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                name.strip(),
+                role.strip(),
+                personality.strip(),
+                channel,
+                credentials.strip(),
+                account.strip(),
+                1 if enabled else 0,
+                1 if orchestrator else 0,
+                ",".join([t.strip().lower() for t in (tags or []) if t.strip()]),
+                ts,
+                ts,
+            ),
+        )
+        row = c.execute("SELECT last_insert_rowid() AS id").fetchone()
+    return int(row["id"])
+
+
+def list_agents(*, channel: str | None = None, enabled_only: bool = False) -> list[AgentRow]:
+    init_db()
+    where: list[str] = []
+    params: list[Any] = []
+    if channel:
+        where.append("channel=?")
+        params.append(_normalize_channel(channel))
+    if enabled_only:
+        where.append("enabled=1")
+    sql = "SELECT * FROM agents"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY orchestrator DESC, channel, name"
+    with _conn() as c:
+        rows = c.execute(sql, tuple(params)).fetchall()
+    return [_row_to_agent(r) for r in rows]
+
+
+def bind_agent(name: str, *, channel: str, account: str) -> int:
+    init_db()
+    ts = _now()
+    channel = _normalize_channel(channel)
+    with _conn() as c:
+        row = c.execute("SELECT id FROM agents WHERE name=?", (name,)).fetchone()
+        if not row:
+            raise ValueError(f"agente não encontrado: {name}")
+        agent_id = int(row["id"])
+        c.execute(
+            """
+            INSERT INTO agent_bindings (agent_id, channel, account, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id, channel, account)
+            DO UPDATE SET updated_at=excluded.updated_at
+            """,
+            (agent_id, channel, account.strip(), ts, ts),
+        )
+    return agent_id
+
+
+def list_agent_bindings() -> list[dict[str, Any]]:
+    init_db()
+    with _conn() as c:
+        rows = c.execute(
+            """
+            SELECT b.id, a.name, b.channel, b.account, b.created_at, b.updated_at
+            FROM agent_bindings b
+            JOIN agents a ON a.id=b.agent_id
+            ORDER BY b.channel, b.account, a.name
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def select_agent_for_message(
+    *,
+    channel: str,
+    text: str,
+    mentions: list[str] | None = None,
+    thread_key: str = "",
+) -> AgentRow | None:
+    del thread_key  # reserved for richer context handoff in next iterations
+    channel = _normalize_channel(channel)
+    agents = list_agents(channel=channel, enabled_only=True)
+    if not agents:
+        return None
+
+    mention_set = {m.lower().lstrip("@") for m in (mentions or []) if str(m).strip()}
+    lowered = text.lower()
+    for ag in agents:
+        if ag.name.lower() in mention_set or f"@{ag.name.lower()}" in lowered:
+            return ag
+
+    # Orchestrator handoff by intent/tag
+    orchestrators = [a for a in agents if a.orchestrator == 1]
+    specialists = [a for a in agents if a.orchestrator != 1]
+    if orchestrators and specialists:
+        for sp in specialists:
+            tags = [t for t in (sp.tags or "").split(",") if t]
+            if any(tag in lowered for tag in tags):
+                return sp
+        return orchestrators[0]
+
+    return agents[0]
 
 
 def upsert_worker(
@@ -155,7 +342,7 @@ def upsert_worker(
 def list_workers() -> list[WorkerRow]:
     init_db()
     with _conn() as c:
-        rows = c.execute("SELECT * FROM workers ORDER BY channel, chat_id, thread_id, label").fetchall()
+        rows = c.execute("SELECT id, channel, chat_id, thread_id, label, command_template, enabled, pid, status, created_at, updated_at FROM workers ORDER BY channel, chat_id, thread_id, label").fetchall()
     out: list[WorkerRow] = []
     for row in rows:
         item = dict(row)
@@ -182,7 +369,7 @@ def _set_worker_runtime(worker_id: int, pid: int | None, status: str, enabled: i
 
 def _get_worker(worker_id: int) -> WorkerRow:
     with _conn() as c:
-        row = c.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+        row = c.execute("SELECT id, channel, chat_id, thread_id, label, command_template, enabled, pid, status, created_at, updated_at FROM workers WHERE id=?", (worker_id,)).fetchone()
     if not row:
         raise ValueError(f"worker {worker_id} não encontrado")
     return _row_to_worker(row)
@@ -233,7 +420,6 @@ def recover_workers() -> list[int]:
             start_worker(wid)
             restarted.append(wid)
         except Exception:
-            # keep MVP resilient: skip broken worker and continue
             pass
     return restarted
 
@@ -303,7 +489,6 @@ def _render_command(template: str, payload: dict[str, Any]) -> str:
 
 def worker_loop(worker_id: int) -> None:
     init_db()
-    worker = _get_worker(worker_id)
     _set_worker_runtime(worker_id, os.getpid(), "running")
 
     while True:
@@ -329,7 +514,6 @@ def worker_loop(worker_id: int) -> None:
             out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
             ok = proc.returncode == 0
 
-            # Resposta em áudio opcional para Telegram
             if ok and payload.get("reply_in_audio") and payload.get("channel") == "telegram":
                 ch_cfg = payload.get("channel_cfg") or {}
                 audio_path = synthesize_tts(out.strip() or "Resposta concluída.", ch_cfg)
@@ -356,6 +540,26 @@ def format_workers_table(rows: list[WorkerRow]) -> str:
         status = r.status
         pid = r.pid if (r.pid and _is_pid_running(r.pid)) else "-"
         lines.append(f"{r.id} | {r.channel} | {r.chat_id} | {r.thread_id or '-'} | {r.label} | {status} | {pid}")
+    return "\n".join(lines)
+
+
+def format_agents_table(rows: list[AgentRow]) -> str:
+    if not rows:
+        return "(sem agentes)"
+    lines = ["id | nome | canal | conta | role | orchestrator | enabled"]
+    for r in rows:
+        lines.append(
+            f"{r.id} | {r.name} | {r.channel} | {r.account or '-'} | {r.role or '-'} | {bool(r.orchestrator)} | {bool(r.enabled)}"
+        )
+    return "\n".join(lines)
+
+
+def format_bindings_table(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "(sem vínculos)"
+    lines = ["id | agente | canal | conta"]
+    for r in rows:
+        lines.append(f"{r['id']} | {r['name']} | {r['channel']} | {r['account']}")
     return "\n".join(lines)
 
 

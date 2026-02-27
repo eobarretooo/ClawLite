@@ -270,6 +270,23 @@
       </div>
 
       <section class="card">
+        <h2>Agents (multi-canal)</h2>
+        <div class="row">
+          <input id="agentName" placeholder="nome" />
+          <select id="agentChannel"><option>telegram</option><option>slack</option><option>discord</option><option>whatsapp</option><option>teams</option></select>
+          <input id="agentAccount" placeholder="account" />
+          <button onclick="createAgent()">Criar</button>
+        </div>
+        <div class="row">
+          <input id="bindAgent" placeholder="agente" />
+          <select id="bindChannel"><option>telegram</option><option>slack</option><option>discord</option><option>whatsapp</option><option>teams</option></select>
+          <input id="bindAccount" placeholder="account" />
+          <button onclick="bindAgent()">Vincular</button>
+        </div>
+        <div id="agentsBox" class="list muted">-</div>
+      </section>
+
+      <section class="card">
         <h2>MCP</h2>
         <div class="row">
           <input id="mcpName" placeholder="nome servidor" />
@@ -395,7 +412,7 @@
         document.getElementById("hookPre").value = boot.settings.hooks?.pre || "";
         document.getElementById("hookPost").value = boot.settings.hooks?.post || "";
 
-        await Promise.all([loadSkills(), loadSessions(), loadTelemetry(), loadLogs(), loadMcp(), searchMcp()]);
+        await Promise.all([loadSkills(), loadSessions(), loadTelemetry(), loadLogs(), loadMcp(), searchMcp(), loadAgents()]);
         connectWs();
       } catch (error) {
         setStatus("authState", error.message || "Falha na autenticacao", "danger");
@@ -574,6 +591,46 @@
       row.appendChild(status);
       row.appendChild(removeBtn);
       return row;
+    }
+
+    async function loadAgents() {
+      const box = document.getElementById("agentsBox");
+      box.innerHTML = '<div class="muted">Carregando...</div>';
+      try {
+        const data = await api("/api/agents");
+        const agents = data.agents || [];
+        const bindings = data.bindings || [];
+        box.innerHTML = (agents.map(a => `<div class="list-item"><b>${escapeHtml(a.name)}</b> [${escapeHtml(a.channel)}] account=${escapeHtml(a.account || "-")} orch=${a.orchestrator ? "sim" : "não"}</div>`).join("")) || '<div class="muted">Sem agentes</div>';
+        if (bindings.length) {
+          box.innerHTML += `<div class="list-item muted">Bindings: ${bindings.map(b => `${b.name}:${b.channel}/${b.account}`).join(" | ")}</div>`;
+        }
+      } catch (error) {
+        box.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function createAgent() {
+      await api("/api/agents", {
+        method: "POST",
+        body: JSON.stringify({
+          name: document.getElementById("agentName").value.trim(),
+          channel: document.getElementById("agentChannel").value,
+          account: document.getElementById("agentAccount").value.trim(),
+        }),
+      });
+      await loadAgents();
+    }
+
+    async function bindAgent() {
+      await api("/api/agents/bind", {
+        method: "POST",
+        body: JSON.stringify({
+          agent: document.getElementById("bindAgent").value.trim(),
+          channel: document.getElementById("bindChannel").value,
+          account: document.getElementById("bindAccount").value.trim(),
+        }),
+      });
+      await loadAgents();
     }
 
     async function loadMcp() {

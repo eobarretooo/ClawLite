@@ -18,6 +18,7 @@ from clawlite.config.settings import CONFIG_DIR, load_config, save_config
 from clawlite.core.agent import run_task_with_meta
 from clawlite.mcp import add_server, install_template, list_servers, remove_server, search_marketplace
 from clawlite.mcp_server import handle_mcp_jsonrpc
+from clawlite.runtime.multiagent import bind_agent, create_agent, list_agent_bindings, list_agents
 from clawlite.skills.marketplace import (
     DEFAULT_DOWNLOAD_BASE_URL,
     SkillMarketplaceError,
@@ -575,6 +576,41 @@ def api_dashboard_status(authorization: str | None = Header(default=None)) -> JS
         "model": cfg.get("model", "unknown"),
         "connections": len(connections) + len(chat_connections) + len(log_connections),
     })
+
+
+@app.get("/api/agents")
+def api_agents(authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    return JSONResponse({"ok": True, "agents": [a.__dict__ for a in list_agents()], "bindings": list_agent_bindings()})
+
+
+@app.post("/api/agents")
+def api_agents_create(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    try:
+        agent_id = create_agent(
+            str(payload.get("name", "")),
+            channel=str(payload.get("channel", "telegram")),
+            role=str(payload.get("role", "")),
+            personality=str(payload.get("personality", "")),
+            credentials=str(payload.get("token", "")),
+            account=str(payload.get("account", "")),
+            orchestrator=bool(payload.get("orchestrator", False)),
+            tags=[str(t) for t in (payload.get("tags") or [])],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "id": agent_id})
+
+
+@app.post("/api/agents/bind")
+def api_agents_bind(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    try:
+        agent_id = bind_agent(str(payload.get("agent", "")), channel=str(payload.get("channel", "")), account=str(payload.get("account", "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "agent_id": agent_id})
 
 
 @app.get("/api/dashboard/skills")

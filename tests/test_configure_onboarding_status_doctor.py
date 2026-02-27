@@ -32,6 +32,8 @@ def test_ensure_defaults_contains_required_sections():
     assert "security" in cfg
     assert "language" in cfg
     assert "whatsapp" in cfg["channels"]
+    assert "slack" in cfg["channels"]
+    assert "teams" in cfg["channels"]
 
 
 def test_doctor_and_status_minimum_output():
