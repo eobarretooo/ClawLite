@@ -86,14 +86,37 @@ def init_db() -> None:
         )
 
 
+def _pid_state(pid: int) -> str | None:
+    """Return Linux process state letter from /proc/<pid>/status (e.g. R/S/Z).
+
+    Returns None when unavailable (non-Linux, permission denied, missing proc entry).
+    """
+    try:
+        with open(f"/proc/{pid}/status", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("State:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1].upper()
+                    return None
+    except OSError:
+        return None
+    return None
+
+
 def _is_pid_running(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
-        return True
     except OSError:
         return False
+
+    # Zombie/defunct process must be treated as unhealthy so recovery can restart.
+    state = _pid_state(pid)
+    if state == "Z":
+        return False
+    return True
 
 
 def _row_to_worker(row: sqlite3.Row) -> WorkerRow:

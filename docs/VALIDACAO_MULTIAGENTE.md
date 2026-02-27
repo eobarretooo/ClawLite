@@ -66,6 +66,23 @@ Ao matar um worker durante execução, o processo ficou `defunct` (zumbi). O che
 ## Conclusão
 O fluxo E2E multi-agente está operacional, porém a validação contínua de 30 minutos expôs um gap de resiliência na recuperação automática pós-falha (detecção de zumbi/PID stale). Para considerar o ITEM 5 totalmente aprovado em campo, é necessário corrigir a heurística de saúde do worker antes da próxima rodada de validação com bot real.
 
+## Pós-correção (2026-02-27)
+Correção aplicada em `clawlite/runtime/multiagent.py`:
+- `PID` em estado `Z` (zombie/defunct) agora é tratado como **não saudável**.
+- `recover_workers()` passa a religar workers habilitados quando o PID anterior está zumbi/defunct.
+
+Cobertura adicionada em `tests/test_multiagent_recovery.py`:
+- PID inexistente → `_is_pid_running=False`
+- PID zombie/defunct (`Z`) → `_is_pid_running=False`
+- PID saudável (`S`) → `_is_pid_running=True`
+- `recover_workers()` acionando restart quando PID está defunct
+
+Resultado pós-correção:
+- Gap crítico de recuperação após `SIGTERM` com PID defunct foi endereçado em código + testes automatizados.
+- Reexecução scriptada (`python scripts/validate_multiagent_item5.py`): `tasks_done=179/180`, `success_rate_pct=99.44`, sem falhas (`tasks_failed=0`).
+- ITEM 5 fica **tecnicamente apto para revalidação E2E** com bot real.
+
 ## Artefatos
 - Script de validação: `scripts/validate_multiagent_item5.py`
 - Banco de teste (isolado): `/tmp/clawlite-item5-home/.clawlite/multiagent.db`
+- Testes de resiliência: `tests/test_multiagent_recovery.py`
