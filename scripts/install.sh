@@ -57,6 +57,17 @@ def ensure_path():
         target.unlink()
     target.symlink_to(VENV_DIR / "bin" / "clawlite")
 
+    # Termux: também instala launcher em $PREFIX/bin para evitar chamar binário global quebrado
+    if IS_TERMUX:
+        prefix_bin = Path(os.environ.get("PREFIX", "")) / "bin"
+        if str(prefix_bin) and prefix_bin.exists():
+            launcher = prefix_bin / "clawlite"
+            launcher.write_text(
+                f"#!/usr/bin/env bash\nexec '{VENV_DIR / 'bin' / 'clawlite'}' \"$@\"\n",
+                encoding="utf-8",
+            )
+            launcher.chmod(0o755)
+
     export_line = 'export PATH="$HOME/.local/bin:$PATH"'
     rc = Path.home() / (".zshrc" if "zsh" in os.environ.get("SHELL", "") else ".bashrc")
     rc.touch(exist_ok=True)
