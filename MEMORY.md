@@ -52,3 +52,8 @@ P4: itens 8, 10, 11
 
 ## Próximo milestone ativo
 - Iniciar P0: arquitetura e MVP de multi-agente nativo no Telegram.
+
+## 2026-02-27 — Repriorização
+- Projeto VeloRota pausado por decisão do usuário.
+- Foco 100% no ClawLite até conclusão dos milestones principais.
+- Execução via subagentes em paralelo para acelerar roadmap.
