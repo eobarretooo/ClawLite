@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawlite"
+version = "0.1.0"
+description = "Portable agentic assistant for Linux and Termux"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "BarretoClaw"}]
+dependencies = []
+
+[project.scripts]
+clawlite = "clawlite.cli:main"
