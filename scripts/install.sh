@@ -23,9 +23,20 @@ python3 -m venv "$VENV_DIR"
 
 # Se executado via curl|bash, não existe pyproject local.
 if [ -n "${ROOT_DIR}" ] && [ -f "$ROOT_DIR/pyproject.toml" ]; then
-  "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall -e "$ROOT_DIR" >/dev/null
+  # instala pacote base sem deps pesadas (compatível com Termux sem Rust)
+  "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall --no-deps -e "$ROOT_DIR" >/dev/null
 else
-  "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall "git+${REPO_URL}" >/dev/null
+  "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall --no-deps "git+${REPO_URL}" >/dev/null
+fi
+
+# deps essenciais da CLI (puras Python)
+"$VENV_DIR/bin/python" -m pip install --upgrade rich questionary >/dev/null
+
+# deps opcionais do gateway (podem falhar no Termux sem Rust)
+if ! "$VENV_DIR/bin/python" -m pip install --upgrade fastapi uvicorn >/dev/null 2>&1; then
+  echo "[WARN] Não foi possível instalar fastapi/uvicorn (dependência nativa ausente, ex: Rust no Termux)."
+  echo "[WARN] A CLI funciona normalmente; para gateway/web, instale Rust e rode:"
+  echo "       pkg install rust clang && ~/.clawlite/venv/bin/pip install fastapi uvicorn"
 fi
 
 mkdir -p "$BIN_DIR"
