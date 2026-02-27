@@ -23,6 +23,8 @@ LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+CATEGORY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+SKILL_STATUS_VALUES = {"stable", "beta", "experimental", "deprecated"}
 MARKETPLACE_DIR = Path.home() / ".clawlite" / "marketplace"
 INSTALLED_MANIFEST_PATH = MARKETPLACE_DIR / "installed.json"
 INSTALLED_SKILLS_DIR = MARKETPLACE_DIR / "skills"
@@ -48,6 +50,31 @@ def _normalize_version(value: str) -> str:
     if not version or not VERSION_RE.fullmatch(version):
         raise SkillMarketplaceError(f"Versão inválida: {value!r}")
     return version
+
+
+def _normalize_category(value: str | None) -> str:
+    raw = (value or "general").strip().lower().replace("_", "-")
+    if not CATEGORY_RE.fullmatch(raw):
+        raise SkillMarketplaceError(f"Categoria inválida: {value!r}")
+    return raw
+
+
+def _normalize_status(value: str | None) -> str:
+    raw = (value or "stable").strip().lower()
+    if raw not in SKILL_STATUS_VALUES:
+        raise SkillMarketplaceError(
+            f"Status inválido: {value!r}. Use um de: {', '.join(sorted(SKILL_STATUS_VALUES))}"
+        )
+    return raw
+
+
+def _normalize_tags(tags: Iterable[str] | None) -> list[str]:
+    clean: set[str] = set()
+    for tag in tags or ():
+        normalized = str(tag).strip().lower().replace(" ", "-")
+        if normalized:
+            clean.add(normalized[:32])
+    return sorted(clean)
 
 
 def _utcnow_iso() -> str:
@@ -188,6 +215,10 @@ def _remote_entry(slug: str, item: dict[str, Any]) -> dict[str, Any]:
         "checksum_sha256": str(item.get("checksum_sha256", "")).strip().lower(),
         "download_url": str(item.get("download_url", "")).strip(),
         "description": str(item.get("description", "")).strip(),
+        "category": str(item.get("category", "general")).strip().lower(),
+        "status": str(item.get("status", "stable")).strip().lower(),
+        "install_hint": str(item.get("install_hint", "")).strip(),
+        "tags": [str(t).strip().lower() for t in item.get("tags", []) if str(t).strip()],
     }
 
 
@@ -225,6 +256,13 @@ def _load_remote_index(
             invalid_reasons[slug] = "missing-checksum"
         elif not SHA256_RE.fullmatch(checksum):
             invalid_reasons[slug] = "invalid-checksum-format"
+
+        try:
+            entry["category"] = _normalize_category(entry.get("category"))
+            entry["status"] = _normalize_status(entry.get("status"))
+            entry["tags"] = _normalize_tags(entry.get("tags", []))
+        except SkillMarketplaceError:
+            invalid_reasons[slug] = "invalid-metadata"
 
         entries[slug] = entry
     return index_raw, entries, invalid_reasons
@@ -287,6 +325,10 @@ def _install_entry(
         "slug": slug,
         "version": version,
         "description": entry.get("description", ""),
+        "category": entry.get("category", "general"),
+        "status": entry.get("status", "stable"),
+        "tags": _normalize_tags(entry.get("tags", [])),
+        "install_hint": str(entry.get("install_hint", "")).strip() or f"clawlite skill install {slug}",
         "checksum_sha256": checksum_expected,
         "index_url": source_index_url,
         "download_url": download_url,
@@ -443,6 +485,60 @@ def update_skills(
     }
 
 
+def search_skills(
+    *,
+    index_url: str = DEFAULT_INDEX_URL,
+    allow_hosts: Iterable[str] | None = None,
+    allow_file_urls: bool = False,
+    query: str = "",
+    category: str | None = None,
+    status: str | None = None,
+    manifest_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    allowed_hosts = _normalize_allowed_hosts(allow_hosts)
+    _, entries, invalid_reasons = _load_remote_index(index_url, allowed_hosts, allow_file_urls)
+    installed = load_installed_manifest(manifest_path).get("skills", {})
+
+    q = query.strip().lower()
+    wanted_category = _normalize_category(category) if category else None
+    wanted_status = _normalize_status(status) if status else None
+
+    rows: list[dict[str, Any]] = []
+    for slug in sorted(entries.keys()):
+        entry = entries[slug]
+        text_haystack = " ".join(
+            [
+                slug,
+                str(entry.get("description", "")),
+                str(entry.get("category", "")),
+                " ".join(entry.get("tags", [])),
+            ]
+        ).lower()
+        if q and q not in text_haystack:
+            continue
+        if wanted_category and entry.get("category") != wanted_category:
+            continue
+        if wanted_status and entry.get("status") != wanted_status:
+            continue
+
+        local = installed.get(slug)
+        rows.append(
+            {
+                "slug": slug,
+                "version": entry.get("version", ""),
+                "description": entry.get("description", ""),
+                "category": entry.get("category", "general"),
+                "status": entry.get("status", "stable"),
+                "tags": entry.get("tags", []),
+                "install_hint": entry.get("install_hint", "") or f"clawlite skill install {slug}",
+                "installed": local is not None,
+                "installed_version": (str(local.get("version", "")) if isinstance(local, dict) else ""),
+                "blocked_reason": invalid_reasons.get(slug, ""),
+            }
+        )
+    return rows
+
+
 def build_auto_update_runtime_payload(
     *,
     index_url: str,
@@ -522,6 +618,10 @@ def publish_skill(
     version: str,
     slug: str | None = None,
     description: str = "",
+    category: str = "general",
+    status: str = "stable",
+    tags: Iterable[str] | None = None,
+    install_hint: str = "",
     hub_dir: str | Path | None = None,
     manifest_path: str | Path | None = None,
     download_base_url: str = DEFAULT_DOWNLOAD_BASE_URL,
@@ -534,6 +634,10 @@ def publish_skill(
 
     resolved_slug = _normalize_slug(slug or source_path.name)
     resolved_version = _normalize_version(version)
+    resolved_category = _normalize_category(category)
+    resolved_status = _normalize_status(status)
+    resolved_tags = _normalize_tags(tags)
+    resolved_install_hint = install_hint.strip() or f"clawlite skill install {resolved_slug}"
 
     hub_root = Path(hub_dir).expanduser().resolve() if hub_dir else (Path.cwd() / "hub" / "marketplace").resolve()
     packages_dir = hub_root / "packages"
@@ -562,6 +666,10 @@ def publish_skill(
         "slug": resolved_slug,
         "version": resolved_version,
         "description": description,
+        "category": resolved_category,
+        "status": resolved_status,
+        "tags": resolved_tags,
+        "install_hint": resolved_install_hint,
         "download_url": download_url,
         "checksum_sha256": checksum,
         "package_file": (
@@ -587,6 +695,10 @@ def publish_skill(
     return {
         "slug": resolved_slug,
         "version": resolved_version,
+        "category": resolved_category,
+        "status": resolved_status,
+        "tags": resolved_tags,
+        "install_hint": resolved_install_hint,
         "package_path": str(package_path),
         "manifest_path": str(target_manifest),
         "checksum_sha256": checksum,

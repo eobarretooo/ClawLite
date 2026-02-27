@@ -18,6 +18,10 @@ Estrutura:
       "slug": "nome-da-skill",
       "version": "1.0.0",
       "description": "Resumo curto",
+      "category": "devtools",
+      "status": "stable",
+      "tags": ["github", "automation"],
+      "install_hint": "clawlite skill install nome-da-skill",
       "download_url": "https://.../packages/nome-da-skill-1.0.0.zip",
       "checksum_sha256": "...",
       "package_file": "packages/nome-da-skill-1.0.0.zip"
@@ -44,6 +48,9 @@ Estrutura:
 
 - `clawlite skill install`
   - Consome índice remoto, valida allowlist/checksum e instala skill.
+
+- `clawlite skill search [query] [--category ...] [--status ...]`
+  - Busca catálogo remoto por termo, categoria e status, incluindo estado de instalação local.
 
 - `clawlite skill update`
   - Atualiza skills instaladas comparando manifesto local com índice remoto.

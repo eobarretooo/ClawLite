@@ -14,6 +14,7 @@ from clawlite.skills.marketplace import (
     publish_skill,
     run_runtime_auto_update,
     schedule_auto_update,
+    search_skills,
     update_skills,
 )
 
@@ -161,6 +162,10 @@ class MarketplaceFlowTests(unittest.TestCase):
                 slug="my-skill",
                 version="2.0.0",
                 description="test publish",
+                category="devtools",
+                status="beta",
+                tags=["automation", "ci"],
+                install_hint="clawlite skill install my-skill",
                 hub_dir=root / "hub" / "marketplace",
                 download_base_url="https://example.com/packages",
             )
@@ -174,6 +179,10 @@ class MarketplaceFlowTests(unittest.TestCase):
             entry = manifest["skills"][0]
             self.assertEqual(entry["slug"], "my-skill")
             self.assertEqual(entry["version"], "2.0.0")
+            self.assertEqual(entry["category"], "devtools")
+            self.assertEqual(entry["status"], "beta")
+            self.assertIn("automation", entry["tags"])
+            self.assertEqual(entry["install_hint"], "clawlite skill install my-skill")
             self.assertEqual(entry["download_url"], "https://example.com/packages/my-skill-2.0.0.zip")
 
             checksum = hashlib.sha256(package_path.read_bytes()).hexdigest()
@@ -370,6 +379,49 @@ class MarketplaceFlowTests(unittest.TestCase):
             self.assertIn("v1", (install_dir / "demo" / "SKILL.md").read_text(encoding="utf-8"))
             installed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(installed_manifest["skills"]["demo"]["version"], "1.0.0")
+
+    def test_search_with_filters_and_installed_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            install_dir = root / "installed"
+            manifest_path = root / "installed.json"
+
+            archive, checksum = self._make_skill_zip(root, "finder", "1.0.0", "# finder")
+            index = self._write_index(
+                root,
+                {
+                    "slug": "finder",
+                    "version": "1.0.0",
+                    "description": "Busca e descoberta",
+                    "category": "productivity",
+                    "status": "stable",
+                    "tags": ["search", "discovery"],
+                    "install_hint": "clawlite skill install finder",
+                    "download_url": archive.as_uri(),
+                    "checksum_sha256": checksum,
+                },
+            )
+
+            install_skill(
+                "finder",
+                index_url=index.as_uri(),
+                install_dir=install_dir,
+                manifest_path=manifest_path,
+                allow_file_urls=True,
+            )
+
+            rows = search_skills(
+                index_url=index.as_uri(),
+                query="busca",
+                category="productivity",
+                status="stable",
+                manifest_path=manifest_path,
+                allow_file_urls=True,
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["slug"], "finder")
+            self.assertTrue(rows[0]["installed"])
+            self.assertEqual(rows[0]["install_hint"], "clawlite skill install finder")
 
     def test_runtime_auto_update_payload_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

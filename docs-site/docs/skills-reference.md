@@ -1,26 +1,77 @@
-# Skills disponíveis
+# Skills marketplace (install / publish / search)
 
-## Exemplos rápidos
+## Buscar skills com filtros
 
 ```bash
-clawlite run "use github skill para resumir issues abertas"
-clawlite run "use web-search para pesquisar melhores práticas de websocket"
-clawlite run "use cron para agendar briefing diário às 8h"
+# listar tudo
+clawlite skill search
+
+# buscar por termo
+clawlite skill search github
+
+# filtrar por categoria e status
+clawlite skill search --category devtools --status stable
 ```
 
-## Skills principais
+### Filtros suportados
 
-- `coding-agent`, `github`, `web-search`, `web-fetch`, `browser`
-- `gmail`, `google-calendar`, `google-drive`, `notion`, `obsidian`
-- `discord`, `slack`, `twitter`, `threads`
-- `docker`, `ssh`, `firebase`, `supabase`, `aws`, `vercel`, `tailscale`
-- `ollama`, `image-gen`, `whisper`, `voice-call`
-- `weather`, `pdf`, `rss`, `youtube`, `maps`, `switchbot`, `cron`, `healthcheck`
+- `query` (termo livre em slug/descrição/tags)
+- `--category <categoria>`
+- `--status <stable|beta|experimental|deprecated>`
 
-## Marketplace CLI
+## Instalar skills
 
 ```bash
 clawlite skill install <slug>
-clawlite skill update
-clawlite skill publish skills/<slug> --version 1.0.0
+```
+
+Após instalar, o CLI já mostra:
+
+- versão instalada
+- caminho local
+- próximo passo (`clawlite run "use <slug> para ..."`)
+
+## Publicar skills com metadados completos
+
+```bash
+clawlite skill publish skills/<slug> \
+  --version 1.0.0 \
+  --description "Resumo curto" \
+  --category devtools \
+  --status stable \
+  --tag github \
+  --tag automation \
+  --install-hint "clawlite skill install <slug>"
+```
+
+Metadados publicados no manifesto:
+
+- `slug`
+- `version`
+- `description`
+- `category`
+- `status`
+- `tags`
+- `install_hint`
+- `download_url`
+- `checksum_sha256`
+
+## Categorias sugeridas
+
+- `devtools`
+- `communication`
+- `productivity`
+- `infra`
+- `data`
+- `media`
+- `general`
+
+## Exemplo de busca orientada por status
+
+```bash
+# skills prontas para produção
+clawlite skill search --status stable
+
+# skills em testes
+clawlite skill search --status beta
 ```

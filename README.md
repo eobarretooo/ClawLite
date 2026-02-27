@@ -82,7 +82,9 @@ clawlite memory compact --max-daily-files 21
 ## Skills e marketplace
 
 - Catálogo local: 37 skills (`clawlite/skills/registry.py`)
-- Install/update/publish via CLI
+- Install/update/publish/search via CLI
+- `clawlite skill search --category <...> --status <...>` para descobrir skills
+- Publicação com metadados completos (`category`, `status`, `tags`, `install_hint`)
 - Auto-update com:
   - allowlist de hosts
   - checksum SHA-256

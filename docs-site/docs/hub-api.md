@@ -22,6 +22,10 @@ Formato:
       "slug": "find-skills",
       "version": "1.0.0",
       "description": "Descoberta de skills",
+      "category": "productivity",
+      "status": "stable",
+      "tags": ["discovery", "marketplace"],
+      "install_hint": "clawlite skill install find-skills",
       "download_url": "https://.../packages/find-skills-1.0.0.zip",
       "checksum_sha256": "<sha256>",
       "package_file": "packages/find-skills-1.0.0.zip"
@@ -39,9 +43,10 @@ Formato:
 ## CLI de Marketplace
 
 ```bash
+clawlite skill search [query] --category <categoria> --status <status>
 clawlite skill install <slug>
 clawlite skill update
-clawlite skill publish skills/<slug> --version 1.0.0
+clawlite skill publish skills/<slug> --version 1.0.0 --category devtools --status stable --tag automation
 ```
 
 ## Segurança da instalação

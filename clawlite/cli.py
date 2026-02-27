@@ -58,6 +58,7 @@ from clawlite.skills.marketplace import (
     install_skill,
     publish_skill,
     schedule_auto_update,
+    search_skills,
     update_skills,
 )
 
@@ -255,9 +256,22 @@ def main() -> None:
     sk_publish.add_argument("--version", required=True)
     sk_publish.add_argument("--slug", default=None)
     sk_publish.add_argument("--description", default="")
+    sk_publish.add_argument("--category", default="general")
+    sk_publish.add_argument("--status", default="stable", choices=["stable", "beta", "experimental", "deprecated"])
+    sk_publish.add_argument("--tag", action="append", default=[])
+    sk_publish.add_argument("--install-hint", default="")
     sk_publish.add_argument("--hub-dir", default=None)
     sk_publish.add_argument("--manifest-path", default=None)
     sk_publish.add_argument("--download-base-url", default=DEFAULT_DOWNLOAD_BASE_URL)
+
+    sk_search = sk_sub.add_parser("search")
+    sk_search.add_argument("query", nargs="?", default="")
+    sk_search.add_argument("--index-url", default=DEFAULT_INDEX_URL)
+    sk_search.add_argument("--allow-host", action="append", default=[])
+    sk_search.add_argument("--manifest-path", default=None)
+    sk_search.add_argument("--category", default=None)
+    sk_search.add_argument("--status", default=None, choices=["stable", "beta", "experimental", "deprecated"])
+    sk_search.add_argument("--allow-file-urls", action="store_true")
 
     sk_autoupdate = sk_sub.add_parser("auto-update")
     sk_autoupdate.add_argument("--index-url", default=DEFAULT_INDEX_URL)
@@ -357,6 +371,8 @@ def main() -> None:
                 )
                 print(f"✅ skill instalada: {result['slug']}@{result['version']}")
                 print(f"caminho: {result['install_path']}")
+                print(f"próximo passo: clawlite run \"use {result['slug']} para ...\"")
+                print("dica: use `clawlite skill search` para explorar catálogo com filtros")
                 return
 
             if args.scmd == "update":
@@ -391,13 +407,44 @@ def main() -> None:
                     version=args.version,
                     slug=args.slug,
                     description=args.description,
+                    category=args.category,
+                    status=args.status,
+                    tags=args.tag,
+                    install_hint=args.install_hint,
                     hub_dir=args.hub_dir,
                     manifest_path=args.manifest_path,
                     download_base_url=args.download_base_url,
                 )
                 print(f"📦 skill publicada: {result['slug']}@{result['version']}")
+                print(f"status/categoria: {result['status']} · {result['category']}")
+                print(f"instalação: {result['install_hint']}")
                 print(f"pacote: {result['package_path']}")
                 print(f"manifesto: {result['manifest_path']}")
+                return
+
+            if args.scmd == "search":
+                rows = search_skills(
+                    index_url=args.index_url,
+                    allow_hosts=args.allow_host,
+                    manifest_path=args.manifest_path,
+                    allow_file_urls=args.allow_file_urls,
+                    query=args.query,
+                    category=args.category,
+                    status=args.status,
+                )
+                if not rows:
+                    print("ℹ️ Nenhuma skill encontrada para os filtros informados.")
+                    return
+                for row in rows:
+                    local_marker = "✅ instalada" if row["installed"] else "⬇️ não instalada"
+                    blocked = f" ⛔{row['blocked_reason']}" if row.get("blocked_reason") else ""
+                    tags = f" [{', '.join(row['tags'])}]" if row.get("tags") else ""
+                    print(
+                        f"- {row['slug']}@{row['version']} ({row['status']}/{row['category']}) {local_marker}{blocked}{tags}"
+                    )
+                    print(f"  {row['description']}")
+                    print(f"  instalação: {row['install_hint']}")
+                print(f"\nTotal: {len(rows)} skill(s)")
                 return
 
             if args.scmd == "auto-update":
