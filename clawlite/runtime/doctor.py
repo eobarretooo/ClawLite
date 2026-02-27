@@ -40,6 +40,19 @@ def run_doctor() -> str:
     online = _check_connectivity()
     lines.append(f"connectivity.optional: {'ok' if online else 'offline/blocked'}")
 
+    # dependências opcionais do gateway (podem faltar em Termux sem Rust)
+    try:
+        import fastapi  # type: ignore
+        import uvicorn  # type: ignore
+
+        gateway_deps = "ok"
+    except Exception:
+        gateway_deps = "optional-missing"
+        warnings.append(
+            "Dependências do gateway ausentes (fastapi/uvicorn). CLI funciona; para gateway rode: pkg install rust clang && ~/.clawlite/venv/bin/pip install fastapi uvicorn"
+        )
+    lines.append(f"gateway.deps: {gateway_deps}")
+
     model = cfg.get("model", "")
     if not model:
         warnings.append("Modelo padrão não definido.")
