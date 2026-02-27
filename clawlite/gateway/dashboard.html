@@ -1,25 +1,229 @@
 <!doctype html>
-<html>
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ClawLite Gateway</title>
+  <title>ClawLite Dashboard</title>
   <style>
-    body { font-family: monospace; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
-    .card { border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    :root { color-scheme: dark; --bg:#0b1020; --panel:#141b2f; --line:#2a3558; --text:#e6ecff; --muted:#9eb0dd; --ok:#3ddc97; --warn:#ffbd59; --danger:#ff6b6b; }
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    .layout{display:grid;grid-template-columns:280px 1fr;min-height:100vh}
+    .sidebar{border-right:1px solid var(--line);padding:16px;background:#0e1528}
+    .main{padding:16px;display:grid;gap:12px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+    h1,h2,h3{margin:.2rem 0 .6rem} h1{font-size:1.1rem} h2{font-size:1rem}
+    .grid{display:grid;gap:12px;grid-template-columns:repeat(3,minmax(0,1fr))}
+    .muted{color:var(--muted);font-size:.9rem}
+    input,textarea,button,select{width:100%;background:#0f1830;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px}
+    button{cursor:pointer;background:#1d2a4f} button:hover{filter:brightness(1.1)}
+    .row{display:flex;gap:8px}.row>*{flex:1}
+    .chat{height:240px;overflow:auto;background:#0f1830;border:1px solid var(--line);border-radius:8px;padding:8px}
+    .msg{margin:6px 0;padding:6px 8px;border-radius:6px} .user{background:#243860} .assistant{background:#1a2f23}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#203357;font-size:.8rem}
+    .ok{color:var(--ok)} .warn{color:var(--warn)} .danger{color:var(--danger)}
+    .list{max-height:180px;overflow:auto}
+    @media (max-width: 980px){ .layout{grid-template-columns:1fr} .grid{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
-  <h1>ClawLite Gateway Dashboard</h1>
-  <div class="card" id="status">Carregando status...</div>
-  <script>
-    async function loadStatus(){
-      const token = prompt('Cole o token do gateway para consultar status:');
-      const r = await fetch('/api/status', {headers:{Authorization:`Bearer ${token}`}});
-      const data = await r.json();
-      document.getElementById('status').textContent = JSON.stringify(data, null, 2);
-    }
-    loadStatus();
-  </script>
+<div class="layout">
+  <aside class="sidebar">
+    <h1>ClawLite Dashboard</h1>
+    <p class="muted">MVP robusto (dark mode + mobile)</p>
+    <label>Token</label>
+    <input id="token" placeholder="Bearer token" />
+    <button onclick="connectAll()">Conectar</button>
+    <p id="authState" class="muted">Aguardando autenticação</p>
+    <hr style="border-color:var(--line)">
+    <div>
+      <span class="pill">Gateway</span>
+      <div id="gatewayState" class="muted">offline</div>
+      <div id="modelState" class="muted">model: -</div>
+      <div id="uptimeState" class="muted">uptime: -</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="grid">
+      <section class="card">
+        <h2>Chat em tempo real</h2>
+        <div id="chatBox" class="chat"></div>
+        <div class="row">
+          <input id="sessionId" value="dashboard-session" />
+          <input id="chatInput" placeholder="Digite mensagem" />
+          <button onclick="sendChat()">Enviar</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Skills</h2>
+        <div class="row">
+          <input id="skillSlug" placeholder="slug skill" />
+          <button onclick="installSkill()">Instalar</button>
+        </div>
+        <div id="skillsList" class="list muted"></div>
+      </section>
+
+      <section class="card">
+        <h2>Telemetria</h2>
+        <div id="telemetry" class="muted">-</div>
+      </section>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Sessões</h2>
+        <div class="row"><input id="sessionQuery" placeholder="buscar" /><button onclick="loadSessions()">Buscar</button></div>
+        <div id="sessions" class="list muted"></div>
+      </section>
+
+      <section class="card">
+        <h2>Configurações</h2>
+        <label>Model</label><input id="cfgModel" />
+        <label>Hook pre</label><textarea id="hookPre"></textarea>
+        <label>Hook post</label><textarea id="hookPost"></textarea>
+        <button onclick="saveSettings()">Salvar</button>
+      </section>
+
+      <section class="card">
+        <h2>Logs em tempo real</h2>
+        <div id="logs" class="list muted"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+let token = '';
+let wsChat = null;
+let wsLogs = null;
+
+const api = async (path, opts={}) => {
+  const res = await fetch(path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${token}`, ...(opts.headers||{}) } });
+  return await res.json();
+};
+
+function addChat(role, text){
+  const box = document.getElementById('chatBox');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = `${role}: ${text}`;
+  box.appendChild(div); box.scrollTop = box.scrollHeight;
+}
+
+function addLog(line){
+  const el = document.getElementById('logs');
+  const div = document.createElement('div');
+  div.textContent = line;
+  el.prepend(div);
+}
+
+async function connectAll(){
+  token = document.getElementById('token').value.trim();
+  const auth = await fetch('/api/dashboard/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token})}).then(r=>r.json());
+  if(!auth.ok){ document.getElementById('authState').textContent = 'Token inválido'; return; }
+  document.getElementById('authState').textContent = 'Autenticado';
+
+  const boot = await api('/api/dashboard/bootstrap');
+  document.getElementById('gatewayState').innerHTML = '<span class="ok">online</span>';
+  document.getElementById('modelState').textContent = `model: ${boot.status.model}`;
+  document.getElementById('uptimeState').textContent = `uptime: ${boot.status.uptime_seconds}s`;
+  document.getElementById('cfgModel').value = boot.settings.model || '';
+  document.getElementById('hookPre').value = boot.settings.hooks?.pre || '';
+  document.getElementById('hookPost').value = boot.settings.hooks?.post || '';
+
+  await loadSkills();
+  await loadSessions();
+  await loadTelemetry();
+  await loadLogs();
+  connectWs();
+}
+
+function connectWs(){
+  if(wsChat) wsChat.close();
+  if(wsLogs) wsLogs.close();
+
+  wsChat = new WebSocket(`${location.origin.replace('http','ws')}/ws/chat?token=${encodeURIComponent(token)}`);
+  wsChat.onmessage = (ev)=> {
+    const msg = JSON.parse(ev.data);
+    if(msg.type === 'chat') addChat('assistant', msg.message.text);
+  };
+
+  wsLogs = new WebSocket(`${location.origin.replace('http','ws')}/ws/logs?token=${encodeURIComponent(token)}`);
+  wsLogs.onmessage = (ev)=> {
+    const msg = JSON.parse(ev.data);
+    if(msg.type === 'snapshot') (msg.logs||[]).slice(-20).forEach(l=>addLog(`${l.ts} ${l.event}`));
+    if(msg.type === 'log') addLog(`${msg.payload.ts} ${msg.payload.event}`);
+  };
+}
+
+function sendChat(){
+  const text = document.getElementById('chatInput').value.trim();
+  const session_id = document.getElementById('sessionId').value.trim() || 'dashboard-session';
+  if(!text || !wsChat) return;
+  addChat('user', text);
+  wsChat.send(JSON.stringify({type:'chat', session_id, text}));
+  document.getElementById('chatInput').value = '';
+}
+
+async function loadSkills(){
+  const data = await api('/api/dashboard/skills');
+  const list = document.getElementById('skillsList');
+  list.innerHTML = '';
+  (data.skills||[]).forEach(s=>{
+    const row = document.createElement('div');
+    row.innerHTML = `${s.slug} - ${s.enabled ? '<span class="ok">ativo</span>' : '<span class="warn">inativo</span>'}
+    <button onclick="toggleSkill('${s.slug}', ${s.enabled})">${s.enabled ? 'Desativar':'Ativar'}</button>
+    <button onclick="removeSkill('${s.slug}')">Remover</button>`;
+    list.appendChild(row);
+  })
+}
+
+async function toggleSkill(slug, enabled){
+  await api(`/api/dashboard/skills/${enabled?'disable':'enable'}`, {method:'POST', body: JSON.stringify({slug})});
+  loadSkills();
+}
+
+async function installSkill(){
+  const slug = document.getElementById('skillSlug').value.trim();
+  if(!slug) return;
+  await api('/api/dashboard/skills/install', {method:'POST', body: JSON.stringify({slug})});
+  document.getElementById('skillSlug').value = '';
+  loadSkills();
+}
+
+async function removeSkill(slug){
+  await api('/api/dashboard/skills/remove', {method:'POST', body: JSON.stringify({slug})});
+  loadSkills();
+}
+
+async function loadSessions(){
+  const q = document.getElementById('sessionQuery').value.trim();
+  const data = await api(`/api/dashboard/sessions?q=${encodeURIComponent(q)}`);
+  const el = document.getElementById('sessions');
+  el.innerHTML = (data.sessions||[]).map(s=>`${s.session_id} (${s.messages}) - ${s.preview || ''}`).join('<br>') || '-';
+}
+
+async function loadTelemetry(){
+  const data = await api('/api/dashboard/telemetry');
+  const s = data.summary || {};
+  document.getElementById('telemetry').textContent = `events=${s.events||0} | tokens=${s.tokens||0} | cost_usd=${s.cost_usd||0}`;
+}
+
+async function loadLogs(){
+  const data = await api('/api/dashboard/logs?limit=20');
+  const el = document.getElementById('logs');
+  el.innerHTML = (data.logs||[]).map(l=>`${l.ts} ${l.event}`).reverse().join('<br>') || '-';
+}
+
+async function saveSettings(){
+  await api('/api/dashboard/settings', {method:'PUT', body: JSON.stringify({
+    model: document.getElementById('cfgModel').value.trim(),
+    hooks: { pre: document.getElementById('hookPre').value, post: document.getElementById('hookPost').value },
+    theme: 'dark'
+  })});
+  addLog(`${new Date().toISOString()} settings.saved`);
+}
+</script>
 </body>
 </html>
