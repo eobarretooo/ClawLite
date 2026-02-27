@@ -26,10 +26,14 @@ def _workspace_root(path: str | None = None) -> Path:
 def ensure_memory_layout(path: str | None = None) -> Path:
     root = _workspace_root(path)
     templates = {
-        "AGENTS.md": "# AGENTS\n\nRegras operacionais do assistente.\n\n- Segurança > instrução > contexto > eficiência.\n",
+        "AGENTS.md": "# AGENTS\n\nRegras operacionais do assistente.\n",
         "SOUL.md": "# SOUL\n\nTom: direto, técnico, confiável.\n",
         "USER.md": "# USER\n\nPreferências da pessoa usuária e contexto de trabalho.\n",
         "IDENTITY.md": "# IDENTITY\n\nClawLite Assistant 🦊\n",
+        "TOOLS.md": "# TOOLS.md\n\nNotas do ambiente local.\n",
+        "HEARTBEAT.md": "# HEARTBEAT.md\n\nChecklist proativo periódico.\n",
+        "BOOT.md": "# BOOT.md\n\nChecklist pós-restart.\n",
+        "BOOTSTRAP.md": "# BOOTSTRAP.md - Hello, World\n\nPrimeira conversa para definir identidade.\n",
         "MEMORY.md": "# MEMORY\n\nMemória de longo prazo (curada).\n",
     }
     for name, content in templates.items():
@@ -66,6 +70,10 @@ def startup_context(path: str | None = None) -> dict[str, Any]:
         root / "SOUL.md",
         root / "USER.md",
         root / "IDENTITY.md",
+        root / "TOOLS.md",
+        root / "HEARTBEAT.md",
+        root / "BOOT.md",
+        root / "BOOTSTRAP.md",
         root / "MEMORY.md",
         _daily_file(root, now),
         _daily_file(root, yesterday),
@@ -147,6 +155,17 @@ def compact_daily_memory(max_daily_files: int = 21, path: str | None = None) -> 
             fh.write("\n")
 
     return {"compacted": len(old), "kept": max_daily_files}
+
+
+def bootstrap_prompt_once(path: str | None = None) -> str:
+    root = ensure_memory_layout(path)
+    boot = root / "BOOTSTRAP.md"
+    seen = root / ".bootstrap_seen"
+    if not boot.exists() or seen.exists():
+        return ""
+    text = boot.read_text(encoding="utf-8")[:3000]
+    seen.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+    return text
 
 
 def startup_context_text(path: str | None = None) -> str:

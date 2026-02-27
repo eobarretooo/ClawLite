@@ -17,6 +17,7 @@ from clawlite.runtime.learning import record_task, get_retry_strategy
 from clawlite.runtime.preferences import build_preference_prefix
 from clawlite.runtime.session_memory import (
     append_daily_log,
+    bootstrap_prompt_once,
     compact_daily_memory,
     semantic_search_memory,
     startup_context_text,
@@ -120,12 +121,15 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
     base_system = build_system_prompt()
     prefix = build_preference_prefix()
     startup_ctx = startup_context_text()
+    bootstrap_txt = bootstrap_prompt_once()
     mem_hits = semantic_search_memory(prompt, max_results=3)
     mem_snippets = "\n".join([f"- {h.snippet}" for h in mem_hits])
 
     context_prefix_parts = []
     if base_system.strip():
         context_prefix_parts.append("[System Prompt]\n" + base_system[:3200])
+    if bootstrap_txt.strip():
+        context_prefix_parts.append("[Bootstrap Inicial]\n" + bootstrap_txt[:2000])
     if startup_ctx.strip():
         context_prefix_parts.append("[Contexto de Sessão]\n" + startup_ctx[:2200])
     if mem_snippets.strip():
