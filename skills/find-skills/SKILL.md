@@ -1,12 +1,10 @@
 ---
 name: find-skills
-description: Descobrir e instalar novas skills
+description: Helps users discover and install agent skills when they ask questions like
 ---
 
 # find-skills
 
-Categorias: meta
+Port da skill para ClawLite (Linux/Termux).
 
-Compatível com Linux/Termux no ClawLite.
-
-
+Origem: /root/projetos/openclaw-skills/skills/jimliuxinghai/find-skills/SKILL.md
