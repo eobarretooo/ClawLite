@@ -4,6 +4,14 @@ import argparse
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
+from clawlite.runtime.session_memory import (
+    compact_daily_memory,
+    ensure_memory_layout,
+    memory_hits_to_json,
+    save_session_summary,
+    semantic_search_memory,
+    startup_context,
+)
 from clawlite.runtime.conversation_cron import (
     add_cron_job,
     format_cron_jobs_table,
@@ -78,6 +86,26 @@ def main() -> None:
     ma.add_argument("text")
     ms = msub.add_parser("search")
     ms.add_argument("query")
+
+    mm_init = msub.add_parser("init")
+    mm_init.add_argument("--path", default=None)
+
+    mm_ctx = msub.add_parser("context")
+    mm_ctx.add_argument("--path", default=None)
+
+    mm_sem = msub.add_parser("semantic-search")
+    mm_sem.add_argument("query")
+    mm_sem.add_argument("--max-results", type=int, default=5)
+    mm_sem.add_argument("--path", default=None)
+
+    mm_compact = msub.add_parser("compact")
+    mm_compact.add_argument("--max-daily-files", type=int, default=21)
+    mm_compact.add_argument("--path", default=None)
+
+    mm_sum = msub.add_parser("save-session")
+    mm_sum.add_argument("summary")
+    mm_sum.add_argument("--not-important", action="store_true")
+    mm_sum.add_argument("--path", default=None)
 
     sub.add_parser("doctor")
     sub.add_parser("status")
@@ -557,6 +585,29 @@ def main() -> None:
         if args.mcmd == "search":
             for i in search_notes(args.query):
                 print("-", i)
+            return
+        if args.mcmd == "init":
+            root = ensure_memory_layout(args.path)
+            print(f"✅ workspace de memória pronto: {root}")
+            return
+        if args.mcmd == "context":
+            ctx = startup_context(args.path)
+            print("root:", ctx["root"])
+            print("files_loaded:")
+            for f in ctx["files_loaded"]:
+                print("-", f)
+            return
+        if args.mcmd == "semantic-search":
+            hits = semantic_search_memory(args.query, max_results=args.max_results, path=args.path)
+            print(memory_hits_to_json(hits))
+            return
+        if args.mcmd == "compact":
+            r = compact_daily_memory(max_daily_files=args.max_daily_files, path=args.path)
+            print(f"✅ compactado={r['compacted']} mantidos={r['kept']}")
+            return
+        if args.mcmd == "save-session":
+            save_session_summary(args.summary, important=not args.not_important, path=args.path)
+            print("✅ resumo de sessão salvo")
             return
 
     p.print_help()

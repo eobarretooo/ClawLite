@@ -9,6 +9,7 @@ from rich.progress import BarColumn, Progress, TextColumn
 from rich.syntax import Syntax
 
 from clawlite.config.settings import load_config, save_config
+from clawlite.runtime.session_memory import ensure_memory_layout
 from clawlite.configure_menu import (
     _ensure_defaults,
     _section_channels,
@@ -25,6 +26,7 @@ console = Console()
 
 
 def run_onboarding() -> None:
+    ensure_memory_layout()
     cfg = load_config()
     _ensure_defaults(cfg)
 

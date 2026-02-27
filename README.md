@@ -63,6 +63,25 @@ clawlite skill install find-skills
 clawlite skill update
 ```
 
+## Memória persistente entre sessões
+
+ClawLite agora replica a estrutura de memória de sessão em workspace próprio:
+
+- `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `MEMORY.md`
+- logs diários automáticos em `memory/YYYY-MM-DD.md`
+- busca semântica local por contexto relevante
+- compactação automática de histórico diário para evitar crescimento sem controle
+
+Comandos úteis:
+
+```bash
+clawlite memory init
+clawlite memory context
+clawlite memory semantic-search "preferências do usuário"
+clawlite memory save-session "Resumo da sessão"
+clawlite memory compact --max-daily-files 21
+```
+
 ## Learning / Stats
 
 A telemetria local de aprendizado pode ser consultada via CLI:

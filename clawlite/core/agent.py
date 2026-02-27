@@ -13,6 +13,12 @@ from clawlite.runtime.offline import (
 )
 from clawlite.runtime.learning import record_task, get_retry_strategy
 from clawlite.runtime.preferences import build_preference_prefix
+from clawlite.runtime.session_memory import (
+    append_daily_log,
+    compact_daily_memory,
+    semantic_search_memory,
+    startup_context_text,
+)
 
 
 def run_task_with_meta(prompt: str) -> tuple[str, dict[str, Any]]:
@@ -80,17 +86,29 @@ def run_task_with_meta(prompt: str) -> tuple[str, dict[str, Any]]:
 
 
 def run_task(prompt: str) -> str:
-    output, meta = run_task_with_meta(prompt)
-    if meta.get("mode") == "offline-fallback":
-        return f"[offline:{meta.get('reason')} -> {meta.get('model')}]\n{output}"
-    return output
+    return run_task_with_learning(prompt)
 
 
 def run_task_with_learning(prompt: str, skill: str = "") -> str:
     """Executa task com aprendizado contínuo: preferências, histórico e auto-retry."""
-    # Injetar preferências
+    # Injetar preferências + contexto de memória de sessão
     prefix = build_preference_prefix()
-    enriched_prompt = f"{prefix}\n\n{prompt}" if prefix else prompt
+    startup_ctx = startup_context_text()
+    mem_hits = semantic_search_memory(prompt, max_results=3)
+    mem_snippets = "\n".join([f"- {h.snippet}" for h in mem_hits])
+
+    context_prefix_parts = []
+    if startup_ctx.strip():
+        context_prefix_parts.append("[Contexto de Sessão]\n" + startup_ctx[:2200])
+    if mem_snippets.strip():
+        context_prefix_parts.append("[Memória Relevante]\n" + mem_snippets[:1200])
+    if prefix.strip():
+        context_prefix_parts.append(prefix)
+
+    context_prefix = "\n\n".join(context_prefix_parts).strip()
+    enriched_prompt = f"{context_prefix}\n\n[Pedido]\n{prompt}" if context_prefix else prompt
+
+    append_daily_log(f"Task iniciada (skill={skill or 'n/a'}): {prompt[:220]}", category="task-start")
 
     attempt = 0
     current_prompt = enriched_prompt
@@ -114,7 +132,13 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
             skill=skill,
         )
 
+        append_daily_log(
+            f"Task {result} (tentativa={attempt + 1}, skill={skill or 'n/a'}, duração={duration:.2f}s): {prompt[:140]}",
+            category="task-result",
+        )
+
         if not is_error:
+            compact_daily_memory()
             if meta.get("mode") == "offline-fallback":
                 return f"[offline:{meta.get('reason')} -> {meta.get('model')}]\n{output}"
             return output
@@ -126,8 +150,9 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
         retry_prompt = get_retry_strategy(prompt, attempt)
         if retry_prompt is None:
             break
-        current_prompt = f"{prefix}\n\n{retry_prompt}" if prefix else retry_prompt
+        current_prompt = f"{context_prefix}\n\n{retry_prompt}" if context_prefix else retry_prompt
 
+    compact_daily_memory()
     if last_meta.get("mode") == "offline-fallback":
         return f"[offline:{last_meta.get('reason')} -> {last_meta.get('model')}]\n{last_output}"
     return last_output

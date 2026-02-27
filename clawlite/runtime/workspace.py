@@ -6,6 +6,7 @@ TEMPLATES = {
     "AGENTS.md": "# AGENTS\n\nRegras operacionais do agente neste workspace.\n",
     "SOUL.md": "# SOUL\n\nTom e personalidade do assistente.\n",
     "USER.md": "# USER\n\nPreferências da pessoa usuária.\n",
+    "IDENTITY.md": "# IDENTITY\n\nNome, assinatura e estilo do assistente.\n",
     "TOOLS.md": "# TOOLS\n\nNotas sobre ferramentas locais e integrações.\n",
     "MEMORY.md": "# MEMORY\n\nMemória de longo prazo do assistente.\n",
 }
