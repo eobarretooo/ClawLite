@@ -44,8 +44,8 @@ except Exception:
     console = None
 
 
-def run(cmd: list[str], desc: str):
-    p = subprocess.run(cmd, capture_output=True, text=True)
+def run(cmd: list[str], desc: str, env: dict | None = None):
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or p.stdout or f"Falha em {desc}").strip())
 
@@ -87,7 +87,13 @@ def install_deps():
     if IS_TERMUX:
         run(["pkg", "update", "-y"], "pkg update")
         run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install deps")
-    run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+        env = os.environ.copy()
+        env["ANDROID_API_LEVEL"] = env.get("ANDROID_API_LEVEL", "24")
+        run(PIP + ["install", "--upgrade", "rich", "questionary"], "pip base", env=env)
+        run(PIP + ["install", "--upgrade", "pydantic==1.10.21", "--only-binary=:all:"], "pip pydantic v1", env=env)
+        run(PIP + ["install", "--upgrade", "fastapi==0.100.1", "uvicorn", "--only-binary=:all:"], "pip fastapi/uvicorn termux", env=env)
+    else:
+        run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
 
 
 def install_package():
@@ -123,11 +129,17 @@ def rich_flow():
     ) as pb:
         t = pb.add_task("deps", total=100)
         if IS_TERMUX:
+            env = os.environ.copy()
+            env["ANDROID_API_LEVEL"] = env.get("ANDROID_API_LEVEL", "24")
             run(["pkg", "update", "-y"], "pkg update")
-            pb.advance(t, 40)
+            pb.advance(t, 25)
             run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install")
-            pb.advance(t, 40)
-            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+            pb.advance(t, 25)
+            run(PIP + ["install", "--upgrade", "rich", "questionary"], "pip base", env=env)
+            pb.advance(t, 15)
+            run(PIP + ["install", "--upgrade", "pydantic==1.10.21", "--only-binary=:all:"], "pip pydantic v1", env=env)
+            pb.advance(t, 15)
+            run(PIP + ["install", "--upgrade", "fastapi==0.100.1", "uvicorn", "--only-binary=:all:"], "pip fastapi/uvicorn termux", env=env)
             pb.advance(t, 20)
         else:
             run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
