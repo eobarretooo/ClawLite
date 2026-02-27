@@ -1,12 +1,13 @@
 # ClawLite
 
 <p align="center">
-  <img src="assets/mascot.svg" alt="Mascote ClawLite" width="180"/>
+  <img src="assets/logo.svg" alt="Logo oficial ClawLite" width="180"/>
 </p>
 
 > O assistente de IA open source para Linux + Termux, com gateway nativo, skills modulares e operação portátil.
 
 [![Docs](https://img.shields.io/badge/docs-online-7c3aed?style=for-the-badge)](https://eobarretooo.github.io/ClawLite/)
+[![Site](https://img.shields.io/badge/site-vercel-000000?style=for-the-badge&logo=vercel)](https://clawlite-site.vercel.app)
 [![License](https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge)](https://github.com/eobarretooo/ClawLite)
 
@@ -160,6 +161,7 @@ clawlite cron run --all
 
 - PT-BR: https://eobarretooo.github.io/ClawLite/
 - EN: https://eobarretooo.github.io/ClawLite/en/
+- Site oficial (Vercel): https://clawlite-site.vercel.app
 - Guia de configuração UX: `docs/CONFIGURE_UX_PTBR.md`
 - Troubleshooting técnico: `docs/TROUBLESHOOTING.md`
 

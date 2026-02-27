@@ -24,6 +24,8 @@ slug: /
   <img src="/ClawLite/img/mascot.svg" alt="Mascote ClawLite" width="180" />
 </p>
 
+> Site oficial: https://clawlite-site.vercel.app
+
 ## O que há no estado atual
 
 - Configure estilo OpenClaw + onboarding wizard guiado
