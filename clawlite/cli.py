@@ -3,6 +3,9 @@ import argparse
 import platform
 import shutil
 import sys
+
+from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
+from clawlite.configure_menu import run_configure_menu
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
 from clawlite.onboarding import run_onboarding
@@ -34,10 +37,19 @@ def main() -> None:
 
     sub.add_parser("doctor")
     sub.add_parser("onboarding")
+    sub.add_parser("configure")
 
     gw = sub.add_parser("gateway")
     gw.add_argument("--host", default=None)
     gw.add_argument("--port", type=int, default=None)
+
+    auth = sub.add_parser("auth")
+    auth_sub = auth.add_subparsers(dest="acmd")
+    login = auth_sub.add_parser("login")
+    login.add_argument("provider", choices=list(PROVIDERS.keys()))
+    auth_sub.add_parser("status")
+    logout = auth_sub.add_parser("logout")
+    logout.add_argument("provider", choices=list(PROVIDERS.keys()))
 
     args = p.parse_args()
 
@@ -49,9 +61,26 @@ def main() -> None:
     if args.cmd == "onboarding":
         run_onboarding()
         return
+    if args.cmd == "configure":
+        run_configure_menu()
+        return
     if args.cmd == "gateway":
         run_gateway(args.host, args.port)
         return
+    if args.cmd == "auth":
+        if args.acmd == "login":
+            ok, msg = auth_login(args.provider)
+            print(("✅ " if ok else "❌ ") + msg)
+            return
+        if args.acmd == "status":
+            for row in auth_status():
+                print(f"- {row['provider']}: {'logged-in' if row['logged_in'] else 'not logged'}")
+            return
+        if args.acmd == "logout":
+            done = auth_logout(args.provider)
+            print("✅ logout" if done else "ℹ️ already logged out")
+            return
+
     if args.cmd == "memory":
         if args.mcmd == "add":
             add_note(args.text)
