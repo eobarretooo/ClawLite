@@ -15,8 +15,10 @@
 - **Linux + Termux first** (ARM e x86)
 - **Instalação em 1 comando**
 - **Gateway WebSocket** com autenticação por token
-- **Menu de configuração interativo** (`clawlite configure`)
-- **Onboarding guiado** (`clawlite onboarding`)
+- **Menu de configuração interativo** (`clawlite configure`) com setas, checkboxes e preview
+- **Onboarding guiado** (`clawlite onboarding`) em wizard por etapas + barra de progresso
+- **Diagnóstico amigável** (`clawlite doctor`) com dependências e validações
+- **Status local de runtime** (`clawlite status`) para gateway/workers/cron/monitor
 - **Auth para provedores de IA** (`clawlite auth login ...`)
 - **Ecossistema de skills** em expansão contínua
 - **Marketplace de skills** com índice remoto, checksum e allowlist de hosts
@@ -31,6 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/i
 
 ```bash
 clawlite doctor
+clawlite status
 clawlite onboarding
 clawlite configure
 clawlite auth status
