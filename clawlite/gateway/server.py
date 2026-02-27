@@ -393,11 +393,18 @@ async def _handle_chat_message(session_id: str, text: str) -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
+        "status": "ok",
         "ok": True,
         "service": "clawlite-gateway",
         "uptime_seconds": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
         "connections": len(connections) + len(chat_connections) + len(log_connections),
     }
+
+
+@app.get("/")
+def root() -> HTMLResponse:
+    html = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
+    return HTMLResponse(html)
 
 
 @app.get("/dashboard")

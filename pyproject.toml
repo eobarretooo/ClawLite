@@ -16,3 +16,6 @@ clawlite = "clawlite.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["clawlite*"]
+
+[tool.setuptools.package-data]
+clawlite = ["gateway/dashboard.html"]
