@@ -45,17 +45,19 @@ try:
 except Exception:
     console = None
 
+# alive-progress/halo podem gerar glitches em alguns terminais (Termux/loggers).
+# Mantemos import para compatibilidade, mas desativamos por padrão para estabilidade.
 try:
     from alive_progress import alive_bar
-    USE_ALIVE = IS_TTY
 except Exception:
     alive_bar = None
+USE_ALIVE = False
 
 try:
     from halo import Halo
-    USE_HALO = IS_TTY
 except Exception:
     Halo = None
+USE_HALO = False
 
 
 def print_line(msg: str):
@@ -134,6 +136,12 @@ def bootstrap_workspace():
     run([PYBIN, "-c", code], "Aplicando configuração inicial")
 
 
+def show_bar(pct: int):
+    filled = max(0, min(10, pct // 10))
+    bar = "█" * filled + "░" * (10 - filled)
+    print_line(f"  {bar} {pct}%")
+
+
 def main():
     if USE_RICH:
         console.print("[bold orange1]🦊 ClawLite Installer v0.4.1[/bold orange1]")
@@ -164,10 +172,14 @@ def main():
             if done < 100:
                 bar(100 - done)
     else:
+        show_bar(20)
         if IS_TERMUX:
             run(["pkg", "update", "-y"], "Atualizando pacotes do Termux")
+            show_bar(50)
             run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "Instalando rust/clang/python/git/curl")
+            show_bar(80)
         run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "alive-progress", "halo"], "Instalando libs Python essenciais")
+        show_bar(100)
     ok("Dependências instaladas")
 
     # [3/5]
