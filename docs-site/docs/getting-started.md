@@ -1,28 +1,21 @@
-# Getting Started
+# Começando em 1 minuto
 
-## Install in one command
+## Instalação (1 comando)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Verify install
+## Verificação
 
 ```bash
 clawlite doctor
 ```
 
-## First run
+## Primeiros passos
 
 ```bash
 clawlite onboarding
-clawlite run "Summarize current folder"
-```
-
-## Example workflow
-
-```bash
-clawlite memory add "prefer concise updates"
-clawlite memory search "concise"
-clawlite gateway --port 8787
+clawlite run "Resuma a pasta atual"
+clawlite memory add "preferência: respostas diretas"
 ```

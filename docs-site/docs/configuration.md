@@ -1,39 +1,29 @@
-# Configuration (Onboarding)
+# Guia de configuração
 
-O onboarding interativo configura o ambiente base em poucos passos.
-
-## Executar onboarding
+## Onboarding
 
 ```bash
 clawlite onboarding
 ```
 
-## O que é configurado
-
+Configura:
 - modelo padrão
-- canais habilitados (Telegram/Discord)
+- canais
 - token do gateway
+- provedor inicial para autenticação
 
-## Arquivo de configuração
+## Menu interativo
 
-```text
-~/.clawlite/config.json
+```bash
+clawlite configure
 ```
 
-Exemplo:
+Seções:
+- Model
+- Channels
+- Skills
+- Gateway
+- Security
+- Web Tools
 
-```json
-{
-  "model": "openai/gpt-4o-mini",
-  "gateway": {
-    "host": "0.0.0.0",
-    "port": 8787,
-    "token": "***"
-  },
-  "channels": {
-    "telegram": {"enabled": true},
-    "discord": {"enabled": false}
-  },
-  "skills": ["core-tools", "memory", "gateway"]
-}
-```
+Inclui preview antes de salvar.

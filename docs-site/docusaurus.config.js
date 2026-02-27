@@ -2,7 +2,7 @@
 
 const config = {
   title: 'ClawLite',
-  tagline: 'Portable AI assistant for Linux + Termux',
+  tagline: 'O assistente de IA mais poderoso para Linux e Termux',
   favicon: 'img/logo.svg',
 
   url: 'https://eobarretooo.github.io',
@@ -15,8 +15,12 @@ const config = {
   onBrokenMarkdownLinks: 'warn',
 
   i18n: {
-    defaultLocale: 'en',
-    locales: ['en'],
+    defaultLocale: 'pt-br',
+    locales: ['pt-br', 'en'],
+    localeConfigs: {
+      'pt-br': {label: 'Português (Brasil)'},
+      en: {label: 'English'},
+    },
   },
 
   presets: [
@@ -41,7 +45,7 @@ const config = {
       {
         hashed: true,
         docsRouteBasePath: '/',
-        language: ['en'],
+        language: ['en', 'pt'],
       },
     ],
   ],
@@ -50,10 +54,11 @@ const config = {
     navbar: {
       title: 'ClawLite',
       items: [
-        {to: '/getting-started', label: 'Getting Started', position: 'left'},
-        {to: '/configuration', label: 'Configuration', position: 'left'},
+        {to: '/getting-started', label: 'Começar', position: 'left'},
+        {to: '/configuration', label: 'Configuração', position: 'left'},
         {to: '/skills-reference', label: 'Skills', position: 'left'},
         {to: '/gateway-api', label: 'Gateway API', position: 'left'},
+        {type: 'localeDropdown', position: 'right'},
         {href: 'https://github.com/eobarretooo/ClawLite', label: 'GitHub', position: 'right'},
       ],
     },
@@ -61,9 +66,9 @@ const config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'Documentação',
           items: [
-            {label: 'Getting Started', to: '/getting-started'},
+            {label: 'Começando em 1 minuto', to: '/getting-started'},
             {label: 'Gateway API', to: '/gateway-api'},
           ],
         },
