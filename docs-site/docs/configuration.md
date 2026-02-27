@@ -8,19 +8,60 @@ Exemplo completo:
 
 - `docs/config.example.json`
 
-## Onboarding
+## UX atual de configuração
+
+### 1) Onboarding wizard guiado
 
 ```bash
 clawlite onboarding
 ```
 
-## Menu interativo
+Fluxo por etapas com barra de progresso, salvamento automático e resumo final.
+
+### 2) Configure estilo OpenClaw
 
 ```bash
 clawlite configure
 ```
 
-## Blocos novos
+Menu seccional com autosave: **Model, Channels, Skills, Hooks, Gateway, Web Tools, Language, Security** + preview JSON final.
+
+## Operação local
+
+### Doctor / Status / Start
+
+```bash
+clawlite doctor
+clawlite status
+clawlite start --port 8787
+```
+
+- `doctor`: valida ambiente, dependências e config mínima.
+- `status`: mostra estado de gateway/workers/cron/reddit.
+- `start`: sobe o gateway HTTP/WebSocket (atalho para `clawlite gateway`).
+
+## Learning stats (telemetria local)
+
+```bash
+clawlite stats --period all
+clawlite stats --period month --skill github
+```
+
+Métricas: total de tasks, taxa de sucesso, tempo médio, tokens, streak, top skills e preferências aprendidas.
+
+## Reddit (web tool + automação)
+
+```bash
+clawlite reddit status
+clawlite reddit auth-url
+clawlite reddit exchange-code "SEU_CODE"
+clawlite reddit post-milestone --title "ClawLite v0.4.0" --text "..."
+clawlite reddit monitor-once
+```
+
+Guia detalhado: `docs/REDDIT_INTEGRATION.md`
+
+## Blocos avançados de runtime
 
 ### 1) Offline automático com Ollama
 

@@ -5,7 +5,7 @@ slug: /
 
 <div className="hero-pro">
   <div className="hero-badges">
-    <img src="https://img.shields.io/badge/versão-0.3.0-7c3aed?style=for-the-badge" alt="versao"/>
+    <img src="https://img.shields.io/badge/versão-0.4.0-7c3aed?style=for-the-badge" alt="versao"/>
     <img src="https://img.shields.io/badge/licença-MIT-10b981?style=for-the-badge" alt="licenca"/>
     <img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge" alt="stars"/>
   </div>
@@ -24,8 +24,10 @@ slug: /
   <img src="/ClawLite/img/mascot.svg" alt="Mascote ClawLite" width="180" />
 </p>
 
-## O que as pessoas estão construindo
+## O que há no estado atual
 
-- Assistentes pessoais no Termux
-- Bots operacionais com gateway WebSocket
-- Automações Linux com memória contextual
+- Configure estilo OpenClaw + onboarding wizard guiado
+- Operação local com `doctor`, `status` e `start`
+- Learning analytics com `clawlite stats`
+- Reddit OAuth + postagem de milestones + monitor de menções
+- Bots operacionais com gateway WebSocket e skills modulares

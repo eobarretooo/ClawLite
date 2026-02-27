@@ -6,16 +6,45 @@
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Verificação
+## 1) Diagnóstico inicial
 
 ```bash
 clawlite doctor
 ```
 
-## Primeiros passos
+## 2) Onboarding wizard (primeira execução)
 
 ```bash
 clawlite onboarding
+```
+
+## 3) Configure estilo OpenClaw (ajustes finos)
+
+```bash
+clawlite configure
+```
+
+## 4) Runtime local: status + start
+
+```bash
+clawlite status
+clawlite start --host 0.0.0.0 --port 8787
+```
+
+> `clawlite start` e `clawlite gateway` sobem o servidor gateway local.
+
+## 5) Primeira tarefa
+
+```bash
 clawlite run "Resuma a pasta atual"
-clawlite memory add "preferência: respostas diretas"
+```
+
+## Extras úteis
+
+```bash
+# aprendizado local
+clawlite stats --period week
+
+# integração Reddit
+clawlite reddit status
 ```
