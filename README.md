@@ -1,121 +1,150 @@
-# ClawLite
-
 <p align="center">
-  <img src="assets/mascot-animated.svg" alt="Mascote oficial ClawLite" width="180"/>
+  <img src="assets/mascot-animated.svg" alt="ClawLite Fox Mascot" width="180" />
 </p>
 
-> Assistente de IA open source para Linux + Termux, com runtime real (CLI + Gateway + Dashboard + Skills).
+<h1 align="center">ClawLite</h1>
 
-[![Docs](https://img.shields.io/badge/docs-online-7c3aed?style=for-the-badge)](https://eobarretooo.github.io/ClawLite/)
-[![Site](https://img.shields.io/badge/site-oficial-000000?style=for-the-badge&logo=vercel)](https://clawlite-site.vercel.app)
-[![License](https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge)](https://github.com/eobarretooo/ClawLite)
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=20&duration=3000&pause=900&center=true&vCenter=true&width=900&lines=Assistente+de+IA+open+source+para+Linux+%2B+Termux;Gateway+WebSocket+%2B+Dashboard+%2B+Skills+Marketplace;Quickstart+guiado+em+PT-BR+com+onboarding+interativo" alt="Typing SVG" />
+</p>
 
-## Status real do projeto (v0.4.x)
+<p align="center">
+  <a href="https://github.com/eobarretooo/ClawLite/releases/tag/v0.4.1"><img src="https://img.shields.io/badge/version-v0.4.1-7c3aed?style=for-the-badge" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge" /></a>
+  <a href="https://github.com/eobarretooo/ClawLite/stargazers"><img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge" /></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Termux-supported-1f8b4c?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Idioma-PT--BR-009c3b?style=for-the-badge" />
+</p>
 
-- ✅ CLI principal operacional (`doctor`, `status`, `start`, `onboarding`, `configure`, `run`)
-- ✅ Gateway FastAPI + WebSocket + dashboard web
-- ✅ Memória persistente entre sessões (workspace + logs diários + busca semântica)
-- ✅ Learning analytics (`clawlite stats`) + tracking de tasks
-- ✅ Multi-agente Telegram (MVP persistente)
-- ✅ Cron por conversa + modo bateria + notificações inteligentes
-- ✅ Marketplace de skills + auto-update com trust policy/rollback
-- ✅ 37 skills registradas
+---
 
-## Instalação
+## ⚡ Demo rápida
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+clawlite doctor
+clawlite onboarding
+clawlite start --port 8787
+```
+
+<p align="center">
+  <img src="docs/media/quickstart-demo.gif" alt="ClawLite Quickstart GIF" width="900" />
+</p>
+
+---
+
+## 📚 Tabela de conteúdo
+
+- [Por que ClawLite](#-por-que-clawlite)
+- [Instalação](#-instalação)
+- [Features](#-features)
+- [Exemplos reais de uso](#-exemplos-reais-de-uso)
+- [Roadmap](#-roadmap)
+- [Contributors](#-contributors)
+- [Star History](#-star-history)
+- [Licença](#-licença)
+
+---
+
+## 🧠 Por que ClawLite
+
+ClawLite é um assistente de IA focado em **execução real**: CLI produtiva, gateway web, memória persistente, skills extensíveis e operação Linux/Termux-first.
+
+- Site oficial: https://clawlite-site.vercel.app
+- Docs (PT-BR): https://eobarretooo.github.io/ClawLite/
+- Catálogo de skills: https://clawlite-skills-site.vercel.app
+
+---
+
+## 🚀 Instalação
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Quickstart (sem JSON manual)
+### Quickstart guiado (padrão)
 
 ```bash
-# 1) Diagnóstico
 clawlite doctor
-
-# 2) Primeira configuração (wizard)
-# aqui você já define: model, canais, skills, gateway, security e voz (STT/TTS)
 clawlite onboarding
-
-# 3) Ajuste fino por seções (opcional)
 clawlite configure
-
-# 4) Status local
 clawlite status
-
-# 5) Subir gateway + dashboard
 clawlite start --host 0.0.0.0 --port 8787
 ```
 
-> O fluxo padrão é todo guiado no menu interativo. Não precisa editar `config.json` manualmente.
+> Setup manual continua disponível para usuários avançados, mas o fluxo recomendado é o wizard interativo (estilo OpenClaw).
 
-## Comandos essenciais
+---
 
+## ✨ Features
+
+- ⚙️ **Onboarding + Configure interativos** (Model, Channels, Skills, Hooks, Gateway, Security)
+- 🌐 **Gateway WebSocket + Dashboard** com chat, logs e telemetria
+- 🧩 **37 skills registradas** com marketplace e auto-update seguro
+- 🧠 **Memória persistente** (`AGENTS/SOUL/USER/IDENTITY/MEMORY` + diário)
+- 📊 **Learning stats** com métricas de sucesso/retry/performance
+- 🔋 **Runtime inteligente** (offline fallback, cron por conversa, modo bateria)
+- 🎙️ **Voz STT/TTS** (pipeline de áudio para canais)
+
+---
+
+## 💡 Exemplos reais de uso
+
+### 1) Diagnóstico + setup
 ```bash
 clawlite doctor
-clawlite status
+clawlite onboarding
+```
+
+### 2) Operação local com dashboard
+```bash
 clawlite start --port 8787
-clawlite auth status
-clawlite run "resuma o diretório"
-clawlite stats --period week
-clawlite skill auto-update --dry-run
+# abrir http://127.0.0.1:8787
+```
+
+### 3) Automação de skills
+```bash
+clawlite skill search github
+clawlite skill install github
 clawlite skill auto-update --apply --strict
 ```
 
-## Memória de sessão (persistente)
-
-Estrutura automática em `~/.clawlite/workspace`:
-- `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `MEMORY.md`
-- `memory/YYYY-MM-DD.md` (log diário)
-
-Comandos:
-
+### 4) Memória de sessão
 ```bash
-clawlite memory init
-clawlite memory context
 clawlite memory semantic-search "preferências do usuário"
 clawlite memory save-session "Resumo da sessão"
-clawlite memory compact --max-daily-files 21
 ```
 
-## Skills e marketplace
+---
 
-- Catálogo local: 37 skills (`clawlite/skills/registry.py`)
-- Install/update/publish/search via CLI
-- `clawlite skill search --category <...> --status <...>` para descobrir skills
-- Publicação com metadados completos (`category`, `status`, `tags`, `install_hint`)
-- Auto-update com:
-  - allowlist de hosts
-  - checksum SHA-256
-  - modo `--strict`
-  - rollback automático em falha
+## 🗺️ Roadmap
 
-## Documentação e sites
+- [x] Gateway + dashboard v2
+- [x] Multi-agente Telegram (MVP)
+- [x] Learning hardening em produção
+- [x] STT/TTS no pipeline
+- [x] Auto-update de skills com trust policy + rollback
+- [ ] Paridade de dashboard com OpenClaw (cron/channels/config avançada/debug)
+- [ ] Voz em validação de campo contínua
+- [ ] Polimento final v0.4.1.x
 
-- Docs PT-BR: https://eobarretooo.github.io/ClawLite/
-- Docs EN: https://eobarretooo.github.io/ClawLite/en/
-- Site oficial: https://clawlite-site.vercel.app
-- Site de skills: https://clawlite-skills-site.vercel.app
+---
 
-## Voz (STT/TTS) — pronto para uso
+## 👥 Contributors
 
-- STT Telegram/WhatsApp com Whisper (local) + fallback OpenAI quando configurado
-- TTS por comando no prompt (`/audio`, `#audio`, `responda em áudio`) ou por config
-- Envio de áudio no Telegram (`sendVoice`) com arquivo temporário seguro
-- Config por canal (`stt_enabled`, `tts_enabled`, `tts_provider`, etc.)
+<a href="https://github.com/eobarretooo/ClawLite/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=eobarretooo/ClawLite" />
+</a>
 
-Detalhes e limitações: `docs/VOICE.md` e `docs/config.example.json`.
+---
 
-## Roadmap ativo
+## ⭐ Star History
 
-1. Evolução do learning system no core (melhoria contínua)
-2. Evolução do ecossistema de skills (site + experiência de publicação)
-3. Hardening de conectores de canais (Telegram/WhatsApp)
+[![Star History Chart](https://api.star-history.com/svg?repos=eobarretooo/ClawLite&type=Date)](https://star-history.com/#eobarretooo/ClawLite&Date)
 
-## Contribuição
+---
 
-1. Fork do repositório
-2. Branch: `feat/minha-feature`
-3. Commit + push
-4. PR com contexto e testes
+## 📄 Licença
+
+Distribuído sob licença **MIT**. Veja [LICENSE](LICENSE).
