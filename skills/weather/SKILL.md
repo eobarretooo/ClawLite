@@ -1,12 +1,10 @@
 ---
 name: weather
-description: Consultar previsão do tempo
+description: Get current weather and forecasts (no API key required).
 ---
 
 # weather
 
-Categorias: utilidades
+Port da skill para ClawLite (Linux/Termux).
 
-Compatível com Linux/Termux no ClawLite.
-
-
+Origem: /root/projetos/openclaw-skills/skills/steipete/weather/SKILL.md
