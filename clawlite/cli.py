@@ -61,6 +61,7 @@ from clawlite.skills.marketplace import (
     search_skills,
     update_skills,
 )
+from clawlite.mcp import add_server, install_template, list_servers, remove_server, search_marketplace
 
 
 def cmd_doctor() -> int:
@@ -283,6 +284,19 @@ def main() -> None:
     sk_autoupdate.add_argument("--apply", action="store_true")
     sk_autoupdate.add_argument("--allow-file-urls", action="store_true")
     sk_autoupdate.add_argument("--schedule-seconds", type=int, default=None)
+
+    mcp = sub.add_parser("mcp")
+    mcp_sub = mcp.add_subparsers(dest="mcpcmd")
+    mcp_add = mcp_sub.add_parser("add")
+    mcp_add.add_argument("name")
+    mcp_add.add_argument("url")
+    mcp_sub.add_parser("list")
+    mcp_rm = mcp_sub.add_parser("remove")
+    mcp_rm.add_argument("name")
+    mcp_search = mcp_sub.add_parser("search")
+    mcp_search.add_argument("query", nargs="?", default="")
+    mcp_install = mcp_sub.add_parser("install")
+    mcp_install.add_argument("name")
 
     st = sub.add_parser("stats")
     st.add_argument("--period", choices=["today", "week", "month", "all"], default="all")
@@ -624,6 +638,49 @@ def main() -> None:
         except Exception as exc:
             _fail(f"Falha no comando 'agents': {_exc_message(exc)}")
 
+
+    if args.cmd == "mcp":
+        try:
+            if args.mcpcmd == "add":
+                row = add_server(args.name, args.url)
+                print(f"✅ MCP server adicionado: {row['name']} -> {row['url']}")
+                return
+            if args.mcpcmd == "list":
+                rows = list_servers()
+                if not rows:
+                    print("ℹ️ Nenhum servidor MCP configurado.")
+                    return
+                for row in rows:
+                    print(f"- {row['name']}: {row['url']}")
+                return
+            if args.mcpcmd == "remove":
+                if remove_server(args.name):
+                    print(f"✅ MCP server removido: {args.name}")
+                else:
+                    _fail(f"Servidor MCP não encontrado: {args.name}")
+                return
+            if args.mcpcmd == "search":
+                rows = search_marketplace(args.query)
+                if not rows:
+                    print("ℹ️ Nenhum servidor MCP encontrado.")
+                    return
+                for row in rows:
+                    print(f"- {row['name']} ({row.get('source', '-')})")
+                    if row.get("description"):
+                        print(f"  {row['description']}")
+                return
+            if args.mcpcmd == "install":
+                row = install_template(args.name)
+                print(f"✅ MCP template instalado: {row['name']} -> {row['url']}")
+                print("dica: use `clawlite mcp list` para validar")
+                return
+            _fail("Subcomando obrigatório para 'mcp'.")
+        except ValueError as exc:
+            _fail(f"Falha no comando 'mcp': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'mcp': {_exc_message(exc)}")
 
     if args.cmd == "stats":
         try:

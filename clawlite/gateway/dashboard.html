@@ -268,6 +268,32 @@
           <div id="logs" class="list muted">-</div>
         </section>
       </div>
+
+      <section class="card">
+        <h2>MCP</h2>
+        <div class="row">
+          <input id="mcpName" placeholder="nome servidor" />
+          <input id="mcpUrl" placeholder="url/comando MCP" />
+          <button onclick="addMcpServer()">Adicionar</button>
+        </div>
+        <div class="row">
+          <input id="mcpSearch" placeholder="buscar no marketplace MCP" />
+          <button onclick="searchMcp()">Buscar</button>
+          <button onclick="installMcpTemplate('filesystem')">Install filesystem</button>
+          <button onclick="installMcpTemplate('github')">Install github</button>
+        </div>
+        <div id="mcpState" class="status-line muted">-</div>
+        <div class="grid-2">
+          <div>
+            <h3>Servidores configurados</h3>
+            <div id="mcpServers" class="list muted">-</div>
+          </div>
+          <div>
+            <h3>Marketplace</h3>
+            <div id="mcpMarketplace" class="list muted">-</div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -369,7 +395,7 @@
         document.getElementById("hookPre").value = boot.settings.hooks?.pre || "";
         document.getElementById("hookPost").value = boot.settings.hooks?.post || "";
 
-        await Promise.all([loadSkills(), loadSessions(), loadTelemetry(), loadLogs()]);
+        await Promise.all([loadSkills(), loadSessions(), loadTelemetry(), loadLogs(), loadMcp(), searchMcp()]);
         connectWs();
       } catch (error) {
         setStatus("authState", error.message || "Falha na autenticacao", "danger");
@@ -523,6 +549,96 @@
       }, `Skill ${slug} removida.`);
       setBusy(button, false);
       if (toggleButton) toggleButton.disabled = false;
+    }
+
+    function mcpRow(item) {
+      const row = document.createElement("div");
+      row.className = "skill-row";
+      const title = document.createElement("div");
+      title.className = "skill-name";
+      title.innerHTML = `<span class="mono">${escapeHtml(item.name || "-")}</span><div class="muted">${escapeHtml(item.url || "")}</div>`;
+      const status = document.createElement("div");
+      status.innerHTML = `<span class="${item.connected ? "ok" : "warn"}">${item.status || (item.connected ? "connected" : "configured")}</span>`;
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "Remover";
+      removeBtn.onclick = async () => {
+        try {
+          await api("/api/mcp/remove", { method: "POST", body: JSON.stringify({ name: item.name }) });
+          setStatus("mcpState", `Servidor MCP removido: ${item.name}`, "ok");
+          await loadMcp();
+        } catch (error) {
+          setStatus("mcpState", error.message || "Falha ao remover servidor MCP", "danger");
+        }
+      };
+      row.appendChild(title);
+      row.appendChild(status);
+      row.appendChild(removeBtn);
+      return row;
+    }
+
+    async function loadMcp() {
+      const list = document.getElementById("mcpServers");
+      list.innerHTML = '<div class="muted">Carregando...</div>';
+      try {
+        const data = await api("/api/mcp/status");
+        const rows = data.servers || [];
+        if (!rows.length) {
+          list.innerHTML = '<div class="muted">Nenhum servidor MCP configurado.</div>';
+          return;
+        }
+        list.innerHTML = "";
+        rows.forEach((item) => list.appendChild(mcpRow(item)));
+      } catch (error) {
+        list.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function addMcpServer() {
+      const name = document.getElementById("mcpName").value.trim();
+      const url = document.getElementById("mcpUrl").value.trim();
+      if (!name || !url) {
+        setStatus("mcpState", "Informe nome e URL/comando do servidor", "warn");
+        return;
+      }
+      try {
+        await api("/api/mcp/add", { method: "POST", body: JSON.stringify({ name, url }) });
+        setStatus("mcpState", `Servidor MCP adicionado: ${name}`, "ok");
+        document.getElementById("mcpName").value = "";
+        document.getElementById("mcpUrl").value = "";
+        await loadMcp();
+      } catch (error) {
+        setStatus("mcpState", error.message || "Falha ao adicionar servidor MCP", "danger");
+      }
+    }
+
+    async function searchMcp() {
+      const q = document.getElementById("mcpSearch").value.trim();
+      const box = document.getElementById("mcpMarketplace");
+      box.innerHTML = '<div class="muted">Carregando...</div>';
+      try {
+        const data = await api(`/api/mcp/search?q=${encodeURIComponent(q)}`);
+        const items = data.items || [];
+        if (!items.length) {
+          box.innerHTML = '<div class="muted">Nada encontrado.</div>';
+          return;
+        }
+        box.innerHTML = items
+          .slice(0, 30)
+          .map((item) => `<div class="list-item"><div class="mono">${escapeHtml(item.name || "-")}</div><div class="muted">${escapeHtml(item.description || item.source || "")}</div></div>`)
+          .join("");
+      } catch (error) {
+        box.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function installMcpTemplate(name) {
+      try {
+        await api("/api/mcp/install", { method: "POST", body: JSON.stringify({ name }) });
+        setStatus("mcpState", `Template MCP instalado: ${name}`, "ok");
+        await loadMcp();
+      } catch (error) {
+        setStatus("mcpState", error.message || "Falha ao instalar template MCP", "danger");
+      }
     }
 
     async function loadSessions() {
