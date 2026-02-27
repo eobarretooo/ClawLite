@@ -34,25 +34,26 @@ PIP = [PYBIN, "-m", "pip"]
 IS_TERMUX = ("com.termux" in os.environ.get("PREFIX", "")) and (subprocess.call(["bash", "-lc", "command -v pkg >/dev/null"]) == 0)
 
 # UI fallback
+IS_TTY = sys.stdout.isatty() and sys.stdin.isatty()
 USE_RICH = USE_ALIVE = USE_HALO = False
 try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
     console = Console()
-    USE_RICH = True
+    USE_RICH = IS_TTY
 except Exception:
     console = None
 
 try:
     from alive_progress import alive_bar
-    USE_ALIVE = True
+    USE_ALIVE = IS_TTY
 except Exception:
     alive_bar = None
 
 try:
     from halo import Halo
-    USE_HALO = True
+    USE_HALO = IS_TTY
 except Exception:
     Halo = None
 
