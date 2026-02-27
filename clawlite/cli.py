@@ -86,6 +86,29 @@ def _exc_message(exc: Exception) -> str:
     return msg or exc.__class__.__name__
 
 
+def _run_gateway_cli(host: str | None, port: int | None) -> None:
+    try:
+        from clawlite.gateway.server import run_gateway
+    except ModuleNotFoundError as exc:
+        missing = str(getattr(exc, "name", "") or "")
+        if missing in {"fastapi", "uvicorn"}:
+            _fail(
+                "Dependências do gateway ausentes (fastapi/uvicorn). "
+                "No Termux: pkg install rust clang && ~/.clawlite/venv/bin/pip install fastapi uvicorn; "
+                "no Linux: pip install fastapi uvicorn."
+            )
+        _fail(f"Falha ao carregar gateway: {_exc_message(exc)}")
+    except Exception as exc:
+        _fail(f"Falha ao carregar gateway: {_exc_message(exc)}")
+
+    try:
+        run_gateway(host, port)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        _fail(f"Falha ao iniciar gateway: {_exc_message(exc)}")
+
+
 def main() -> None:
     # bootstrap de segredos (.env + vault local opcional)
     load_dotenv()
@@ -367,14 +390,10 @@ def main() -> None:
         run_configure_menu()
         return
     if args.cmd == "start":
-        from clawlite.gateway.server import run_gateway
-
-        run_gateway(args.host, args.port)
+        _run_gateway_cli(args.host, args.port)
         return
     if args.cmd == "gateway":
-        from clawlite.gateway.server import run_gateway
-
-        run_gateway(args.host, args.port)
+        _run_gateway_cli(args.host, args.port)
         return
     if args.cmd == "auth":
         try:

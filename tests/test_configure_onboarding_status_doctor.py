@@ -106,3 +106,31 @@ def test_onboarding_wizard_saves_without_manual_json(monkeypatch):
         settings.CONFIG_DIR = old_dir
         settings.CONFIG_PATH = old_path
         tmp.cleanup()
+
+
+def test_onboarding_simple_mode_handles_non_interactive_input(monkeypatch):
+    import builtins
+
+    tmp = tempfile.TemporaryDirectory()
+    old_dir, old_path = _patch_config_home(tmp.name)
+
+    def _raise_eof(*_args, **_kwargs):
+        raise EOFError
+
+    try:
+        monkeypatch.setenv("HOME", tmp.name)
+        monkeypatch.setenv("CLAWLITE_SIMPLE_UI", "1")
+        monkeypatch.setattr(builtins, "input", _raise_eof)
+
+        run_onboarding()
+        cfg = settings.load_config()
+        assert cfg["language"] == "pt-br"
+        assert cfg["assistant_name"] == "ClawLite Assistant"
+
+        workspace = Path(tmp.name) / ".clawlite" / "workspace"
+        assert (workspace / "IDENTITY.md").exists()
+        assert (workspace / "USER.md").exists()
+    finally:
+        settings.CONFIG_DIR = old_dir
+        settings.CONFIG_PATH = old_path
+        tmp.cleanup()

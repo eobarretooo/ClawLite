@@ -37,6 +37,17 @@ SKILL_PRESETS = {
 }
 
 
+def _simple_prompt(prompt: str, default: str = "") -> str:
+    try:
+        value = input(prompt)
+    except EOFError:
+        return default
+    except KeyboardInterrupt:
+        return default
+    text = value.strip()
+    return text if text else default
+
+
 def _fox_banner() -> str:
     return (
         "[bold #ff6b2b]      /\\_/\\[/bold #ff6b2b]\n"
@@ -160,28 +171,30 @@ def _skills_quickstart_profile(cfg: dict) -> None:
 
 def _run_onboarding_simple(cfg: dict) -> None:
     console.print("🛠️ Modo simples ativado (compatibilidade de terminal).")
-    lang = input("Idioma [pt-br/en] (padrão pt-br): ").strip().lower() or "pt-br"
+    lang = _simple_prompt("Idioma [pt-br/en] (padrão pt-br): ", "pt-br").lower()
     cfg["language"] = "en" if lang.startswith("en") else "pt-br"
 
-    cfg["assistant_name"] = input("Nome do assistente (ClawLite Assistant): ").strip() or "ClawLite Assistant"
-    cfg["assistant_temperament"] = input("Temperamento (técnico e direto): ").strip() or "técnico e direto"
-    cfg["user_name"] = input("Seu nome: ").strip() or "Usuário"
+    cfg["assistant_name"] = _simple_prompt("Nome do assistente (ClawLite Assistant): ", "ClawLite Assistant")
+    cfg["assistant_temperament"] = _simple_prompt("Temperamento (técnico e direto): ", "técnico e direto")
+    cfg["user_name"] = _simple_prompt("Seu nome: ", "Usuário")
 
-    model = input(f"Modelo [{cfg.get('model','openai/gpt-4o-mini')}]: ").strip()
+    model = _simple_prompt(f"Modelo [{cfg.get('model','openai/gpt-4o-mini')}]: ", "")
     if model:
         cfg["model"] = model
 
-    tg = input("Ativar Telegram? [s/N]: ").strip().lower().startswith("s")
+    tg_value = _simple_prompt("Ativar Telegram? [s/N]: ", "n").lower()
+    tg = tg_value.startswith(("s", "y"))
     cfg.setdefault("channels", {}).setdefault("telegram", {})["enabled"] = tg
     if tg:
-        tok = input("Token Telegram (opcional agora): ").strip()
+        tok = _simple_prompt("Token Telegram (opcional agora): ", "")
         if tok:
             cfg["channels"]["telegram"]["token"] = tok
 
-    profile = input("Perfil de skills [dev/creator/ops/custom] (dev): ").strip().lower() or "dev"
+    profile = _simple_prompt("Perfil de skills [dev/creator/ops/custom] (dev): ", "dev").lower()
     if profile in SKILL_PRESETS:
         cfg["skills"] = SKILL_PRESETS[profile]
 
+    _save_identity_files(cfg)
     save_config(cfg)
     console.print("✅ Onboarding simples concluído.")
 

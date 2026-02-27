@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -103,6 +104,20 @@ def test_cron_cli_error_ptbr_and_dashboard_status(monkeypatch, tmp_path):
     status = client.get("/api/dashboard/status", headers=_auth_headers(server))
     assert status.status_code == 200
     assert status.json()["ok"] is True
+
+
+def test_start_cli_invalid_gateway_port_is_actionable(tmp_path):
+    cfg_dir = tmp_path / ".clawlite"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.json").write_text(
+        json.dumps({"gateway": {"host": "0.0.0.0", "port": "abc", "token": "x"}}),
+        encoding="utf-8",
+    )
+
+    start = _run_cli(tmp_path, "start")
+    assert start.returncode == 1
+    assert "Falha ao iniciar gateway: Configuração inválida do gateway" in start.stdout
+    assert "Traceback" not in start.stderr
 
 
 def test_agents_cli_error_ptbr_and_dashboard_logs(monkeypatch, tmp_path):

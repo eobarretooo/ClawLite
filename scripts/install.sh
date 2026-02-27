@@ -6,11 +6,35 @@ VENV_DIR="${HOME}/.clawlite/venv"
 BIN_DIR="${HOME}/.local/bin"
 REPO_URL="https://github.com/eobarretooo/ClawLite.git"
 
-command -v python3 >/dev/null 2>&1 || { echo "✗ python3 não encontrado"; exit 1; }
+IS_TERMUX=0
+if [[ "${PREFIX:-}" == *"com.termux"* ]] && command -v pkg >/dev/null 2>&1; then
+  IS_TERMUX=1
+fi
+
+PYTHON_BIN="$(command -v python3 || true)"
+if [[ -z "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$(command -v python || true)"
+fi
+
+if [[ "$IS_TERMUX" == "1" ]]; then
+  NEED_PKGS=()
+  command -v git >/dev/null 2>&1 || NEED_PKGS+=("git")
+  command -v curl >/dev/null 2>&1 || NEED_PKGS+=("curl")
+  if [[ -z "$PYTHON_BIN" ]]; then
+    NEED_PKGS+=("python")
+  fi
+  if [[ ${#NEED_PKGS[@]} -gt 0 ]]; then
+    pkg update -y >/dev/null
+    pkg install -y "${NEED_PKGS[@]}" >/dev/null
+    PYTHON_BIN="$(command -v python3 || command -v python || true)"
+  fi
+fi
+
+[[ -n "$PYTHON_BIN" ]] || { echo "✗ python/python3 não encontrado"; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "✗ git não encontrado"; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "✗ curl não encontrado"; exit 1; }
 
-python3 -m venv "$VENV_DIR"
+"$PYTHON_BIN" -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
 "$VENV_DIR/bin/python" -m pip install --upgrade rich >/dev/null 2>&1 || true
 
@@ -47,7 +71,11 @@ except Exception:
 def run(cmd: list[str], desc: str, env: dict | None = None):
     p = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if p.returncode != 0:
-        raise RuntimeError((p.stderr or p.stdout or f"Falha em {desc}").strip())
+        out = (p.stderr or p.stdout or "").strip()
+        cmd_txt = " ".join(cmd)
+        if out:
+            raise RuntimeError(f"{desc} falhou (cmd: {cmd_txt})\n{out}")
+        raise RuntimeError(f"{desc} falhou (cmd: {cmd_txt})")
 
 
 def ensure_path():
@@ -62,10 +90,15 @@ def ensure_path():
         prefix_bin = Path(os.environ.get("PREFIX", "")) / "bin"
         if str(prefix_bin) and prefix_bin.exists():
             launcher = prefix_bin / "clawlite"
-            launcher.write_text(
-                f"#!/usr/bin/env bash\nexport CLAWLITE_SIMPLE_UI=1\nexec '{VENV_DIR / 'bin' / 'clawlite'}' \"$@\"\n",
-                encoding="utf-8",
+            bash_path = prefix_bin / "bash"
+            shebang = f"#!{bash_path}" if bash_path.exists() else "#!/usr/bin/env bash"
+            launcher_content = (
+                f"{shebang}\n"
+                "export CLAWLITE_SIMPLE_UI=1\n"
+                f"exec '{VENV_DIR / 'bin' / 'clawlite'}' \"$@\"\n"
             )
+            if not launcher.exists() or launcher.read_text(encoding="utf-8", errors="ignore") != launcher_content:
+                launcher.write_text(launcher_content, encoding="utf-8")
             launcher.chmod(0o755)
 
     export_line = 'export PATH="$HOME/.local/bin:$PATH"'
@@ -100,11 +133,11 @@ def install_deps():
         run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install deps")
         env = os.environ.copy()
         env["ANDROID_API_LEVEL"] = env.get("ANDROID_API_LEVEL", "24")
-        run(PIP + ["install", "--upgrade", "rich", "questionary"], "pip base", env=env)
+        run(PIP + ["install", "--upgrade", "rich", "questionary", "httpx"], "pip base", env=env)
         run(PIP + ["install", "--upgrade", "pydantic==1.10.21", "--only-binary=:all:"], "pip pydantic v1", env=env)
         run(PIP + ["install", "--upgrade", "fastapi==0.100.1", "uvicorn", "--only-binary=:all:"], "pip fastapi/uvicorn termux", env=env)
     else:
-        run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+        run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "httpx"], "pip deps")
 
 
 def install_package():
@@ -151,14 +184,14 @@ def rich_flow():
             pb.advance(t, 25)
             run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install")
             pb.advance(t, 25)
-            run(PIP + ["install", "--upgrade", "rich", "questionary"], "pip base", env=env)
+            run(PIP + ["install", "--upgrade", "rich", "questionary", "httpx"], "pip base", env=env)
             pb.advance(t, 15)
             run(PIP + ["install", "--upgrade", "pydantic==1.10.21", "--only-binary=:all:"], "pip pydantic v1", env=env)
             pb.advance(t, 15)
             run(PIP + ["install", "--upgrade", "fastapi==0.100.1", "uvicorn", "--only-binary=:all:"], "pip fastapi/uvicorn termux", env=env)
             pb.advance(t, 20)
         else:
-            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn"], "pip deps")
+            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "httpx"], "pip deps")
             pb.advance(t, 100)
     console.print("[green]✓[/green]")
 
