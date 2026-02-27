@@ -55,7 +55,7 @@ Métricas: total de tasks, taxa de sucesso, tempo médio, tokens, streak, top sk
 clawlite reddit status
 clawlite reddit auth-url
 clawlite reddit exchange-code "SEU_CODE"
-clawlite reddit post-milestone --title "ClawLite v0.4.0" --text "..."
+clawlite reddit post-milestone --title "ClawLite v0.4.1" --text "..."
 clawlite reddit monitor-once
 ```
 
