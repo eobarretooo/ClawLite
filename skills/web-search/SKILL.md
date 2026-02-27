@@ -1,11 +1,10 @@
 ---
 name: web-search
-description: Buscar informações na web via Brave Search
+description: This skill should be used when users need to search the web for information, find current content, look up news articles, search for images, or find videos. It uses DuckDuckGo's search API to return results in clean, formatted output (text, markdown, or JSON). Use for research, fact-checking, finding recent information, or gathering web resources.
 ---
 
 # web-search
 
-Compatível com Linux/Termux (MVP do ClawLite).
+Port da skill para ClawLite (Linux/Termux).
 
-## Status
-Implementado como skill base com validações de ambiente e comandos seguros.
+Origem: /root/projetos/openclaw-skills/skills/billyutw/web-search/SKILL.md
