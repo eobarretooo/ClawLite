@@ -897,6 +897,20 @@ async def ws_logs(websocket: WebSocket):
         log_connections.pop(websocket, None)
 
 
+@app.get("/api/learning/stats")
+async def api_learning_stats(
+    period: str = Query("all", regex="^(today|week|month|all)$"),
+    skill: str | None = Query(None),
+):
+    from clawlite.runtime.learning import get_stats, get_templates
+    from clawlite.runtime.preferences import get_preferences
+
+    stats = get_stats(period=period, skill=skill)
+    stats["preferences"] = get_preferences()
+    stats["templates_count"] = sum(len(v) for v in get_templates().values())
+    return JSONResponse(stats)
+
+
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
     cfg = load_config()
     h = host or cfg.get("gateway", {}).get("host", "0.0.0.0")
