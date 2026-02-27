@@ -46,18 +46,18 @@ clawlite start --port 8787
 
 ## 📚 Tabela de conteúdo
 
-- [Por que ClawLite](#-por-que-clawlite)
-- [Pré-requisitos](#-pré-requisitos)
-- [Instalação](#-instalação)
-- [Features](#-features)
-- [Exemplos reais de uso](#-exemplos-reais-de-uso)
-- [Comparação rápida](#-comparação-rápida)
-- [Troubleshooting](#-troubleshooting)
-- [Comunidade e suporte](#-comunidade-e-suporte)
-- [Roadmap](#-roadmap)
-- [Contribuindo](#-contribuindo)
-- [Star History](#-star-history)
-- [Licença](#-licença)
+- [Por que ClawLite](#por-que-clawlite)
+- [Pré-requisitos](#pre-requisitos)
+- [Instalação](#instalacao)
+- [Features](#features)
+- [Exemplos reais de uso](#exemplos-reais-de-uso)
+- [Comparação rápida](#comparacao-rapida)
+- [Troubleshooting](#troubleshooting)
+- [Comunidade e suporte](#comunidade-e-suporte)
+- [Roadmap](#roadmap)
+- [Contribuindo](#contribuindo)
+- [Star History](#star-history)
+- [Licença](#licenca)
 
 ---
 
