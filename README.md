@@ -238,38 +238,70 @@ clawlite start --port 9090
 <summary>Erro de dependência Python</summary>
 
 ```bash
-python3 -m venv ~/.clawlite/venv
-~/.clawlite/venv/bin/pip install -e .
+pip install --upgrade clawlite
+clawlite doctor --fix
 ```
 </details>
 
-Guia completo: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
+<details>
+<summary>Fallback offline não aciona</summary>
+
+```bash
+clawlite configure
+# verificar seção Runtime → Offline
+# certifique-se que o Ollama está instalado e rodando
+```
+</details>
+
+> 📖 Guia completo: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ---
 
 ## 🗺️ Roadmap
 
-- [x] Gateway + dashboard v2
-- [x] Multi-agente Telegram MVP
-- [x] STT/TTS pipeline
-- [x] MCP client/server
-- [ ] Paridade completa de dashboard com OpenClaw
-- [ ] Hardening final de produção v1
+- [x] Gateway + Dashboard v2
+- [x] Multi-agente multi-canal (Telegram, Slack, Discord, WhatsApp, Teams)
+- [x] Learning system em produção
+- [x] STT/TTS no pipeline
+- [x] Auto-update de skills com trust policy + rollback
+- [x] Suporte a MCP
+- [ ] Paridade total de dashboard com OpenClaw
+- [ ] Validação de campo de voz contínua
+- [ ] Release v0.5.0
 
 ---
 
 ## 🤝 Contribuindo
 
-PRs são bem-vindos! Leia [`CONTRIBUTING.md`](CONTRIBUTING.md).
+PRs são bem-vindos! Leia [CONTRIBUTING.md](CONTRIBUTING.md) para começar.
+
+```bash
+git clone https://github.com/eobarretooo/ClawLite
+cd ClawLite
+pip install -e ".[dev]"
+clawlite doctor
+```
 
 ---
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=eobarretooo/ClawLite&type=Date)](https://star-history.com/#eobarretooo/ClawLite&Date)
+<p align="center">
+  <a href="https://star-history.com/#eobarretooo/ClawLite&Date">
+    <img src="https://api.star-history.com/svg?repos=eobarretooo/ClawLite&type=Date" alt="Star History" width="600"/>
+  </a>
+</p>
 
 ---
 
 ## 📄 Licença
 
-Distribuído sob licença **MIT**. Veja [LICENSE](LICENSE).
+Distribuído sob licença MIT. Veja [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  Feito com 🦊 por <a href="https://github.com/eobarretooo">eobarretooo</a>
+  <br/>
+  <a href="https://github.com/eobarretooo/ClawLite">⭐ Deixe uma star se o projeto te ajudou!</a>
+</p>
