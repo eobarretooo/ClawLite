@@ -4,10 +4,20 @@ import argparse
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
+from clawlite.runtime.conversation_cron import (
+    add_cron_job,
+    format_cron_jobs_table,
+    format_cron_run_results,
+    init_cron_db,
+    list_cron_jobs,
+    remove_cron_job,
+    run_cron_jobs,
+)
 from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.workspace import init_workspace
 from clawlite.runtime.channels import channel_template
 from clawlite.runtime.models import model_status, set_model_fallback
+from clawlite.runtime.battery import get_battery_mode, set_battery_mode
 from clawlite.runtime.multiagent import (
     format_workers_table,
     init_db,
@@ -94,6 +104,39 @@ def main() -> None:
     tg.add_argument("--thread-id", default="")
     tg.add_argument("--label", default=None)
     tg.add_argument("text")
+
+    cr = sub.add_parser("cron")
+    cr_sub = cr.add_subparsers(dest="crcmd")
+
+    cr_list = cr_sub.add_parser("list")
+    cr_list.add_argument("--channel", default=None)
+    cr_list.add_argument("--chat-id", default=None)
+    cr_list.add_argument("--thread-id", default=None)
+    cr_list.add_argument("--label", default=None)
+
+    cr_add = cr_sub.add_parser("add")
+    cr_add.add_argument("--channel", default="telegram")
+    cr_add.add_argument("--chat-id", required=True)
+    cr_add.add_argument("--thread-id", default="")
+    cr_add.add_argument("--label", required=True)
+    cr_add.add_argument("--name", required=True)
+    cr_add.add_argument("--text", required=True)
+    cr_add.add_argument("--every-seconds", type=int, required=True)
+    cr_add.add_argument("--disabled", action="store_true")
+
+    cr_rm = cr_sub.add_parser("remove")
+    cr_rm.add_argument("job_id", type=int)
+
+    cr_run = cr_sub.add_parser("run")
+    cr_run.add_argument("--job-id", type=int, default=None)
+    cr_run.add_argument("--all", action="store_true")
+
+    bt = sub.add_parser("battery")
+    bt_sub = bt.add_subparsers(dest="bacmd")
+    bt_sub.add_parser("status")
+    bt_set = bt_sub.add_parser("set")
+    bt_set.add_argument("--enabled", choices=["true", "false"], default=None)
+    bt_set.add_argument("--throttle-seconds", type=float, default=None)
 
     md = sub.add_parser("model")
     md_sub = md.add_subparsers(dest="mocmd")
@@ -259,6 +302,57 @@ def main() -> None:
         set_model_fallback(args.models)
         print("✅ model fallback atualizado")
         return
+
+    if args.cmd == "battery":
+        if args.bacmd == "status":
+            mode = get_battery_mode()
+            print(f"battery.enabled: {mode['enabled']}")
+            print(f"battery.throttle_seconds: {mode['throttle_seconds']}")
+            return
+        if args.bacmd == "set":
+            enabled = None
+            if args.enabled is not None:
+                enabled = args.enabled.lower() == "true"
+            mode = set_battery_mode(enabled=enabled, throttle_seconds=args.throttle_seconds)
+            print("✅ battery mode atualizado")
+            print(f"battery.enabled: {mode['enabled']}")
+            print(f"battery.throttle_seconds: {mode['throttle_seconds']}")
+            return
+
+    if args.cmd == "cron":
+        init_cron_db()
+        if args.crcmd == "list":
+            rows = list_cron_jobs(args.channel, args.chat_id, args.thread_id, args.label)
+            print(format_cron_jobs_table(rows))
+            return
+
+        if args.crcmd == "add":
+            job_id = add_cron_job(
+                channel=args.channel,
+                chat_id=args.chat_id,
+                thread_id=args.thread_id,
+                label=args.label,
+                name=args.name,
+                text=args.text,
+                interval_seconds=args.every_seconds,
+                enabled=(not args.disabled),
+            )
+            print(f"✅ cron job salvo: {job_id}")
+            return
+
+        if args.crcmd == "remove":
+            removed = remove_cron_job(args.job_id)
+            if removed:
+                print(f"✅ cron job removido: {args.job_id}")
+            else:
+                print(f"❌ cron job não encontrado: {args.job_id}")
+                raise SystemExit(1)
+            return
+
+        if args.crcmd == "run":
+            rows = run_cron_jobs(job_id=args.job_id, run_all=args.all)
+            print(format_cron_run_results(rows))
+            return
 
     if args.cmd == "agents":
         init_db()

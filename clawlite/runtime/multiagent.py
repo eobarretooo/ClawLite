@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from clawlite.runtime.battery import effective_poll_seconds, get_battery_mode
+
 DB_DIR = Path.home() / ".clawlite"
 DB_PATH = DB_DIR / "multiagent.db"
 POLL_SECONDS = 2.0
@@ -286,9 +288,10 @@ def worker_loop(worker_id: int) -> None:
             _set_worker_runtime(worker_id, None, "stopped")
             return
 
+        poll_sleep = effective_poll_seconds(POLL_SECONDS)
         row = _next_task(worker)
         if not row:
-            time.sleep(POLL_SECONDS)
+            time.sleep(poll_sleep)
             continue
 
         task_id = int(row["id"])
@@ -303,6 +306,9 @@ def worker_loop(worker_id: int) -> None:
             _finish_task(task_id, proc.returncode == 0, out.strip())
         except Exception as exc:
             _finish_task(task_id, False, f"worker error: {exc}")
+
+        if get_battery_mode().get("enabled", False):
+            time.sleep(poll_sleep)
 
 
 def format_workers_table(rows: list[WorkerRow]) -> str:
