@@ -17,6 +17,9 @@ def _err(code: int, message: str, id_value: Any = None) -> dict[str, Any]:
 
 
 def handle_mcp_jsonrpc(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return _err(-32600, "Payload MCP deve ser objeto JSON", None)
+
     method = str(payload.get("method", "")).strip()
     rpc = str(payload.get("jsonrpc", "2.0"))
     req_id = payload.get("id")

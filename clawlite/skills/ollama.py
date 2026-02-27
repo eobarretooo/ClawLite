@@ -5,6 +5,7 @@ Detecta o servidor Ollama local, lista modelos, gera completions e faz pull de m
 from __future__ import annotations
 
 import json
+import shlex
 import urllib.error
 import urllib.request
 from typing import Any
@@ -131,14 +132,27 @@ def run(command: str = "") -> str:
     elif cmd == "generate":
         if not arg:
             return "Uso: generate <prompt> [--model nome]"
-        # parse --model
         model = "llama3"
-        if "--model" in arg:
-            idx = arg.index("--model")
-            rest = arg[idx + 7:].strip().split(None, 1)
-            model = rest[0] if rest else "llama3"
-            arg = arg[:idx].strip() + (" " + rest[1] if len(rest) > 1 else "")
-        result = ollama_generate(arg.strip(), model=model)
+        try:
+            tokens = shlex.split(arg)
+        except ValueError as exc:
+            return f"Erro ao interpretar argumentos: {exc}"
+
+        prompt_parts: list[str] = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "--model" and i + 1 < len(tokens):
+                model = tokens[i + 1]
+                i += 2
+                continue
+            prompt_parts.append(tok)
+            i += 1
+
+        prompt = " ".join(prompt_parts).strip()
+        if not prompt:
+            return "Uso: generate <prompt> [--model nome]"
+        result = ollama_generate(prompt, model=model)
         return result.get("response", result.get("error", json.dumps(result)))
     elif cmd == "pull":
         if not arg:

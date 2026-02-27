@@ -158,6 +158,8 @@ def whisper_transcribe(audio_path: str, model: str = "base", language: str = "")
     """
     if not audio_path:
         return {"error": "Caminho do áudio não pode ser vazio."}
+    if model not in WHISPER_MODELS:
+        return {"error": f"Modelo inválido: {model}. Use um de: {', '.join(WHISPER_MODELS)}"}
 
     backend = _detect_backend()
     if backend:

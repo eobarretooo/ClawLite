@@ -5,6 +5,7 @@ Usa o GitHub CLI (`gh`) já autenticado para interagir com repositórios.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 from typing import Any
@@ -176,11 +177,22 @@ def run(command: str = "") -> str:
         return "\n".join(lines)
 
     else:
-        # Fallback: executa comando gh direto
-        proc = subprocess.run(command, shell=True, text=True, capture_output=True)
-        if proc.returncode != 0:
-            return proc.stderr.strip() or "Erro ao executar comando gh."
-        return proc.stdout.strip()
+        # Fallback seguro: parseia argumentos e executa via gh CLI sem shell=True
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            return f"Erro ao interpretar comando: {exc}"
+        if not argv:
+            return "Comando vazio."
+        if argv[0] == "gh":
+            argv = argv[1:]
+        if not argv:
+            return "Uso: informe subcomando do gh (ex: repo list)."
+        result = _run_gh(*argv)
+        if "error" in result:
+            return result["error"]
+        data = result.get("data", "")
+        return data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
 
 
 def info() -> str:

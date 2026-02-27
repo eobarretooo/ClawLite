@@ -31,10 +31,11 @@ def _parse_interval(expression: str) -> int:
 
     Aceita presets ('1h', '30m', '1d') ou número direto de segundos.
     """
-    if expression in INTERVAL_PRESETS:
-        return INTERVAL_PRESETS[expression]
+    normalized = expression.strip().lower()
+    if normalized in INTERVAL_PRESETS:
+        return INTERVAL_PRESETS[normalized]
     try:
-        val = int(expression)
+        val = int(normalized)
         if val <= 0:
             raise ValueError
         return val

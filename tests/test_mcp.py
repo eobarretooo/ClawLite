@@ -9,6 +9,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from clawlite.mcp_server import handle_mcp_jsonrpc
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -119,3 +121,9 @@ def test_mcp_cli_and_gateway_endpoints(monkeypatch, tmp_path):
     )
     assert rpc_call.status_code == 200
     assert "mcp-ok" in rpc_call.json()["result"]["content"][0]["text"]
+
+
+def test_mcp_jsonrpc_invalid_payload_is_graceful() -> None:
+    response = handle_mcp_jsonrpc([])  # type: ignore[arg-type]
+    assert response["error"]["code"] == -32600
+    assert "Payload MCP deve ser objeto JSON" in response["error"]["message"]
