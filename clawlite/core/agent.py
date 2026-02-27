@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any
 
 from clawlite.config.settings import load_config
@@ -19,6 +21,28 @@ from clawlite.runtime.session_memory import (
     semantic_search_memory,
     startup_context_text,
 )
+
+MAX_RETRIES = 3
+ATTEMPT_TIMEOUT_S = float(os.getenv("CLAWLITE_ATTEMPT_TIMEOUT_S", "90"))
+RETRY_BACKOFF_BASE_S = 0.5
+
+
+def _run_task_with_timeout(prompt: str, timeout_s: float) -> tuple[str, dict[str, Any]]:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        fut = executor.submit(run_task_with_meta, prompt)
+        try:
+            return fut.result(timeout=timeout_s)
+        except FutureTimeout:
+            return (
+                f"Timeout: execução excedeu {timeout_s:.0f}s",
+                {
+                    "mode": "error",
+                    "reason": "attempt-timeout",
+                    "model": "n/a",
+                    "error": f"timeout>{timeout_s}s",
+                    "error_type": "timeout",
+                },
+            )
 
 
 def run_task_with_meta(prompt: str) -> tuple[str, dict[str, Any]]:
@@ -115,13 +139,14 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
     last_output = ""
     last_meta: dict[str, Any] = {}
 
-    while attempt <= 3:
+    while attempt <= MAX_RETRIES:
         t0 = time.time()
-        output, meta = run_task_with_meta(current_prompt)
+        output, meta = _run_task_with_timeout(current_prompt, ATTEMPT_TIMEOUT_S)
         duration = time.time() - t0
 
         is_error = meta.get("mode") == "error"
         result = "fail" if is_error else "success"
+        err_reason = str(meta.get("reason") or meta.get("error_type") or "")
 
         record_task(
             prompt=prompt,
@@ -130,10 +155,13 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
             model=meta.get("model", ""),
             tokens=meta.get("tokens", 0),
             skill=skill,
+            retry_count=attempt,
+            error_type=err_reason,
+            error_message=str(meta.get("error") or "") or output[:240],
         )
 
         append_daily_log(
-            f"Task {result} (tentativa={attempt + 1}, skill={skill or 'n/a'}, duração={duration:.2f}s): {prompt[:140]}",
+            f"Task {result} (tentativa={attempt + 1}/{MAX_RETRIES + 1}, skill={skill or 'n/a'}, duração={duration:.2f}s, motivo={err_reason or 'n/a'}): {prompt[:140]}",
             category="task-result",
         )
 
@@ -150,9 +178,28 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
         retry_prompt = get_retry_strategy(prompt, attempt)
         if retry_prompt is None:
             break
+
+        create_notification(
+            event="task_retry",
+            message=f"Retry {attempt}/{MAX_RETRIES} para task (skill={skill or 'n/a'})",
+            priority="normal",
+            dedupe_key=f"task_retry:{skill}:{err_reason}:{attempt}",
+            dedupe_window_seconds=30,
+            metadata={"attempt": attempt, "reason": err_reason, "skill": skill},
+        )
+
+        time.sleep(RETRY_BACKOFF_BASE_S * (2 ** (attempt - 1)))
         current_prompt = f"{context_prefix}\n\n{retry_prompt}" if context_prefix else retry_prompt
 
     compact_daily_memory()
+    create_notification(
+        event="task_retry_exhausted",
+        message=f"Task falhou após {MAX_RETRIES + 1} tentativas (skill={skill or 'n/a'})",
+        priority="high",
+        dedupe_key=f"task_retry_exhausted:{skill}:{str(last_meta.get('reason', ''))[:40]}",
+        dedupe_window_seconds=120,
+        metadata={"skill": skill, "last_reason": last_meta.get("reason", "")},
+    )
     if last_meta.get("mode") == "offline-fallback":
         return f"[offline:{last_meta.get('reason')} -> {last_meta.get('model')}]\n{last_output}"
     return last_output

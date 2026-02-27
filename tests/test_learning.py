@@ -119,3 +119,15 @@ class TestStats:
         record_task("web task", "success", skill="web")
         stats = get_stats(skill="coding")
         assert stats["total_tasks"] == 1
+
+    def test_retry_and_error_observability(self):
+        from clawlite.runtime.learning import get_stats, record_task
+
+        record_task("task timeout", "fail", retry_count=2, error_type="attempt-timeout", error_message="timeout")
+        record_task("task ok", "success", retry_count=1)
+
+        stats = get_stats()
+        assert stats["retry_total"] == 3
+        assert stats["failures"] == 1
+        assert len(stats["top_errors"]) >= 1
+        assert stats["top_errors"][0]["error_type"] == "attempt-timeout"

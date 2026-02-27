@@ -5,27 +5,49 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 DB_DIR = Path.home() / ".clawlite"
 DB_PATH = DB_DIR / "learning.db"
 TEMPLATES_PATH = DB_DIR / "prompt_templates.json"
 
 _conn: sqlite3.Connection | None = None
+_conn_lock = threading.Lock()
+
+_DB_RETRY_ATTEMPTS = 4
+_DB_RETRY_BASE_SLEEP_S = 0.06
 
 
-def _get_conn() -> sqlite3.Connection:
-    global _conn
-    if _conn is not None:
-        return _conn
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-    _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    _conn.row_factory = sqlite3.Row
-    _conn.execute("""
+def _with_db_retry(fn: Callable[[], Any]) -> Any:
+    last_exc: Exception | None = None
+    for attempt in range(_DB_RETRY_ATTEMPTS):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            if "locked" not in msg and "busy" not in msg:
+                raise
+            if attempt >= _DB_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_DB_RETRY_BASE_SLEEP_S * (2 ** attempt))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Erro inesperado de retry em SQLite")
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r[1] == column for r in rows)
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
             prompt TEXT NOT NULL,
@@ -36,10 +58,36 @@ def _get_conn() -> sqlite3.Connection:
             skill TEXT DEFAULT '',
             keywords TEXT DEFAULT '',
             retry_count INTEGER DEFAULT 0,
+            error_type TEXT DEFAULT '',
+            error_message TEXT DEFAULT '',
             created_at TEXT NOT NULL
         )
     """)
-    _conn.commit()
+
+    # Migrações incrementais para DBs antigos.
+    if not _column_exists(conn, "tasks", "retry_count"):
+        conn.execute("ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0")
+    if not _column_exists(conn, "tasks", "error_type"):
+        conn.execute("ALTER TABLE tasks ADD COLUMN error_type TEXT DEFAULT ''")
+    if not _column_exists(conn, "tasks", "error_message"):
+        conn.execute("ALTER TABLE tasks ADD COLUMN error_message TEXT DEFAULT ''")
+
+
+def _get_conn() -> sqlite3.Connection:
+    global _conn
+    if _conn is not None:
+        return _conn
+    with _conn_lock:
+        if _conn is not None:
+            return _conn
+        DB_DIR.mkdir(parents=True, exist_ok=True)
+        _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        _conn.row_factory = sqlite3.Row
+        _conn.execute("PRAGMA journal_mode=WAL")
+        _conn.execute("PRAGMA busy_timeout=3000")
+        _conn.execute("PRAGMA synchronous=NORMAL")
+        _ensure_schema(_conn)
+        _conn.commit()
     return _conn
 
 
@@ -56,17 +104,36 @@ def record_task(
     model: str = "",
     tokens: int = 0,
     skill: str = "",
+    retry_count: int = 0,
+    error_type: str = "",
+    error_message: str = "",
 ) -> str:
     conn = _get_conn()
     task_id = uuid.uuid4().hex[:12]
     keywords = json.dumps(_extract_keywords(prompt), ensure_ascii=False)
-    conn.execute(
-        "INSERT INTO tasks (id, prompt, result, duration_s, model, tokens, skill, keywords, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (task_id, prompt, result, duration_s, model, tokens, skill, keywords,
-         datetime.now(timezone.utc).isoformat()),
-    )
-    conn.commit()
+
+    def _insert() -> None:
+        conn.execute(
+            "INSERT INTO tasks (id, prompt, result, duration_s, model, tokens, skill, keywords, retry_count, error_type, error_message, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id,
+                prompt,
+                result,
+                duration_s,
+                model,
+                tokens,
+                skill,
+                keywords,
+                max(retry_count, 0),
+                (error_type or "")[:80],
+                (error_message or "")[:300],
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+    _with_db_retry(_insert)
 
     if result == "success":
         _learn_template(prompt, skill)
@@ -81,15 +148,19 @@ def find_similar_tasks(prompt: str, limit: int = 5) -> list[dict[str, Any]]:
         return []
     conditions = " OR ".join(["keywords LIKE ?"] * len(kw))
     params = [f"%{w}%" for w in kw]
-    rows = conn.execute(
-        f"SELECT * FROM tasks WHERE ({conditions}) ORDER BY created_at DESC LIMIT ?",
-        params + [limit],
-    ).fetchall()
+
+    def _query() -> list[sqlite3.Row]:
+        return conn.execute(
+            f"SELECT * FROM tasks WHERE ({conditions}) ORDER BY created_at DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+
+    rows = _with_db_retry(_query)
     return [dict(r) for r in rows]
 
 
 def get_retry_strategy(prompt: str, attempt: int) -> str | None:
-    """Retorna prompt ajustado para retry (máx 3 tentativas)."""
+    """Retorna prompt ajustado para retry (máx 3 retries)."""
     if attempt >= 3:
         return None
     similar = find_similar_tasks(prompt, limit=10)
@@ -128,30 +199,45 @@ def get_stats(period: str = "all", skill: str | None = None) -> dict[str, Any]:
 
     where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-    row = conn.execute(
+    row = _with_db_retry(lambda: conn.execute(
         f"SELECT COUNT(*) as total, "
         f"SUM(CASE WHEN result='success' THEN 1 ELSE 0 END) as successes, "
+        f"SUM(CASE WHEN result='fail' THEN 1 ELSE 0 END) as failures, "
         f"AVG(duration_s) as avg_duration, "
-        f"SUM(tokens) as total_tokens "
+        f"SUM(tokens) as total_tokens, "
+        f"SUM(retry_count) as retry_total "
         f"FROM tasks {where}", params
-    ).fetchone()
+    ).fetchone())
 
     total = row["total"] or 0
     successes = row["successes"] or 0
+    failures = row["failures"] or 0
+    retry_total = row["retry_total"] or 0
 
     # Top skills
-    top_skills = conn.execute(
+    top_skills = _with_db_retry(lambda: conn.execute(
         f"SELECT skill, COUNT(*) as cnt FROM tasks {where} "
         f"AND skill != '' GROUP BY skill ORDER BY cnt DESC LIMIT 5"
         if where else
         "SELECT skill, COUNT(*) as cnt FROM tasks WHERE skill != '' GROUP BY skill ORDER BY cnt DESC LIMIT 5",
         params,
-    ).fetchall()
+    ).fetchall())
 
-    # Streak
-    recent = conn.execute(
+    # Top erros
+    top_errors = _with_db_retry(lambda: conn.execute(
+        f"SELECT error_type, COUNT(*) as cnt FROM tasks {where} "
+        f"AND result='fail' AND error_type != '' "
+        f"GROUP BY error_type ORDER BY cnt DESC LIMIT 5"
+        if where else
+        "SELECT error_type, COUNT(*) as cnt FROM tasks WHERE result='fail' AND error_type != '' "
+        "GROUP BY error_type ORDER BY cnt DESC LIMIT 5",
+        params,
+    ).fetchall())
+
+    # Streak (global)
+    recent = _with_db_retry(lambda: conn.execute(
         "SELECT result FROM tasks ORDER BY created_at DESC LIMIT 50"
-    ).fetchall()
+    ).fetchall())
     streak = 0
     for r in recent:
         if r["result"] == "success":
@@ -162,10 +248,14 @@ def get_stats(period: str = "all", skill: str | None = None) -> dict[str, Any]:
     return {
         "total_tasks": total,
         "successes": successes,
+        "failures": failures,
         "success_rate": round(successes / total * 100, 1) if total else 0.0,
         "avg_duration_s": round(row["avg_duration"] or 0, 2),
         "total_tokens": row["total_tokens"] or 0,
+        "retry_total": retry_total,
+        "retry_rate": round(retry_total / total, 2) if total else 0.0,
         "top_skills": [{"skill": s["skill"], "count": s["cnt"]} for s in top_skills],
+        "top_errors": [{"error_type": e["error_type"], "count": e["cnt"]} for e in top_errors],
         "streak": streak,
         "period": period,
     }
