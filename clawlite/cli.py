@@ -30,6 +30,13 @@ from clawlite.runtime.multiagent import (
     worker_loop,
 )
 from clawlite.runtime.telegram_multiagent import dispatch_local
+from clawlite.runtime.reddit import (
+    auth_url as reddit_auth_url,
+    exchange_code as reddit_exchange_code,
+    monitor_mentions_once as reddit_monitor_mentions_once,
+    post_milestone as reddit_post_milestone,
+    reddit_status,
+)
 from clawlite.skills.marketplace import (
     DEFAULT_DOWNLOAD_BASE_URL,
     DEFAULT_INDEX_URL,
@@ -196,6 +203,22 @@ def main() -> None:
     sk_publish.add_argument("--hub-dir", default=None)
     sk_publish.add_argument("--manifest-path", default=None)
     sk_publish.add_argument("--download-base-url", default=DEFAULT_DOWNLOAD_BASE_URL)
+
+    rd = sub.add_parser("reddit")
+    rd_sub = rd.add_subparsers(dest="rdcmd")
+
+    rd_sub.add_parser("status")
+    rd_auth = rd_sub.add_parser("auth-url")
+    rd_auth.add_argument("--scopes", default="identity submit read history")
+    rd_ex = rd_sub.add_parser("exchange-code")
+    rd_ex.add_argument("code")
+
+    rd_post = rd_sub.add_parser("post-milestone")
+    rd_post.add_argument("--title", required=True)
+    rd_post.add_argument("--text", required=True)
+    rd_post.add_argument("--subs", nargs="*", default=[])
+
+    rd_sub.add_parser("monitor-once")
 
     args = p.parse_args()
 
@@ -433,6 +456,41 @@ def main() -> None:
             raise
         except Exception as exc:
             _fail(f"Falha no comando 'agents': {_exc_message(exc)}")
+
+
+    if args.cmd == "reddit":
+        try:
+            if args.rdcmd == "status":
+                st = reddit_status()
+                print(f"enabled: {st['enabled']}")
+                print(f"client_id_configured: {st['client_id']}")
+                print(f"client_secret_configured: {st['client_secret']}")
+                print(f"refresh_token_configured: {st['refresh_token']}")
+                print("subreddits:", ", ".join(st['subreddits']))
+                print("redirect_uri:", st['redirect_uri'])
+                return
+            if args.rdcmd == "auth-url":
+                print(reddit_auth_url(args.scopes))
+                return
+            if args.rdcmd == "exchange-code":
+                data = reddit_exchange_code(args.code)
+                print("✅ OAuth configurado. refresh_token:", bool(data.get("refresh_token")))
+                return
+            if args.rdcmd == "post-milestone":
+                res = reddit_post_milestone(args.title, args.text, args.subs or None)
+                print("✅ Postagem concluída")
+                for row in res:
+                    print("-", row['subreddit'])
+                return
+            if args.rdcmd == "monitor-once":
+                r = reddit_monitor_mentions_once()
+                print(f"checked={len(r['checked_subreddits'])} new_mentions={r['new_mentions']}")
+                return
+            _fail("Subcomando obrigatório para 'reddit'.")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'reddit': {_exc_message(exc)}")
 
     if args.cmd == "memory":
         if args.mcmd == "add":

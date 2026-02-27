@@ -148,3 +148,9 @@ Registro central:
 2. Branch: `feat/minha-feature`
 3. Commit + push
 4. Pull Request com contexto, screenshots/logs e teste
+
+
+## Reddit
+
+- OAuth + postagem de milestone + monitor de menções com aprovação via Telegram.
+- Guia: `docs/REDDIT_INTEGRATION.md`

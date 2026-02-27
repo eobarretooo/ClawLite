@@ -36,6 +36,15 @@ DEFAULT_CONFIG = {
         "discord": {"enabled": False},
     },
     "skills": ["core-tools", "memory", "gateway"],
+    "reddit": {
+        "enabled": False,
+        "client_id": "",
+        "client_secret": "",
+        "redirect_uri": "http://127.0.0.1:8788/reddit/callback",
+        "refresh_token": "",
+        "subreddits": ["selfhosted", "Python", "AIAssistants", "termux"],
+        "notify_chat_id": ""
+    },
 }
 
 
