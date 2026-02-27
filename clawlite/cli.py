@@ -15,6 +15,7 @@ from clawlite.runtime.session_memory import (
     semantic_search_memory,
     startup_context,
 )
+from clawlite.runtime.secret_store import load_dotenv, load_vault_json
 from clawlite.runtime.conversation_cron import (
     add_cron_job,
     format_cron_jobs_table,
@@ -86,6 +87,10 @@ def _exc_message(exc: Exception) -> str:
 
 
 def main() -> None:
+    # bootstrap de segredos (.env + vault local opcional)
+    load_dotenv()
+    load_vault_json()
+
     _started_at = time.time()
     _raw_cmd = " ".join(sys.argv[1:]).strip() or "help"
 
