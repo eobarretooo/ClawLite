@@ -1,57 +1,39 @@
 # Skills Reference
 
-Abaixo estão as skills atualmente registradas no ClawLite.
+Each skill can be invoked through the ClawLite runtime and extended for your environment.
 
-## Núcleo
+## Examples
 
-- `coding-agent`
-- `github`
-- `web-search`
-- `web-fetch`
-- `browser`
-- `memory-search`
-- `skill-creator`
-- `find-skills`
+### `github`
+```bash
+clawlite run "use github skill to summarize open issues"
+```
 
-## Produtividade
+### `web-search`
+```bash
+clawlite run "search web for arm64 python websocket best practices"
+```
 
-- `gmail`
-- `google-calendar`
-- `google-drive`
-- `notion`
-- `obsidian`
-- `linear`
+### `ollama`
+```bash
+clawlite run "switch to local ollama model when offline"
+```
 
-## Comunicação e Social
+### `cron`
+```bash
+clawlite run "schedule daily briefing at 08:00"
+```
 
-- `discord`
-- `slack`
-- `twitter`
-- `threads`
+### `healthcheck`
+```bash
+clawlite run "perform security healthcheck on this host"
+```
 
-## Infra / DevOps / Cloud
+## Full skill map
 
-- `docker`
-- `ssh`
-- `firebase`
-- `supabase`
-- `aws`
-- `vercel`
-- `tailscale`
-
-## IA, mídia e utilidades
-
-- `ollama`
-- `image-gen`
-- `whisper`
-- `voice-call`
-- `weather`
-- `pdf`
-- `rss`
-- `youtube`
-- `maps`
-- `switchbot`
-- `cron`
-- `healthcheck`
-
-> Observação: algumas skills dependem de ferramentas externas instaladas no sistema.
+- Core: `coding-agent`, `github`, `web-search`, `web-fetch`, `browser`, `memory-search`
+- Productivity: `gmail`, `google-calendar`, `google-drive`, `notion`, `obsidian`, `linear`
+- Social: `discord`, `slack`, `twitter`, `threads`
+- Infra: `docker`, `ssh`, `firebase`, `supabase`, `aws`, `vercel`, `tailscale`
+- AI/Media: `ollama`, `image-gen`, `whisper`, `voice-call`
+- Utility: `weather`, `pdf`, `rss`, `youtube`, `maps`, `switchbot`, `cron`, `healthcheck`, `find-skills`, `skill-creator`

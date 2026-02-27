@@ -1,35 +1,28 @@
 # Getting Started
 
-## Requisitos
-
-- Linux ou Termux
-- Python 3.10+
-- git
-- curl
-
-## Instalação em 1 comando
+## Install in one command
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Verificação rápida
+## Verify install
 
 ```bash
 clawlite doctor
 ```
 
-Saída esperada (resumo):
-
-- versão do Python
-- plataforma detectada
-- status de git/curl
-
-## Primeiros comandos
+## First run
 
 ```bash
 clawlite onboarding
 clawlite run "Summarize current folder"
-clawlite memory add "prefer respostas diretas"
-clawlite memory search "diretas"
+```
+
+## Example workflow
+
+```bash
+clawlite memory add "prefer concise updates"
+clawlite memory search "concise"
+clawlite gateway --port 8787
 ```
