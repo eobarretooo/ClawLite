@@ -1,4 +1,9 @@
 :root {
   --ifm-color-primary: #2563eb;
   --ifm-color-primary-dark: #1d4ed8;
+  --ifm-code-font-size: 95%;
+}
+
+.heroBanner {
+  border-radius: 16px;
 }
