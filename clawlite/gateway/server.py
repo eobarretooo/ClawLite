@@ -1085,7 +1085,7 @@ async def ws_logs(websocket: WebSocket):
 
 @app.get("/api/learning/stats")
 async def api_learning_stats(
-    period: str = Query("all", regex="^(today|week|month|all)$"),
+    period: str = Query("all", pattern="^(today|week|month|all)$"),
     skill: str | None = Query(None),
 ):
     from clawlite.runtime.learning import get_stats, get_templates
