@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from clawlite.config.settings import load_config
@@ -10,6 +11,8 @@ from clawlite.runtime.offline import (
     ProviderExecutionError,
     run_with_offline_fallback,
 )
+from clawlite.runtime.learning import record_task, get_retry_strategy
+from clawlite.runtime.preferences import build_preference_prefix
 
 
 def run_task_with_meta(prompt: str) -> tuple[str, dict[str, Any]]:
@@ -81,3 +84,50 @@ def run_task(prompt: str) -> str:
     if meta.get("mode") == "offline-fallback":
         return f"[offline:{meta.get('reason')} -> {meta.get('model')}]\n{output}"
     return output
+
+
+def run_task_with_learning(prompt: str, skill: str = "") -> str:
+    """Executa task com aprendizado contínuo: preferências, histórico e auto-retry."""
+    # Injetar preferências
+    prefix = build_preference_prefix()
+    enriched_prompt = f"{prefix}\n\n{prompt}" if prefix else prompt
+
+    attempt = 0
+    current_prompt = enriched_prompt
+    last_output = ""
+    last_meta: dict[str, Any] = {}
+
+    while attempt <= 3:
+        t0 = time.time()
+        output, meta = run_task_with_meta(current_prompt)
+        duration = time.time() - t0
+
+        is_error = meta.get("mode") == "error"
+        result = "fail" if is_error else "success"
+
+        record_task(
+            prompt=prompt,
+            result=result,
+            duration_s=duration,
+            model=meta.get("model", ""),
+            tokens=meta.get("tokens", 0),
+            skill=skill,
+        )
+
+        if not is_error:
+            if meta.get("mode") == "offline-fallback":
+                return f"[offline:{meta.get('reason')} -> {meta.get('model')}]\n{output}"
+            return output
+
+        last_output = output
+        last_meta = meta
+        attempt += 1
+
+        retry_prompt = get_retry_strategy(prompt, attempt)
+        if retry_prompt is None:
+            break
+        current_prompt = f"{prefix}\n\n{retry_prompt}" if prefix else retry_prompt
+
+    if last_meta.get("mode") == "offline-fallback":
+        return f"[offline:{last_meta.get('reason')} -> {last_meta.get('model')}]\n{last_output}"
+    return last_output
