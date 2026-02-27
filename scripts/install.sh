@@ -107,6 +107,11 @@ def doctor_check():
     run([str(VENV_DIR / "bin" / "clawlite"), "doctor"], "doctor")
 
 
+def verify_gateway_runtime():
+    code = "import fastapi,uvicorn; print('ok')"
+    run([PYBIN, "-c", code], "verify gateway runtime")
+
+
 def rich_flow():
     console.print("[bold #ff6b2b]🦊 ClawLite Installer v0.4.1[/bold #ff6b2b]")
     console.print("[bold #00f5ff]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold #00f5ff]")
@@ -165,6 +170,7 @@ def rich_flow():
     with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
         t = sp.add_task("[5/5] Verificando instalação...", total=None)
         doctor_check()
+        verify_gateway_runtime()
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
@@ -185,7 +191,9 @@ def simple_flow():
     print("[4/5] Configurando workspace...")
     ensure_path(); bootstrap_workspace(); print("✓")
     print("[5/5] Verificando instalação...")
-    doctor_check(); print("✓")
+    doctor_check()
+    verify_gateway_runtime()
+    print("✓")
     print("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding")
 
 
@@ -201,10 +209,16 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        msg = str(e)
+        if "verify gateway runtime" in msg or "fastapi" in msg or "uvicorn" in msg:
+            msg = (
+                "Gateway runtime não está pronto (fastapi/uvicorn). "
+                "No Termux, execute: pkg install rust clang && ~/.clawlite/venv/bin/pip install pydantic==1.10.21 --only-binary=:all: fastapi==0.100.1 uvicorn --only-binary=:all:"
+            )
         if USE_RICH:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]✗[/red] {msg}")
         else:
-            print(f"✗ {e}")
+            print(f"✗ {msg}")
         sys.exit(1)
 PY
 
