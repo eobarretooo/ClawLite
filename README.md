@@ -15,11 +15,13 @@
 - **Linux + Termux first** (ARM e x86)
 - **Instalação em 1 comando**
 - **Gateway WebSocket** com autenticação por token
-- **Menu de configuração interativo** (`clawlite configure`) com setas, checkboxes e preview
-- **Onboarding guiado** (`clawlite onboarding`) em wizard por etapas + barra de progresso
-- **Diagnóstico amigável** (`clawlite doctor`) com dependências e validações
-- **Status local de runtime** (`clawlite status`) para gateway/workers/cron/monitor
-- **Auth para provedores de IA** (`clawlite auth login ...`)
+- **Configure estilo OpenClaw** (`clawlite configure`) com seções, autosave e preview JSON
+- **Onboarding wizard guiado** (`clawlite onboarding`) com etapas + barra de progresso
+- **Diagnóstico amigável** (`clawlite doctor`) com validações de dependências e runtime
+- **Status local de runtime** (`clawlite status`) para gateway/workers/cron/reddit
+- **Bootstrap rápido de servidor** (`clawlite start`) para subir gateway local
+- **Learning analytics** (`clawlite stats`) com taxa de sucesso, top skills e preferências aprendidas
+- **Integração Reddit** (`clawlite reddit ...`) com OAuth, postagem de milestone e monitor de menções
 - **Ecossistema de skills** em expansão contínua
 - **Marketplace de skills** com índice remoto, checksum e allowlist de hosts
 
@@ -29,18 +31,62 @@
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Comandos principais
+## Quickstart (estado atual)
+
+```bash
+# 1) validar ambiente
+clawlite doctor
+
+# 2) onboarding guiado (primeira execução)
+clawlite onboarding
+
+# 3) ajuste fino no estilo OpenClaw
+clawlite configure
+
+# 4) conferir runtime local
+clawlite status
+
+# 5) subir gateway HTTP/WebSocket
+clawlite start --host 0.0.0.0 --port 8787
+```
+
+## Comandos essenciais
 
 ```bash
 clawlite doctor
 clawlite status
-clawlite onboarding
-clawlite configure
+clawlite start --port 8787
 clawlite auth status
-clawlite gateway --port 8787
+clawlite stats --period week
+clawlite reddit status
 clawlite skill install find-skills
 clawlite skill update
 ```
+
+## Learning / Stats
+
+A telemetria local de aprendizado pode ser consultada via CLI:
+
+```bash
+clawlite stats --period all
+clawlite stats --period month --skill github
+```
+
+Saída inclui: total de tasks, taxa de sucesso, tempo médio, tokens, streak, top skills e preferências aprendidas.
+
+## Reddit
+
+Fluxo completo:
+
+```bash
+clawlite reddit status
+clawlite reddit auth-url
+clawlite reddit exchange-code "SEU_CODE"
+clawlite reddit post-milestone --title "ClawLite v0.4.0" --text "..."
+clawlite reddit monitor-once
+```
+
+Guia detalhado: `docs/REDDIT_INTEGRATION.md`
 
 ## Dashboard v2
 
@@ -67,83 +113,24 @@ clawlite model status
 ## Cron por conversa
 
 ```bash
-# listar
 clawlite cron list
-
-# criar job por conversa/chat/thread/label
 clawlite cron add --channel telegram --chat-id 123 --thread-id suporte --label general --name heartbeat --text "ping" --every-seconds 300
-
-# remover
 clawlite cron remove 1
-
-# rodar jobs vencidos (ou todos com --all)
 clawlite cron run
 clawlite cron run --all
 ```
-
-## Notificações inteligentes (prioridade + dedupe)
-
-- Eventos críticos (falha de provedor/cron) geram prioridade `high`.
-- Eventos de fallback offline usam prioridade `normal`.
-- Execuções de cron com sucesso usam prioridade `low`.
-- Deduplicação evita spam de alertas repetidos na janela configurada.
-
-## Modo bateria com throttling
-
-```bash
-clawlite battery status
-clawlite battery set --enabled true --throttle-seconds 8
-```
-
-Com `battery_mode.enabled=true`, workers aumentam o intervalo de polling para economizar bateria.
 
 ## Config de exemplo
 
 - Arquivo de referência: `docs/config.example.json`
 - Arquivo real de runtime: `~/.clawlite/config.json`
 
-## MVP Multi-Agente Telegram (P0)
-
-```bash
-# 1) Registrar worker persistente por chat/thread/label
-clawlite agents register --channel telegram --chat-id 123 --thread-id suporte --label general --cmd 'clawlite run "{text}"'
-
-# 2) Subir/parar/listar workers
-clawlite agents start 1
-clawlite agents stop 1
-clawlite agents list
-
-# 3) Dispatch local (simulando update Telegram)
-clawlite agents telegram-dispatch --config telegram.multiagent.json --chat-id 123 --label general "responda este pedido"
-
-# 4) Acompanhar fila
-clawlite agents tasks --limit 20
-```
-
-Template de configuração:
-
-```bash
-clawlite channels template telegram-multiagent
-```
-
 ## Documentação
 
 - PT-BR: https://eobarretooo.github.io/ClawLite/
 - EN: https://eobarretooo.github.io/ClawLite/en/
+- Guia de configuração UX: `docs/CONFIGURE_UX_PTBR.md`
 - Troubleshooting técnico: `docs/TROUBLESHOOTING.md`
-
-## Skills
-
-Estrutura de skill:
-
-```text
-skills/<nome>/SKILL.md
-clawlite/skills/<nome_modulo>.py
-```
-
-Registro central:
-
-- `clawlite/skills/registry.py`
 
 ## Contribuição
 
@@ -152,8 +139,12 @@ Registro central:
 3. Commit + push
 4. Pull Request com contexto, screenshots/logs e teste
 
+## Community Automation (Reddit + Threads + GitHub)
 
-## Reddit
+- Playbook consolidado: `docs/COMMUNITY_AUTOMATION.md`
+- Templates: `templates/community/`
+- Gerador de pacote por milestone:
 
-- OAuth + postagem de milestone + monitor de menções com aprovação via Telegram.
-- Guia: `docs/REDDIT_INTEGRATION.md`
+```bash
+python3 scripts/community_pack.py --version v0.5.0 --date 2026-02-27 --highlights "Multiagent por thread" "Cron por conversa" "Reddit monitor"
+```
