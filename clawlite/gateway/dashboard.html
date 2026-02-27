@@ -5,24 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ClawLite Dashboard</title>
   <style>
-    :root{--bg:#0b1020;--panel:#111934;--line:#26365f;--text:#eaf1ff;--muted:#9fb3de;--ok:#44d487;--warn:#f4c16a;--err:#ff7373;--a:#ff6b2b;--c:#00f5ff}
+    :root{--bg:#0b1020;--panel:#111934;--line:#26365f;--text:#eaf1ff;--muted:#9fb3de;--ok:#44d487;--warn:#f4c16a;--err:#ff7373;--a:#ff6b2b}
     *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 0 0,#173366,var(--bg) 55%);color:var(--text);font-family:Inter,system-ui,sans-serif}
-    .layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
-    .side{border-right:1px solid var(--line);padding:14px;background:#0d142a}
-    .main{padding:14px}
+    .layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:14px;background:#0d142a}.main{padding:14px}
     .card{background:linear-gradient(180deg,#101931,var(--panel));border:1px solid var(--line);border-radius:12px;padding:12px}
     h1,h2{margin:0 0 8px 0} h1{font-size:1.05rem} h2{font-size:.98rem}
-    .muted{color:var(--muted)}
-    .tabs button{width:100%;text-align:left;margin:6px 0;padding:9px;border:1px solid var(--line);background:#0f1830;color:var(--text);border-radius:8px;cursor:pointer}
+    .muted{color:var(--muted)} .tabs button{width:100%;text-align:left;margin:6px 0;padding:9px;border:1px solid var(--line);background:#0f1830;color:var(--text);border-radius:8px;cursor:pointer}
     .tabs button.active{border-color:var(--a);box-shadow:0 0 0 1px #ff6b2b33 inset}
     input,select,textarea,button{background:#0d1630;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px}
     .row{display:flex;gap:8px;align-items:center;margin:8px 0}.row>*{flex:1}
-    .list,.chat{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#0b1328;padding:8px}
-    .chat{height:300px}
-    .msg{padding:8px;border-radius:8px;margin:8px 0;white-space:pre-wrap}.u{background:#1d3768}.a{background:#1b3221}
+    .list,.chat{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#0b1328;padding:8px}
+    .chat{height:300px}.msg{padding:8px;border-radius:8px;margin:8px 0;white-space:pre-wrap}.u{background:#1d3768}.a{background:#1b3221}
     .kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.k{border:1px solid var(--line);border-radius:8px;padding:10px;background:#0b1328}
-    .grid{display:grid;gap:12px}.grid2{grid-template-columns:1fr 1fr}.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
-    .hide{display:none}
+    .ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)} .hide{display:none}
     @media(max-width:980px){.layout{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
   </style>
 </head>
@@ -30,7 +25,7 @@
 <div class="layout">
   <aside class="side">
     <h1>🦊 ClawLite Dashboard</h1>
-    <p class="muted">Novo layout integrado com dados reais</p>
+    <p class="muted">Painéis P0 (chat/cron/channels/config/debug/update)</p>
     <div class="card">
       <label class="muted">Token</label>
       <input id="token" placeholder="Bearer token" />
@@ -52,24 +47,40 @@
       <div class="row"><input id="sessionId" value="dashboard-session"><input id="chatInput" placeholder="Digite mensagem"><button id="btnSend">Enviar</button></div>
     </section>
 
-    <section id="tab-skills" class="card tabview hide">
-      <h2>🧩 Skills</h2>
-      <div class="row"><input id="skillSlug" placeholder="slug"><button id="btnInstallSkill">Instalar</button></div>
-      <div id="skills" class="list"></div>
+    <section id="tab-cron" class="card tabview hide">
+      <h2>⏱️ Cron</h2>
+      <div class="row"><input id="cronName" placeholder="nome"><input id="cronText" placeholder="texto"><input id="cronInterval" type="number" value="3600"></div>
+      <div class="row"><input id="cronChannel" value="telegram"><input id="cronChatId" placeholder="chat_id"><button id="btnCronAdd">Criar job</button><button id="btnCronRefresh">Atualizar</button></div>
+      <div id="cronFeedback" class="muted"></div>
+      <div id="cronList" class="list"></div>
     </section>
 
-    <section id="tab-mcp" class="card tabview hide">
-      <h2>🔌 MCP</h2>
-      <div class="row"><input id="mcpName" placeholder="nome"><input id="mcpUrl" placeholder="url/comando"><button id="btnMcpAdd">Adicionar</button></div>
-      <div class="row"><input id="mcpQuery" placeholder="buscar marketplace"><button id="btnMcpSearch">Buscar</button><button id="btnMcpInstallFs">Install filesystem</button><button id="btnMcpInstallGh">Install github</button></div>
-      <div id="mcpList" class="list"></div>
-      <div id="mcpSearch" class="list" style="margin-top:8px"></div>
+    <section id="tab-channels" class="card tabview hide">
+      <h2>📡 Channels</h2>
+      <div class="row"><button id="btnChannelsLoad">Recarregar</button><button id="btnChannelsSave">Salvar channels</button></div>
+      <div id="channelsList" class="list"></div>
     </section>
 
-    <section id="tab-agents" class="card tabview hide">
-      <h2>🤖 Agentes</h2>
-      <div class="row"><input id="agentName" placeholder="nome"><select id="agentChannel"><option>telegram</option><option>slack</option><option>discord</option><option>whatsapp</option><option>teams</option></select><button id="btnAgentCreate">Criar</button></div>
-      <div id="agents" class="list"></div>
+    <section id="tab-config" class="card tabview hide">
+      <h2>⚙️ Config</h2>
+      <label class="muted">Model</label><input id="cfgModel">
+      <label class="muted">Hook pre</label><textarea id="hookPre" rows="2"></textarea>
+      <label class="muted">Hook post</label><textarea id="hookPost" rows="2"></textarea>
+      <div class="row"><button id="btnSaveCfg">Salvar settings</button><button id="btnApplyCfg">Apply config</button><button id="btnApplyDryCfg">Dry-run apply</button><button id="btnRestartCfg">Restart seguro</button></div>
+      <div id="configFeedback" class="muted"></div>
+    </section>
+
+    <section id="tab-debug" class="card tabview hide">
+      <h2>🧪 Debug</h2>
+      <div class="row"><button id="btnDebugLoad">Atualizar debug</button></div>
+      <div id="debugData" class="list"></div>
+    </section>
+
+    <section id="tab-update" class="card tabview hide">
+      <h2>⬆️ Update</h2>
+      <div class="row"><input id="updateSlugs" placeholder="slugs separados por vírgula (opcional)"></div>
+      <div class="row"><button id="btnUpdateDry">Dry-run update</button><button id="btnUpdateApply">Apply update</button></div>
+      <div id="updateData" class="list"></div>
     </section>
 
     <section id="tab-telemetry" class="card tabview hide">
@@ -78,92 +89,67 @@
       <div class="kpi"><div class="k" id="kEvents"></div><div class="k" id="kSessions"></div><div class="k" id="kTokens"></div><div class="k" id="kCost"></div></div>
     </section>
 
-    <section id="tab-sessions" class="card tabview hide">
-      <h2>🗂️ Sessões</h2>
-      <div class="row"><input id="sessionQuery" placeholder="buscar"><button id="btnSessions">Buscar</button></div>
-      <div id="sessions" class="list"></div>
-    </section>
-
     <section id="tab-logs" class="card tabview hide">
       <h2>📜 Logs</h2>
       <div class="row"><select id="logLevel"><option value="">todos</option><option>info</option><option>warn</option><option>error</option></select><input id="logEvent" placeholder="evento"><input id="logQuery" placeholder="busca"><button id="btnLogs">Filtrar</button></div>
       <div id="logs" class="list"></div>
     </section>
-
-    <section id="tab-config" class="card tabview hide">
-      <h2>⚙️ Config</h2>
-      <label class="muted">Model</label><input id="cfgModel">
-      <label class="muted">Hook pre</label><textarea id="hookPre" rows="3"></textarea>
-      <label class="muted">Hook post</label><textarea id="hookPost" rows="3"></textarea>
-      <div class="row"><button id="btnSaveCfg">Salvar</button></div>
-    </section>
-
-    <section id="tab-learning" class="card tabview hide">
-      <h2>🧠 Learning</h2>
-      <div id="learning" class="list"></div>
-    </section>
   </main>
 </div>
 
 <script>
-const TABS=[['chat','💬 Chat'],['skills','🧩 Skills'],['mcp','🔌 MCP'],['agents','🤖 Agentes'],['telemetry','📊 Telemetria'],['sessions','🗂️ Sessões'],['logs','📜 Logs'],['config','⚙️ Config'],['learning','🧠 Learning']]
-const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[]}
+const TABS=[['chat','💬 Chat'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
+const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[]}
 const q=id=>document.getElementById(id)
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
 
-function renderTabs(){q('tabs').innerHTML=TABS.map(([id,l])=>`<button class="${state.tab===id?'active':''}" data-tab="${id}">${l}</button>`).join('')
-q('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab))}
+function renderTabs(){q('tabs').innerHTML=TABS.map(([id,l])=>`<button class="${state.tab===id?'active':''}" data-tab="${id}">${l}</button>`).join('');q('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab))}
 function switchTab(id){state.tab=id;document.querySelectorAll('.tabview').forEach(v=>v.classList.add('hide'));q('tab-'+id).classList.remove('hide');renderTabs()}
-
 async function api(path,opts={}){const h={'Content-Type':'application/json',...(opts.headers||{})}; if(state.token)h.Authorization=`Bearer ${state.token}`; const r=await fetch(path,{...opts,headers:h}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.detail||d.message||('HTTP '+r.status)); return d}
 
-async function connect(){
-  state.token=q('token').value.trim();
-  const a=await fetch('/api/dashboard/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:state.token})}).then(r=>r.json())
-  if(!a.ok){q('auth').innerHTML='<span class="err">token inválido</span>';return}
-  q('auth').innerHTML='<span class="ok">autenticado</span>'
-  const b=await api('/api/dashboard/bootstrap');
-  q('gw').innerHTML='<span class="ok">gateway online</span>'
-  q('model').textContent='model: '+(b.status.model||'-'); q('uptime').textContent='uptime: '+(b.status.uptime_seconds||0)+'s'
-  q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||''
-  await Promise.all([loadSkills(),loadMcp(),loadAgents(),loadTelemetry(),loadSessions(),loadLogs(),loadLearning()]);
-  connectWs()
-}
+async function connect(){state.token=q('token').value.trim();const a=await fetch('/api/dashboard/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:state.token})}).then(r=>r.json());if(!a.ok){q('auth').innerHTML='<span class="err">token inválido</span>';return}
+  q('auth').innerHTML='<span class="ok">autenticado</span>'; const b=await api('/api/dashboard/bootstrap');
+  q('gw').innerHTML='<span class="ok">gateway online</span>'; q('model').textContent='model: '+(b.status.model||'-'); q('uptime').textContent='uptime: '+(b.status.uptime_seconds||0)+'s';
+  q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||'';
+  await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug()]); connectWs()}
 
 function connectWs(){const base=location.origin.replace('http','ws'); if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
- state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`)
- state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat'){addMsg('a',m.message?.text||''); loadTelemetry(); loadSessions();}}
- state.wsLogs=new WebSocket(`${base}/ws/logs?token=${encodeURIComponent(state.token)}`)
- state.wsLogs.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='snapshot'){state.logs=m.logs||[]; renderLogs()} if(m.type==='log'){state.logs.push(m.payload); if(state.logs.length>500)state.logs.shift(); renderLogs()}}
+ state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`); state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat') addMsg('a',m.message?.text||'')}
+ state.wsLogs=new WebSocket(`${base}/ws/logs?token=${encodeURIComponent(state.token)}`); state.wsLogs.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='snapshot'){state.logs=m.logs||[]; renderLogs()} if(m.type==='log'){state.logs.push(m.payload); if(state.logs.length>500)state.logs.shift(); renderLogs()}}
 }
-
 function addMsg(role,text){const d=document.createElement('div'); d.className='msg '+role; d.innerHTML=esc(text); q('chat').appendChild(d); q('chat').scrollTop=q('chat').scrollHeight}
 async function sendChat(){const t=q('chatInput').value.trim(); if(!t||!state.wsChat||state.wsChat.readyState!==1)return; addMsg('u',t); state.wsChat.send(JSON.stringify({type:'chat',session_id:q('sessionId').value||'dashboard-session',text:t})); q('chatInput').value=''}
 
-async function loadSkills(){const d=await api('/api/dashboard/skills'); q('skills').innerHTML=(d.skills||[]).map(s=>`<div>${esc(s.slug)} - ${s.enabled?'<span class="ok">ativo</span>':'<span class="warn">inativo</span>'} <button onclick="toggleSkill('${esc(s.slug)}',${!!s.enabled})">${s.enabled?'desativar':'ativar'}</button> <button onclick="removeSkill('${esc(s.slug)}')">remover</button></div>`).join('')||'<div class="muted">sem skills</div>'}
-async function installSkill(){const slug=q('skillSlug').value.trim(); if(!slug)return; await api('/api/dashboard/skills/install',{method:'POST',body:JSON.stringify({slug})}); q('skillSlug').value=''; loadSkills()}
-async function toggleSkill(slug,en){await api('/api/dashboard/skills/'+(en?'disable':'enable'),{method:'POST',body:JSON.stringify({slug})}); loadSkills()}
-async function removeSkill(slug){await api('/api/dashboard/skills/remove',{method:'POST',body:JSON.stringify({slug})}); loadSkills()}
+async function loadCron(){const d=await api('/api/cron'); q('cronList').innerHTML=(d.jobs||[]).map(j=>`<div><b>#${j.id}</b> ${esc(j.name)} <span class='muted'>${j.interval_seconds}s</span><br>${esc(j.text||'')}<br><button onclick="rmCron(${j.id})">remover</button></div>`).join('')||'<div class="muted">sem jobs</div>'}
+async function addCron(){try{const p={channel:q('cronChannel').value.trim()||'telegram',chat_id:q('cronChatId').value.trim(),name:q('cronName').value.trim(),text:q('cronText').value.trim(),interval_seconds:Number(q('cronInterval').value||3600)};const d=await api('/api/cron',{method:'POST',body:JSON.stringify(p)});q('cronFeedback').innerHTML=`<span class='ok'>job #${d.id} criado</span>`;loadCron()}catch(e){q('cronFeedback').innerHTML=`<span class='err'>${esc(e.message)}</span>`}}
+async function rmCron(id){await api('/api/cron/'+id,{method:'DELETE'});q('cronFeedback').innerHTML=`<span class='ok'>job #${id} removido</span>`;loadCron()}
 
-async function loadMcp(){const d=await api('/api/mcp/list'); q('mcpList').innerHTML=(d.servers||[]).map(s=>`<div>${esc(s.name)} → ${esc(s.url)} <button onclick="mcpRemove('${esc(s.name)}')">remover</button></div>`).join('')||'<div class="muted">sem servidores MCP</div>'}
-async function mcpAdd(){const name=q('mcpName').value.trim(),url=q('mcpUrl').value.trim(); if(!name||!url)return; await api('/api/mcp/add',{method:'POST',body:JSON.stringify({name,url})}); q('mcpName').value=''; q('mcpUrl').value=''; loadMcp()}
-async function mcpRemove(name){await api('/api/mcp/remove',{method:'POST',body:JSON.stringify({name})}); loadMcp()}
-async function mcpSearch(){const query=q('mcpQuery').value.trim(); const d=await api('/api/mcp/search?query='+encodeURIComponent(query)); q('mcpSearch').innerHTML=(d.results||[]).map(r=>`<div>${esc(r.name||'-')} - ${esc(r.description||'')}</div>`).join('')||'<div class="muted">sem resultados</div>'}
-async function mcpInstall(name){await api('/api/mcp/install',{method:'POST',body:JSON.stringify({name})}); loadMcp()}
+function renderChannels(){q('channelsList').innerHTML=(state.channels||[]).map((ch,i)=>`<div style='margin-bottom:8px'><b>${esc(ch.channel)}</b> ${ch.configured?'<span class="ok">configured</span>':'<span class="warn">empty</span>'}<br>
+<label><input type='checkbox' data-i='${i}' data-k='enabled' ${ch.enabled?'checked':''}/> enabled</label>
+<label><input type='checkbox' data-i='${i}' data-k='stt_enabled' ${ch.stt_enabled?'checked':''}/> stt</label>
+<label><input type='checkbox' data-i='${i}' data-k='tts_enabled' ${ch.tts_enabled?'checked':''}/> tts</label>
+<div class='row'><input data-i='${i}' data-k='token' placeholder='token' value='${esc(ch.token||'')}'><input data-i='${i}' data-k='account' placeholder='account' value='${esc(ch.account||'')}'></div></div>`).join('')||'<div class="muted">sem canais</div>';
+q('channelsList').querySelectorAll('input').forEach(el=>{el.onchange=()=>{const i=Number(el.dataset.i);const k=el.dataset.k;if(el.type==='checkbox')state.channels[i][k]=el.checked;else state.channels[i][k]=el.value}})}
+async function loadChannels(){const d=await api('/api/channels/status'); state.channels=d.channels||[]; renderChannels()}
+async function saveChannels(){const out={}; (state.channels||[]).forEach(c=>out[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled}); await api('/api/channels/config',{method:'PUT',body:JSON.stringify({channels:out})}); q('auth').innerHTML='<span class="ok">channels salvos</span>'; loadChannels()}
 
-async function loadAgents(){const d=await api('/api/agents'); q('agents').innerHTML=(d.agents||[]).map(a=>`<div>${esc(a.name||a.label||'agent')} • ${esc(a.channel||'-')} • ${a.enabled?'<span class="ok">on</span>':'<span class="warn">off</span>'}</div>`).join('')||'<div class="muted">sem agentes</div>'}
-async function createAgent(){const name=q('agentName').value.trim(), channel=q('agentChannel').value; if(!name)return; await api('/api/agents',{method:'POST',body:JSON.stringify({name,channel})}); q('agentName').value=''; loadAgents()}
+async function saveCfg(){await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:q('cfgModel').value.trim(),hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('configFeedback').innerHTML='<span class="ok">settings salvas</span>'}
+async function applyCfg(dry){const channels={};(state.channels||[]).forEach(c=>channels[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled});const d=await api('/api/dashboard/config/apply',{method:'POST',body:JSON.stringify({dry_run:dry,model:q('cfgModel').value.trim(),channels})}); q('configFeedback').innerHTML=`<span class='ok'>${esc(d.message)}</span>`}
+async function restartCfg(){const d=await api('/api/dashboard/config/restart',{method:'POST',body:JSON.stringify({mode:'safe'})}); q('configFeedback').innerHTML=`<span class='warn'>${esc(d.message)}</span>`}
+
+async function loadDebug(){const d=await api('/api/dashboard/debug'); q('debugData').innerHTML=Object.entries(d.debug||{}).map(([k,v])=>`<div><b>${esc(k)}</b>: ${esc(v)}</div>`).join('')}
+function parseUpdateSlugs(){return (q('updateSlugs').value||'').split(',').map(s=>s.trim()).filter(Boolean)}
+async function runUpdate(dry){const d=await api('/api/dashboard/update',{method:'POST',body:JSON.stringify({dry_run:dry,slugs:parseUpdateSlugs()})}); q('updateData').innerHTML=`<div><b>dry_run:</b> ${d.dry_run}</div><pre>${esc(JSON.stringify(d.result,null,2))}</pre>`}
 
 async function loadTelemetry(){const p=q('period').value,s=q('telemetrySession').value.trim(); const d=await api('/api/dashboard/telemetry?period='+encodeURIComponent(p)+'&session_id='+encodeURIComponent(s)); const x=d.summary||{}; q('kEvents').innerHTML='events<br><b>'+ (x.events||0) +'</b>'; q('kSessions').innerHTML='sessions<br><b>'+ (x.sessions||0) +'</b>'; q('kTokens').innerHTML='tokens<br><b>'+ (x.tokens||0) +'</b>'; q('kCost').innerHTML='cost<br><b>$'+ Number(x.cost_usd||0).toFixed(6) +'</b>'}
-async function loadSessions(){const d=await api('/api/dashboard/sessions?q='+encodeURIComponent(q('sessionQuery').value||'')); q('sessions').innerHTML=(d.sessions||[]).map(s=>`<div><b>${esc(s.session_id)}</b> • ${s.messages} msgs<br><span class='muted'>${esc(s.preview||'')}</span></div>`).join('')||'<div class="muted">sem sessões</div>'}
-
 function renderLogs(){q('logs').innerHTML=(state.logs||[]).slice().reverse().map(l=>`<div>[${esc(l.level||'info').toUpperCase()}] ${esc(l.event||'-')}<br><span class='muted'>${esc(JSON.stringify(l.data||{}))}</span></div>`).join('')||'<div class="muted">sem logs</div>'}
 async function loadLogs(){const d=await api('/api/dashboard/logs?limit=200&level='+encodeURIComponent(q('logLevel').value||'')+'&event='+encodeURIComponent(q('logEvent').value||'')+'&q='+encodeURIComponent(q('logQuery').value||'')); state.logs=d.logs||[]; renderLogs()}
 
-async function saveCfg(){await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:q('cfgModel').value.trim(),hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('auth').innerHTML='<span class="ok">config salva</span>'}
-async function loadLearning(){const d=await api('/api/learning/stats?period=all'); q('learning').innerHTML=`<div>Total: <b>${d.total_tasks||0}</b></div><div>Sucesso: <b>${d.success_rate||0}%</b></div><div>Retry rate: <b>${d.retry_rate||0}%</b></div><div>Streak: <b>${d.streak||0}</b></div>`}
-
-q('btnConnect').onclick=connect; q('btnSend').onclick=sendChat; q('btnInstallSkill').onclick=installSkill; q('btnMcpAdd').onclick=mcpAdd; q('btnMcpSearch').onclick=mcpSearch; q('btnMcpInstallFs').onclick=()=>mcpInstall('filesystem'); q('btnMcpInstallGh').onclick=()=>mcpInstall('github'); q('btnAgentCreate').onclick=createAgent; q('btnTelem').onclick=loadTelemetry; q('btnSessions').onclick=loadSessions; q('btnLogs').onclick=loadLogs; q('btnSaveCfg').onclick=saveCfg; q('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}})
+q('btnConnect').onclick=connect; q('btnSend').onclick=sendChat; q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
+q('btnChannelsLoad').onclick=loadChannels; q('btnChannelsSave').onclick=saveChannels;
+q('btnSaveCfg').onclick=saveCfg; q('btnApplyCfg').onclick=()=>applyCfg(false); q('btnApplyDryCfg').onclick=()=>applyCfg(true); q('btnRestartCfg').onclick=restartCfg;
+q('btnDebugLoad').onclick=loadDebug; q('btnUpdateDry').onclick=()=>runUpdate(true); q('btnUpdateApply').onclick=()=>runUpdate(false);
+q('btnTelem').onclick=loadTelemetry; q('btnLogs').onclick=loadLogs; q('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}})
 renderTabs()
 </script>
 </body>

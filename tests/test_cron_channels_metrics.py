@@ -111,6 +111,94 @@ def test_channels_status(monkeypatch, tmp_path):
         multiagent.DB_PATH = old_path
 
 
+def test_config_apply_restart_and_debug(monkeypatch, tmp_path):
+    old_dir, old_path = _patch_db(tmp_path)
+    try:
+        server = _boot(monkeypatch, tmp_path)
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        dry = client.post(
+            "/api/dashboard/config/apply",
+            headers=headers,
+            json={
+                "dry_run": True,
+                "model": "openai/gpt-4o-mini",
+                "channels": {"telegram": {"enabled": True, "token": "x"}},
+            },
+        )
+        assert dry.status_code == 200
+        assert dry.json()["dry_run"] is True
+
+        apply_real = client.post(
+            "/api/dashboard/config/apply",
+            headers=headers,
+            json={
+                "dry_run": False,
+                "model": "openai/gpt-4o-mini",
+                "channels": {"telegram": {"enabled": True, "token": "abc", "account": "acc-1"}},
+            },
+        )
+        assert apply_real.status_code == 200
+        assert apply_real.json()["settings"]["model"] == "openai/gpt-4o-mini"
+
+        restart = client.post("/api/dashboard/config/restart", headers=headers, json={"mode": "safe"})
+        assert restart.status_code == 200
+        assert restart.json()["performed"] is False
+
+        debug = client.get("/api/dashboard/debug", headers=headers)
+        assert debug.status_code == 200
+        info = debug.json()["debug"]
+        assert "version" in info
+        assert "python" in info
+        assert "config_dir" in info
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path
+
+
+def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
+    old_dir, old_path = _patch_db(tmp_path)
+    try:
+        server = _boot(monkeypatch, tmp_path)
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        saved = client.put(
+            "/api/channels/config",
+            headers=headers,
+            json={
+                "channels": {
+                    "telegram": {
+                        "enabled": True,
+                        "token": "tok",
+                        "account": "acc",
+                        "stt_enabled": True,
+                        "tts_enabled": False,
+                    }
+                }
+            },
+        )
+        assert saved.status_code == 200
+        assert saved.json()["channels"]["telegram"]["enabled"] is True
+
+        status = client.get("/api/channels/status", headers=headers)
+        tg = next(c for c in status.json()["channels"] if c["channel"] == "telegram")
+        assert tg["configured"] is True
+
+        # evita rede no teste do update
+        monkeypatch.setattr(server, "update_skills", lambda **kwargs: {"updated": [], "skipped": [], "blocked": [], "missing": []})
+        up = client.post("/api/dashboard/update", headers=headers, json={"dry_run": True, "slugs": ["abc"]})
+        assert up.status_code == 200
+        assert up.json()["ok"] is True
+        assert up.json()["dry_run"] is True
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path
+
+
 def test_metrics(monkeypatch, tmp_path):
     old_dir, old_path = _patch_db(tmp_path)
     try:

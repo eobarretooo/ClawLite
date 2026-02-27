@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import re
 import secrets
+import sys
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +32,7 @@ from clawlite.skills.marketplace import (
     SkillMarketplaceError,
     load_hub_manifest,
     publish_skill,
+    update_skills,
 )
 
 app = FastAPI(title="ClawLite Gateway", version="0.3.0")
@@ -49,6 +52,15 @@ DASHBOARD_DIR = CONFIG_DIR / "dashboard"
 SESSIONS_FILE = DASHBOARD_DIR / "sessions.jsonl"
 TELEMETRY_FILE = DASHBOARD_DIR / "telemetry.jsonl"
 SETTINGS_FILE = DASHBOARD_DIR / "settings.json"
+
+
+def _version() -> str:
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        return _pkg_version("clawlite")
+    except Exception:
+        return "dev"
 
 
 def _iso_now() -> str:
@@ -1169,6 +1181,138 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
 
 
 # ---------------------------------------------------------------------------
+# Config/channels/debug/update endpoints (paridade dashboard OpenClaw)
+# ---------------------------------------------------------------------------
+
+
+@app.put("/api/channels/config")
+def api_channels_config_save(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    cfg = load_config()
+    channels = payload.get("channels", {})
+    if not isinstance(channels, dict):
+        raise HTTPException(status_code=400, detail="Campo 'channels' deve ser objeto")
+
+    clean_channels: dict[str, dict[str, Any]] = {}
+    for name, raw in channels.items():
+        if not isinstance(raw, dict):
+            continue
+        clean_channels[str(name)] = {
+            "enabled": bool(raw.get("enabled", False)),
+            "token": str(raw.get("token", "")).strip(),
+            "account": str(raw.get("account", "")).strip(),
+            "stt_enabled": bool(raw.get("stt_enabled", False)),
+            "tts_enabled": bool(raw.get("tts_enabled", False)),
+        }
+    cfg["channels"] = clean_channels
+    save_config(cfg)
+    _log("channels.updated", data={"count": len(clean_channels)})
+    return JSONResponse({"ok": True, "channels": clean_channels})
+
+
+@app.post("/api/dashboard/config/apply")
+def api_dashboard_config_apply(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    cfg = load_config()
+    dry_run = bool(payload.get("dry_run", False))
+
+    model = str(payload.get("model", cfg.get("model", ""))).strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="Model obrigatório")
+
+    channels = payload.get("channels", cfg.get("channels", {}))
+    if not isinstance(channels, dict):
+        raise HTTPException(status_code=400, detail="Campo 'channels' inválido")
+
+    sanitized_channels: dict[str, dict[str, Any]] = {}
+    for name, raw in channels.items():
+        if not isinstance(raw, dict):
+            continue
+        sanitized_channels[str(name)] = {
+            "enabled": bool(raw.get("enabled", False)),
+            "token": str(raw.get("token", "")).strip(),
+            "account": str(raw.get("account", "")).strip(),
+            "stt_enabled": bool(raw.get("stt_enabled", False)),
+            "tts_enabled": bool(raw.get("tts_enabled", False)),
+        }
+
+    pending_cfg = dict(cfg)
+    pending_cfg["model"] = model
+    pending_cfg["channels"] = sanitized_channels
+
+    if not dry_run:
+        save_config(pending_cfg)
+        _log("config.applied", data={"model": model, "channels": len(sanitized_channels)})
+    else:
+        _log("config.apply.dry_run", data={"model": model, "channels": len(sanitized_channels)})
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "dry_run": dry_run,
+            "settings": {
+                "model": model,
+                "channels": sanitized_channels,
+            },
+            "message": "validação concluída" if dry_run else "config aplicada",
+        }
+    )
+
+
+@app.post("/api/dashboard/config/restart")
+def api_dashboard_config_restart(payload: dict[str, Any] | None = None, authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    mode = "safe"
+    if isinstance(payload, dict):
+        mode = str(payload.get("mode", "safe")).strip() or "safe"
+    _log("gateway.restart.requested", data={"mode": mode})
+    return JSONResponse(
+        {
+            "ok": True,
+            "mode": mode,
+            "performed": False,
+            "message": "Restart seguro registrado (noop no runtime embutido)",
+        }
+    )
+
+
+@app.get("/api/dashboard/debug")
+def api_dashboard_debug(authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    return JSONResponse(
+        {
+            "ok": True,
+            "debug": {
+                "version": _version(),
+                "python": sys.version.split(" ")[0],
+                "platform": platform.platform(),
+                "cwd": str(Path.cwd()),
+                "home": str(Path.home()),
+                "config_dir": str(CONFIG_DIR),
+                "skills_dir": str(_skills_dir()),
+                "logs_in_ring": len(LOG_RING),
+                "uptime_seconds": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
+            },
+        }
+    )
+
+
+@app.post("/api/dashboard/update")
+def api_dashboard_update(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    slugs = payload.get("slugs") or []
+    if not isinstance(slugs, list):
+        raise HTTPException(status_code=400, detail="Campo 'slugs' deve ser lista")
+    dry_run = bool(payload.get("dry_run", True))
+    try:
+        result = update_skills(slugs=[str(s) for s in slugs], dry_run=dry_run)
+    except SkillMarketplaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log("skills.update", data={"dry_run": dry_run, "count": len(result.get("updated", []))})
+    return JSONResponse({"ok": True, "dry_run": dry_run, "result": result})
+
+
+# ---------------------------------------------------------------------------
 # Metrics endpoint (observabilidade P0)
 # ---------------------------------------------------------------------------
 
@@ -1226,13 +1370,31 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
 
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
     cfg = load_config()
-    h = host or cfg.get("gateway", {}).get("host", "0.0.0.0")
-    p = port or int(cfg.get("gateway", {}).get("port", 8787))
+    h_raw = host if host is not None else cfg.get("gateway", {}).get("host", "0.0.0.0")
+    h = str(h_raw).strip() or "0.0.0.0"
+
+    p_raw = port if port is not None else cfg.get("gateway", {}).get("port", 8787)
+    try:
+        p = int(p_raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Configuração inválida do gateway: 'port' deve ser inteiro entre 1 e 65535."
+        ) from exc
+    if p < 1 or p > 65535:
+        raise RuntimeError(
+            f"Configuração inválida do gateway: porta {p} fora do intervalo 1..65535."
+        )
+
     _log("gateway.started", data={"host": h, "port": p})
-    uvicorn.run(
-        app,
-        host=h,
-        port=p,
-        access_log=False,
-        log_level="warning",
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=h,
+            port=p,
+            access_log=False,
+            log_level="warning",
+        )
+    except OSError as exc:
+        raise RuntimeError(
+            f"Falha ao iniciar gateway em {h}:{p}. Verifique porta em uso/permissão. Detalhe: {exc}"
+        ) from exc
