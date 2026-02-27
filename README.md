@@ -36,6 +36,30 @@ clawlite auth status
 clawlite gateway --port 8787
 ```
 
+## MVP Multi-Agente Telegram (P0)
+
+```bash
+# 1) Registrar worker persistente por chat/thread/label
+clawlite agents register --channel telegram --chat-id 123 --thread-id suporte --label general --cmd 'clawlite run "{text}"'
+
+# 2) Subir/parar/listar workers
+clawlite agents start 1
+clawlite agents stop 1
+clawlite agents list
+
+# 3) Dispatch local (simulando update Telegram)
+clawlite agents telegram-dispatch --config telegram.multiagent.json --chat-id 123 --label general "responda este pedido"
+
+# 4) Acompanhar fila
+clawlite agents tasks --limit 20
+```
+
+Template de configuração:
+
+```bash
+clawlite channels template telegram-multiagent
+```
+
 ## Documentação
 
 - PT-BR: https://eobarretooo.github.io/ClawLite/
