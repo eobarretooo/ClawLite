@@ -54,11 +54,12 @@ const config = {
     navbar: {
       title: 'ClawLite',
       items: [
-        {to: '/getting-started', label: 'Começar', position: 'left'},
-        {to: '/configuration', label: 'Configuração', position: 'left'},
+        {to: '/getting-started', label: 'Início Rápido', position: 'left'},
+        {to: '/instalacao', label: 'Instalação', position: 'left'},
+        {to: '/comandos-cli', label: 'CLI', position: 'left'},
         {to: '/skills-reference', label: 'Skills', position: 'left'},
-        {to: '/hub-api', label: 'Hub API', position: 'left'},
-        {to: '/gateway-api', label: 'Gateway API', position: 'left'},
+        {to: '/gateway-api', label: 'Gateway', position: 'left'},
+        {to: '/faq', label: 'FAQ', position: 'left'},
         {type: 'localeDropdown', position: 'right'},
         {href: 'https://github.com/eobarretooo/ClawLite', label: 'GitHub', position: 'right'},
       ],

@@ -33,3 +33,5 @@ slug: /
 - Learning analytics com `clawlite stats`
 - Reddit OAuth + postagem de milestones + monitor de menções
 - Bots operacionais com gateway WebSocket e skills modulares
+
+➡️ Próxima página: [Início Rápido](/getting-started)

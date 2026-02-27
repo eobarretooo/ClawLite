@@ -1,0 +1,31 @@
+# 🧰 Instalação
+
+Passo a passo para Linux, Termux e Ubuntu.
+
+## Linux (genérico)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+```
+
+## Ubuntu/Debian
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip curl git
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+```
+
+## Termux
+
+```bash
+pkg update -y
+pkg install -y python git curl
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+```
+
+:::warning
+Se houver erro de ambiente Python gerenciado externamente, use o fluxo de venv do instalador oficial.
+:::
+
+➡️ Próxima página: [Onboarding](/onboarding)

@@ -1,0 +1,16 @@
+# ❓ FAQ
+
+As 10 dúvidas mais comuns sobre ClawLite.
+
+1. **Funciona no Termux?** Sim, foco Linux/Termux-first.
+2. **Preciso editar JSON?** Não no fluxo padrão (`onboarding`/`configure`).
+3. **Tem modo offline?** Sim, com fallback para Ollama.
+4. **Como vejo status do runtime?** `clawlite status`.
+5. **Como subir dashboard?** `clawlite start --port 8787`.
+6. **Quantas skills existem?** Atualmente 37 registradas.
+7. **Como publicar skill?** `clawlite skill publish ...`.
+8. **Como garantir updates seguros?** `--strict` no auto-update.
+9. **O assistente lembra contexto?** Sim, memória persistente + busca semântica.
+10. **Onde reportar bug?** https://github.com/eobarretooo/ClawLite/issues
+
+➡️ Próxima página: [Changelog](/changelog)

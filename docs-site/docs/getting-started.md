@@ -1,58 +1,34 @@
-# Começando em 1 minuto
+# ⚡ Início Rápido
 
-## Instalação (1 comando)
+Rode o ClawLite em 5 minutos com fluxo guiado.
+
+:::tip
+O quickstart padrão é interativo (estilo OpenClaw). Setup manual é opcional.
+:::
+
+## 1) Instalar
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## 1) Diagnóstico inicial
+## 2) Diagnóstico
 
 ```bash
 clawlite doctor
 ```
 
-## 2) Onboarding wizard (primeira execução)
+## 3) Onboarding guiado
 
 ```bash
 clawlite onboarding
 ```
 
-No onboarding você já configura tudo de forma guiada:
-- modelo
-- canais (Telegram/WhatsApp/Discord)
-- skills
-- gateway
-- segurança
-- voz por canal (STT/TTS)
-
-## 3) Configure estilo OpenClaw (ajustes finos)
-
-```bash
-clawlite configure
-```
-
-## 4) Runtime local: status + start
+## 4) Status + start
 
 ```bash
 clawlite status
 clawlite start --host 0.0.0.0 --port 8787
 ```
 
-> `clawlite start` e `clawlite gateway` sobem o servidor gateway local.
-
-## 5) Primeira tarefa
-
-```bash
-clawlite run "Resuma a pasta atual"
-```
-
-## Extras úteis
-
-```bash
-# aprendizado local
-clawlite stats --period week
-
-# integração Reddit
-clawlite reddit status
-```
+➡️ Próxima página: [Instalação](/instalacao)
