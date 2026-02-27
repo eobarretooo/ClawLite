@@ -1,8 +1,5 @@
 from __future__ import annotations
 import argparse
-import platform
-import shutil
-import sys
 
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
 from clawlite.core.agent import run_task
@@ -23,6 +20,14 @@ from clawlite.runtime.multiagent import (
     worker_loop,
 )
 from clawlite.runtime.telegram_multiagent import dispatch_local
+from clawlite.skills.marketplace import (
+    DEFAULT_DOWNLOAD_BASE_URL,
+    DEFAULT_INDEX_URL,
+    SkillMarketplaceError,
+    install_skill,
+    publish_skill,
+    update_skills,
+)
 
 
 def cmd_doctor() -> int:
@@ -108,6 +113,37 @@ def main() -> None:
     logout = auth_sub.add_parser("logout")
     logout.add_argument("provider", choices=list(PROVIDERS.keys()))
 
+    sk = sub.add_parser("skill")
+    sk_sub = sk.add_subparsers(dest="scmd")
+
+    sk_install = sk_sub.add_parser("install")
+    sk_install.add_argument("slug")
+    sk_install.add_argument("--index-url", default=DEFAULT_INDEX_URL)
+    sk_install.add_argument("--allow-host", action="append", default=[])
+    sk_install.add_argument("--install-dir", default=None)
+    sk_install.add_argument("--manifest-path", default=None)
+    sk_install.add_argument("--force", action="store_true")
+    sk_install.add_argument("--allow-file-urls", action="store_true")
+
+    sk_update = sk_sub.add_parser("update")
+    sk_update.add_argument("slugs", nargs="*")
+    sk_update.add_argument("--index-url", default=DEFAULT_INDEX_URL)
+    sk_update.add_argument("--allow-host", action="append", default=[])
+    sk_update.add_argument("--install-dir", default=None)
+    sk_update.add_argument("--manifest-path", default=None)
+    sk_update.add_argument("--force", action="store_true")
+    sk_update.add_argument("--dry-run", action="store_true")
+    sk_update.add_argument("--allow-file-urls", action="store_true")
+
+    sk_publish = sk_sub.add_parser("publish")
+    sk_publish.add_argument("source_dir")
+    sk_publish.add_argument("--version", required=True)
+    sk_publish.add_argument("--slug", default=None)
+    sk_publish.add_argument("--description", default="")
+    sk_publish.add_argument("--hub-dir", default=None)
+    sk_publish.add_argument("--manifest-path", default=None)
+    sk_publish.add_argument("--download-base-url", default=DEFAULT_DOWNLOAD_BASE_URL)
+
     args = p.parse_args()
 
     if args.cmd == "doctor":
@@ -143,6 +179,68 @@ def main() -> None:
             done = auth_logout(args.provider)
             print("✅ logout" if done else "ℹ️ already logged out")
             return
+
+    if args.cmd == "skill":
+        try:
+            if args.scmd == "install":
+                result = install_skill(
+                    args.slug,
+                    index_url=args.index_url,
+                    allow_hosts=args.allow_host,
+                    install_dir=args.install_dir,
+                    manifest_path=args.manifest_path,
+                    force=args.force,
+                    allow_file_urls=args.allow_file_urls,
+                )
+                print(f"✅ skill instalada: {result['slug']}@{result['version']}")
+                print(f"path: {result['install_path']}")
+                return
+
+            if args.scmd == "update":
+                result = update_skills(
+                    index_url=args.index_url,
+                    allow_hosts=args.allow_host,
+                    install_dir=args.install_dir,
+                    manifest_path=args.manifest_path,
+                    slugs=args.slugs,
+                    force=args.force,
+                    dry_run=args.dry_run,
+                    allow_file_urls=args.allow_file_urls,
+                )
+                for updated in result["updated"]:
+                    if updated.get("dry_run"):
+                        print(
+                            f"🔎 {updated['slug']}: {updated['from_version']} -> {updated['to_version']} (dry-run)"
+                        )
+                    else:
+                        print(f"⬆️ {updated['slug']}: {updated.get('from_version', '?')} -> {updated['version']}")
+                for skipped in result["skipped"]:
+                    print(f"⏭️ {skipped['slug']}: {skipped['reason']}")
+                for missing in result["missing"]:
+                    print(f"❓ {missing}: não instalada localmente")
+                if not result["updated"]:
+                    print("ℹ️ Nenhuma skill atualizada.")
+                return
+
+            if args.scmd == "publish":
+                result = publish_skill(
+                    args.source_dir,
+                    version=args.version,
+                    slug=args.slug,
+                    description=args.description,
+                    hub_dir=args.hub_dir,
+                    manifest_path=args.manifest_path,
+                    download_base_url=args.download_base_url,
+                )
+                print(f"📦 skill publicada: {result['slug']}@{result['version']}")
+                print(f"package: {result['package_path']}")
+                print(f"manifest: {result['manifest_path']}")
+                return
+        except SkillMarketplaceError as exc:
+            print(f"❌ {exc}")
+            raise SystemExit(1) from exc
+        sk.print_help()
+        return
 
     if args.cmd == "workspace" and args.wcmd == "init":
         path = init_workspace(args.path)

@@ -57,6 +57,7 @@ const config = {
         {to: '/getting-started', label: 'Começar', position: 'left'},
         {to: '/configuration', label: 'Configuração', position: 'left'},
         {to: '/skills-reference', label: 'Skills', position: 'left'},
+        {to: '/hub-api', label: 'Hub API', position: 'left'},
         {to: '/gateway-api', label: 'Gateway API', position: 'left'},
         {type: 'localeDropdown', position: 'right'},
         {href: 'https://github.com/eobarretooo/ClawLite', label: 'GitHub', position: 'right'},
@@ -69,6 +70,7 @@ const config = {
           title: 'Documentação',
           items: [
             {label: 'Começando em 1 minuto', to: '/getting-started'},
+            {label: 'Hub API', to: '/hub-api'},
             {label: 'Gateway API', to: '/gateway-api'},
           ],
         },

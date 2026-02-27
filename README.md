@@ -19,6 +19,7 @@
 - **Onboarding guiado** (`clawlite onboarding`)
 - **Auth para provedores de IA** (`clawlite auth login ...`)
 - **Ecossistema de skills** em expansão contínua
+- **Marketplace de skills** com índice remoto, checksum e allowlist de hosts
 
 ## Instalação
 
@@ -34,6 +35,8 @@ clawlite onboarding
 clawlite configure
 clawlite auth status
 clawlite gateway --port 8787
+clawlite skill install find-skills
+clawlite skill update
 ```
 
 ## MVP Multi-Agente Telegram (P0)

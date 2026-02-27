@@ -5,6 +5,7 @@ module.exports = {
     'configuration',
     'skills-reference',
     'create-custom-skills',
+    'hub-api',
     'gateway-api',
     'changelog',
   ],

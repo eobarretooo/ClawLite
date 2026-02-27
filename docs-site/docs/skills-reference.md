@@ -16,3 +16,11 @@ clawlite run "use cron para agendar briefing diário às 8h"
 - `docker`, `ssh`, `firebase`, `supabase`, `aws`, `vercel`, `tailscale`
 - `ollama`, `image-gen`, `whisper`, `voice-call`
 - `weather`, `pdf`, `rss`, `youtube`, `maps`, `switchbot`, `cron`, `healthcheck`
+
+## Marketplace CLI
+
+```bash
+clawlite skill install <slug>
+clawlite skill update
+clawlite skill publish skills/<slug> --version 1.0.0
+```
