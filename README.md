@@ -1,7 +1,7 @@
 # ClawLite
 
 <p align="center">
-  <img src="assets/logo.svg" alt="Logo oficial ClawLite" width="180"/>
+  <img src="assets/mascot-animated.svg" alt="Mascote animado oficial ClawLite" width="180"/>
 </p>
 
 > O assistente de IA open source para Linux + Termux, com gateway nativo, skills modulares e operação portátil.

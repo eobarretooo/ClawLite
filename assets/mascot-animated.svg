@@ -1,0 +1,45 @@
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="400" rx="80" fill="#0B1020"/>
+
+  <!-- ears -->
+  <g>
+    <path d="M120 180 L100 80 L170 150 Z" fill="#ff6b2b">
+      <animateTransform attributeName="transform" type="rotate" values="0 120 180;-3 120 180;0 120 180" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+    <path d="M280 180 L300 80 L230 150 Z" fill="#ff6b2b">
+      <animateTransform attributeName="transform" type="rotate" values="0 280 180;3 280 180;0 280 180" dur="2.2s" repeatCount="indefinite"/>
+    </path>
+  </g>
+
+  <!-- body/head -->
+  <ellipse cx="200" cy="200" rx="95" ry="85" fill="#ff6b2b"/>
+  <ellipse cx="200" cy="225" rx="55" ry="45" fill="#ff8f5e"/>
+
+  <!-- eyes glow + blink -->
+  <g>
+    <ellipse cx="168" cy="190" rx="12" ry="14" fill="#00f5ff">
+      <animate attributeName="ry" values="14;14;2;14;14" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.8;1;0.9;1;0.8" dur="2s" repeatCount="indefinite"/>
+    </ellipse>
+    <circle cx="163" cy="185" r="4" fill="#ffffff" opacity="0.9"/>
+
+    <ellipse cx="232" cy="190" rx="12" ry="14" fill="#00f5ff">
+      <animate attributeName="ry" values="14;14;2;14;14" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.8;1;0.9;1;0.8" dur="2s" repeatCount="indefinite"/>
+    </ellipse>
+    <circle cx="227" cy="185" r="4" fill="#ffffff" opacity="0.9"/>
+  </g>
+
+  <ellipse cx="200" cy="218" rx="8" ry="6" fill="#0f0f1a"/>
+
+  <!-- terminal chest -->
+  <rect x="150" y="290" width="100" height="50" rx="10" fill="#0f0f1a" stroke="#2a2a40"/>
+  <rect x="162" y="304" width="32" height="4" rx="2" fill="#00f5ff">
+    <animate attributeName="opacity" values="0.4;1;0.4" dur="1.5s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="198" y="304" width="16" height="4" rx="2" fill="#ff6b2b"/>
+  <rect x="162" y="316" width="50" height="4" rx="2" fill="#8888a0" opacity="0.6"/>
+
+  <!-- float animation -->
+  <animateTransform attributeName="transform" type="translate" values="0 0;0 -3;0 0" dur="2.8s" repeatCount="indefinite"/>
+</svg>
