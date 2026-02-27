@@ -3,880 +3,168 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ClawLite Dashboard v2</title>
+  <title>ClawLite Dashboard</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #060a17;
-      --bg-soft: #0c1428;
-      --panel: #121c35;
-      --line: #26365f;
-      --text: #ecf2ff;
-      --muted: #a6b8e6;
-      --ok: #44d487;
-      --warn: #f4c16a;
-      --danger: #ff7373;
-      --accent: #5fa9ff;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-      background: radial-gradient(circle at 0 0, #173366, var(--bg) 58%);
-      color: var(--text);
-    }
-    .layout {
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: 300px 1fr;
-    }
-    .sidebar {
-      border-right: 1px solid var(--line);
-      background: rgba(8, 14, 29, 0.9);
-      padding: 18px;
-      display: grid;
-      gap: 12px;
-      align-content: start;
-    }
-    .main {
-      padding: 14px;
-      display: grid;
-      gap: 12px;
-      align-content: start;
-    }
-    .card {
-      background: linear-gradient(180deg, #101931 0%, var(--panel) 100%);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
-    }
-    h1, h2, h3 { margin: 0 0 10px 0; }
-    h1 { font-size: 1.12rem; letter-spacing: .02em; }
-    h2 { font-size: 1rem; }
-    h3 { font-size: .88rem; color: var(--muted); }
-    .muted { color: var(--muted); font-size: .9rem; }
-    .ok { color: var(--ok); }
-    .warn { color: var(--warn); }
-    .danger { color: var(--danger); }
-    .pill {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      font-size: .74rem;
-      color: var(--muted);
-    }
-    input, textarea, button, select {
-      width: 100%;
-      background: #0d1630;
-      color: var(--text);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 8px;
-    }
-    button {
-      cursor: pointer;
-      background: #1c2c56;
-      transition: filter .15s ease, transform .15s ease;
-    }
-    button:hover { filter: brightness(1.1); }
-    button:disabled {
-      cursor: wait;
-      opacity: .65;
-      transform: none;
-    }
-    .row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .row > * { flex: 1; }
-    .grid-3 { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .grid-2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
-    .chat {
-      height: 240px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #0b1328;
-      padding: 8px;
-      margin-bottom: 8px;
-    }
-    .msg {
-      margin: 8px 0;
-      padding: 8px;
-      border-radius: 8px;
-      white-space: pre-wrap;
-      line-height: 1.35;
-      font-size: .92rem;
-    }
-    .msg.user { background: #1d3768; }
-    .msg.assistant { background: #1b3221; }
-    .meta {
-      margin-top: 4px;
-      font-size: .76rem;
-      color: var(--muted);
-    }
-    .list {
-      max-height: 220px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #0b1328;
-      padding: 8px;
-    }
-    .list-item {
-      border-bottom: 1px solid #1b2a4d;
-      padding: 8px 0;
-    }
-    .list-item:last-child { border-bottom: 0; }
-    .skill-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 108px 86px;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 8px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #1b2a4d;
-    }
-    .skill-row:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
-    .skill-name { font-size: .9rem; }
-    .mono { font-family: "IBM Plex Mono", "Courier New", monospace; font-size: .85rem; }
-    .status-line { min-height: 20px; font-size: .85rem; }
-    .telemetry-grid { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .telemetry-box {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #0b1328;
-      padding: 8px;
-      font-size: .88rem;
-    }
-    @media (max-width: 1024px) {
-      .layout { grid-template-columns: 1fr; }
-      .grid-3 { grid-template-columns: 1fr; }
-      .grid-2 { grid-template-columns: 1fr; }
-      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
-      .skill-row { grid-template-columns: minmax(0, 1fr); }
-    }
+    :root{--bg:#0b1020;--panel:#111934;--line:#26365f;--text:#eaf1ff;--muted:#9fb3de;--ok:#44d487;--warn:#f4c16a;--err:#ff7373;--a:#ff6b2b;--c:#00f5ff}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 0 0,#173366,var(--bg) 55%);color:var(--text);font-family:Inter,system-ui,sans-serif}
+    .layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+    .side{border-right:1px solid var(--line);padding:14px;background:#0d142a}
+    .main{padding:14px}
+    .card{background:linear-gradient(180deg,#101931,var(--panel));border:1px solid var(--line);border-radius:12px;padding:12px}
+    h1,h2{margin:0 0 8px 0} h1{font-size:1.05rem} h2{font-size:.98rem}
+    .muted{color:var(--muted)}
+    .tabs button{width:100%;text-align:left;margin:6px 0;padding:9px;border:1px solid var(--line);background:#0f1830;color:var(--text);border-radius:8px;cursor:pointer}
+    .tabs button.active{border-color:var(--a);box-shadow:0 0 0 1px #ff6b2b33 inset}
+    input,select,textarea,button{background:#0d1630;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px}
+    .row{display:flex;gap:8px;align-items:center;margin:8px 0}.row>*{flex:1}
+    .list,.chat{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#0b1328;padding:8px}
+    .chat{height:300px}
+    .msg{padding:8px;border-radius:8px;margin:8px 0;white-space:pre-wrap}.u{background:#1d3768}.a{background:#1b3221}
+    .kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.k{border:1px solid var(--line);border-radius:8px;padding:10px;background:#0b1328}
+    .grid{display:grid;gap:12px}.grid2{grid-template-columns:1fr 1fr}.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+    .hide{display:none}
+    @media(max-width:980px){.layout{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
   </style>
 </head>
 <body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div>
-        <h1>ClawLite Dashboard v2</h1>
-        <p class="muted">Chat real + telemetria de sessao + logs filtraveis</p>
-      </div>
+<div class="layout">
+  <aside class="side">
+    <h1>🦊 ClawLite Dashboard</h1>
+    <p class="muted">Novo layout integrado com dados reais</p>
+    <div class="card">
+      <label class="muted">Token</label>
+      <input id="token" placeholder="Bearer token" />
+      <div class="row"><button id="btnConnect">Conectar</button></div>
+      <div id="auth" class="muted">Aguardando autenticação</div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <div id="gw" class="muted">gateway: -</div>
+      <div id="model" class="muted">model: -</div>
+      <div id="uptime" class="muted">uptime: -</div>
+    </div>
+    <div class="tabs" style="margin-top:10px" id="tabs"></div>
+  </aside>
 
-      <div class="card">
-        <label class="muted">Token</label>
-        <input id="token" placeholder="Bearer token" />
-        <div class="row" style="margin-top:8px;">
-          <button id="connectBtn" onclick="connectAll()">Conectar</button>
-        </div>
-        <div id="authState" class="status-line muted">Aguardando autenticacao</div>
-      </div>
+  <main class="main">
+    <section id="tab-chat" class="card tabview">
+      <h2>💬 Chat</h2>
+      <div id="chat" class="chat"></div>
+      <div class="row"><input id="sessionId" value="dashboard-session"><input id="chatInput" placeholder="Digite mensagem"><button id="btnSend">Enviar</button></div>
+    </section>
 
-      <div class="card">
-        <span class="pill">Gateway</span>
-        <div id="gatewayState" class="status-line muted">offline</div>
-        <div id="modelState" class="muted">model: -</div>
-        <div id="uptimeState" class="muted">uptime: -</div>
-      </div>
-    </aside>
+    <section id="tab-skills" class="card tabview hide">
+      <h2>🧩 Skills</h2>
+      <div class="row"><input id="skillSlug" placeholder="slug"><button id="btnInstallSkill">Instalar</button></div>
+      <div id="skills" class="list"></div>
+    </section>
 
-    <main class="main">
-      <section class="card">
-        <h2>Chat em tempo real</h2>
-        <div id="chatBox" class="chat"></div>
-        <div class="row">
-          <input id="sessionId" value="dashboard-session" />
-          <input id="chatInput" placeholder="Digite mensagem" />
-          <button id="sendChatBtn" onclick="sendChat()">Enviar</button>
-        </div>
-      </section>
+    <section id="tab-mcp" class="card tabview hide">
+      <h2>🔌 MCP</h2>
+      <div class="row"><input id="mcpName" placeholder="nome"><input id="mcpUrl" placeholder="url/comando"><button id="btnMcpAdd">Adicionar</button></div>
+      <div class="row"><input id="mcpQuery" placeholder="buscar marketplace"><button id="btnMcpSearch">Buscar</button><button id="btnMcpInstallFs">Install filesystem</button><button id="btnMcpInstallGh">Install github</button></div>
+      <div id="mcpList" class="list"></div>
+      <div id="mcpSearch" class="list" style="margin-top:8px"></div>
+    </section>
 
-      <div class="grid-3">
-        <section class="card">
-          <h2>Skills</h2>
-          <div class="row">
-            <input id="skillSlug" placeholder="slug skill" />
-            <button id="installSkillBtn" onclick="installSkill()">Instalar</button>
-          </div>
-          <div id="skillsState" class="status-line muted">-</div>
-          <div id="skillsList" class="list"></div>
-        </section>
+    <section id="tab-agents" class="card tabview hide">
+      <h2>🤖 Agentes</h2>
+      <div class="row"><input id="agentName" placeholder="nome"><select id="agentChannel"><option>telegram</option><option>slack</option><option>discord</option><option>whatsapp</option><option>teams</option></select><button id="btnAgentCreate">Criar</button></div>
+      <div id="agents" class="list"></div>
+    </section>
 
-        <section class="card">
-          <h2>Telemetria</h2>
-          <div class="row">
-            <select id="telemetryPeriod">
-              <option value="24h">24h</option>
-              <option value="7d" selected>7d</option>
-              <option value="30d">30d</option>
-              <option value="month">mes atual</option>
-              <option value="all">tudo</option>
-            </select>
-            <input id="telemetrySession" placeholder="session_id (opcional)" />
-            <button onclick="loadTelemetry()">Atualizar</button>
-          </div>
-          <div id="telemetrySummary" class="telemetry-box muted">-</div>
-          <div class="telemetry-grid" style="margin-top:8px;">
-            <div id="telemetrySessions" class="telemetry-box muted"></div>
-            <div id="telemetryTimeline" class="telemetry-box muted"></div>
-          </div>
-        </section>
+    <section id="tab-telemetry" class="card tabview hide">
+      <h2>📊 Telemetria</h2>
+      <div class="row"><select id="period"><option value="24h">24h</option><option value="7d" selected>7d</option><option value="30d">30d</option><option value="all">all</option></select><input id="telemetrySession" placeholder="session_id"><button id="btnTelem">Atualizar</button></div>
+      <div class="kpi"><div class="k" id="kEvents"></div><div class="k" id="kSessions"></div><div class="k" id="kTokens"></div><div class="k" id="kCost"></div></div>
+    </section>
 
-        <section class="card">
-          <h2>Configuracoes</h2>
-          <label class="muted">Model</label>
-          <input id="cfgModel" />
-          <label class="muted">Hook pre</label>
-          <textarea id="hookPre" rows="3"></textarea>
-          <label class="muted">Hook post</label>
-          <textarea id="hookPost" rows="3"></textarea>
-          <button onclick="saveSettings()">Salvar</button>
-        </section>
-      </div>
+    <section id="tab-sessions" class="card tabview hide">
+      <h2>🗂️ Sessões</h2>
+      <div class="row"><input id="sessionQuery" placeholder="buscar"><button id="btnSessions">Buscar</button></div>
+      <div id="sessions" class="list"></div>
+    </section>
 
-      <div class="grid-2">
-        <section class="card">
-          <h2>Sessoes</h2>
-          <div class="row">
-            <input id="sessionQuery" placeholder="buscar por id/preview" />
-            <button onclick="loadSessions()">Buscar</button>
-          </div>
-          <div id="sessions" class="list muted">-</div>
-        </section>
+    <section id="tab-logs" class="card tabview hide">
+      <h2>📜 Logs</h2>
+      <div class="row"><select id="logLevel"><option value="">todos</option><option>info</option><option>warn</option><option>error</option></select><input id="logEvent" placeholder="evento"><input id="logQuery" placeholder="busca"><button id="btnLogs">Filtrar</button></div>
+      <div id="logs" class="list"></div>
+    </section>
 
-        <section class="card">
-          <h2>Logs em tempo real</h2>
-          <div class="row">
-            <select id="logLevel">
-              <option value="">nivel: todos</option>
-              <option value="info">info</option>
-              <option value="warn">warn</option>
-              <option value="error">error</option>
-            </select>
-            <input id="logEvent" placeholder="evento (ex: chat.message)" />
-          </div>
-          <div class="row">
-            <input id="logQuery" placeholder="busca livre" />
-            <button onclick="applyLogFilters()">Filtrar</button>
-          </div>
-          <div id="logs" class="list muted">-</div>
-        </section>
-      </div>
+    <section id="tab-config" class="card tabview hide">
+      <h2>⚙️ Config</h2>
+      <label class="muted">Model</label><input id="cfgModel">
+      <label class="muted">Hook pre</label><textarea id="hookPre" rows="3"></textarea>
+      <label class="muted">Hook post</label><textarea id="hookPost" rows="3"></textarea>
+      <div class="row"><button id="btnSaveCfg">Salvar</button></div>
+    </section>
 
-      <section class="card">
-        <h2>Agents (multi-canal)</h2>
-        <div class="row">
-          <input id="agentName" placeholder="nome" />
-          <select id="agentChannel"><option>telegram</option><option>slack</option><option>discord</option><option>whatsapp</option><option>teams</option></select>
-          <input id="agentAccount" placeholder="account" />
-          <button onclick="createAgent()">Criar</button>
-        </div>
-        <div class="row">
-          <input id="bindAgent" placeholder="agente" />
-          <select id="bindChannel"><option>telegram</option><option>slack</option><option>discord</option><option>whatsapp</option><option>teams</option></select>
-          <input id="bindAccount" placeholder="account" />
-          <button onclick="bindAgent()">Vincular</button>
-        </div>
-        <div id="agentsBox" class="list muted">-</div>
-      </section>
+    <section id="tab-learning" class="card tabview hide">
+      <h2>🧠 Learning</h2>
+      <div id="learning" class="list"></div>
+    </section>
+  </main>
+</div>
 
-      <section class="card">
-        <h2>MCP</h2>
-        <div class="row">
-          <input id="mcpName" placeholder="nome servidor" />
-          <input id="mcpUrl" placeholder="url/comando MCP" />
-          <button onclick="addMcpServer()">Adicionar</button>
-        </div>
-        <div class="row">
-          <input id="mcpSearch" placeholder="buscar no marketplace MCP" />
-          <button onclick="searchMcp()">Buscar</button>
-          <button onclick="installMcpTemplate('filesystem')">Install filesystem</button>
-          <button onclick="installMcpTemplate('github')">Install github</button>
-        </div>
-        <div id="mcpState" class="status-line muted">-</div>
-        <div class="grid-2">
-          <div>
-            <h3>Servidores configurados</h3>
-            <div id="mcpServers" class="list muted">-</div>
-          </div>
-          <div>
-            <h3>Marketplace</h3>
-            <div id="mcpMarketplace" class="list muted">-</div>
-          </div>
-        </div>
-      </section>
-    </main>
-  </div>
+<script>
+const TABS=[['chat','💬 Chat'],['skills','🧩 Skills'],['mcp','🔌 MCP'],['agents','🤖 Agentes'],['telemetry','📊 Telemetria'],['sessions','🗂️ Sessões'],['logs','📜 Logs'],['config','⚙️ Config'],['learning','🧠 Learning']]
+const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[]}
+const q=id=>document.getElementById(id)
+const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
 
-  <script>
-    const state = {
-      token: "",
-      wsChat: null,
-      wsLogs: null,
-      logs: [],
-      logFilters: { level: "", event: "", q: "" },
-      connected: false,
-      pendingSkill: false,
-      pendingSkillButtons: new Set(),
-    };
+function renderTabs(){q('tabs').innerHTML=TABS.map(([id,l])=>`<button class="${state.tab===id?'active':''}" data-tab="${id}">${l}</button>`).join('')
+q('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab))}
+function switchTab(id){state.tab=id;document.querySelectorAll('.tabview').forEach(v=>v.classList.add('hide'));q('tab-'+id).classList.remove('hide');renderTabs()}
 
-    const chatBox = document.getElementById("chatBox");
+async function api(path,opts={}){const h={'Content-Type':'application/json',...(opts.headers||{})}; if(state.token)h.Authorization=`Bearer ${state.token}`; const r=await fetch(path,{...opts,headers:h}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.detail||d.message||('HTTP '+r.status)); return d}
 
-    function setStatus(elId, message, tone = "muted") {
-      const el = document.getElementById(elId);
-      el.className = `status-line ${tone}`;
-      el.textContent = message;
-    }
+async function connect(){
+  state.token=q('token').value.trim();
+  const a=await fetch('/api/dashboard/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:state.token})}).then(r=>r.json())
+  if(!a.ok){q('auth').innerHTML='<span class="err">token inválido</span>';return}
+  q('auth').innerHTML='<span class="ok">autenticado</span>'
+  const b=await api('/api/dashboard/bootstrap');
+  q('gw').innerHTML='<span class="ok">gateway online</span>'
+  q('model').textContent='model: '+(b.status.model||'-'); q('uptime').textContent='uptime: '+(b.status.uptime_seconds||0)+'s'
+  q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||''
+  await Promise.all([loadSkills(),loadMcp(),loadAgents(),loadTelemetry(),loadSessions(),loadLogs(),loadLearning()]);
+  connectWs()
+}
 
-    function escapeHtml(value) {
-      return String(value || "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
-    }
+function connectWs(){const base=location.origin.replace('http','ws'); if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
+ state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`)
+ state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat'){addMsg('a',m.message?.text||''); loadTelemetry(); loadSessions();}}
+ state.wsLogs=new WebSocket(`${base}/ws/logs?token=${encodeURIComponent(state.token)}`)
+ state.wsLogs.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='snapshot'){state.logs=m.logs||[]; renderLogs()} if(m.type==='log'){state.logs.push(m.payload); if(state.logs.length>500)state.logs.shift(); renderLogs()}}
+}
 
-    function setBusy(button, busy, busyLabel = "Carregando...") {
-      if (!button) return;
-      if (busy) {
-        button.dataset.originalText = button.textContent;
-        button.disabled = true;
-        button.textContent = busyLabel;
-        return;
-      }
-      button.disabled = false;
-      if (button.dataset.originalText) {
-        button.textContent = button.dataset.originalText;
-      }
-    }
+function addMsg(role,text){const d=document.createElement('div'); d.className='msg '+role; d.innerHTML=esc(text); q('chat').appendChild(d); q('chat').scrollTop=q('chat').scrollHeight}
+async function sendChat(){const t=q('chatInput').value.trim(); if(!t||!state.wsChat||state.wsChat.readyState!==1)return; addMsg('u',t); state.wsChat.send(JSON.stringify({type:'chat',session_id:q('sessionId').value||'dashboard-session',text:t})); q('chatInput').value=''}
 
-    async function api(path, opts = {}) {
-      const headers = {
-        "Content-Type": "application/json",
-        ...(opts.headers || {}),
-      };
-      if (state.token) headers.Authorization = `Bearer ${state.token}`;
-      const response = await fetch(path, { ...opts, headers });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) {
-        throw new Error(data.detail || data.message || `HTTP ${response.status}`);
-      }
-      return data;
-    }
+async function loadSkills(){const d=await api('/api/dashboard/skills'); q('skills').innerHTML=(d.skills||[]).map(s=>`<div>${esc(s.slug)} - ${s.enabled?'<span class="ok">ativo</span>':'<span class="warn">inativo</span>'} <button onclick="toggleSkill('${esc(s.slug)}',${!!s.enabled})">${s.enabled?'desativar':'ativar'}</button> <button onclick="removeSkill('${esc(s.slug)}')">remover</button></div>`).join('')||'<div class="muted">sem skills</div>'}
+async function installSkill(){const slug=q('skillSlug').value.trim(); if(!slug)return; await api('/api/dashboard/skills/install',{method:'POST',body:JSON.stringify({slug})}); q('skillSlug').value=''; loadSkills()}
+async function toggleSkill(slug,en){await api('/api/dashboard/skills/'+(en?'disable':'enable'),{method:'POST',body:JSON.stringify({slug})}); loadSkills()}
+async function removeSkill(slug){await api('/api/dashboard/skills/remove',{method:'POST',body:JSON.stringify({slug})}); loadSkills()}
 
-    function addChat(role, text, meta = null) {
-      const node = document.createElement("div");
-      node.className = `msg ${role}`;
-      node.innerHTML = `<div>${escapeHtml(role)}: ${escapeHtml(text)}</div>`;
-      if (meta && role === "assistant") {
-        const metaNode = document.createElement("div");
-        metaNode.className = "meta mono";
-        const model = meta.model || "-";
-        const mode = meta.mode || "-";
-        const reason = meta.reason || "-";
-        metaNode.textContent = `mode=${mode} | model=${model} | reason=${reason}`;
-        node.appendChild(metaNode);
-      }
-      chatBox.appendChild(node);
-      chatBox.scrollTop = chatBox.scrollHeight;
-    }
+async function loadMcp(){const d=await api('/api/mcp/list'); q('mcpList').innerHTML=(d.servers||[]).map(s=>`<div>${esc(s.name)} → ${esc(s.url)} <button onclick="mcpRemove('${esc(s.name)}')">remover</button></div>`).join('')||'<div class="muted">sem servidores MCP</div>'}
+async function mcpAdd(){const name=q('mcpName').value.trim(),url=q('mcpUrl').value.trim(); if(!name||!url)return; await api('/api/mcp/add',{method:'POST',body:JSON.stringify({name,url})}); q('mcpName').value=''; q('mcpUrl').value=''; loadMcp()}
+async function mcpRemove(name){await api('/api/mcp/remove',{method:'POST',body:JSON.stringify({name})}); loadMcp()}
+async function mcpSearch(){const query=q('mcpQuery').value.trim(); const d=await api('/api/mcp/search?query='+encodeURIComponent(query)); q('mcpSearch').innerHTML=(d.results||[]).map(r=>`<div>${esc(r.name||'-')} - ${esc(r.description||'')}</div>`).join('')||'<div class="muted">sem resultados</div>'}
+async function mcpInstall(name){await api('/api/mcp/install',{method:'POST',body:JSON.stringify({name})}); loadMcp()}
 
-    async function connectAll() {
-      const btn = document.getElementById("connectBtn");
-      setBusy(btn, true, "Conectando...");
-      try {
-        state.token = document.getElementById("token").value.trim();
-        if (!state.token) {
-          throw new Error("Token obrigatorio");
-        }
+async function loadAgents(){const d=await api('/api/agents'); q('agents').innerHTML=(d.agents||[]).map(a=>`<div>${esc(a.name||a.label||'agent')} • ${esc(a.channel||'-')} • ${a.enabled?'<span class="ok">on</span>':'<span class="warn">off</span>'}</div>`).join('')||'<div class="muted">sem agentes</div>'}
+async function createAgent(){const name=q('agentName').value.trim(), channel=q('agentChannel').value; if(!name)return; await api('/api/agents',{method:'POST',body:JSON.stringify({name,channel})}); q('agentName').value=''; loadAgents()}
 
-        const auth = await fetch("/api/dashboard/auth", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: state.token }),
-        }).then((r) => r.json());
-        if (!auth.ok) throw new Error("Token invalido");
-        setStatus("authState", "Autenticado", "ok");
+async function loadTelemetry(){const p=q('period').value,s=q('telemetrySession').value.trim(); const d=await api('/api/dashboard/telemetry?period='+encodeURIComponent(p)+'&session_id='+encodeURIComponent(s)); const x=d.summary||{}; q('kEvents').innerHTML='events<br><b>'+ (x.events||0) +'</b>'; q('kSessions').innerHTML='sessions<br><b>'+ (x.sessions||0) +'</b>'; q('kTokens').innerHTML='tokens<br><b>'+ (x.tokens||0) +'</b>'; q('kCost').innerHTML='cost<br><b>$'+ Number(x.cost_usd||0).toFixed(6) +'</b>'}
+async function loadSessions(){const d=await api('/api/dashboard/sessions?q='+encodeURIComponent(q('sessionQuery').value||'')); q('sessions').innerHTML=(d.sessions||[]).map(s=>`<div><b>${esc(s.session_id)}</b> • ${s.messages} msgs<br><span class='muted'>${esc(s.preview||'')}</span></div>`).join('')||'<div class="muted">sem sessões</div>'}
 
-        const boot = await api("/api/dashboard/bootstrap");
-        state.connected = true;
-        document.getElementById("gatewayState").innerHTML = '<span class="ok">online</span>';
-        document.getElementById("modelState").textContent = `model: ${boot.status.model}`;
-        document.getElementById("uptimeState").textContent = `uptime: ${boot.status.uptime_seconds}s`;
-        document.getElementById("cfgModel").value = boot.settings.model || "";
-        document.getElementById("hookPre").value = boot.settings.hooks?.pre || "";
-        document.getElementById("hookPost").value = boot.settings.hooks?.post || "";
+function renderLogs(){q('logs').innerHTML=(state.logs||[]).slice().reverse().map(l=>`<div>[${esc(l.level||'info').toUpperCase()}] ${esc(l.event||'-')}<br><span class='muted'>${esc(JSON.stringify(l.data||{}))}</span></div>`).join('')||'<div class="muted">sem logs</div>'}
+async function loadLogs(){const d=await api('/api/dashboard/logs?limit=200&level='+encodeURIComponent(q('logLevel').value||'')+'&event='+encodeURIComponent(q('logEvent').value||'')+'&q='+encodeURIComponent(q('logQuery').value||'')); state.logs=d.logs||[]; renderLogs()}
 
-        await Promise.all([loadSkills(), loadSessions(), loadTelemetry(), loadLogs(), loadMcp(), searchMcp(), loadAgents()]);
-        connectWs();
-      } catch (error) {
-        setStatus("authState", error.message || "Falha na autenticacao", "danger");
-      } finally {
-        setBusy(btn, false);
-      }
-    }
+async function saveCfg(){await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:q('cfgModel').value.trim(),hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('auth').innerHTML='<span class="ok">config salva</span>'}
+async function loadLearning(){const d=await api('/api/learning/stats?period=all'); q('learning').innerHTML=`<div>Total: <b>${d.total_tasks||0}</b></div><div>Sucesso: <b>${d.success_rate||0}%</b></div><div>Retry rate: <b>${d.retry_rate||0}%</b></div><div>Streak: <b>${d.streak||0}</b></div>`}
 
-    function connectWs() {
-      if (state.wsChat) state.wsChat.close();
-      if (state.wsLogs) state.wsLogs.close();
-
-      const wsBase = location.origin.replace("http", "ws");
-      state.wsChat = new WebSocket(`${wsBase}/ws/chat?token=${encodeURIComponent(state.token)}`);
-      state.wsChat.onmessage = (ev) => {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "chat") {
-          addChat("assistant", msg.message?.text || "", msg.meta || {});
-          loadTelemetry();
-          loadSessions();
-        }
-        if (msg.type === "error") {
-          addChat("assistant", `Erro: ${msg.detail || "falha no chat"}`);
-        }
-      };
-      state.wsChat.onclose = () => {
-        if (state.connected) setStatus("authState", "Chat desconectado", "warn");
-      };
-
-      const query = new URLSearchParams({
-        token: state.token,
-        level: state.logFilters.level || "",
-        event: state.logFilters.event || "",
-        q: state.logFilters.q || "",
-      }).toString();
-      state.wsLogs = new WebSocket(`${wsBase}/ws/logs?${query}`);
-      state.wsLogs.onmessage = (ev) => {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "snapshot") {
-          state.logs = (msg.logs || []).slice(-500);
-          renderLogs();
-          return;
-        }
-        if (msg.type === "log" && msg.payload) {
-          state.logs.push(msg.payload);
-          if (state.logs.length > 500) state.logs.shift();
-          renderLogs();
-        }
-      };
-    }
-
-    function sendChat() {
-      const text = document.getElementById("chatInput").value.trim();
-      const sessionId = document.getElementById("sessionId").value.trim() || "dashboard-session";
-      if (!text) return;
-      if (!state.wsChat || state.wsChat.readyState !== 1) {
-        addChat("assistant", "Chat nao conectado");
-        return;
-      }
-      addChat("user", text);
-      state.wsChat.send(JSON.stringify({ type: "chat", session_id: sessionId, text }));
-      document.getElementById("chatInput").value = "";
-    }
-
-    function skillRow(slug, enabled) {
-      const row = document.createElement("div");
-      row.className = "skill-row";
-
-      const title = document.createElement("div");
-      title.className = "skill-name";
-      title.innerHTML = `<span class="mono">${escapeHtml(slug)}</span> ${enabled ? '<span class="ok">ativo</span>' : '<span class="warn">inativo</span>'}`;
-
-      const toggleBtn = document.createElement("button");
-      toggleBtn.textContent = enabled ? "Desativar" : "Ativar";
-      toggleBtn.onclick = () => toggleSkill(slug, enabled, toggleBtn);
-
-      const removeBtn = document.createElement("button");
-      removeBtn.textContent = "Remover";
-      removeBtn.onclick = () => removeSkill(slug, removeBtn, toggleBtn);
-
-      row.appendChild(title);
-      row.appendChild(toggleBtn);
-      row.appendChild(removeBtn);
-      return row;
-    }
-
-    async function loadSkills() {
-      const list = document.getElementById("skillsList");
-      list.innerHTML = '<div class="muted">Carregando...</div>';
-      try {
-        const data = await api("/api/dashboard/skills");
-        list.innerHTML = "";
-        const skills = data.skills || [];
-        if (!skills.length) {
-          list.innerHTML = '<div class="muted">Nenhuma skill encontrada.</div>';
-          return;
-        }
-        skills.forEach((item) => list.appendChild(skillRow(item.slug, !!item.enabled)));
-      } catch (error) {
-        list.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
-      }
-    }
-
-    async function withSkillFeedback(fn, successMessage) {
-      if (state.pendingSkill) return;
-      state.pendingSkill = true;
-      setStatus("skillsState", "Executando acao...", "warn");
-      try {
-        await fn();
-        setStatus("skillsState", successMessage, "ok");
-        await loadSkills();
-      } catch (error) {
-        setStatus("skillsState", error.message || "Falha ao executar acao", "danger");
-      } finally {
-        state.pendingSkill = false;
-      }
-    }
-
-    async function installSkill() {
-      const slugInput = document.getElementById("skillSlug");
-      const slug = slugInput.value.trim();
-      if (!slug) {
-        setStatus("skillsState", "Informe um slug para instalar", "warn");
-        return;
-      }
-      const btn = document.getElementById("installSkillBtn");
-      setBusy(btn, true, "Instalando...");
-      await withSkillFeedback(async () => {
-        await api("/api/dashboard/skills/install", { method: "POST", body: JSON.stringify({ slug }) });
-        slugInput.value = "";
-      }, `Skill ${slug} instalada.`);
-      setBusy(btn, false);
-    }
-
-    async function toggleSkill(slug, enabled, button) {
-      setBusy(button, true, enabled ? "Desativando..." : "Ativando...");
-      await withSkillFeedback(async () => {
-        await api(`/api/dashboard/skills/${enabled ? "disable" : "enable"}`, {
-          method: "POST",
-          body: JSON.stringify({ slug }),
-        });
-      }, `Skill ${slug} ${enabled ? "desativada" : "ativada"}.`);
-      setBusy(button, false);
-    }
-
-    async function removeSkill(slug, button, toggleButton) {
-      setBusy(button, true, "Removendo...");
-      if (toggleButton) toggleButton.disabled = true;
-      await withSkillFeedback(async () => {
-        await api("/api/dashboard/skills/remove", { method: "POST", body: JSON.stringify({ slug }) });
-      }, `Skill ${slug} removida.`);
-      setBusy(button, false);
-      if (toggleButton) toggleButton.disabled = false;
-    }
-
-    function mcpRow(item) {
-      const row = document.createElement("div");
-      row.className = "skill-row";
-      const title = document.createElement("div");
-      title.className = "skill-name";
-      title.innerHTML = `<span class="mono">${escapeHtml(item.name || "-")}</span><div class="muted">${escapeHtml(item.url || "")}</div>`;
-      const status = document.createElement("div");
-      status.innerHTML = `<span class="${item.connected ? "ok" : "warn"}">${item.status || (item.connected ? "connected" : "configured")}</span>`;
-      const removeBtn = document.createElement("button");
-      removeBtn.textContent = "Remover";
-      removeBtn.onclick = async () => {
-        try {
-          await api("/api/mcp/remove", { method: "POST", body: JSON.stringify({ name: item.name }) });
-          setStatus("mcpState", `Servidor MCP removido: ${item.name}`, "ok");
-          await loadMcp();
-        } catch (error) {
-          setStatus("mcpState", error.message || "Falha ao remover servidor MCP", "danger");
-        }
-      };
-      row.appendChild(title);
-      row.appendChild(status);
-      row.appendChild(removeBtn);
-      return row;
-    }
-
-    async function loadAgents() {
-      const box = document.getElementById("agentsBox");
-      box.innerHTML = '<div class="muted">Carregando...</div>';
-      try {
-        const data = await api("/api/agents");
-        const agents = data.agents || [];
-        const bindings = data.bindings || [];
-        box.innerHTML = (agents.map(a => `<div class="list-item"><b>${escapeHtml(a.name)}</b> [${escapeHtml(a.channel)}] account=${escapeHtml(a.account || "-")} orch=${a.orchestrator ? "sim" : "não"}</div>`).join("")) || '<div class="muted">Sem agentes</div>';
-        if (bindings.length) {
-          box.innerHTML += `<div class="list-item muted">Bindings: ${bindings.map(b => `${b.name}:${b.channel}/${b.account}`).join(" | ")}</div>`;
-        }
-      } catch (error) {
-        box.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
-      }
-    }
-
-    async function createAgent() {
-      await api("/api/agents", {
-        method: "POST",
-        body: JSON.stringify({
-          name: document.getElementById("agentName").value.trim(),
-          channel: document.getElementById("agentChannel").value,
-          account: document.getElementById("agentAccount").value.trim(),
-        }),
-      });
-      await loadAgents();
-    }
-
-    async function bindAgent() {
-      await api("/api/agents/bind", {
-        method: "POST",
-        body: JSON.stringify({
-          agent: document.getElementById("bindAgent").value.trim(),
-          channel: document.getElementById("bindChannel").value,
-          account: document.getElementById("bindAccount").value.trim(),
-        }),
-      });
-      await loadAgents();
-    }
-
-    async function loadMcp() {
-      const list = document.getElementById("mcpServers");
-      list.innerHTML = '<div class="muted">Carregando...</div>';
-      try {
-        const data = await api("/api/mcp/status");
-        const rows = data.servers || [];
-        if (!rows.length) {
-          list.innerHTML = '<div class="muted">Nenhum servidor MCP configurado.</div>';
-          return;
-        }
-        list.innerHTML = "";
-        rows.forEach((item) => list.appendChild(mcpRow(item)));
-      } catch (error) {
-        list.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
-      }
-    }
-
-    async function addMcpServer() {
-      const name = document.getElementById("mcpName").value.trim();
-      const url = document.getElementById("mcpUrl").value.trim();
-      if (!name || !url) {
-        setStatus("mcpState", "Informe nome e URL/comando do servidor", "warn");
-        return;
-      }
-      try {
-        await api("/api/mcp/add", { method: "POST", body: JSON.stringify({ name, url }) });
-        setStatus("mcpState", `Servidor MCP adicionado: ${name}`, "ok");
-        document.getElementById("mcpName").value = "";
-        document.getElementById("mcpUrl").value = "";
-        await loadMcp();
-      } catch (error) {
-        setStatus("mcpState", error.message || "Falha ao adicionar servidor MCP", "danger");
-      }
-    }
-
-    async function searchMcp() {
-      const q = document.getElementById("mcpSearch").value.trim();
-      const box = document.getElementById("mcpMarketplace");
-      box.innerHTML = '<div class="muted">Carregando...</div>';
-      try {
-        const data = await api(`/api/mcp/search?q=${encodeURIComponent(q)}`);
-        const items = data.items || [];
-        if (!items.length) {
-          box.innerHTML = '<div class="muted">Nada encontrado.</div>';
-          return;
-        }
-        box.innerHTML = items
-          .slice(0, 30)
-          .map((item) => `<div class="list-item"><div class="mono">${escapeHtml(item.name || "-")}</div><div class="muted">${escapeHtml(item.description || item.source || "")}</div></div>`)
-          .join("");
-      } catch (error) {
-        box.innerHTML = `<div class="danger">${escapeHtml(error.message)}</div>`;
-      }
-    }
-
-    async function installMcpTemplate(name) {
-      try {
-        await api("/api/mcp/install", { method: "POST", body: JSON.stringify({ name }) });
-        setStatus("mcpState", `Template MCP instalado: ${name}`, "ok");
-        await loadMcp();
-      } catch (error) {
-        setStatus("mcpState", error.message || "Falha ao instalar template MCP", "danger");
-      }
-    }
-
-    async function loadSessions() {
-      const q = document.getElementById("sessionQuery").value.trim();
-      const data = await api(`/api/dashboard/sessions?q=${encodeURIComponent(q)}`);
-      const sessions = data.sessions || [];
-      const el = document.getElementById("sessions");
-      if (!sessions.length) {
-        el.innerHTML = '<div class="muted">Nenhuma sessao encontrada.</div>';
-        return;
-      }
-      el.innerHTML = sessions
-        .map((s) => `<div class="list-item"><div class="mono">${escapeHtml(s.session_id)}</div><div>${s.messages} msgs</div><div class="muted">${escapeHtml(s.preview || "-")}</div></div>`)
-        .join("");
-    }
-
-    function telemetrySessionsHtml(rows) {
-      if (!rows.length) return "<div class='muted'>Sem sessoes no periodo.</div>";
-      return rows
-        .slice(0, 5)
-        .map((row) => `<div class="list-item"><div class="mono">${escapeHtml(row.session_id)}</div><div>tokens=${row.tokens} | cost=$${Number(row.cost_usd || 0).toFixed(6)}</div></div>`)
-        .join("");
-    }
-
-    function telemetryTimelineHtml(rows) {
-      if (!rows.length) return "<div class='muted'>Sem buckets no periodo.</div>";
-      return rows
-        .slice(-6)
-        .reverse()
-        .map((row) => `<div class="list-item"><div class="mono">${escapeHtml(row.bucket)}</div><div>events=${row.events} | tokens=${row.tokens} | cost=$${Number(row.cost_usd || 0).toFixed(6)}</div></div>`)
-        .join("");
-    }
-
-    async function loadTelemetry() {
-      const period = document.getElementById("telemetryPeriod").value;
-      const sessionId = document.getElementById("telemetrySession").value.trim();
-      const params = new URLSearchParams({ period, session_id: sessionId, limit: "200" });
-      const data = await api(`/api/dashboard/telemetry?${params.toString()}`);
-      const summary = data.summary || {};
-      document.getElementById("telemetrySummary").innerHTML =
-        `<div>events=${summary.events || 0} | sessions=${summary.sessions || 0}</div>` +
-        `<div>prompt_tokens=${summary.prompt_tokens || 0} | completion_tokens=${summary.completion_tokens || 0}</div>` +
-        `<div>tokens_total=${summary.tokens || 0} | cost_total=$${Number(summary.cost_usd || 0).toFixed(6)}</div>`;
-      document.getElementById("telemetrySessions").innerHTML =
-        `<h3>Por sessao</h3>${telemetrySessionsHtml(data.sessions || [])}`;
-      document.getElementById("telemetryTimeline").innerHTML =
-        `<h3>Por periodo (${escapeHtml(data.filters?.granularity || "-")})</h3>${telemetryTimelineHtml(data.timeline || [])}`;
-    }
-
-    function formatLog(entry) {
-      const ts = entry.ts || "-";
-      const level = String(entry.level || "info").toUpperCase();
-      const event = entry.event || "-";
-      const data = entry.data ? JSON.stringify(entry.data) : "";
-      return `<div class="list-item"><div class="mono">${escapeHtml(ts)}</div><div>[${escapeHtml(level)}] ${escapeHtml(event)}</div><div class="muted">${escapeHtml(data)}</div></div>`;
-    }
-
-    function renderLogs() {
-      const el = document.getElementById("logs");
-      if (!state.logs.length) {
-        el.innerHTML = '<div class="muted">Sem logs.</div>';
-        return;
-      }
-      el.innerHTML = state.logs.slice().reverse().map(formatLog).join("");
-    }
-
-    async function loadLogs() {
-      const p = new URLSearchParams({
-        limit: "200",
-        level: state.logFilters.level,
-        event: state.logFilters.event,
-        q: state.logFilters.q,
-      });
-      const data = await api(`/api/dashboard/logs?${p.toString()}`);
-      state.logs = data.logs || [];
-      renderLogs();
-    }
-
-    async function applyLogFilters() {
-      state.logFilters = {
-        level: document.getElementById("logLevel").value.trim(),
-        event: document.getElementById("logEvent").value.trim(),
-        q: document.getElementById("logQuery").value.trim(),
-      };
-      await loadLogs();
-      if (state.wsLogs && state.wsLogs.readyState === 1) {
-        state.wsLogs.send(JSON.stringify({ type: "filters", ...state.logFilters }));
-      } else if (state.connected) {
-        connectWs();
-      }
-    }
-
-    async function saveSettings() {
-      try {
-        await api("/api/dashboard/settings", {
-          method: "PUT",
-          body: JSON.stringify({
-            model: document.getElementById("cfgModel").value.trim(),
-            hooks: {
-              pre: document.getElementById("hookPre").value || "",
-              post: document.getElementById("hookPost").value || "",
-            },
-            theme: "dark",
-          }),
-        });
-        setStatus("authState", "Configuracoes salvas", "ok");
-      } catch (error) {
-        setStatus("authState", error.message || "Falha ao salvar configuracoes", "danger");
-      }
-    }
-
-    document.getElementById("chatInput").addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        sendChat();
-      }
-    });
-
-    /* === Learning Section === */
-    async function loadLearning() {
-      try {
-        const data = await api("/api/learning/stats?period=all");
-        const el = document.getElementById("learningContent");
-        if (!el) return;
-        const rate = data.success_rate || 0;
-        const barColor = rate >= 80 ? "#4caf50" : rate >= 50 ? "#ff9800" : "#f44336";
-        let html = `
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px">
-            <div style="background:#1e1e2e;padding:12px;border-radius:8px;text-align:center">
-              <div style="font-size:24px;font-weight:bold;color:#89b4fa">${data.total_tasks}</div>
-              <div style="color:#888;font-size:12px">Total Tasks</div>
-            </div>
-            <div style="background:#1e1e2e;padding:12px;border-radius:8px;text-align:center">
-              <div style="font-size:24px;font-weight:bold;color:${barColor}">${rate}%</div>
-              <div style="color:#888;font-size:12px">Sucesso</div>
-            </div>
-            <div style="background:#1e1e2e;padding:12px;border-radius:8px;text-align:center">
-              <div style="font-size:24px;font-weight:bold;color:#f9e2af">${data.avg_duration_s}s</div>
-              <div style="color:#888;font-size:12px">Tempo Médio</div>
-            </div>
-            <div style="background:#1e1e2e;padding:12px;border-radius:8px;text-align:center">
-              <div style="font-size:24px;font-weight:bold;color:#fab387">🔥 ${data.streak}</div>
-              <div style="color:#888;font-size:12px">Streak</div>
-            </div>
-          </div>
-          <div style="margin-bottom:8px;font-size:13px;color:#cdd6f4">Taxa de sucesso:</div>
-          <div style="background:#313244;border-radius:4px;height:20px;overflow:hidden;margin-bottom:16px">
-            <div style="width:${rate}%;height:100%;background:${barColor};transition:width 0.5s"></div>
-          </div>`;
-        if (data.top_skills && data.top_skills.length) {
-          html += `<div style="font-size:13px;color:#cdd6f4;margin-bottom:6px">Top Skills:</div>`;
-          data.top_skills.forEach(s => {
-            html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-              <span style="color:#89b4fa;min-width:100px">${s.skill}</span>
-              <div style="flex:1;background:#313244;border-radius:3px;height:14px;overflow:hidden">
-                <div style="width:${Math.min(s.count/data.total_tasks*100,100)}%;height:100%;background:#89b4fa"></div>
-              </div>
-              <span style="color:#888;font-size:12px">${s.count}</span>
-            </div>`;
-          });
-        }
-        if (data.preferences && data.preferences.length) {
-          html += `<div style="font-size:13px;color:#cdd6f4;margin:12px 0 6px">Preferências (${data.preferences.length}):</div>`;
-          data.preferences.slice(0,10).forEach(p => {
-            html += `<div style="color:#a6adc8;font-size:12px;margin-left:8px">• [${p.category}] ${p.value}</div>`;
-          });
-        }
-        el.innerHTML = html;
-      } catch(e) { console.warn("Learning stats:", e); }
-    }
-
-    // Inject learning section into page
-    (function() {
-      const main = document.querySelector("main") || document.body;
-      const section = document.createElement("section");
-      section.style.cssText = "background:#181825;border:1px solid #313244;border-radius:12px;padding:20px;margin:16px 0";
-      section.innerHTML = '<h3 style="color:#cdd6f4;margin:0 0 16px">🧠 Learning</h3><div id="learningContent"><span style="color:#888">Carregando...</span></div>';
-      main.appendChild(section);
-      loadLearning();
-      setInterval(loadLearning, 30000);
-    })();
-  </script>
+q('btnConnect').onclick=connect; q('btnSend').onclick=sendChat; q('btnInstallSkill').onclick=installSkill; q('btnMcpAdd').onclick=mcpAdd; q('btnMcpSearch').onclick=mcpSearch; q('btnMcpInstallFs').onclick=()=>mcpInstall('filesystem'); q('btnMcpInstallGh').onclick=()=>mcpInstall('github'); q('btnAgentCreate').onclick=createAgent; q('btnTelem').onclick=loadTelemetry; q('btnSessions').onclick=loadSessions; q('btnLogs').onclick=loadLogs; q('btnSaveCfg').onclick=saveCfg; q('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}})
+renderTabs()
+</script>
 </body>
 </html>
