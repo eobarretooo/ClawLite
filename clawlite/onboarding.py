@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import secrets
 
+import questionary
+
+from clawlite.auth import PROVIDERS, auth_login
 from clawlite.config.settings import load_config, save_config
 
 
@@ -9,16 +12,20 @@ def run_onboarding() -> None:
     cfg = load_config()
     print("\n=== ClawLite Onboarding ===")
 
-    model = input(f"Modelo padrão [{cfg.get('model','openai/gpt-4o-mini')}]: ").strip()
+    model = questionary.text("Modelo padrão", default=cfg.get("model", "openai/gpt-4o-mini")).ask()
     if model:
         cfg["model"] = model
 
-    tg = input("Ativar canal Telegram? (y/N): ").strip().lower() == "y"
-    ds = input("Ativar canal Discord? (y/N): ").strip().lower() == "y"
-    cfg.setdefault("channels", {})["telegram"] = {"enabled": tg}
-    cfg.setdefault("channels", {})["discord"] = {"enabled": ds}
+    first = questionary.select("Escolha o primeiro provedor para autenticar", choices=list(PROVIDERS.keys()) + ["pular"]).ask()
+    if first and first != "pular":
+        auth_login(first)
 
-    token = input("Token do gateway (enter para gerar automático): ").strip()
+    tg = questionary.confirm("Ativar canal Telegram?", default=cfg.get("channels",{}).get("telegram",{}).get("enabled", False)).ask()
+    ds = questionary.confirm("Ativar canal Discord?", default=cfg.get("channels",{}).get("discord",{}).get("enabled", False)).ask()
+    cfg.setdefault("channels", {})["telegram"] = {"enabled": bool(tg)}
+    cfg.setdefault("channels", {})["discord"] = {"enabled": bool(ds)}
+
+    token = questionary.text("Token do gateway (enter para gerar)", default=cfg.get("gateway",{}).get("token", "")).ask().strip()
     if not token:
         token = secrets.token_urlsafe(24)
     cfg.setdefault("gateway", {})["token"] = token
