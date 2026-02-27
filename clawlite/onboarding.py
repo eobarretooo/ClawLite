@@ -25,6 +25,36 @@ from clawlite.configure_menu import (
 console = Console()
 
 
+SKILL_PRESETS = {
+    "dev": ["coding-agent", "github", "docker", "ssh", "web-search", "web-fetch", "skill-creator"],
+    "creator": ["threads", "twitter", "youtube", "rss", "image-gen", "web-search", "web-fetch"],
+    "ops": ["healthcheck", "cron", "tailscale", "ssh", "docker", "weather", "memory-search"],
+}
+
+
+def _skills_quickstart_profile(cfg: dict) -> None:
+    choice = questionary.select(
+        "Perfil inicial de skills (você ajusta na próxima etapa):",
+        choices=[
+            "Dev (automação + código)",
+            "Creator (conteúdo + social)",
+            "Ops (infra + monitoramento)",
+            "Personalizado (começar do zero)",
+        ],
+        default="Dev (automação + código)",
+    ).ask()
+
+    if not choice or choice.startswith("Personalizado"):
+        return
+
+    if choice.startswith("Dev"):
+        cfg["skills"] = SKILL_PRESETS["dev"]
+    elif choice.startswith("Creator"):
+        cfg["skills"] = SKILL_PRESETS["creator"]
+    elif choice.startswith("Ops"):
+        cfg["skills"] = SKILL_PRESETS["ops"]
+
+
 def run_onboarding() -> None:
     ensure_memory_layout()
     cfg = load_config()
@@ -34,6 +64,7 @@ def run_onboarding() -> None:
         ("Idioma", _section_language),
         ("Modelo", _section_model),
         ("Canais", _section_channels),
+        ("Perfil de Skills", _skills_quickstart_profile),
         ("Skills", _section_skills),
         ("Hooks", _section_hooks),
         ("Gateway", _section_gateway),

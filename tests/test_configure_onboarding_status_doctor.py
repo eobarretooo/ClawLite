@@ -88,6 +88,7 @@ def test_onboarding_wizard_saves_without_manual_json(monkeypatch):
         monkeypatch.setattr(onboarding, "_section_language", fake_step)
         monkeypatch.setattr(onboarding, "_section_model", fake_step)
         monkeypatch.setattr(onboarding, "_section_channels", fake_step)
+        monkeypatch.setattr(onboarding, "_skills_quickstart_profile", fake_step)
         monkeypatch.setattr(onboarding, "_section_skills", fake_step)
         monkeypatch.setattr(onboarding, "_section_hooks", fake_step)
         monkeypatch.setattr(onboarding, "_section_gateway", fake_step)
