@@ -38,6 +38,8 @@ from clawlite.runtime.reddit import (
     post_milestone as reddit_post_milestone,
     reddit_status,
 )
+from clawlite.runtime.learning import get_stats as learning_get_stats
+from clawlite.runtime.preferences import get_preferences
 from clawlite.skills.marketplace import (
     DEFAULT_DOWNLOAD_BASE_URL,
     DEFAULT_INDEX_URL,
@@ -205,6 +207,10 @@ def main() -> None:
     sk_publish.add_argument("--hub-dir", default=None)
     sk_publish.add_argument("--manifest-path", default=None)
     sk_publish.add_argument("--download-base-url", default=DEFAULT_DOWNLOAD_BASE_URL)
+
+    st = sub.add_parser("stats")
+    st.add_argument("--period", choices=["today", "week", "month", "all"], default="all")
+    st.add_argument("--skill", default=None)
 
     rd = sub.add_parser("reddit")
     rd_sub = rd.add_subparsers(dest="rdcmd")
@@ -462,6 +468,43 @@ def main() -> None:
         except Exception as exc:
             _fail(f"Falha no comando 'agents': {_exc_message(exc)}")
 
+
+    if args.cmd == "stats":
+        try:
+            from rich.console import Console
+            from rich.table import Table
+
+            console = Console()
+            stats = learning_get_stats(period=args.period, skill=args.skill)
+            prefs = get_preferences()
+
+            table = Table(title=f"📊 ClawLite Stats ({args.period})", show_lines=True)
+            table.add_column("Métrica", style="cyan")
+            table.add_column("Valor", style="green")
+            table.add_row("Total de tasks", str(stats["total_tasks"]))
+            table.add_row("Taxa de sucesso", f"{stats['success_rate']}%")
+            table.add_row("Tempo médio", f"{stats['avg_duration_s']}s")
+            table.add_row("Total tokens", str(stats["total_tokens"]))
+            table.add_row("Streak de acertos", f"🔥 {stats['streak']}")
+
+            if stats["top_skills"]:
+                skills_str = ", ".join(f"{s['skill']} ({s['count']})" for s in stats["top_skills"])
+                table.add_row("Top skills", skills_str)
+
+            table.add_row("Preferências", str(len(prefs)))
+            console.print(table)
+
+            if prefs:
+                pt = Table(title="🧠 Preferências aprendidas")
+                pt.add_column("#", style="dim")
+                pt.add_column("Categoria", style="yellow")
+                pt.add_column("Valor", style="white")
+                for i, p in enumerate(prefs):
+                    pt.add_row(str(i), p.get("category", ""), p.get("value", "")[:60])
+                console.print(pt)
+        except Exception as exc:
+            _fail(f"Falha no comando 'stats': {_exc_message(exc)}")
+        return
 
     if args.cmd == "reddit":
         try:
