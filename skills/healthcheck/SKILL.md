@@ -1,12 +1,10 @@
 ---
 name: healthcheck
-description: Auditoria de segurança do sistema
+description: Track water and sleep with JSON file storage
 ---
 
 # healthcheck
 
-Categorias: segurança
+Port da skill para ClawLite (Linux/Termux).
 
-Compatível com Linux/Termux no ClawLite.
-
-
+Origem: /root/projetos/openclaw-skills/skills/stellarhold170nt/healthcheck/SKILL.md
