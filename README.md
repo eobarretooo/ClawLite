@@ -28,16 +28,17 @@
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Quickstart
+## Quickstart (sem JSON manual)
 
 ```bash
 # 1) Diagnóstico
 clawlite doctor
 
 # 2) Primeira configuração (wizard)
+# aqui você já define: model, canais, skills, gateway, security e voz (STT/TTS)
 clawlite onboarding
 
-# 3) Ajuste fino por seções
+# 3) Ajuste fino por seções (opcional)
 clawlite configure
 
 # 4) Status local
@@ -46,6 +47,8 @@ clawlite status
 # 5) Subir gateway + dashboard
 clawlite start --host 0.0.0.0 --port 8787
 ```
+
+> O fluxo padrão é todo guiado no menu interativo. Não precisa editar `config.json` manualmente.
 
 ## Comandos essenciais
 

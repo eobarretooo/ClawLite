@@ -18,6 +18,14 @@ clawlite doctor
 clawlite onboarding
 ```
 
+No onboarding você já configura tudo de forma guiada:
+- modelo
+- canais (Telegram/WhatsApp/Discord)
+- skills
+- gateway
+- segurança
+- voz por canal (STT/TTS)
+
 ## 3) Configure estilo OpenClaw (ajustes finos)
 
 ```bash
