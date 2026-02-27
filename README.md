@@ -151,6 +151,17 @@ clawlite run "use a skill github para listar issues abertas do repo"
 clawlite run "use whisper para transcrever ./audio/nota.ogg"
 ```
 
+### 6) MCP (Model Context Protocol)
+```bash
+clawlite mcp add local https://example.com/mcp
+clawlite mcp list
+clawlite mcp search filesystem
+clawlite mcp install filesystem
+clawlite mcp remove local
+```
+
+Docs MCP: `docs/MCP.md`
+
 ---
 
 ## 🆚 Comparação rápida
