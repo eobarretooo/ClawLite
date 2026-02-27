@@ -39,6 +39,34 @@ clawlite skill install find-skills
 clawlite skill update
 ```
 
+## UX nova do `clawlite configure` (PT-BR)
+
+- Menu vibrante com ícones e descrições curtas
+- Navegação por **setas** + seleção com **espaço** (checkbox)
+- Barra de progresso por etapas
+- Validações amigáveis (porta, campos obrigatórios)
+- Prévia JSON antes de salvar + confirmação
+- Resumo final claro após salvar
+
+Exemplo (ASCII):
+
+```text
+╭──────────────────────────────────────────────╮
+│ ⚙️ ClawLite Configure (PT-BR)               │
+│ 🟪🟪🟪🟪🟪🟪🟪⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 2/6 etapas • 33% │
+╰──────────────────────────────────────────────╯
+
+? Use ↑↓ para navegar e Enter para abrir uma etapa:
+❯ 🤖 Modelo e autenticação
+    └─ Define IA padrão e login inicial de provedor
+  📡 Canais
+    └─ Liga/desliga Telegram e Discord
+  👀 Prévia, confirmação e salvar
+    └─ Revise tudo antes de gravar
+```
+
+Onboarding mantém o mesmo padrão visual em PT-BR, com progresso, validação e confirmação antes de persistir em `~/.clawlite/config.json`.
+
 ## MVP Multi-Agente Telegram (P0)
 
 ```bash
