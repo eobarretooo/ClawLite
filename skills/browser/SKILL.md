@@ -1,11 +1,10 @@
 ---
 name: browser
-description: Controlar navegador para automação web
+description: Skill imported from OpenClaw archive.
 ---
 
 # browser
 
-Compatível com Linux/Termux (MVP do ClawLite).
+Port da skill para ClawLite (Linux/Termux).
 
-## Status
-Implementado como skill base com validações de ambiente e comandos seguros.
+Origem: /root/projetos/openclaw-skills/skills/therohitdas/browser-history/SKILL.md
