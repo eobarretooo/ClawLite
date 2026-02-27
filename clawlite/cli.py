@@ -10,14 +10,13 @@ from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
 from clawlite.onboarding import run_onboarding
 from clawlite.gateway.server import run_gateway
+from clawlite.runtime.doctor import run_doctor
+from clawlite.runtime.workspace import init_workspace
+from clawlite.runtime.channels import channel_template
 
 
 def cmd_doctor() -> int:
-    print("ClawLite Doctor")
-    print("python:", sys.version.split()[0])
-    print("platform:", platform.platform())
-    print("git:", "ok" if shutil.which("git") else "missing")
-    print("curl:", "ok" if shutil.which("curl") else "missing")
+    print(run_doctor())
     return 0
 
 
@@ -38,6 +37,16 @@ def main() -> None:
     sub.add_parser("doctor")
     sub.add_parser("onboarding")
     sub.add_parser("configure")
+
+    ws = sub.add_parser("workspace")
+    ws_sub = ws.add_subparsers(dest="wcmd")
+    ws_init = ws_sub.add_parser("init")
+    ws_init.add_argument("--path", default=None)
+
+    ch = sub.add_parser("channels")
+    ch_sub = ch.add_subparsers(dest="ccmd")
+    ch_t = ch_sub.add_parser("template")
+    ch_t.add_argument("name", choices=["telegram", "discord", "whatsapp"])
 
     gw = sub.add_parser("gateway")
     gw.add_argument("--host", default=None)
@@ -80,6 +89,15 @@ def main() -> None:
             done = auth_logout(args.provider)
             print("✅ logout" if done else "ℹ️ already logged out")
             return
+
+    if args.cmd == "workspace" and args.wcmd == "init":
+        path = init_workspace(args.path)
+        print(f"✅ Workspace inicializado em: {path}")
+        return
+
+    if args.cmd == "channels" and args.ccmd == "template":
+        print(channel_template(args.name))
+        return
 
     if args.cmd == "memory":
         if args.mcmd == "add":
