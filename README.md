@@ -1,59 +1,49 @@
 <p align="center">
-  <img src="assets/mascot-animated.svg" alt="ClawLite Fox Mascot" width="180" />
+  <img src="assets/mascot-animated.svg" alt="ClawLite Fox Mascot" width="160" />
 </p>
 
 <h1 align="center">ClawLite</h1>
 
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=20&duration=3000&pause=900&center=true&vCenter=true&width=900&lines=Assistente+de+IA+open+source+para+Linux+%2B+Termux;Gateway+WebSocket+%2B+Dashboard+%2B+Skills+Marketplace;Quickstart+guiado+em+PT-BR+com+onboarding+interativo" alt="Typing SVG" />
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=18&duration=3000&pause=900&center=true&vCenter=true&width=900&color=FF6B2B&lines=Assistente+de+IA+open+source+para+Linux+%2B+Termux;Gateway+WebSocket+%2B+Dashboard+%2B+Skills+Marketplace;Multi-agente+multi-canal+com+mem%C3%B3ria+persistente;Quickstart+guiado+em+PT-BR+%E2%80%94+funciona+em+5+minutos" alt="Typing SVG" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/eobarretooo/ClawLite/releases/tag/v0.4.1"><img src="https://img.shields.io/badge/version-v0.4.1-7c3aed?style=for-the-badge" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge" /></a>
-  <a href="https://github.com/eobarretooo/ClawLite/stargazers"><img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge" /></a>
+  <a href="https://github.com/eobarretooo/ClawLite/releases/tag/v0.4.1">
+    <img src="https://img.shields.io/badge/versão-v0.4.1-ff6b2b?style=for-the-badge" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/licença-MIT-10b981?style=for-the-badge" />
+  </a>
+  <a href="https://github.com/eobarretooo/ClawLite/stargazers">
+    <img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge&color=00f5ff" />
+  </a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" />
-  <img src="https://img.shields.io/badge/Termux-supported-1f8b4c?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Idioma-PT--BR-009c3b?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Termux-nativo-1f8b4c?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/PT--BR-padrão-009c3b?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/MCP-suportado-7c3aed?style=for-the-badge" />
+</p>
+
+<p align="center">
+  <a href="https://clawlite-site.vercel.app">🌐 Site</a> •
+  <a href="https://eobarretooo.github.io/ClawLite/">📚 Docs</a> •
+  <a href="https://clawlite-skills-site.vercel.app">🧩 Skills</a> •
+  <a href="https://github.com/eobarretooo/ClawLite/issues">🐛 Issues</a> •
+  <a href="https://github.com/eobarretooo/ClawLite/discussions">💬 Discussões</a>
 </p>
 
 ---
 
-## ⚡ Demo rápida
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
-clawlite doctor
-clawlite onboarding
-clawlite start --port 8787
-```
-
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ $ clawlite doctor                                            │
-│ python: ok | sqlite: ok | runtime: ok                      │
-│                                                              │
-│ $ clawlite onboarding                                        │
-│ [1/9] Idioma  [2/9] Modelo  [3/9] Canais ...               │
-│ ✅ Configuração salva                                        │
-│                                                              │
-│ $ clawlite start --port 8787                                │
-│ Gateway online em http://127.0.0.1:8787                     │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📚 Tabela de conteúdo
+## 📋 Tabela de conteúdo
 
 - [Por que ClawLite](#por-que-clawlite)
 - [Pré-requisitos](#pre-requisitos)
+- [Instalando o Termux (Android)](#instalando-o-termux-android)
 - [Instalação](#instalacao)
 - [Features](#features)
 - [Exemplos reais de uso](#exemplos-reais-de-uso)
-- [Comparação rápida](#comparacao-rapida)
+- [Comparação](#comparacao)
 - [Troubleshooting](#troubleshooting)
-- [Comunidade e suporte](#comunidade-e-suporte)
 - [Roadmap](#roadmap)
 - [Contribuindo](#contribuindo)
 - [Star History](#star-history)
@@ -63,19 +53,37 @@ clawlite start --port 8787
 
 ## 🧠 Por que ClawLite
 
-ClawLite é um assistente de IA focado em **execução real**: CLI produtiva, gateway web, memória persistente, skills extensíveis e operação Linux/Termux-first.
+> ClawLite é um assistente de IA focado em execução real — não só chat bonito.
 
-- Site oficial: https://clawlite-site.vercel.app
-- Docs (PT-BR): https://eobarretooo.github.io/ClawLite/
-- Catálogo de skills: https://clawlite-skills-site.vercel.app
+CLI produtiva, gateway WebSocket, memória persistente entre sessões, 37 skills extensíveis, multi-agente em múltiplos canais e suporte a MCP — tudo rodando nativamente no Linux e Termux, sem proot, sem Docker, sem Node.js.
 
 ---
 
 ## ✅ Pré-requisitos
 
-- Python **3.10+**
-- Sistema **Linux** (Ubuntu/Debian/Arch etc.) ou **Termux**
+- Python 3.10+
+- Linux (Ubuntu, Debian, Arch...) ou Termux no Android
 - `curl` disponível no ambiente
+
+### Instalando o Termux (Android)
+
+> ⚠️ Importante: não instale o Termux pela Google Play Store — a versão lá está desatualizada e não recebe atualizações. Use o F-Droid.
+
+Passo a passo:
+
+1. Acesse [f-droid.org](https://f-droid.org) no navegador do seu Android e baixe o app do F-Droid.
+2. Abra o F-Droid, pesquise por **Termux** e instale.
+3. Ou baixe diretamente o APK mais recente em: https://github.com/termux/termux-app/releases/latest
+4. Após instalar, abra o Termux e execute:
+
+```bash
+pkg update && pkg upgrade
+pkg install python curl git
+```
+
+5. Pronto! Agora siga a instalação do ClawLite abaixo. 🦊
+
+---
 
 ## 🚀 Instalação
 
@@ -83,143 +91,84 @@ ClawLite é um assistente de IA focado em **execução real**: CLI produtiva, ga
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-### Quickstart guiado (padrão)
+### Quickstart em 5 minutos
 
 ```bash
+# 1. Verificar ambiente
 clawlite doctor
+
+# 2. Configurar interativamente
 clawlite onboarding
+
+# 3. Ajustar configurações
 clawlite configure
+
+# 4. Verificar status
 clawlite status
+
+# 5. Iniciar gateway
 clawlite start --host 0.0.0.0 --port 8787
 ```
-
-> Setup manual continua disponível para usuários avançados, mas o fluxo recomendado é o wizard interativo (estilo OpenClaw).
 
 ---
 
 ## ✨ Features
 
-- ⚙️ **Onboarding + Configure interativos** (Model, Channels, Skills, Hooks, Gateway, Security)
-- 🌐 **Gateway WebSocket + Dashboard** com chat, logs e telemetria
-- 🧩 **37 skills registradas** com marketplace e auto-update seguro
-- 🧠 **Memória persistente** (`AGENTS/SOUL/USER/IDENTITY/MEMORY` + diário)
-- 📊 **Learning stats** com métricas de sucesso/retry/performance
-- 🔋 **Runtime inteligente** (offline fallback, cron por conversa, modo bateria)
-- 🎙️ **Voz STT/TTS** (pipeline de áudio para canais)
+- Onboarding e configure interativos (PT-BR default)
+- Gateway com dashboard web e WebSocket
+- Multi-agente multi-canal
+- Memória persistente (AGENTS, SOUL, USER, IDENTITY, MEMORY)
+- Skills marketplace com install/publish/auto-update
+- Learning system com métricas de execução
+- MCP client + MCP server
 
 ---
 
 ## 💡 Exemplos reais de uso
 
-### 1) Diagnóstico + setup
 ```bash
-clawlite doctor
-clawlite onboarding
-```
-
-### 2) Operação local com dashboard
-```bash
-clawlite start --port 8787
-# abrir http://127.0.0.1:8787
-```
-
-Preview do runtime (terminal/status):
-
-<p align="center">
-  <img src="docs/media/clawlite-status-snapshot.png" alt="ClawLite status preview" width="820" />
-</p>
-
-### 3) Automação de skills
-```bash
+clawlite run "resuma o diretório"
 clawlite skill search github
 clawlite skill install github
-clawlite skill auto-update --apply --strict
-```
-
-### 4) Memória de sessão
-```bash
-clawlite memory semantic-search "preferências do usuário"
-clawlite memory save-session "Resumo da sessão"
-```
-
-### 5) Exemplos de skills na prática
-```bash
-# GitHub: listar issues
-clawlite run "use a skill github para listar issues abertas do repo"
-
-# Whisper: transcrever áudio local
-clawlite run "use whisper para transcrever ./audio/nota.ogg"
-```
-
-### 6) Multi-agente multi-canal
-```bash
-clawlite agents create orchestrator --channel telegram --account main-bot --orchestrator
-clawlite agents create dev --channel telegram --account dev-bot --personality "engenheiro pragmático" --tag code --tag bug
-clawlite agents bind dev --channel slack --account workspace-dev
-clawlite agents list
-```
-
-- Roteamento por menção: `@dev` prioriza agente `dev`
-- Handoff por intenção/tag: orquestrador delega para especialista por tags
-- Chaves de contexto por thread/grupo para continuidade de conversa
-
-Guia completo: `docs/MULTIAGENTE_MULTICANAL_PTBR.md`
-
-### 7) MCP (Model Context Protocol)
-```bash
-clawlite mcp add local https://example.com/mcp
 clawlite mcp list
-clawlite mcp search filesystem
-clawlite mcp install filesystem
-clawlite mcp remove local
+clawlite stats --period week
 ```
-
-Docs MCP: `docs/MCP.md`
 
 ---
 
-## 🆚 Comparação rápida
+## 🆚 Comparação
 
-- **ClawLite**: quickstart guiado PT-BR, Linux/Termux-first, memória persistente e runtime com fallback offline.
-- **Alternativas genéricas**: muitas focam só em chat, com menos operação real (cron, dashboard integrado, pipeline de skills).
+- **ClawLite:** execução real, quickstart guiado, memória persistente, MCP e foco Linux/Termux.
+- **Alternativas genéricas:** geralmente mais focadas em chat e menos em operação prática multi-canal.
 
 ---
 
 ## 🛠️ Troubleshooting
 
-Problemas comuns:
-- Erro de dependência no ambiente Python
-- Gateway não sobe na porta padrão
-- Fallback offline não acionando como esperado
+Problemas comuns e soluções:
+- `clawlite doctor` para diagnóstico inicial
+- conflito de porta no gateway
+- falha de autenticação em canais
+- fallback offline/Ollama
 
-Guia completo: `docs/TROUBLESHOOTING.md`
-
----
-
-## 💬 Comunidade e suporte
-
-- Issues: https://github.com/eobarretooo/ClawLite/issues
-- Discussões: https://github.com/eobarretooo/ClawLite/discussions
-- Docs: https://eobarretooo.github.io/ClawLite/
+Guia completo: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
 
 ---
 
 ## 🗺️ Roadmap
 
 - [x] Gateway + dashboard v2
-- [x] Multi-agente multi-canal (Telegram, Slack, Discord, WhatsApp, Teams)
-- [x] Learning hardening em produção
-- [x] STT/TTS no pipeline
-- [x] Auto-update de skills com trust policy + rollback
-- [ ] Paridade de dashboard com OpenClaw (cron/channels/config avançada/debug)
-- [ ] Voz em validação de campo contínua
-- [ ] Polimento final v0.4.1.x
+- [x] Multi-agente Telegram MVP
+- [x] STT/TTS pipeline
+- [x] MCP client/server
+- [ ] Paridade completa de dashboard com OpenClaw
+- [ ] Hardening final de produção v1
 
 ---
 
 ## 🤝 Contribuindo
 
-PRs são bem-vindos! Leia `CONTRIBUTING.md`.
+PRs são bem-vindos! Leia [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
