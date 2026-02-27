@@ -1,11 +1,10 @@
 ---
 name: coding-agent
-description: Delegar tarefas de código para agentes especializados
+description: Run Codex CLI, Claude Code, OpenCode, or Pi Coding Agent via background process for programmatic control.
 ---
 
 # coding-agent
 
-Compatível com Linux/Termux (MVP do ClawLite).
+Port da skill para ClawLite (Linux/Termux).
 
-## Status
-Implementado como skill base com validações de ambiente e comandos seguros.
+Origem: /root/projetos/openclaw-skills/skills/steipete/coding-agent/SKILL.md
