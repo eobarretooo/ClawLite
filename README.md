@@ -39,6 +39,15 @@ clawlite skill install find-skills
 clawlite skill update
 ```
 
+## Dashboard v2
+
+- Chat em tempo real integrado ao pipeline do agente (`/ws/chat`)
+- Telemetria de tokens/custo por sessao e por periodo (`/api/dashboard/telemetry`)
+- Acoes de skills com feedback de loading/sucesso/erro
+- Logs realtime com filtros basicos e busca (`/api/dashboard/logs`, `/ws/logs`)
+
+Guia completo: `docs/DASHBOARD.md`
+
 ## Offline automático com Ollama
 
 - Se `offline_mode.enabled=true`, o runtime tenta o modelo remoto e faz fallback automático para Ollama em dois casos:
@@ -118,6 +127,7 @@ clawlite channels template telegram-multiagent
 
 - PT-BR: https://eobarretooo.github.io/ClawLite/
 - EN: https://eobarretooo.github.io/ClawLite/en/
+- Troubleshooting técnico: `docs/TROUBLESHOOTING.md`
 
 ## Skills
 

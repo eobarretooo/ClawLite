@@ -7,6 +7,7 @@ module.exports = {
     'create-custom-skills',
     'hub-api',
     'gateway-api',
+    'troubleshooting',
     'changelog',
   ],
 };
