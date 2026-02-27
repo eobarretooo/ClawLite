@@ -91,6 +91,26 @@ Template de configuração:
 clawlite channels template telegram-multiagent
 ```
 
+## Dashboard Web (MVP robusto)
+
+Abra `http://localhost:8787/dashboard` após subir o gateway.
+
+Inclui:
+
+- autenticação por token
+- chat em tempo real via WebSocket
+- status do gateway (online/modelo/uptime)
+- gerenciador de skills (listar/ativar/desativar/instalar/remover local)
+- histórico de sessões com busca
+- telemetria local estimada de tokens/custos
+- configurações (modelo/canais/hooks)
+- logs em tempo real
+- dark mode por padrão + responsivo mobile
+
+APIs do dashboard em `/api/dashboard/*` e websockets em `/ws/chat` e `/ws/logs`.
+
+Mais detalhes: `docs/DASHBOARD.md`.
+
 ## Documentação
 
 - PT-BR: https://eobarretooo.github.io/ClawLite/
