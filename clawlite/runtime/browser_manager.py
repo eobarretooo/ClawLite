@@ -284,7 +284,11 @@ Título: {data.get("title")}
 
         m_title = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
         self._mock_title = (m_title.group(1).strip() if m_title else "Untitled")
-        self._mock_text_preview = re.sub(r"\s+", " ", html)[:1500]
+
+        def _strip_tags(s: str) -> str:
+            return re.sub(r"<[^>]+>", "", s or "").strip()
+
+        self._mock_text_preview = re.sub(r"\s+", " ", _strip_tags(html))[:1500]
 
         patterns = [
             ("button", r"<button[^>]*>(.*?)</button>"),
@@ -293,9 +297,6 @@ Título: {data.get("title")}
             ("textarea", r"<textarea[^>]*>(.*?)</textarea>"),
             ("select", r"<select[^>]*>(.*?)</select>"),
         ]
-
-        def _strip_tags(s: str) -> str:
-            return re.sub(r"<[^>]+>", "", s or "").strip()
 
         for tag, pat in patterns:
             for match in re.finditer(pat, html, re.IGNORECASE | re.DOTALL):
