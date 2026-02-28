@@ -59,3 +59,20 @@
 ### Riscos pendentes
 - Não foi executado teste E2E completo do instalador com `pkg` real em dispositivo Termux durante esta sessão.
 - Fluxo de dependências opcionais do gateway em ambientes extremamente restritos ainda depende de conectividade para pip/pkg.
+
+## 2026-02-28 12:05 UTC — Ciclo curto core (onboarding/start/doctor)
+
+### Escopo
+- Rodar testes focados em onboarding/start/doctor.
+- Corrigir 1 ponto de robustez **apenas se houvesse falha**.
+- Registrar evidências neste arquivo.
+
+### Testes executados
+- `pytest -v tests/test_configure_onboarding_status_doctor.py tests/test_onboarding_key_validation.py tests/test_cli_gateway_dashboard_integration.py`
+
+### Resultado
+- `33 passed in 31.80s`.
+- Não houve falhas nos fluxos alvo; portanto, **nenhuma correção de robustez foi necessária** neste ciclo.
+
+### Observações
+- O repositório já continha mudanças não relacionadas em andamento (`clawlite/gateway/dashboard.html`, `docs/WORKLOG_DASHBOARD.md`), mantidas intactas.
