@@ -58,3 +58,10 @@ Se quiser rodar localmente além do GitHub Actions:
 - [ ] `SYNC_REPORT.md` atualizado corretamente
 - [ ] workflow semanal ativo no GitHub
 - [ ] permissões de commit do workflow habilitadas
+
+## 5) Nota de execução manual
+
+- 2026-02-28 (UTC): ciclo de sync executado com sucesso via:
+  - `python3 scripts/openclaw_sync.py --dry-run`
+  - `python3 scripts/openclaw_sync.py`
+- Resultado: `SYNC_REPORT.md` regenerado no estado atual da branch `main`.

@@ -1,10 +1,10 @@
 # SYNC_REPORT
 
-- Gerado em (UTC): 2026-02-27 21:59:13
+- Gerado em (UTC): 2026-02-28 12:03:41
 - Branch local: `main`
-- HEAD local: `408607030f8abf9b0da551580b0418b7d9b622df`
+- HEAD local: `c71876bea1540ae96ebfa7744cc5c7b355ff560b`
 - OpenClaw upstream: `https://github.com/openclaw/openclaw.git`
-- HEAD upstream (remoto): `ee2eaddeb3d8cbe1fceadff2ff0c0894f7a090e5`
+- HEAD upstream (remoto): `150c2093fa03d3d239e7c962decbd318b5e04a31`
 
 ## Resumo
 
@@ -12,6 +12,27 @@ Este relatório automatiza a fotografia semanal de sincronização entre o estad
 
 ## Alterações locais recentes
 
+- c71876b 2026-02-28 chore: commit all pending ClawLite changes (BarretoClaw)
+- 3a074df 2026-02-28 docs: update all READMEs to reflect current state v0.5.0 (BarretoClaw)
+- 62de633 2026-02-28 fix: rename source_SKILL.md to SKILL.md in all skills (BarretoClaw)
+- d6a7eb1 2026-02-28 feat(dashboard): P2 — model swap live, workspace editor, skills tab (root)
+- 4e2e731 2026-02-28 feat(dashboard): P1 — sessions, telegram badge, heartbeat widget, chat histórico (root)
+- 67208c1 2026-02-28 feat(dashboard): P0 — status widget + token mascarado com copiar (root)
+- e016e46 2026-02-28 fix(ci): resolver falhas ruff (F841/F541) (BarretoClaw)
+- 096d3f7 2026-02-28 feat: onboarding live key validation + visual result (root)
+- 415a313 2026-02-28 fix(ci): evitar prompts interativos no onboarding durante pytest (BarretoClaw)
+- 3e6114c 2026-02-28 ci: corrigir install de deps quando extra dev não existe (BarretoClaw)
+- caf72ed 2026-02-28 feat: heartbeat loop 30min with state tracking (root)
+- 575bf5b 2026-02-28 ci: corrigir workflows flaky e endurecer gate de qualidade (BarretoClaw)
+- cfbb684 2026-02-28 feat: bootstrap cycle with self-delete (root)
+- 6167da6 2026-02-28 feat(cli): exibir token completo no banner do clawlite start (root)
+- c7af8d9 2026-02-28 feat(cli): mostrar URL/token/dashboard ao iniciar gateway (BarretoClaw)
+- 133bfad 2026-02-27 feat(workspace): seed BOOTSTRAP/HEARTBEAT/BOOT/TOOLS and inject bootstrap prompt once on first session (BarretoClaw)
+- 92d9186 2026-02-27 fix(termux): harden installer, onboarding simple and gateway start errors (root)
+- cadb21d 2026-02-27 feat(dashboard): add cron/channels/config/debug-update P0 panels and endpoints (root)
+- 6f5cc53 2026-02-27 docs(quality): registrar quality gate do Sprint 1 (root)
+- a4393c7 2026-02-27 skills: harden core parsers and MCP bridge; expand stability tests (root)
+- ad995f3 2026-02-27 chore(sync): automatizar atualização semanal do SYNC_REPORT (root)
 - 4086070 2026-02-27 docs: runbook de incidentes + handoff Claude→BarretoClaw + worklog atualizado (root)
 - d205865 2026-02-27 ci: adicionar pipeline CI completo (pytest + lint + smoke) e smoke_test.sh (root)
 - 5dbf48d 2026-02-27 fix(tests): isolar DB em test_gateway_agents_endpoints via _patch_db (root)
@@ -178,19 +199,7 @@ Este relatório automatiza a fotografia semanal de sincronização entre o estad
 ## Estado do working tree
 
 ```text
-M clawlite/configure_menu.py
- M clawlite/mcp_server.py
- M clawlite/skills/cron.py
- M clawlite/skills/github.py
- M clawlite/skills/ollama.py
- M clawlite/skills/whisper.py
- M tests/test_mcp.py
- M tests/test_skills_stability.py
-?? .github/workflows/sync-report-weekly.yml
-?? docs/AUDIT_CLAWLITE_vs_OPENCLAW_2026-02-27.md
-?? docs/SYNC_AUTOMATION.md
-?? scripts/openclaw_sync.py
-?? skills/my-local-skill/
+(limpo)
 ```
 
 ## Próximos passos sugeridos
