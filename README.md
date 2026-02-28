@@ -37,7 +37,7 @@ Princípios:
 ## Instalação
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
 ```
 
 Requisitos mínimos:
