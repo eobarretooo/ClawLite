@@ -1,272 +1,335 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ClawLite Dashboard</title>
-  <style>
-    :root{--bg:#0b1020;--panel:#111934;--line:#26365f;--text:#eaf1ff;--muted:#9fb3de;--ok:#44d487;--warn:#f4c16a;--err:#ff7373;--a:#ff6b2b}
-    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 0 0,#173366,var(--bg) 55%);color:var(--text);font-family:Inter,system-ui,sans-serif}
-    .layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:14px;background:#0d142a}.main{padding:14px}
-    .card{background:linear-gradient(180deg,#101931,var(--panel));border:1px solid var(--line);border-radius:12px;padding:12px}
-    h1,h2{margin:0 0 8px 0} h1{font-size:1.05rem} h2{font-size:.98rem}
-    .muted{color:var(--muted)} .tabs button{width:100%;text-align:left;margin:6px 0;padding:9px;border:1px solid var(--line);background:#0f1830;color:var(--text);border-radius:8px;cursor:pointer}
-    .tabs button.active{border-color:var(--a);box-shadow:0 0 0 1px #ff6b2b33 inset}
-    input,select,textarea,button{background:#0d1630;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px}
-    .row{display:flex;gap:8px;align-items:center;margin:8px 0}.row>*{flex:1}
-    .list,.chat{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#0b1328;padding:8px}
-    .chat{height:300px}.msg{padding:8px;border-radius:8px;margin:8px 0;white-space:pre-wrap}.u{background:#1d3768}.a{background:#1b3221}
-    .kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.k{border:1px solid var(--line);border-radius:8px;padding:10px;background:#0b1328}
-    .ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)} .hide{display:none}
-    .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--err);flex-shrink:0;transition:background .3s}
-    .dot.online{background:var(--ok)}
-    .status-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
-    .status-badge{display:flex;align-items:center;gap:6px;font-size:.9em}
-    .status-meta{font-size:.82em;color:var(--muted);margin:3px 0}
-    .token-row{display:flex;gap:6px;align-items:center;margin-top:8px}
-    .token-mask{flex:1;font-family:monospace;font-size:.84em;color:var(--text);background:#0b1328;border:1px solid var(--line);border-radius:6px;padding:5px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
-    .copy-btn{font-size:.8em;cursor:pointer;white-space:nowrap;background:#1a2a50;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:5px 10px;flex-shrink:0}
-    .copy-btn:hover{border-color:var(--a);color:var(--a)}.copy-btn.copied{color:var(--ok);border-color:var(--ok)}
-    .ch-badge{font-size:.78em;font-weight:600;padding:2px 7px;border-radius:10px;border:1px solid}
-    .ch-badge.online{color:var(--ok);border-color:var(--ok);background:#0d2b1a}
-    .ch-badge.offline{color:var(--muted);border-color:var(--line);background:#131e36}
-    .hb-ok{color:var(--ok)}.hb-warn{color:var(--warn)}
-    .sitem{padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px;margin:3px 0}
-    .sitem:hover{background:#1a2a50}.sitem .sid{font-size:.88em;color:var(--text);font-weight:600}
-    .sitem .smeta{font-size:.78em;color:var(--muted)}.sitem .sprev{font-size:.82em;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%}
-    .skill-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
-    .skill-item:last-child{border-bottom:none}.skill-slug{flex:1;font-size:.9em}
-    .skill-btn{font-size:.78em;padding:3px 9px;cursor:pointer;border-radius:5px;border:1px solid var(--line);background:#0f1830;color:var(--muted)}
-    .skill-btn:hover{border-color:var(--a);color:var(--a)}.skill-btn.danger:hover{border-color:var(--err);color:var(--err)}
-    .ws-editor{width:100%;min-height:280px;font-family:monospace;font-size:.85em;resize:vertical;background:#080f22;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:10px}
-    .ws-editor:focus{outline:none;border-color:var(--a)}
-    @media(max-width:980px){.layout{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
-  </style>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ClawLite Dashboard Premium</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configurando Tailwind com paleta premium Dark Mode -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        fox: {
+                            50: '#fff3ec',
+                            100: '#ffe4d3',
+                            500: '#ff6b2b',
+                            600: '#ea4f0d',
+                            700: '#c2380a',
+                            900: '#7e260b',
+                        },
+                        drk: {
+                            900: '#0b1020', // bg ultra escuro (sidebar)
+                            800: '#111934', // paineis
+                            700: '#1c284d', // bordas
+                            600: '#2a3b6e', // hovers
+                            300: '#9fb3de', // texto muted
+                            100: '#eaf1ff', // texto principal
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel para compilar JSX in-browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        body {
+            background-color: #0b1020;
+            color: #eaf1ff;
+            background-image: radial-gradient(circle at top left, #173366 0%, #0b1020 40%);
+            background-attachment: fixed;
+        }
+        
+        /* Custom Scrollbar Premium */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #2a3b6e; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #ff6b2b; }
+
+        /* Loader Animation */
+        .loader {
+            border: 3px solid rgba(255, 107, 43, 0.2);
+            border-bottom-color: #ff6b2b;
+            border-radius: 50%;
+            display: inline-block;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
 </head>
-<body>
-<div class="layout">
-  <aside class="side">
-    <h1>🦊 ClawLite Dashboard</h1>
-    <p class="muted" style="font-size:.8em">v0.3 · chat · sessions · cron · channels · config</p>
-    <div class="card">
-      <label class="muted">Token</label>
-      <input id="token" placeholder="Bearer token" />
-      <div class="row"><button id="btnConnect">Conectar</button></div>
-      <div id="auth" class="muted">Aguardando autenticação</div>
-      <div class="token-row hide" id="tokenDisplay">
-        <span class="token-mask" id="tokenMask" title="Token de autenticação">—</span>
-        <button class="copy-btn" id="btnCopyToken" title="Copiar token">⎘</button>
-      </div>
-    </div>
-    <div class="card" style="margin-top:10px" id="statusCard">
-      <div class="status-row">
-        <span class="status-badge"><span class="dot" id="gwDot"></span><span id="gwLabel" style="font-size:.9em">offline</span></span>
-        <span class="muted" id="gwConns" style="font-size:.78em">—</span>
-      </div>
-      <div class="status-meta" id="gwModel">modelo: —</div>
-      <div class="status-meta" id="gwUptime">uptime: —</div>
-    </div>
-    <div class="card" style="margin-top:8px">
-      <div class="status-row">
-        <span style="font-size:.85em">📬 Telegram</span>
-        <span id="tgBadge" class="ch-badge offline">desconectado</span>
-      </div>
-    </div>
-    <div class="card" style="margin-top:8px" id="hbCard">
-      <div style="font-size:.85em;font-weight:600;margin-bottom:5px">💓 Heartbeat</div>
-      <div class="status-meta" id="hbLast">último run: —</div>
-      <div class="status-meta" id="hbResult">resultado: —</div>
-      <div class="status-meta" id="hbNext">próximo: —</div>
-    </div>
-    <div class="tabs" style="margin-top:10px" id="tabs"></div>
-  </aside>
+<body class="antialiased selection:bg-fox-500 selection:text-white overflow-hidden">
+    <div id="root"></div>
 
-  <main class="main">
-    <section id="tab-chat" class="card tabview">
-      <h2>💬 Chat</h2>
-      <div id="chat" class="chat"></div>
-      <div class="row"><input id="sessionId" value="dashboard-session"><input id="chatInput" placeholder="Digite mensagem"><button id="btnSend" disabled title="Conecte o chat para enviar">Enviar</button></div>
-    </section>
+    <script type="text/babel">
+        // --- Utils e Context API Globais ---
+        const { useState, useEffect, useRef, useMemo, createContext, useContext } = React;
+        
+        // Criando contexto global de AppState para não passar props eternamente
+        const AppContext = createContext();
 
-    <section id="tab-sessions" class="card tabview hide">
-      <h2>📋 Sessions</h2>
-      <div class="row"><input id="sessionSearch" placeholder="buscar sessão..."><button id="btnSessionsLoad">Atualizar</button></div>
-      <div id="sessionsList" class="list" style="max-height:420px"></div>
-    </section>
+        // Config de Tabs que espelha os ícones da Lucide com a label
+        const TABS = [
+            { id: 'chat', label: 'Chat', icon: 'message-square' },
+            { id: 'sessions', label: 'Sessions', icon: 'server' },
+            { id: 'cron', label: 'Cron Jobs', icon: 'clock' },
+            { id: 'channels', label: 'Channels', icon: 'satellite-dish' },
+            { id: 'config', label: 'System Config', icon: 'settings' },
+            { id: 'workspace', label: 'Workspace', icon: 'folder-code' },
+            { id: 'skills', label: 'Skills Hub', icon: 'blocks' },
+            { id: 'telemetry', label: 'Telemetria', icon: 'bar-chart-3' },
+            { id: 'logs', label: 'Realtime Logs', icon: 'terminal' }
+        ];
 
-    <section id="tab-cron" class="card tabview hide">
-      <h2>⏱️ Cron</h2>
-      <div class="row"><input id="cronName" placeholder="nome"><input id="cronText" placeholder="texto"><input id="cronInterval" type="number" value="3600"></div>
-      <div class="row"><input id="cronChannel" value="telegram"><input id="cronChatId" placeholder="chat_id"><button id="btnCronAdd">Criar job</button><button id="btnCronRefresh">Atualizar</button></div>
-      <div id="cronFeedback" class="muted"></div>
-      <div id="cronList" class="list"></div>
-    </section>
+        // Componente utilitário de Card
+        const Card = ({ children, className = "" }) => (
+            <div className={`bg-gradient-to-b from-drk-800 to-drk-900 border border-drk-700 rounded-xl p-4 shadow-xl ${className}`}>
+                {children}
+            </div>
+        );
 
-    <section id="tab-channels" class="card tabview hide">
-      <h2>📡 Channels</h2>
-      <div class="row"><button id="btnChannelsLoad">Recarregar</button><button id="btnChannelsSave">Salvar channels</button></div>
-      <div id="channelsList" class="list"></div>
-    </section>
+        // Componente Ícone
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (ref.current && window.lucide) {
+                    lucide.createIcons({
+                        icons: { [name.replace(/-/g, '')]: window.lucide.icons[name.replace(/-(.)/g, (_, c) => c.toUpperCase())] } || window.lucide.icons,
+                        nameAttr: 'data-lucide',
+                        root: ref.current.parentNode
+                    });
+                }
+            }, [name]);
+            return <i ref={ref} data-lucide={name} style={{ width: size, height: size }} className={className} />;
+        };
 
-    <section id="tab-config" class="card tabview hide">
-      <h2>⚙️ Config</h2>
-      <label class="muted">Model</label><input id="cfgModel">
-      <label class="muted">Hook pre</label><textarea id="hookPre" rows="2"></textarea>
-      <label class="muted">Hook post</label><textarea id="hookPost" rows="2"></textarea>
-      <div class="row"><button id="btnSaveCfg">Salvar settings</button><button id="btnApplyCfg">Apply config</button><button id="btnApplyDryCfg">Dry-run apply</button><button id="btnRestartCfg">Restart seguro</button></div>
-      <div id="configFeedback" class="muted"></div>
-    </section>
+        // --- Sidebar (Painel de Status e Menu) ---
+        const Sidebar = () => {
+            const { 
+                tab, setTab, 
+                token, setToken, 
+                status, isConnected, doLogin 
+            } = useContext(AppContext);
+            
+            const handleTokenChange = (e) => setToken(e.target.value);
 
-    <section id="tab-workspace" class="card tabview hide">
-      <h2>📝 Workspace Files</h2>
-      <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
-        <button class="skill-btn" onclick="loadWsFile('SOUL.md')">SOUL.md</button>
-        <button class="skill-btn" onclick="loadWsFile('USER.md')">USER.md</button>
-        <button class="skill-btn" onclick="loadWsFile('HEARTBEAT.md')">HEARTBEAT.md</button>
-        <button class="skill-btn" onclick="loadWsFile('BOOTSTRAP.md')">BOOTSTRAP.md</button>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <label class="muted" id="wsFileName">Selecione um arquivo acima</label>
-        <button id="btnWsSave" class="copy-btn" style="display:none">Salvar</button>
-      </div>
-      <textarea id="wsEditor" class="ws-editor" placeholder="Selecione um arquivo para editar..."></textarea>
-      <div id="wsFeedback" class="muted" style="margin-top:6px"></div>
-    </section>
+            return (
+                <aside className="w-72 flex-shrink-0 border-r border-drk-700 bg-drk-900/50 backdrop-blur top-0 h-screen flex flex-col p-4 overflow-y-auto">
+                    {/* Header Logo */}
+                    <div className="flex items-center gap-3 mb-6 mix-blend-screen">
+                        <div className="bg-fox-500/10 p-2 rounded-lg border border-fox-500/30">
+                            <span className="text-2xl" role="img" aria-label="fox">🦊</span>
+                        </div>
+                        <div>
+                            <h1 className="font-bold tracking-tight text-white text-lg">ClawLite</h1>
+                            <p className="text-xs text-drk-300 font-mono tracking-wider">PREMIUM ENGINE</p>
+                        </div>
+                    </div>
 
-    <section id="tab-skills" class="card tabview hide">
-      <h2>🔧 Skills</h2>
-      <div class="row"><input id="skillSlug" placeholder="slug da skill"><button id="btnSkillInstall">Instalar</button><button id="btnSkillsLoad">Atualizar</button></div>
-      <div id="skillsFeedback" class="muted"></div>
-      <div id="skillsList" class="list" style="margin-top:8px"></div>
-    </section>
+                    {/* Authentication Card */}
+                    <Card className="mb-4">
+                        <h2 className="text-xs font-bold text-drk-300 uppercase tracking-wider mb-2 flex items-center gap-2">
+                            <Icon name="key" size={14}/> Node Authentication
+                        </h2>
+                        {!isConnected ? (
+                            <div className="space-y-2">
+                                <input 
+                                    type="password" 
+                                    value={token} 
+                                    onChange={handleTokenChange}
+                                    placeholder="Insert Bearer Token" 
+                                    className="w-full bg-drk-900 border border-drk-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-fox-500 focus:ring-1 focus:ring-fox-500"
+                                />
+                                <button 
+                                    onClick={doLogin}
+                                    className="w-full bg-fox-600 hover:bg-fox-500 text-white font-medium rounded-lg px-3 py-2 text-sm transition-colors shadow-lg shadow-fox-500/20"
+                                >
+                                    Connect to Gateway
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center justify-between bg-drk-900 border border-drk-700 rounded-lg p-2">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                                    <span className="text-sm font-mono text-drk-100">••••{token.slice(-4)}</span>
+                                </div>
+                                <button onClick={() => setToken('')} className="text-xs text-drk-300 hover:text-red-400">Disconnect</button>
+                            </div>
+                        )}
+                    </Card>
 
-    <section id="tab-debug" class="card tabview hide">
-      <h2>🧪 Debug</h2>
-      <div class="row"><button id="btnDebugLoad">Atualizar debug</button></div>
-      <div id="debugData" class="list"></div>
-    </section>
+                    {/* Status Dashboard Mini (Only if connected) */}
+                    {isConnected && (
+                        <div className="mb-6 space-y-3 pl-1">
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-drk-300 flex items-center gap-2">
+                                    <Icon name="activity" size={14}/> Core Status
+                                </span>
+                                <span className={status?.online ? "text-green-400 font-medium" : "text-red-400 font-medium"}>
+                                    {status?.online ? 'Online' : 'Offline'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-drk-300 flex items-center gap-2">
+                                    <Icon name="cpu" size={14}/> Model
+                                </span>
+                                <span className="text-fox-500 font-mono text-xs">{status?.model || '—'}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-drk-300 flex items-center gap-2">
+                                    <Icon name="clock" size={14}/> Uptime
+                                </span>
+                                <span className="text-drk-100 font-mono text-xs">{status?.uptime_seconds ? `${Math.floor(status.uptime_seconds/3600)}h ${Math.floor((status.uptime_seconds%3600)/60)}m` : '—'}</span>
+                            </div>
+                        </div>
+                    )}
 
-    <section id="tab-update" class="card tabview hide">
-      <h2>⬆️ Update</h2>
-      <div class="row"><input id="updateSlugs" placeholder="slugs separados por vírgula (opcional)"></div>
-      <div class="row"><button id="btnUpdateDry">Dry-run update</button><button id="btnUpdateApply">Apply update</button></div>
-      <div id="updateData" class="list"></div>
-    </section>
+                    <div className="mt-2 text-xs font-bold text-drk-300 uppercase tracking-wider mb-2 pl-2">Navigation</div>
+                    
+                    {/* Navigation Menu (Tabs) */}
+                    <nav className="flex-1 space-y-1">
+                        {TABS.map(item => (
+                            <button
+                                key={item.id}
+                                onClick={() => setTab(item.id)}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                                    tab === item.id 
+                                        ? 'bg-fox-500/10 text-fox-500 border border-fox-500/30 shadow-[inset_0_0_15px_rgba(255,107,43,0.1)]' 
+                                        : 'text-drk-300 hover:bg-drk-800 hover:text-drk-100 border border-transparent'
+                                }`}
+                            >
+                                <Icon name={item.icon} size={16} />
+                                {item.label}
+                            </button>
+                        ))}
+                    </nav>
+                </aside>
+            )
+        };
 
-    <section id="tab-telemetry" class="card tabview hide">
-      <h2>📊 Telemetria</h2>
-      <div class="row"><select id="period"><option value="24h">24h</option><option value="7d" selected>7d</option><option value="30d">30d</option><option value="all">all</option></select><input id="telemetrySession" placeholder="session_id"><button id="btnTelem">Atualizar</button></div>
-      <div class="kpi"><div class="k" id="kEvents"></div><div class="k" id="kSessions"></div><div class="k" id="kTokens"></div><div class="k" id="kCost"></div></div>
-    </section>
+        // --- Screens Mocks (Sprints 5 implementations will expand this) ---
+        const ConstructionScreen = ({ title, icon }) => (
+            <div className="flex-1 flex flex-col items-center justify-center h-full opacity-50">
+                <Icon name={icon} size={64} className="mb-4 text-drk-600" />
+                <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-drk-100 to-drk-300">{title}</h2>
+                <p className="text-drk-300 mt-2">Esta tela está sendo construída no Sprint 5. 🦊</p>
+            </div>
+        );
 
-    <section id="tab-logs" class="card tabview hide">
-      <h2>📜 Logs</h2>
-      <div class="row"><select id="logLevel"><option value="">todos</option><option>info</option><option>warn</option><option>error</option></select><input id="logEvent" placeholder="evento"><input id="logQuery" placeholder="busca"><button id="btnLogs">Filtrar</button></div>
-      <div id="logs" class="list"></div>
-    </section>
-  </main>
-</div>
+        const ChatScreen = () => {
+            return (
+                <div className="flex flex-col h-full"> 
+                    <div className="flex items-center justify-between pb-4 border-b border-drk-700 mb-4">
+                        <h2 className="text-lg font-bold flex items-center gap-2"><Icon name="message-square"/> Console Engine</h2>
+                        <span className="text-xs bg-drk-800 border border-drk-700 px-2 py-1 rounded text-drk-300 font-mono">Session: dashboard-zero</span>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto bg-drk-900/50 rounded-xl border border-drk-700 p-4 mb-4">
+                        <div className="text-center text-drk-300 text-sm mt-10">
+                            Sem histórico ativo.<br/>Conecte-se para iniciar a transmissão SSE real-time.
+                        </div>
+                    </div>
 
-<script>
-const TABS=[['chat','💬 Chat'],['sessions','📋 Sessions'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['workspace','📝 Workspace'],['skills','🔧 Skills'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
-const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null,hbPoller:null,wsReconnectTimer:null}
-const q=id=>document.getElementById(id)
-const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+                    <div className="flex gap-2">
+                        <input type="text" placeholder="Envie comandos multimodais para o ClawLite..." className="flex-1 bg-drk-800 border border-drk-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-fox-500 focus:ring-1 focus:ring-fox-500" />
+                        <button className="bg-fox-600 hover:bg-fox-500 text-white rounded-xl px-4 py-3 font-medium transition-colors shadow-lg shadow-fox-500/20 flex items-center gap-2">
+                            <Icon name="send" size={16} /> Send
+                        </button>
+                    </div>
+                </div>
+            );
+        }
 
-function renderTabs(){q('tabs').innerHTML=TABS.map(([id,l])=>`<button class="${state.tab===id?'active':''}" data-tab="${id}">${l}</button>`).join('');q('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab))}
-function switchTab(id){state.tab=id;document.querySelectorAll('.tabview').forEach(v=>v.classList.add('hide'));q('tab-'+id).classList.remove('hide');renderTabs()}
-async function api(path,opts={}){const h={'Content-Type':'application/json',...(opts.headers||{})}; if(state.token)h.Authorization=`Bearer ${state.token}`; const r=await fetch(path,{...opts,headers:h}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.detail||d.message||('HTTP '+r.status)); return d}
+        // --- Main App Orchestrator ---
+        const MainApp = () => {
+            const [tab, setTab] = useState('chat');
+            const [token, setToken] = useState(localStorage.getItem('clawlite_token') || '');
+            const [isConnected, setIsConnected] = useState(false);
+            const [status, setStatus] = useState(null);
 
-function formatUptime(s){s=Math.max(0,Math.floor(s));if(s<60)return s+'s';if(s<3600){const m=Math.floor(s/60),sc=s%60;return `${m}m ${sc}s`}const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return `${h}h ${m}m`}
-function maskToken(t){if(!t||t.length<8)return t||'—';return '••••'+t.slice(-6)}
-function renderStatus(st){const online=st&&st.online!==false;q('gwDot').className='dot'+(online?' online':'');q('gwLabel').textContent=online?'online':'offline';q('gwLabel').style.color=online?'var(--ok)':'var(--err)';if(st){q('gwModel').textContent='modelo: '+(st.model||'—');q('gwUptime').textContent='uptime: '+formatUptime(st.uptime_seconds||0);const c=st.connections||0;q('gwConns').textContent=c+' conn'}}
-async function pollStatus(){try{const d=await api('/api/dashboard/status');renderStatus(d)}catch(e){renderStatus({online:false})}}
-function startStatusPoller(){if(state.statusPoller)clearInterval(state.statusPoller);state.statusPoller=setInterval(pollStatus,30000)}
-function showTokenDisplay(){q('tokenMask').textContent=maskToken(state.token);q('tokenDisplay').classList.remove('hide')}
-async function copyToken(){try{await navigator.clipboard.writeText(state.token);q('btnCopyToken').textContent='✓';q('btnCopyToken').classList.add('copied');setTimeout(()=>{q('btnCopyToken').textContent='⎘';q('btnCopyToken').classList.remove('copied')},2000)}catch{const el=document.createElement('textarea');el.value=state.token;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);q('btnCopyToken').textContent='✓';setTimeout(()=>q('btnCopyToken').textContent='⎘',2000)}}
+            // API Utils Proxy
+            const apiCall = async (path, options = {}) => {
+                const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+                if (token) headers.Authorization = `Bearer ${token}`;
+                const res = await fetch(path, { ...options, headers });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                return data;
+            };
 
-async function connect(){state.token=q('token').value.trim();const a=await fetch('/api/dashboard/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:state.token})}).then(r=>r.json());if(!a.ok){q('auth').innerHTML='<span class="err">token inválido</span>';return}
-  q('auth').innerHTML='<span class="ok">autenticado</span>'; const b=await api('/api/dashboard/bootstrap');
-  renderStatus(b.status); startStatusPoller(); showTokenDisplay();
-  q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||'';
-  await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug(),loadSessions(),loadHeartbeat(),loadSkills()]); startHeartbeatPoller(); connectWs()}
+            const doLogin = async () => {
+                if(!token) return;
+                try {
+                    const authRes = await fetch('/api/dashboard/auth', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ token })
+                    }).then(r => r.json());
+                    
+                    if (authRes.ok) {
+                        setIsConnected(true);
+                        localStorage.setItem('clawlite_token', token);
+                        // Fetch initial bootsrap
+                        apiCall('/api/dashboard/bootstrap').then(b => setStatus(b.status)).catch(console.error);
+                    } else {
+                        alert("Token Inválido ou Gateway offline.");
+                    }
+                } catch(e) {
+                    alert("Erro de conexão na Auth.");
+                }
+            };
+            
+            // Re-auth silently if token was in localstorage
+            useEffect(() => { if(token) doLogin(); }, []);
 
-function setChatConnectionState(online,msg=''){q('btnSend').disabled=!online;q('btnSend').title=online?'Enviar mensagem':'Conecte o chat para enviar';if(msg){q('auth').innerHTML=msg}}
-function scheduleWsReconnect(){if(state.wsReconnectTimer||!state.token)return;state.wsReconnectTimer=setTimeout(()=>{state.wsReconnectTimer=null;connectWs()},2000)}
-function connectWs(){const wsProto=location.protocol==='https:'?'wss':'ws';const base=`${wsProto}://${location.host}`; if(state.wsReconnectTimer){clearTimeout(state.wsReconnectTimer);state.wsReconnectTimer=null} if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
- setChatConnectionState(false,'<span class="warn">chat conectando…</span>');
- state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`);
- state.wsChat.onopen=()=>setChatConnectionState(true,'<span class="ok">chat conectado</span>');
- state.wsChat.onclose=()=>{setChatConnectionState(false,'<span class="warn">chat desconectado, tentando reconectar…</span>');scheduleWsReconnect()};
- state.wsChat.onerror=()=>setChatConnectionState(false,'<span class="err">erro na conexão de chat</span>');
- state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat') addMsg('a',m.message?.text||'')}
- state.wsLogs=new WebSocket(`${base}/ws/logs?token=${encodeURIComponent(state.token)}`); state.wsLogs.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='snapshot'){state.logs=m.logs||[]; renderLogs()} if(m.type==='log'){state.logs.push(m.payload); if(state.logs.length>500)state.logs.shift(); renderLogs()}}
- state.wsLogs.onclose=()=>scheduleWsReconnect()
-}
-function addMsg(role,text){const d=document.createElement('div'); d.className='msg '+role; d.innerHTML=esc(text); q('chat').appendChild(d); q('chat').scrollTop=q('chat').scrollHeight}
-async function sendChat(){const t=q('chatInput').value.trim(); if(!t||!state.wsChat||state.wsChat.readyState!==1)return; addMsg('u',t); state.wsChat.send(JSON.stringify({type:'chat',session_id:q('sessionId').value||'dashboard-session',text:t})); q('chatInput').value=''}
+            // Main View Switcher
+            const renderMainArea = () => {
+                switch(tab) {
+                    case 'chat': return <ChatScreen />;
+                    case 'telemetry': return <ConstructionScreen title="LLM Telemetria Avançada" icon="bar-chart-3" />;
+                    case 'skills': return <ConstructionScreen title="Skills Marketplace" icon="blocks" />;
+                    case 'channels': return <ConstructionScreen title="Channels Watchtower" icon="satellite-dish" />;
+                    default: return <ConstructionScreen title="Em Desenvolvimento" icon="wrench" />;
+                }
+            };
 
-// ---- P1: Sessions ----
-function formatRelTime(iso){if(!iso)return '—';try{const d=new Date(iso.endsWith('Z')?iso:iso+'Z');const s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s atrás';if(s<3600)return Math.floor(s/60)+'min atrás';if(s<86400)return Math.floor(s/3600)+'h atrás';return Math.floor(s/86400)+'d atrás'}catch{return iso.slice(0,16)}}
-async function loadSessions(){const q_=q('sessionSearch').value.trim();const d=await api('/api/dashboard/sessions?q='+encodeURIComponent(q_));renderSessions(d.sessions||[])}
-function renderSessions(items){if(!items.length){q('sessionsList').innerHTML='<div class="muted" style="padding:12px">Nenhuma sessão encontrada.</div>';return}q('sessionsList').innerHTML=items.map(s=>`<div class="sitem" onclick="openSession('${esc(s.session_id)}')" title="Abrir no chat"><div class="sid">${esc(s.session_id)}</div><div class="smeta">${s.messages} msgs · ${formatRelTime(s.last_ts)}</div><div class="sprev">${esc(s.preview||'')}</div></div>`).join('')}
-async function openSession(id){q('sessionId').value=id;const d=await api('/api/dashboard/sessions/'+encodeURIComponent(id));const msgs=d.messages||[];q('chat').innerHTML='';msgs.forEach(m=>{const role=m.role==='user'?'u':'a';addMsg(role,m.text||'')});switchTab('chat')}
+            return (
+                <AppContext.Provider value={{ tab, setTab, token, setToken, status, isConnected, doLogin, apiCall }}>
+                    <div className="flex h-screen overflow-hidden">
+                        <Sidebar />
+                        <main className="flex-1 p-6 relative flex flex-col h-screen overflow-hidden">
+                            {/* Decorative background glow */}
+                            <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-fox-500/5 rounded-full blur-[100px] pointer-events-none"></div>
+                            <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-blue-500/5 rounded-full blur-[100px] pointer-events-none"></div>
+                            
+                            <div className="relative z-10 flex-1 flex flex-col h-full bg-drk-900/40 backdrop-blur-sm border border-drk-700/50 rounded-2xl shadow-2xl p-6">
+                                {renderMainArea()}
+                            </div>
+                        </main>
+                    </div>
+                </AppContext.Provider>
+            );
+        };
 
-// ---- P1: Telegram badge ----
-function updateTelegramBadge(channels){const tg=(channels||[]).find(c=>c.channel==='telegram');const el=q('tgBadge');if(tg&&tg.enabled&&tg.configured){el.textContent='conectado';el.className='ch-badge online'}else if(tg&&tg.configured){el.textContent='desabilitado';el.className='ch-badge offline'}else{el.textContent='desconectado';el.className='ch-badge offline'}}
-
-// ---- P1: Heartbeat widget ----
-function renderHeartbeat(d){if(!d)return;q('hbLast').textContent='último run: '+formatRelTime(d.last_run)+(d.runs_today?` (${d.runs_today}x hoje)`:'');const r=d.last_result;if(!r){q('hbResult').textContent='resultado: —';q('hbResult').className='status-meta'}else if(r==='HEARTBEAT_OK'){q('hbResult').innerHTML='resultado: <span class="hb-ok">✓ OK</span>';q('hbResult').className='status-meta'}else{q('hbResult').innerHTML=`resultado: <span class="hb-warn" title="${esc(r)}">${esc(r.length>40?r.slice(0,40)+'…':r)}</span>`;q('hbResult').className='status-meta'}if(d.seconds_until_next!=null){q('hbNext').textContent='próximo: '+formatUptime(d.seconds_until_next)}else{q('hbNext').textContent='próximo: —'}}
-async function loadHeartbeat(){try{const d=await api('/api/heartbeat/status');renderHeartbeat(d)}catch(e){}}
-function startHeartbeatPoller(){if(state.hbPoller)clearInterval(state.hbPoller);state.hbPoller=setInterval(loadHeartbeat,60000)}
-
-async function loadCron(){const d=await api('/api/cron'); q('cronList').innerHTML=(d.jobs||[]).map(j=>`<div><b>#${j.id}</b> ${esc(j.name)} <span class='muted'>${j.interval_seconds}s</span><br>${esc(j.text||'')}<br><button onclick="rmCron(${j.id})">remover</button></div>`).join('')||'<div class="muted">sem jobs</div>'}
-async function addCron(){try{const p={channel:q('cronChannel').value.trim()||'telegram',chat_id:q('cronChatId').value.trim(),name:q('cronName').value.trim(),text:q('cronText').value.trim(),interval_seconds:Number(q('cronInterval').value||3600)};const d=await api('/api/cron',{method:'POST',body:JSON.stringify(p)});q('cronFeedback').innerHTML=`<span class='ok'>job #${d.id} criado</span>`;loadCron()}catch(e){q('cronFeedback').innerHTML=`<span class='err'>${esc(e.message)}</span>`}}
-async function rmCron(id){await api('/api/cron/'+id,{method:'DELETE'});q('cronFeedback').innerHTML=`<span class='ok'>job #${id} removido</span>`;loadCron()}
-
-function renderChannels(){q('channelsList').innerHTML=(state.channels||[]).map((ch,i)=>`<div style='margin-bottom:8px'><b>${esc(ch.channel)}</b> ${ch.configured?'<span class="ok">configured</span>':'<span class="warn">empty</span>'}<br>
-<label><input type='checkbox' data-i='${i}' data-k='enabled' ${ch.enabled?'checked':''}/> enabled</label>
-<label><input type='checkbox' data-i='${i}' data-k='stt_enabled' ${ch.stt_enabled?'checked':''}/> stt</label>
-<label><input type='checkbox' data-i='${i}' data-k='tts_enabled' ${ch.tts_enabled?'checked':''}/> tts</label>
-<div class='row'><input data-i='${i}' data-k='token' placeholder='token' value='${esc(ch.token||'')}'><input data-i='${i}' data-k='account' placeholder='account' value='${esc(ch.account||'')}'></div></div>`).join('')||'<div class="muted">sem canais</div>';
-q('channelsList').querySelectorAll('input').forEach(el=>{el.onchange=()=>{const i=Number(el.dataset.i);const k=el.dataset.k;if(el.type==='checkbox')state.channels[i][k]=el.checked;else state.channels[i][k]=el.value}})}
-async function loadChannels(){const d=await api('/api/channels/status'); state.channels=d.channels||[]; renderChannels(); updateTelegramBadge(state.channels)}
-async function saveChannels(){const out={}; (state.channels||[]).forEach(c=>out[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled}); await api('/api/channels/config',{method:'PUT',body:JSON.stringify({channels:out})}); q('auth').innerHTML='<span class="ok">channels salvos</span>'; loadChannels()}
-
-async function saveCfg(){const m=q('cfgModel').value.trim();await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:m,hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('configFeedback').innerHTML=`<span class="ok">settings salvas — modelo: ${esc(m)}</span>`; pollStatus()}
-
-// ---- P2: Workspace editor ----
-const wsState={current:null}
-async function loadWsFile(name){try{const d=await api('/api/workspace/file?name='+encodeURIComponent(name));q('wsEditor').value=d.content;q('wsFileName').textContent=name;q('btnWsSave').style.display='';q('wsFeedback').textContent='';wsState.current=name}catch(e){q('wsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
-async function saveWsFile(){if(!wsState.current)return;try{const d=await api('/api/workspace/file',{method:'PUT',body:JSON.stringify({name:wsState.current,content:q('wsEditor').value})});q('wsFeedback').innerHTML=`<span class="ok">${esc(wsState.current)} salvo (${d.bytes} bytes)</span>`}catch(e){q('wsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
-
-// ---- P2: Skills tab ----
-async function loadSkills(){try{const d=await api('/api/dashboard/skills');renderSkills(d.skills||[])}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
-function renderSkills(skills){if(!skills.length){q('skillsList').innerHTML='<div class="muted" style="padding:8px">Nenhuma skill instalada.</div>';return}q('skillsList').innerHTML=skills.map(s=>`<div class="skill-item"><span class="skill-slug">${esc(s.slug)} ${s.enabled?'<span class="ok" style="font-size:.8em">●</span>':'<span class="muted" style="font-size:.8em">○</span>'}</span><button class="skill-btn" onclick="toggleSkill('${esc(s.slug)}',${!s.enabled})">${s.enabled?'Desativar':'Ativar'}</button><button class="skill-btn danger" onclick="removeSkill('${esc(s.slug)}')">Remover</button></div>`).join('')}
-async function installSkill(){const slug=q('skillSlug').value.trim();if(!slug)return;try{await api('/api/dashboard/skills/install',{method:'POST',body:JSON.stringify({slug})});q('skillsFeedback').innerHTML=`<span class="ok">skill '${esc(slug)}' instalada</span>`;q('skillSlug').value='';loadSkills()}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
-async function toggleSkill(slug,enable){const path=enable?'/api/dashboard/skills/enable':'/api/dashboard/skills/disable';try{await api(path,{method:'POST',body:JSON.stringify({slug})});loadSkills()}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
-async function removeSkill(slug){if(!confirm(`Remover skill '${slug}'?`))return;try{await api('/api/dashboard/skills/remove',{method:'POST',body:JSON.stringify({slug})});q('skillsFeedback').innerHTML=`<span class="ok">skill '${esc(slug)}' removida</span>`;loadSkills()}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
-async function applyCfg(dry){const channels={};(state.channels||[]).forEach(c=>channels[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled});const d=await api('/api/dashboard/config/apply',{method:'POST',body:JSON.stringify({dry_run:dry,model:q('cfgModel').value.trim(),channels})}); q('configFeedback').innerHTML=`<span class='ok'>${esc(d.message)}</span>`}
-async function restartCfg(){const d=await api('/api/dashboard/config/restart',{method:'POST',body:JSON.stringify({mode:'safe'})}); q('configFeedback').innerHTML=`<span class='warn'>${esc(d.message)}</span>`}
-
-async function loadDebug(){const d=await api('/api/dashboard/debug'); q('debugData').innerHTML=Object.entries(d.debug||{}).map(([k,v])=>`<div><b>${esc(k)}</b>: ${esc(v)}</div>`).join('')}
-function parseUpdateSlugs(){return (q('updateSlugs').value||'').split(',').map(s=>s.trim()).filter(Boolean)}
-async function runUpdate(dry){const d=await api('/api/dashboard/update',{method:'POST',body:JSON.stringify({dry_run:dry,slugs:parseUpdateSlugs()})}); q('updateData').innerHTML=`<div><b>dry_run:</b> ${d.dry_run}</div><pre>${esc(JSON.stringify(d.result,null,2))}</pre>`}
-
-async function loadTelemetry(){const p=q('period').value,s=q('telemetrySession').value.trim(); const d=await api('/api/dashboard/telemetry?period='+encodeURIComponent(p)+'&session_id='+encodeURIComponent(s)); const x=d.summary||{}; q('kEvents').innerHTML='events<br><b>'+ (x.events||0) +'</b>'; q('kSessions').innerHTML='sessions<br><b>'+ (x.sessions||0) +'</b>'; q('kTokens').innerHTML='tokens<br><b>'+ (x.tokens||0) +'</b>'; q('kCost').innerHTML='cost<br><b>$'+ Number(x.cost_usd||0).toFixed(6) +'</b>'}
-function renderLogs(){q('logs').innerHTML=(state.logs||[]).slice().reverse().map(l=>`<div>[${esc(l.level||'info').toUpperCase()}] ${esc(l.event||'-')}<br><span class='muted'>${esc(JSON.stringify(l.data||{}))}</span></div>`).join('')||'<div class="muted">sem logs</div>'}
-async function loadLogs(){const d=await api('/api/dashboard/logs?limit=200&level='+encodeURIComponent(q('logLevel').value||'')+'&event='+encodeURIComponent(q('logEvent').value||'')+'&q='+encodeURIComponent(q('logQuery').value||'')); state.logs=d.logs||[]; renderLogs()}
-
-q('btnConnect').onclick=connect; q('btnCopyToken').onclick=copyToken; q('btnSend').onclick=sendChat;
-q('btnSessionsLoad').onclick=loadSessions; q('sessionSearch').addEventListener('keydown',e=>{if(e.key==='Enter')loadSessions()});
-q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
-q('btnChannelsLoad').onclick=loadChannels; q('btnChannelsSave').onclick=saveChannels;
-q('btnSaveCfg').onclick=saveCfg; q('btnApplyCfg').onclick=()=>applyCfg(false); q('btnApplyDryCfg').onclick=()=>applyCfg(true); q('btnRestartCfg').onclick=restartCfg;
-q('btnDebugLoad').onclick=loadDebug; q('btnUpdateDry').onclick=()=>runUpdate(true); q('btnUpdateApply').onclick=()=>runUpdate(false);
-q('btnTelem').onclick=loadTelemetry; q('btnLogs').onclick=loadLogs;
-q('btnWsSave').onclick=saveWsFile; q('btnSkillInstall').onclick=installSkill; q('btnSkillsLoad').onclick=loadSkills;
-q('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}})
-renderTabs()
-</script>
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<MainApp />);
+        
+        // Manual init for lucide in non-react roots if needed
+        setTimeout(() => { if(window.lucide) lucide.createIcons(); }, 100);
+    </script>
 </body>
 </html>
