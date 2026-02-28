@@ -5,11 +5,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from clawlite.config.settings import load_config
-from clawlite.gateway.routes import admin, agents, channels, cron, mcp, sessions, skills, websockets, workspace
+from clawlite.gateway.routes import admin, agents, channels, cron, mcp, sessions, skills, websockets, workspace, webhooks
 from clawlite.gateway.utils import _log
 
+import contextlib
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    from clawlite.channels.manager import manager
+    await manager.start_all()
+    yield
+    await manager.stop_all()
+
 # Main FastAPI App Setup
-app = FastAPI(title="ClawLite Gateway", version="0.3.0")
+app = FastAPI(title="ClawLite Gateway", version="0.3.0", lifespan=lifespan)
 
 # Setup CORS
 app.add_middleware(
@@ -30,6 +39,7 @@ app.include_router(sessions.router)
 app.include_router(skills.router)
 app.include_router(websockets.router)
 app.include_router(workspace.router)
+app.include_router(webhooks.router)
 
 
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
