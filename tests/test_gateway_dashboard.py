@@ -115,6 +115,33 @@ def test_logs_filtering_and_ws_snapshot(monkeypatch, tmp_path):
         assert all(item["level"] == "error" for item in first["logs"])
 
 
+def test_workspace_file_crud(monkeypatch, tmp_path):
+    """GET /api/workspace/file reads and PUT saves workspace files."""
+    server = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+    token = server._token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # empty file returns empty content
+    r = client.get("/api/workspace/file?name=SOUL.md", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["content"] == ""
+
+    # save content
+    put = client.put("/api/workspace/file", headers=headers,
+                     json={"name": "SOUL.md", "content": "Sou o assistente ClawLite."})
+    assert put.status_code == 200
+    assert put.json()["bytes"] > 0
+
+    # read back
+    r2 = client.get("/api/workspace/file?name=SOUL.md", headers=headers)
+    assert r2.json()["content"] == "Sou o assistente ClawLite."
+
+    # disallowed file name
+    bad = client.get("/api/workspace/file?name=../../etc/passwd", headers=headers)
+    assert bad.status_code == 400
+
+
 def test_heartbeat_status_no_state(monkeypatch, tmp_path):
     """GET /api/heartbeat/status returns ok even without a state file."""
     server = _boot(monkeypatch, tmp_path)

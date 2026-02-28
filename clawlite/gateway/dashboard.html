@@ -34,6 +34,12 @@
     .sitem{padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px;margin:3px 0}
     .sitem:hover{background:#1a2a50}.sitem .sid{font-size:.88em;color:var(--text);font-weight:600}
     .sitem .smeta{font-size:.78em;color:var(--muted)}.sitem .sprev{font-size:.82em;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%}
+    .skill-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+    .skill-item:last-child{border-bottom:none}.skill-slug{flex:1;font-size:.9em}
+    .skill-btn{font-size:.78em;padding:3px 9px;cursor:pointer;border-radius:5px;border:1px solid var(--line);background:#0f1830;color:var(--muted)}
+    .skill-btn:hover{border-color:var(--a);color:var(--a)}.skill-btn.danger:hover{border-color:var(--err);color:var(--err)}
+    .ws-editor{width:100%;min-height:280px;font-family:monospace;font-size:.85em;resize:vertical;background:#080f22;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:10px}
+    .ws-editor:focus{outline:none;border-color:var(--a)}
     @media(max-width:980px){.layout{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
   </style>
 </head>
@@ -111,6 +117,29 @@
       <div id="configFeedback" class="muted"></div>
     </section>
 
+    <section id="tab-workspace" class="card tabview hide">
+      <h2>📝 Workspace Files</h2>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
+        <button class="skill-btn" onclick="loadWsFile('SOUL.md')">SOUL.md</button>
+        <button class="skill-btn" onclick="loadWsFile('USER.md')">USER.md</button>
+        <button class="skill-btn" onclick="loadWsFile('HEARTBEAT.md')">HEARTBEAT.md</button>
+        <button class="skill-btn" onclick="loadWsFile('BOOTSTRAP.md')">BOOTSTRAP.md</button>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <label class="muted" id="wsFileName">Selecione um arquivo acima</label>
+        <button id="btnWsSave" class="copy-btn" style="display:none">Salvar</button>
+      </div>
+      <textarea id="wsEditor" class="ws-editor" placeholder="Selecione um arquivo para editar..."></textarea>
+      <div id="wsFeedback" class="muted" style="margin-top:6px"></div>
+    </section>
+
+    <section id="tab-skills" class="card tabview hide">
+      <h2>🔧 Skills</h2>
+      <div class="row"><input id="skillSlug" placeholder="slug da skill"><button id="btnSkillInstall">Instalar</button><button id="btnSkillsLoad">Atualizar</button></div>
+      <div id="skillsFeedback" class="muted"></div>
+      <div id="skillsList" class="list" style="margin-top:8px"></div>
+    </section>
+
     <section id="tab-debug" class="card tabview hide">
       <h2>🧪 Debug</h2>
       <div class="row"><button id="btnDebugLoad">Atualizar debug</button></div>
@@ -139,7 +168,7 @@
 </div>
 
 <script>
-const TABS=[['chat','💬 Chat'],['sessions','📋 Sessions'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
+const TABS=[['chat','💬 Chat'],['sessions','📋 Sessions'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['workspace','📝 Workspace'],['skills','🔧 Skills'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
 const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null,hbPoller:null}
 const q=id=>document.getElementById(id)
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
@@ -160,7 +189,7 @@ async function connect(){state.token=q('token').value.trim();const a=await fetch
   q('auth').innerHTML='<span class="ok">autenticado</span>'; const b=await api('/api/dashboard/bootstrap');
   renderStatus(b.status); startStatusPoller(); showTokenDisplay();
   q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||'';
-  await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug(),loadSessions(),loadHeartbeat()]); startHeartbeatPoller(); connectWs()}
+  await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug(),loadSessions(),loadHeartbeat(),loadSkills()]); startHeartbeatPoller(); connectWs()}
 
 function connectWs(){const base=location.origin.replace('http','ws'); if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
  state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`); state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat') addMsg('a',m.message?.text||'')}
@@ -196,7 +225,19 @@ q('channelsList').querySelectorAll('input').forEach(el=>{el.onchange=()=>{const 
 async function loadChannels(){const d=await api('/api/channels/status'); state.channels=d.channels||[]; renderChannels(); updateTelegramBadge(state.channels)}
 async function saveChannels(){const out={}; (state.channels||[]).forEach(c=>out[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled}); await api('/api/channels/config',{method:'PUT',body:JSON.stringify({channels:out})}); q('auth').innerHTML='<span class="ok">channels salvos</span>'; loadChannels()}
 
-async function saveCfg(){await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:q('cfgModel').value.trim(),hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('configFeedback').innerHTML='<span class="ok">settings salvas</span>'}
+async function saveCfg(){const m=q('cfgModel').value.trim();await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:m,hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('configFeedback').innerHTML=`<span class="ok">settings salvas — modelo: ${esc(m)}</span>`; pollStatus()}
+
+// ---- P2: Workspace editor ----
+const wsState={current:null}
+async function loadWsFile(name){try{const d=await api('/api/workspace/file?name='+encodeURIComponent(name));q('wsEditor').value=d.content;q('wsFileName').textContent=name;q('btnWsSave').style.display='';q('wsFeedback').textContent='';wsState.current=name}catch(e){q('wsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
+async function saveWsFile(){if(!wsState.current)return;try{const d=await api('/api/workspace/file',{method:'PUT',body:JSON.stringify({name:wsState.current,content:q('wsEditor').value})});q('wsFeedback').innerHTML=`<span class="ok">${esc(wsState.current)} salvo (${d.bytes} bytes)</span>`}catch(e){q('wsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
+
+// ---- P2: Skills tab ----
+async function loadSkills(){try{const d=await api('/api/dashboard/skills');renderSkills(d.skills||[])}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
+function renderSkills(skills){if(!skills.length){q('skillsList').innerHTML='<div class="muted" style="padding:8px">Nenhuma skill instalada.</div>';return}q('skillsList').innerHTML=skills.map(s=>`<div class="skill-item"><span class="skill-slug">${esc(s.slug)} ${s.enabled?'<span class="ok" style="font-size:.8em">●</span>':'<span class="muted" style="font-size:.8em">○</span>'}</span><button class="skill-btn" onclick="toggleSkill('${esc(s.slug)}',${!s.enabled})">${s.enabled?'Desativar':'Ativar'}</button><button class="skill-btn danger" onclick="removeSkill('${esc(s.slug)}')">Remover</button></div>`).join('')}
+async function installSkill(){const slug=q('skillSlug').value.trim();if(!slug)return;try{await api('/api/dashboard/skills/install',{method:'POST',body:JSON.stringify({slug})});q('skillsFeedback').innerHTML=`<span class="ok">skill '${esc(slug)}' instalada</span>`;q('skillSlug').value='';loadSkills()}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
+async function toggleSkill(slug,enable){const path=enable?'/api/dashboard/skills/enable':'/api/dashboard/skills/disable';try{await api(path,{method:'POST',body:JSON.stringify({slug})});loadSkills()}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
+async function removeSkill(slug){if(!confirm(`Remover skill '${slug}'?`))return;try{await api('/api/dashboard/skills/remove',{method:'POST',body:JSON.stringify({slug})});q('skillsFeedback').innerHTML=`<span class="ok">skill '${esc(slug)}' removida</span>`;loadSkills()}catch(e){q('skillsFeedback').innerHTML=`<span class="err">${esc(e.message)}</span>`}}
 async function applyCfg(dry){const channels={};(state.channels||[]).forEach(c=>channels[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled});const d=await api('/api/dashboard/config/apply',{method:'POST',body:JSON.stringify({dry_run:dry,model:q('cfgModel').value.trim(),channels})}); q('configFeedback').innerHTML=`<span class='ok'>${esc(d.message)}</span>`}
 async function restartCfg(){const d=await api('/api/dashboard/config/restart',{method:'POST',body:JSON.stringify({mode:'safe'})}); q('configFeedback').innerHTML=`<span class='warn'>${esc(d.message)}</span>`}
 
@@ -214,7 +255,9 @@ q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
 q('btnChannelsLoad').onclick=loadChannels; q('btnChannelsSave').onclick=saveChannels;
 q('btnSaveCfg').onclick=saveCfg; q('btnApplyCfg').onclick=()=>applyCfg(false); q('btnApplyDryCfg').onclick=()=>applyCfg(true); q('btnRestartCfg').onclick=restartCfg;
 q('btnDebugLoad').onclick=loadDebug; q('btnUpdateDry').onclick=()=>runUpdate(true); q('btnUpdateApply').onclick=()=>runUpdate(false);
-q('btnTelem').onclick=loadTelemetry; q('btnLogs').onclick=loadLogs; q('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}})
+q('btnTelem').onclick=loadTelemetry; q('btnLogs').onclick=loadLogs;
+q('btnWsSave').onclick=saveWsFile; q('btnSkillInstall').onclick=installSkill; q('btnSkillsLoad').onclick=loadSkills;
+q('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}})
 renderTabs()
 </script>
 </body>

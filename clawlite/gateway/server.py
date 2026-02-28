@@ -1368,6 +1368,40 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
     })
 
 
+_WORKSPACE_ALLOWED = {"SOUL.md", "USER.md", "HEARTBEAT.md", "BOOTSTRAP.md"}
+
+
+@app.get("/api/workspace/file")
+def api_workspace_file_get(
+    name: str = Query(...),
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    if name not in _WORKSPACE_ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Arquivo não permitido: {name}")
+    workspace = Path.home() / ".clawlite" / "workspace"
+    path = workspace / name
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    return JSONResponse({"ok": True, "name": name, "content": content})
+
+
+@app.put("/api/workspace/file")
+def api_workspace_file_save(
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    name = str(payload.get("name", "")).strip()
+    if name not in _WORKSPACE_ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Arquivo não permitido: {name}")
+    content = str(payload.get("content", ""))
+    workspace = Path.home() / ".clawlite" / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / name).write_text(content, encoding="utf-8")
+    _log("workspace.file.saved", data={"name": name, "bytes": len(content)})
+    return JSONResponse({"ok": True, "name": name, "bytes": len(content)})
+
+
 @app.get("/api/heartbeat/status")
 def api_heartbeat_status(authorization: str | None = Header(default=None)) -> JSONResponse:
     _check_bearer(authorization)
