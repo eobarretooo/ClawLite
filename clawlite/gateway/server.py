@@ -1368,6 +1368,43 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
     })
 
 
+@app.get("/api/heartbeat/status")
+def api_heartbeat_status(authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    cfg = load_config()
+    interval_s = int(cfg.get("gateway", {}).get("heartbeat_interval_s", 1800))
+    workspace = Path.home() / ".clawlite" / "workspace"
+    state_file = workspace / "memory" / "heartbeat-state.json"
+    state: dict[str, Any] = {}
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    last_run = state.get("last_run")
+    next_run_iso: str | None = None
+    seconds_until_next: int | None = None
+    if last_run:
+        try:
+            lr = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+            if lr.tzinfo is None:
+                lr = lr.replace(tzinfo=timezone.utc)
+            next_dt = lr + timedelta(seconds=interval_s)
+            next_run_iso = next_dt.isoformat()
+            seconds_until_next = max(0, int((next_dt - datetime.now(timezone.utc)).total_seconds()))
+        except Exception:
+            pass
+    return JSONResponse({
+        "ok": True,
+        "last_run": last_run,
+        "last_result": state.get("last_result"),
+        "runs_today": state.get("runs_today", 0),
+        "interval_s": interval_s,
+        "next_run": next_run_iso,
+        "seconds_until_next": seconds_until_next,
+    })
+
+
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
     cfg = load_config()
     h_raw = host if host is not None else cfg.get("gateway", {}).get("host", "0.0.0.0")

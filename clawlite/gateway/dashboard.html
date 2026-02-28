@@ -27,6 +27,13 @@
     .token-mask{flex:1;font-family:monospace;font-size:.84em;color:var(--text);background:#0b1328;border:1px solid var(--line);border-radius:6px;padding:5px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
     .copy-btn{font-size:.8em;cursor:pointer;white-space:nowrap;background:#1a2a50;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:5px 10px;flex-shrink:0}
     .copy-btn:hover{border-color:var(--a);color:var(--a)}.copy-btn.copied{color:var(--ok);border-color:var(--ok)}
+    .ch-badge{font-size:.78em;font-weight:600;padding:2px 7px;border-radius:10px;border:1px solid}
+    .ch-badge.online{color:var(--ok);border-color:var(--ok);background:#0d2b1a}
+    .ch-badge.offline{color:var(--muted);border-color:var(--line);background:#131e36}
+    .hb-ok{color:var(--ok)}.hb-warn{color:var(--warn)}
+    .sitem{padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px;margin:3px 0}
+    .sitem:hover{background:#1a2a50}.sitem .sid{font-size:.88em;color:var(--text);font-weight:600}
+    .sitem .smeta{font-size:.78em;color:var(--muted)}.sitem .sprev{font-size:.82em;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%}
     @media(max-width:980px){.layout{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
   </style>
 </head>
@@ -34,7 +41,7 @@
 <div class="layout">
   <aside class="side">
     <h1>🦊 ClawLite Dashboard</h1>
-    <p class="muted">Painéis P0 (chat/cron/channels/config/debug/update)</p>
+    <p class="muted" style="font-size:.8em">v0.3 · chat · sessions · cron · channels · config</p>
     <div class="card">
       <label class="muted">Token</label>
       <input id="token" placeholder="Bearer token" />
@@ -53,6 +60,18 @@
       <div class="status-meta" id="gwModel">modelo: —</div>
       <div class="status-meta" id="gwUptime">uptime: —</div>
     </div>
+    <div class="card" style="margin-top:8px">
+      <div class="status-row">
+        <span style="font-size:.85em">📬 Telegram</span>
+        <span id="tgBadge" class="ch-badge offline">desconectado</span>
+      </div>
+    </div>
+    <div class="card" style="margin-top:8px" id="hbCard">
+      <div style="font-size:.85em;font-weight:600;margin-bottom:5px">💓 Heartbeat</div>
+      <div class="status-meta" id="hbLast">último run: —</div>
+      <div class="status-meta" id="hbResult">resultado: —</div>
+      <div class="status-meta" id="hbNext">próximo: —</div>
+    </div>
     <div class="tabs" style="margin-top:10px" id="tabs"></div>
   </aside>
 
@@ -61,6 +80,12 @@
       <h2>💬 Chat</h2>
       <div id="chat" class="chat"></div>
       <div class="row"><input id="sessionId" value="dashboard-session"><input id="chatInput" placeholder="Digite mensagem"><button id="btnSend">Enviar</button></div>
+    </section>
+
+    <section id="tab-sessions" class="card tabview hide">
+      <h2>📋 Sessions</h2>
+      <div class="row"><input id="sessionSearch" placeholder="buscar sessão..."><button id="btnSessionsLoad">Atualizar</button></div>
+      <div id="sessionsList" class="list" style="max-height:420px"></div>
     </section>
 
     <section id="tab-cron" class="card tabview hide">
@@ -114,8 +139,8 @@
 </div>
 
 <script>
-const TABS=[['chat','💬 Chat'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
-const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null}
+const TABS=[['chat','💬 Chat'],['sessions','📋 Sessions'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
+const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null,hbPoller:null}
 const q=id=>document.getElementById(id)
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
 
@@ -135,7 +160,7 @@ async function connect(){state.token=q('token').value.trim();const a=await fetch
   q('auth').innerHTML='<span class="ok">autenticado</span>'; const b=await api('/api/dashboard/bootstrap');
   renderStatus(b.status); startStatusPoller(); showTokenDisplay();
   q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||'';
-  await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug()]); connectWs()}
+  await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug(),loadSessions(),loadHeartbeat()]); startHeartbeatPoller(); connectWs()}
 
 function connectWs(){const base=location.origin.replace('http','ws'); if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
  state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`); state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat') addMsg('a',m.message?.text||'')}
@@ -143,6 +168,20 @@ function connectWs(){const base=location.origin.replace('http','ws'); if(state.w
 }
 function addMsg(role,text){const d=document.createElement('div'); d.className='msg '+role; d.innerHTML=esc(text); q('chat').appendChild(d); q('chat').scrollTop=q('chat').scrollHeight}
 async function sendChat(){const t=q('chatInput').value.trim(); if(!t||!state.wsChat||state.wsChat.readyState!==1)return; addMsg('u',t); state.wsChat.send(JSON.stringify({type:'chat',session_id:q('sessionId').value||'dashboard-session',text:t})); q('chatInput').value=''}
+
+// ---- P1: Sessions ----
+function formatRelTime(iso){if(!iso)return '—';try{const d=new Date(iso.endsWith('Z')?iso:iso+'Z');const s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s atrás';if(s<3600)return Math.floor(s/60)+'min atrás';if(s<86400)return Math.floor(s/3600)+'h atrás';return Math.floor(s/86400)+'d atrás'}catch{return iso.slice(0,16)}}
+async function loadSessions(){const q_=q('sessionSearch').value.trim();const d=await api('/api/dashboard/sessions?q='+encodeURIComponent(q_));renderSessions(d.sessions||[])}
+function renderSessions(items){if(!items.length){q('sessionsList').innerHTML='<div class="muted" style="padding:12px">Nenhuma sessão encontrada.</div>';return}q('sessionsList').innerHTML=items.map(s=>`<div class="sitem" onclick="openSession('${esc(s.session_id)}')" title="Abrir no chat"><div class="sid">${esc(s.session_id)}</div><div class="smeta">${s.messages} msgs · ${formatRelTime(s.last_ts)}</div><div class="sprev">${esc(s.preview||'')}</div></div>`).join('')}
+async function openSession(id){q('sessionId').value=id;const d=await api('/api/dashboard/sessions/'+encodeURIComponent(id));const msgs=d.messages||[];q('chat').innerHTML='';msgs.forEach(m=>{const role=m.role==='user'?'u':'a';addMsg(role,m.text||'')});switchTab('chat')}
+
+// ---- P1: Telegram badge ----
+function updateTelegramBadge(channels){const tg=(channels||[]).find(c=>c.channel==='telegram');const el=q('tgBadge');if(tg&&tg.enabled&&tg.configured){el.textContent='conectado';el.className='ch-badge online'}else if(tg&&tg.configured){el.textContent='desabilitado';el.className='ch-badge offline'}else{el.textContent='desconectado';el.className='ch-badge offline'}}
+
+// ---- P1: Heartbeat widget ----
+function renderHeartbeat(d){if(!d)return;q('hbLast').textContent='último run: '+formatRelTime(d.last_run)+(d.runs_today?` (${d.runs_today}x hoje)`:'');const r=d.last_result;if(!r){q('hbResult').textContent='resultado: —';q('hbResult').className='status-meta'}else if(r==='HEARTBEAT_OK'){q('hbResult').innerHTML='resultado: <span class="hb-ok">✓ OK</span>';q('hbResult').className='status-meta'}else{q('hbResult').innerHTML=`resultado: <span class="hb-warn" title="${esc(r)}">${esc(r.length>40?r.slice(0,40)+'…':r)}</span>`;q('hbResult').className='status-meta'}if(d.seconds_until_next!=null){q('hbNext').textContent='próximo: '+formatUptime(d.seconds_until_next)}else{q('hbNext').textContent='próximo: —'}}
+async function loadHeartbeat(){try{const d=await api('/api/heartbeat/status');renderHeartbeat(d)}catch(e){}}
+function startHeartbeatPoller(){if(state.hbPoller)clearInterval(state.hbPoller);state.hbPoller=setInterval(loadHeartbeat,60000)}
 
 async function loadCron(){const d=await api('/api/cron'); q('cronList').innerHTML=(d.jobs||[]).map(j=>`<div><b>#${j.id}</b> ${esc(j.name)} <span class='muted'>${j.interval_seconds}s</span><br>${esc(j.text||'')}<br><button onclick="rmCron(${j.id})">remover</button></div>`).join('')||'<div class="muted">sem jobs</div>'}
 async function addCron(){try{const p={channel:q('cronChannel').value.trim()||'telegram',chat_id:q('cronChatId').value.trim(),name:q('cronName').value.trim(),text:q('cronText').value.trim(),interval_seconds:Number(q('cronInterval').value||3600)};const d=await api('/api/cron',{method:'POST',body:JSON.stringify(p)});q('cronFeedback').innerHTML=`<span class='ok'>job #${d.id} criado</span>`;loadCron()}catch(e){q('cronFeedback').innerHTML=`<span class='err'>${esc(e.message)}</span>`}}
@@ -154,7 +193,7 @@ function renderChannels(){q('channelsList').innerHTML=(state.channels||[]).map((
 <label><input type='checkbox' data-i='${i}' data-k='tts_enabled' ${ch.tts_enabled?'checked':''}/> tts</label>
 <div class='row'><input data-i='${i}' data-k='token' placeholder='token' value='${esc(ch.token||'')}'><input data-i='${i}' data-k='account' placeholder='account' value='${esc(ch.account||'')}'></div></div>`).join('')||'<div class="muted">sem canais</div>';
 q('channelsList').querySelectorAll('input').forEach(el=>{el.onchange=()=>{const i=Number(el.dataset.i);const k=el.dataset.k;if(el.type==='checkbox')state.channels[i][k]=el.checked;else state.channels[i][k]=el.value}})}
-async function loadChannels(){const d=await api('/api/channels/status'); state.channels=d.channels||[]; renderChannels()}
+async function loadChannels(){const d=await api('/api/channels/status'); state.channels=d.channels||[]; renderChannels(); updateTelegramBadge(state.channels)}
 async function saveChannels(){const out={}; (state.channels||[]).forEach(c=>out[c.channel]={enabled:!!c.enabled,token:c.token||'',account:c.account||'',stt_enabled:!!c.stt_enabled,tts_enabled:!!c.tts_enabled}); await api('/api/channels/config',{method:'PUT',body:JSON.stringify({channels:out})}); q('auth').innerHTML='<span class="ok">channels salvos</span>'; loadChannels()}
 
 async function saveCfg(){await api('/api/dashboard/settings',{method:'PUT',body:JSON.stringify({model:q('cfgModel').value.trim(),hooks:{pre:q('hookPre').value||'',post:q('hookPost').value||''},theme:'dark'})}); q('configFeedback').innerHTML='<span class="ok">settings salvas</span>'}
@@ -169,7 +208,9 @@ async function loadTelemetry(){const p=q('period').value,s=q('telemetrySession')
 function renderLogs(){q('logs').innerHTML=(state.logs||[]).slice().reverse().map(l=>`<div>[${esc(l.level||'info').toUpperCase()}] ${esc(l.event||'-')}<br><span class='muted'>${esc(JSON.stringify(l.data||{}))}</span></div>`).join('')||'<div class="muted">sem logs</div>'}
 async function loadLogs(){const d=await api('/api/dashboard/logs?limit=200&level='+encodeURIComponent(q('logLevel').value||'')+'&event='+encodeURIComponent(q('logEvent').value||'')+'&q='+encodeURIComponent(q('logQuery').value||'')); state.logs=d.logs||[]; renderLogs()}
 
-q('btnConnect').onclick=connect; q('btnCopyToken').onclick=copyToken; q('btnSend').onclick=sendChat; q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
+q('btnConnect').onclick=connect; q('btnCopyToken').onclick=copyToken; q('btnSend').onclick=sendChat;
+q('btnSessionsLoad').onclick=loadSessions; q('sessionSearch').addEventListener('keydown',e=>{if(e.key==='Enter')loadSessions()});
+q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
 q('btnChannelsLoad').onclick=loadChannels; q('btnChannelsSave').onclick=saveChannels;
 q('btnSaveCfg').onclick=saveCfg; q('btnApplyCfg').onclick=()=>applyCfg(false); q('btnApplyDryCfg').onclick=()=>applyCfg(true); q('btnRestartCfg').onclick=restartCfg;
 q('btnDebugLoad').onclick=loadDebug; q('btnUpdateDry').onclick=()=>runUpdate(true); q('btnUpdateApply').onclick=()=>runUpdate(false);

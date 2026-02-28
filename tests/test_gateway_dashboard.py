@@ -113,3 +113,51 @@ def test_logs_filtering_and_ws_snapshot(monkeypatch, tmp_path):
         first = ws.receive_json()
         assert first["type"] == "snapshot"
         assert all(item["level"] == "error" for item in first["logs"])
+
+
+def test_heartbeat_status_no_state(monkeypatch, tmp_path):
+    """GET /api/heartbeat/status returns ok even without a state file."""
+    server = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+    token = server._token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = client.get("/api/heartbeat/status", headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["last_run"] is None
+    assert data["last_result"] is None
+    assert data["runs_today"] == 0
+    assert isinstance(data["interval_s"], int)
+    assert data["next_run"] is None
+
+
+def test_heartbeat_status_with_state(monkeypatch, tmp_path):
+    """GET /api/heartbeat/status reads heartbeat-state.json correctly."""
+    import json as _json
+
+    server = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+    token = server._token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # write a fake heartbeat state file
+    state_dir = tmp_path / ".clawlite" / "workspace" / "memory"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "heartbeat-state.json"
+    state_file.write_text(_json.dumps({
+        "last_run": "2026-01-01T10:00:00",
+        "last_result": "HEARTBEAT_OK",
+        "runs_today": 3,
+    }), encoding="utf-8")
+
+    r = client.get("/api/heartbeat/status", headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["last_run"] == "2026-01-01T10:00:00"
+    assert data["last_result"] == "HEARTBEAT_OK"
+    assert data["runs_today"] == 3
+    assert data["next_run"] is not None
+    assert isinstance(data["seconds_until_next"], int)
