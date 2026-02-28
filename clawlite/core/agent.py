@@ -23,6 +23,7 @@ from clawlite.runtime.session_memory import (
     startup_context_text,
 )
 from clawlite.runtime.system_prompt import build_system_prompt
+from clawlite.core.bootstrap import BootstrapManager
 
 MAX_RETRIES = 3
 ATTEMPT_TIMEOUT_S = float(os.getenv("CLAWLITE_ATTEMPT_TIMEOUT_S", "90"))
@@ -121,7 +122,8 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
     base_system = build_system_prompt()
     prefix = build_preference_prefix()
     startup_ctx = startup_context_text()
-    bootstrap_txt = bootstrap_prompt_once()
+    bootstrap_mgr = BootstrapManager()
+    bootstrap_txt = bootstrap_mgr.get_prompt() if bootstrap_mgr.should_run() else ""
     mem_hits = semantic_search_memory(prompt, max_results=3)
     mem_snippets = "\n".join([f"- {h.snippet}" for h in mem_hits])
 
@@ -175,6 +177,7 @@ def run_task_with_learning(prompt: str, skill: str = "") -> str:
 
         if not is_error:
             compact_daily_memory()
+            bootstrap_mgr.complete()  # apaga BOOTSTRAP.md após primeira resposta bem-sucedida
             if meta.get("mode") == "offline-fallback":
                 return f"[offline:{meta.get('reason')} -> {meta.get('model')}]\n{output}"
             return output
