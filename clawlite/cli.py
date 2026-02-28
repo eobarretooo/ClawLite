@@ -172,6 +172,12 @@ def _run_gateway_cli(host: str | None, port: int | None) -> None:
 
     token = _token()  # garante que o token existe no config antes de imprimir
     _print_gateway_boot_banner(show_host, effective_port, token)
+    try:
+        from clawlite.runtime.self_update import maybe_print_update_notice
+
+        maybe_print_update_notice(print_fn=print)
+    except Exception:
+        pass
 
     try:
         run_gateway(host, port)
@@ -239,6 +245,8 @@ def main() -> None:
     sub.add_parser("onboarding")
     sub.add_parser("configure")
     sub.add_parser("tui")
+    upd = sub.add_parser("update")
+    upd.add_argument("--check", action="store_true", help="Apenas verifica se existe nova versao")
 
     start = sub.add_parser("start")
     start.add_argument("--host", default=None)
@@ -501,6 +509,30 @@ def main() -> None:
         return
     if args.cmd == "start":
         _run_gateway_cli(args.host, args.port)
+        return
+    if args.cmd == "update":
+        try:
+            from clawlite.runtime.self_update import check_for_updates, run_self_update
+
+            if args.check:
+                status = check_for_updates(force_remote=True)
+                if status.available:
+                    print(
+                        f"⬆️ Atualizacao disponivel: {status.current_version} -> {status.latest_version}. "
+                        "Rode `clawlite update`."
+                    )
+                else:
+                    print(f"✅ ClawLite ja esta atualizado ({status.current_version}).")
+                return
+
+            ok, msg = run_self_update()
+            print(("✅ " if ok else "❌ ") + msg)
+            if not ok:
+                raise SystemExit(1)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'update': {_exc_message(exc)}")
         return
     if args.cmd == "install-daemon":
         try:

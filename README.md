@@ -102,6 +102,23 @@ clawlite onboarding
 clawlite start --host 127.0.0.1 --port 8787
 ```
 
+## Atualização sem reinstalar instalador
+
+```bash
+clawlite update
+```
+
+Somente checar:
+
+```bash
+clawlite update --check
+```
+
+Comportamento no `start`:
+
+- Ao rodar `clawlite start`, o ClawLite faz checagem rápida de versão e avisa se houver update.
+- Para desativar a checagem no boot do gateway: `export CLAWLITE_SKIP_UPDATE_CHECK=1`.
+
 Dashboard local:
 
 - `http://127.0.0.1:8787`
