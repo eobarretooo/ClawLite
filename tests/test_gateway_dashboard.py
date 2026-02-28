@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 def _boot(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     settings = importlib.import_module("clawlite.config.settings")
     importlib.reload(settings)
     server = importlib.import_module("clawlite.gateway.server")
@@ -39,8 +40,9 @@ def test_dashboard_auth_and_settings(monkeypatch, tmp_path):
 
 def test_skills_and_telemetry_flow(monkeypatch, tmp_path):
     server = _boot(monkeypatch, tmp_path)
+    import clawlite.gateway.chat as gc
     monkeypatch.setattr(
-        server,
+        gc,
         "run_task_with_meta",
         lambda prompt: (
             f"[pipeline] {prompt}",
