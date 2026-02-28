@@ -1,0 +1,39 @@
+name: Bug report
+description: Relate um problema reproduzível no ClawLite.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Descrição
+      description: O que aconteceu e o que você esperava?
+      placeholder: Explique o problema objetivamente.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir
+      description: Liste os passos mínimos para reproduzir.
+      placeholder: |
+        1. Rode...
+        2. Execute...
+        3. Veja erro...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs/stacktrace
+      description: Cole trechos relevantes (sem segredos).
+      render: shell
+  - type: textarea
+    id: env
+    attributes:
+      label: Ambiente
+      description: Sistema, Python, modo (Linux/Termux), versão do ClawLite.
+      placeholder: Ubuntu 24.04 / Python 3.11 / ClawLite 0.4.1
+    validations:
+      required: true

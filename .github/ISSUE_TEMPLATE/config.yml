@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/eobarretooo/ClawLite/security/advisories/new
+    about: Reporte vulnerabilidades de forma privada.
+  - name: Discussions
+    url: https://github.com/eobarretooo/ClawLite/discussions
+    about: Perguntas gerais e troca de ideias.

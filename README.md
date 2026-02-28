@@ -62,22 +62,44 @@ pkg install python curl git
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Quickstart
+## Primeiros Passos
 
 ```bash
 # 1) Diagnóstico do ambiente
 clawlite doctor
 
-# 2) Setup guiado
+# 2) Setup guiado (recomendado)
 clawlite onboarding
+```
 
-# 3) Ajustes avançados
+## Onboarding Wizard (QuickStart vs Avançado)
+
+O `clawlite onboarding` agora segue um fluxo próximo ao OpenClaw:
+
+- **QuickStart (recomendado)**: aplica defaults seguros para rodar rápido em ambiente local.
+- **Avançado**: expõe todas as etapas com revisão antes de salvar.
+
+Etapas principais cobertas no wizard:
+
+1. **Model/Auth** (provedor e validação de API key)
+2. **Workspace** (inicialização dos arquivos de memória)
+3. **Gateway** (host/porta/token)
+4. **Canais** (Telegram/Discord/Slack/WhatsApp/Teams)
+5. **Daemon** (planejamento de `systemd --user`)
+6. **Health check** (preflight de doctor + porta + token)
+7. **Skills** (perfil inicial e seleção)
+8. **Review + Apply** (prévia com segredos mascarados antes de persistir)
+
+Após o onboarding:
+
+```bash
+# Ajustes avançados
 clawlite configure
 
-# 4) Subir gateway local
+# Subir gateway local
 clawlite start --host 0.0.0.0 --port 8787
 
-# 5) Dashboard
+# Dashboard
 # http://127.0.0.1:8787
 ```
 

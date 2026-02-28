@@ -9,6 +9,24 @@ A experiência de configuração foi redesenhada para público não-técnico:
 5. **Prévia JSON + confirmação** antes de salvar
 6. **Resumo final** objetivo após persistência
 
+## Fluxo do onboarding (alinhado ao OpenClaw)
+
+O `clawlite onboarding` opera em dois modos:
+
+- **QuickStart**: setup rápido com defaults seguros.
+- **Avançado**: fluxo completo com etapas explícitas e confirmação final.
+
+No modo avançado, as etapas seguem:
+
+1. Model/Auth
+2. Workspace
+3. Gateway
+4. Canais
+5. Daemon
+6. Health check (preflight)
+7. Skills
+8. Review + Apply (prévia antes de salvar)
+
 ## Exemplo do menu
 
 ```text

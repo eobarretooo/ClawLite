@@ -1,0 +1,26 @@
+name: Feature request
+description: Sugira uma melhoria de produto ou DX.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema
+      description: Qual dor atual essa feature resolve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposta
+      description: Como você sugere implementar?
+      placeholder: Fluxo de usuário, comandos, comportamento esperado.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Quais alternativas você já avaliou?
