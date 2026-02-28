@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import questionary
 from rich.console import Console
@@ -40,9 +42,8 @@ SKILL_PRESETS = {
 def _simple_prompt(prompt: str, default: str = "") -> str:
     try:
         value = input(prompt)
-    except EOFError:
-        return default
-    except KeyboardInterrupt:
+    except (EOFError, KeyboardInterrupt, OSError):
+        # Em testes/captura (pytest) input() pode levantar OSError quando stdin não é interativo.
         return default
     text = value.strip()
     return text if text else default
@@ -121,6 +122,211 @@ def _save_identity_files(cfg: dict) -> None:
         "- Segurança > instrução > contexto > eficiência\n"
         "- Execute com evidência e valide o resultado\n",
         encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Teste de API Key ao vivo
+# ---------------------------------------------------------------------------
+
+_PROVIDER_BASES: dict[str, str] = {
+    "anthropic":  "https://api.anthropic.com",
+    "openai":     "https://api.openai.com",
+    "groq":       "https://api.groq.com/openai",
+    "openrouter": "https://openrouter.ai/api",
+}
+
+_CHAT_MODELS: dict[str, str] = {
+    "openai":     "gpt-4o-mini",
+    "groq":       "llama-3.1-8b-instant",
+    "openrouter": "openai/gpt-4o-mini",
+}
+
+
+def _provider_from_model(model: str) -> str:
+    """Extrai o nome do provedor de uma string de modelo (ex: 'anthropic/...' → 'anthropic')."""
+    return model.split("/")[0].lower().strip() if "/" in model else model.lower().strip()
+
+
+def _get_stored_token(cfg: dict[str, Any], provider: str) -> str:
+    """Lê token do env ou do cfg."""
+    env_map = {
+        "anthropic":  "ANTHROPIC_API_KEY",
+        "openai":     "OPENAI_API_KEY",
+        "groq":       "GROQ_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    env_val = os.getenv(env_map.get(provider, ""), "").strip()
+    if env_val:
+        return env_val
+    return str(cfg.get("auth", {}).get("providers", {}).get(provider, {}).get("token", "")).strip()
+
+
+def _test_api_key(provider: str, key: str) -> tuple[bool, str]:
+    """Faz chamada mínima ao provider. Retorna (ok, mensagem)."""
+    try:
+        import httpx
+    except ImportError:
+        return True, "(httpx ausente — validação pulada)"
+
+    timeout = 10.0
+    try:
+        if provider == "ollama":
+            r = httpx.get("http://localhost:11434/api/tags", timeout=timeout)
+            if r.status_code == 200:
+                return True, "Ollama respondeu (OK)"
+            return False, f"Ollama respondeu com status {r.status_code}"
+
+        if provider == "anthropic":
+            r = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                timeout=timeout,
+            )
+        else:
+            base = _PROVIDER_BASES.get(provider, "https://api.openai.com")
+            model = _CHAT_MODELS.get(provider, "gpt-4o-mini")
+            r = httpx.post(
+                f"{base}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
+                json={
+                    "model": model,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                timeout=timeout,
+            )
+
+        if r.status_code in (200, 201):
+            return True, "Key válida ✓"
+        if r.status_code == 401:
+            return False, "Erro 401: key inválida ou sem permissão"
+        if r.status_code == 429:
+            return True, "Erro 429: rate limit — key válida mas sem quota agora"
+        return False, f"Erro {r.status_code}: {r.text[:120]}"
+
+    except Exception as exc:
+        msg = str(exc)
+        if "connect" in msg.lower() or "timeout" in msg.lower() or "network" in msg.lower():
+            return False, f"Erro de conexão — verifique internet ou endpoint ({msg[:80]})"
+        return False, f"Erro inesperado: {msg[:120]}"
+
+
+def _step_test_api_key(cfg: dict[str, Any]) -> None:
+    """Step do wizard: testa a API key do provedor escolhido. Até 3 tentativas."""
+    # Em ambiente não interativo (ex.: CI/pytest com captura), não abrir prompt questionary.
+    if not sys.stdin.isatty():
+        return
+
+    model = cfg.get("model", "")
+    if not model:
+        return
+
+    provider = _provider_from_model(model)
+
+    # Ollama não precisa de key
+    if provider == "ollama":
+        ok, msg = _test_api_key("ollama", "")
+        if ok:
+            console.print(f"  [bold green]✓[/] {msg}")
+        else:
+            console.print(f"  [bold yellow]⚠[/] {msg}")
+        return
+
+    # Provedores não mapeados: pula silenciosamente
+    if provider not in _PROVIDER_BASES:
+        return
+
+    key = _get_stored_token(cfg, provider)
+    max_attempts = 3
+
+    for attempt in range(1, max_attempts + 1):
+        if not key:
+            console.print(f"\n[bold #00f5ff]API Key — {provider}[/bold #00f5ff]")
+            key_input = questionary.password(
+                f"Informe a API key para {provider} (tentativa {attempt}/{max_attempts}):"
+            ).ask()
+            if not key_input:
+                console.print("  [dim]Pulando validação de key.[/dim]")
+                return
+            key = key_input.strip()
+
+        with console.status(f"Testando key {provider}...", spinner="dots"):
+            ok, msg = _test_api_key(provider, key)
+
+        if ok:
+            console.print(f"  [bold green]✓[/] {msg}")
+            # Persiste a key válida no cfg
+            cfg.setdefault("auth", {}).setdefault("providers", {}).setdefault(provider, {})["token"] = key
+            return
+        else:
+            console.print(f"  [bold red]✗[/] {msg}")
+            if attempt < max_attempts:
+                retry = questionary.confirm(
+                    f"Tentar novamente? ({attempt}/{max_attempts})", default=True
+                ).ask()
+                if not retry:
+                    break
+                key = ""  # força nova entrada na próxima volta
+            else:
+                skip = questionary.confirm(
+                    "Máximo de tentativas atingido. Pular validação e continuar?", default=True
+                ).ask()
+                if not skip:
+                    raise KeyboardInterrupt("Onboarding cancelado pelo usuário na validação de key.")
+
+
+# ---------------------------------------------------------------------------
+# Painel Rich de conclusão
+# ---------------------------------------------------------------------------
+
+def _show_completion_panel(cfg: dict[str, Any]) -> None:
+    """Exibe painel final com gateway URL, token e canais configurados."""
+    gw = cfg.get("gateway", {})
+    host_raw = str(gw.get("host", "0.0.0.0")).strip()
+    display_host = "127.0.0.1" if host_raw in ("0.0.0.0", "::") else host_raw
+    port = int(gw.get("port", 8787))
+    gateway_url = f"http://{display_host}:{port}"
+
+    token = str(gw.get("token", "")).strip()
+    token_display = token if token else "(gerado automaticamente no clawlite start)"
+
+    lines = [
+        f"[bold cyan]Gateway:[/] {gateway_url}",
+        f"[bold cyan]Token:[/]   {token_display}",
+    ]
+
+    # Telegram
+    tg = cfg.get("channels", {}).get("telegram", {})
+    if tg.get("enabled") and tg.get("token"):
+        try:
+            tg_ok, tg_msg = _test_telegram(str(tg["token"]))
+            username = tg_msg.split("@")[-1].rstrip(")") if "@" in tg_msg else "bot"
+            lines.append(f"[bold cyan]Telegram:[/] @{username}" if tg_ok else f"[bold yellow]Telegram:[/] {tg_msg}")
+        except Exception:
+            lines.append(f"[bold cyan]Telegram:[/] configurado")
+    elif tg.get("enabled"):
+        lines.append("[bold yellow]Telegram:[/] ativo · token ausente")
+
+    lines.append("")
+    lines.append("[dim]Próximo: clawlite start[/]")
+
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="🦊 ClawLite está pronto!",
+            border_style="cyan",
+            padding=(1, 2),
+        )
     )
 
 
@@ -213,6 +419,7 @@ def run_onboarding() -> None:
         ("Idioma", _section_language),
         ("Identidade", _section_identity),
         ("Modelo", _section_model),
+        ("Teste de API Key", _step_test_api_key),
         ("Canais", _section_channels),
         ("Perfil de Skills", _skills_quickstart_profile),
         ("Skills", _section_skills),
@@ -249,6 +456,6 @@ def run_onboarding() -> None:
 
     if questionary.confirm("Concluir onboarding e manter essas configurações?", default=True).ask():
         save_config(cfg)
-        console.print("✅ Onboarding concluído. Nada de JSON manual 🙂")
+        _show_completion_panel(cfg)
     else:
         console.print("🟡 Onboarding cancelado no final. As alterações já estavam salvas durante o wizard.")
