@@ -30,6 +30,29 @@ Estrutura:
 }
 ```
 
+## Estatísticas de downloads da comunidade
+
+Arquivo padrão: `hub/marketplace/community_downloads.json`
+
+Estrutura:
+
+```json
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-02-28T00:00:00Z",
+  "total_downloads": 0,
+  "skills": {
+    "github": 0,
+    "discord": 0
+  }
+}
+```
+
+Observações:
+
+- O `publish` garante ao menos a entrada da skill com contador `0`.
+- O arquivo pode ser sincronizado com `python scripts/sync_community_downloads.py`.
+
 ## Endpoints planejados
 
 - `GET /api/hub/manifest`

@@ -28,6 +28,7 @@ SKILL_STATUS_VALUES = {"stable", "beta", "experimental", "deprecated"}
 MARKETPLACE_DIR = Path.home() / ".clawlite" / "marketplace"
 INSTALLED_MANIFEST_PATH = MARKETPLACE_DIR / "installed.json"
 INSTALLED_SKILLS_DIR = MARKETPLACE_DIR / "skills"
+COMMUNITY_DOWNLOADS_FILENAME = "community_downloads.json"
 SYSTEM_AUTO_UPDATE_CHANNEL = "system"
 SYSTEM_AUTO_UPDATE_CHAT = "local"
 SYSTEM_AUTO_UPDATE_LABEL = "skills"
@@ -206,6 +207,68 @@ def _save_hub_manifest(data: dict[str, Any], manifest_path: str | Path) -> Path:
     data["generated_at"] = _utcnow_iso()
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def _default_download_stats() -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "updated_at": _utcnow_iso(),
+        "total_downloads": 0,
+        "skills": {},
+    }
+
+
+def _load_download_stats(stats_path: str | Path) -> dict[str, Any]:
+    path = Path(stats_path)
+    if not path.exists():
+        return _default_download_stats()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return _default_download_stats()
+
+    skills = data.get("skills", {})
+    if not isinstance(skills, dict):
+        skills = {}
+
+    normalized: dict[str, int] = {}
+    for slug, value in skills.items():
+        try:
+            normalized[_normalize_slug(str(slug))] = max(0, int(value))
+        except (SkillMarketplaceError, TypeError, ValueError):
+            continue
+
+    total = sum(normalized.values())
+    return {
+        "schema_version": "1.0",
+        "updated_at": str(data.get("updated_at", _utcnow_iso())),
+        "total_downloads": total,
+        "skills": normalized,
+    }
+
+
+def _save_download_stats(data: dict[str, Any], stats_path: str | Path) -> Path:
+    path = Path(stats_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    skills = data.get("skills", {})
+    if not isinstance(skills, dict):
+        skills = {}
+    data["skills"] = {str(k): int(v) for k, v in sorted(skills.items())}
+    data["total_downloads"] = sum(int(v) for v in data["skills"].values())
+    data["updated_at"] = _utcnow_iso()
+    data["schema_version"] = "1.0"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _ensure_download_stats_entry(stats_path: str | Path, slug: str) -> None:
+    data = _load_download_stats(stats_path)
+    skills = data.setdefault("skills", {})
+    if not isinstance(skills, dict):
+        skills = {}
+        data["skills"] = skills
+    skills.setdefault(slug, 0)
+    _save_download_stats(data, stats_path)
 
 
 def _remote_entry(slug: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -691,6 +754,7 @@ def publish_skill(
     hub_manifest["skills"] = sorted(skills, key=lambda i: str(i.get("slug", "")))
     hub_manifest.setdefault("allow_hosts", sorted(DEFAULT_ALLOWED_HOSTS))
     _save_hub_manifest(hub_manifest, target_manifest)
+    _ensure_download_stats_entry(target_manifest.parent / COMMUNITY_DOWNLOADS_FILENAME, resolved_slug)
 
     return {
         "slug": resolved_slug,

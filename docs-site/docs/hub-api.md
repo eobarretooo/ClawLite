@@ -49,6 +49,31 @@ clawlite skill update
 clawlite skill publish skills/<slug> --version 1.0.0 --category devtools --status stable --tag automation
 ```
 
+## Estatísticas de downloads
+
+Arquivo padrão:
+
+```text
+hub/marketplace/community_downloads.json
+```
+
+Formato:
+
+```json
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-02-28T00:00:00Z",
+  "total_downloads": 0,
+  "skills": {
+    "github": 0,
+    "discord": 0
+  }
+}
+```
+
+- `clawlite skill publish` garante entrada da skill no contador (inicial `0`).
+- Para sincronizar todas as chaves com o registry: `python scripts/sync_community_downloads.py`.
+
 ## Segurança da instalação
 
 - Allowlist de hosts (bloqueia origem fora da lista)

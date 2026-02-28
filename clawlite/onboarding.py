@@ -14,7 +14,6 @@ from typing import Any
 import questionary
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
 
 from clawlite.config.settings import load_config, save_config
@@ -986,18 +985,10 @@ def run_onboarding() -> None:
 
     console.print(Panel.fit(_fox_banner(), border_style="#ff6b2b"))
 
-    with Progress(
-        SpinnerColumn(style="#00f5ff"),
-        TextColumn("[bold #00f5ff]{task.description}"),
-        BarColumn(bar_width=30, complete_style="#ff6b2b", finished_style="#ff6b2b"),
-        TextColumn("[bold]{task.completed}/{task.total}[/bold]"),
-    ) as progress:
-        task = progress.add_task("Etapa: Inicializando", total=len(steps))
-        for idx, (name, fn) in enumerate(steps, start=1):
-            progress.update(task, description=f"Etapa [{idx}/{len(steps)}]: {name}")
-            with console.status(f"Configurando {name}...", spinner="dots"):
-                fn(draft)
-            progress.advance(task)
+    total_steps = len(steps)
+    for idx, (name, fn) in enumerate(steps, start=1):
+        console.print(Panel.fit(f"Etapa {idx}/{total_steps}: {name}", border_style="#00f5ff"))
+        fn(draft)
 
     token_generated = _ensure_gateway_token_if_required(draft)
     public_preview = _public_config(draft)

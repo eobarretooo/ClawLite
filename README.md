@@ -147,6 +147,11 @@ O catálogo `skills/` do ClawLite agora inclui skills importadas do OpenClaw com
 - Skills com equivalente direto foram mapeadas para backends nativos do ClawLite (ex.: `gh-issues` → `github`, `openai-whisper` → `whisper`, `xurl` → `web-fetch`).
 - Skills sem backend nativo no ClawLite retornam guidance operacional com alternativas.
 
+## Agradecimentos
+
+Obrigado ao projeto [OpenClaw](https://github.com/openclaw/openclaw), que é open source.
+O ClawLite aproveitou referências técnicas e de organização do ecossistema OpenClaw para acelerar arquitetura, onboarding e portabilidade de skills.
+
 ## Desenvolvimento
 
 ```bash
