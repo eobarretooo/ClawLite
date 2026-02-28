@@ -102,8 +102,8 @@ def _print_gateway_boot_banner(host: str, port: int, token: str) -> None:
     print("│ 🦊 ClawLite Gateway                             │")
     print("│                                                 │")
     print(f"│ URL: {base:<43}│")
-    print(f"│ Token: {_mask_token(token):<41}│")
-    print(f"│ Dashboard: {dash[:34]:<34} │")
+    print(f"│ Token: {token:<41}│")
+    print(f"│ Dashboard: {base:<37}│")
     print("╰─────────────────────────────────────────────────╯")
 
 
@@ -116,12 +116,10 @@ def _run_gateway_cli(host: str | None, port: int | None) -> None:
         effective_port = int(raw_port)
     except Exception:
         effective_port = 8787
-    token = str(gcfg.get("token") or "")
     show_host = "127.0.0.1" if effective_host in {"0.0.0.0", "::"} else effective_host
-    _print_gateway_boot_banner(show_host, effective_port, token)
 
     try:
-        from clawlite.gateway.server import run_gateway
+        from clawlite.gateway.server import run_gateway, _token
     except ModuleNotFoundError as exc:
         missing = str(getattr(exc, "name", "") or "")
         if missing in {"fastapi", "uvicorn"}:
@@ -133,6 +131,9 @@ def _run_gateway_cli(host: str | None, port: int | None) -> None:
         _fail(f"Falha ao carregar gateway: {_exc_message(exc)}")
     except Exception as exc:
         _fail(f"Falha ao carregar gateway: {_exc_message(exc)}")
+
+    token = _token()  # garante que o token existe no config antes de imprimir
+    _print_gateway_boot_banner(show_host, effective_port, token)
 
     try:
         run_gateway(host, port)
