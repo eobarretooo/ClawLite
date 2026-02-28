@@ -8,9 +8,78 @@ import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Generator, AsyncGenerator
+import edge_tts
+from groq import Groq
+try:
+    import pygame
+    _PYGAME_AVAILABLE = True
+except ImportError:
+    _PYGAME_AVAILABLE = False
 
 from clawlite.skills.whisper import whisper_transcribe
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_VOICE = "pt-BR-AntonioNeural"
+
+class VoicePipeline:
+    def __init__(self):
+        self._groq_client: Optional[Groq] = None
+        if _PYGAME_AVAILABLE:
+            pygame.mixer.init()
+
+    def get_groq_client(self) -> Groq:
+        if not self._groq_client:
+            api_key = os.environ.get("GROQ_API_KEY")
+            if not api_key:
+                raise VoiceError("GROQ_API_KEY não configurada para o pipeline de STT rápido.")
+            self._groq_client = Groq(api_key=api_key)
+        return self._groq_client
+
+    async def speak(self, text: str, voice: str = DEFAULT_VOICE) -> None:
+        if not text.strip() or not _PYGAME_AVAILABLE:
+            return
+            
+        communicate = edge_tts.Communicate(text, voice)
+        fd, temp_file = tempfile.mkstemp(prefix="claw-tts-", suffix=".mp3")
+        os.close(fd)
+        
+        await communicate.save(temp_file)
+        
+        try:
+            import asyncio
+            pygame.mixer.music.load(temp_file)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Erro no playback de TTS: {e}")
+        finally:
+            pygame.mixer.music.unload()
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+
+    def transcribe(self, audio_filepath: str) -> str:
+        client = self.get_groq_client()
+        with open(audio_filepath, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(audio_filepath, file.read()),
+                model="whisper-large-v3-turbo",
+                language="pt",
+            )
+            return transcription.text
+
+_voice_pipeline = None
+
+def get_voice_pipeline() -> VoicePipeline:
+    global _voice_pipeline
+    if _voice_pipeline is None:
+        _voice_pipeline = VoicePipeline()
+    return _voice_pipeline
 
 AUDIO_FLAGS = ("/audio", "#audio", "--audio", "responda em áudio", "responder em áudio", "em voz")
 
@@ -103,6 +172,16 @@ def download_whatsapp_audio(payload: dict[str, Any], whatsapp_token: str = "") -
 
 
 def transcribe_audio_file(audio_path: str, model: str = "base", language: str = "pt") -> str:
+    # Tenta via Groq (mais rápido) se houver chave, senão fallback primário (Whisper.cpp local stub)
+    if os.environ.get("GROQ_API_KEY"):
+        try:
+            vp = get_voice_pipeline()
+            text = vp.transcribe(audio_path)
+            if text:
+                return text.strip()
+        except Exception as e:
+            logger.warning(f"Groq API falhou, caindo para whisper local: {e}")
+            
     result = whisper_transcribe(audio_path, model=model, language=language)
     if result.get("error"):
         raise VoiceError(str(result["error"]))
@@ -167,28 +246,31 @@ def _tts_openai(text: str, voice: str = "alloy", model: str = "gpt-4o-mini-tts")
     return out_path
 
 
+import asyncio
 def _tts_local(text: str) -> str:
-    if not shutil.which("espeak"):
-        raise VoiceError("espeak não instalado para fallback local de TTS.")
-
-    fd, wav_path = tempfile.mkstemp(prefix="clawlite-tts-", suffix=".wav")
+    # Substituindo espeak rudimentar pelo Edge-TTS local de alta qualidade
+    fd, mp3_path = tempfile.mkstemp(prefix="clawlite-tts-", suffix=".mp3")
     os.close(fd)
-    cmd = ["espeak", "-v", "pt-br", "-w", wav_path, text]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise VoiceError(proc.stderr.strip() or "Falha no espeak")
-
-    if shutil.which("ffmpeg"):
-        fd2, ogg_path = tempfile.mkstemp(prefix="clawlite-tts-", suffix=".ogg")
-        os.close(fd2)
-        conv = subprocess.run(["ffmpeg", "-y", "-i", wav_path, ogg_path], capture_output=True, text=True)
-        if conv.returncode == 0:
-            try:
-                os.unlink(wav_path)
-            except OSError:
-                pass
-            return ogg_path
-    return wav_path
+    
+    # Processo pseudo-sync do Edge-TTS local (que nativamente é async)
+    try:
+        communicate = edge_tts.Communicate(text, DEFAULT_VOICE)
+        asyncio.run(communicate.save(mp3_path))
+        
+        # Ogg fallback para telegram
+        if shutil.which("ffmpeg"):
+            fd2, ogg_path = tempfile.mkstemp(prefix="clawlite-tts-tg-", suffix=".ogg")
+            os.close(fd2)
+            conv = subprocess.run(["ffmpeg", "-y", "-i", mp3_path, ogg_path], capture_output=True, text=True)
+            if conv.returncode == 0:
+                try:
+                    os.unlink(mp3_path)
+                except OSError:
+                    pass
+                return ogg_path
+        return mp3_path
+    except Exception as e:
+        raise VoiceError(f"Falha no Edge-TTS: {e}")
 
 
 def synthesize_tts(text: str, channel_cfg: dict[str, Any]) -> str:

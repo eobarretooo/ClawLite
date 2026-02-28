@@ -200,6 +200,7 @@ def main() -> None:
     sub.add_parser("status")
     sub.add_parser("onboarding")
     sub.add_parser("configure")
+    sub.add_parser("tui")
 
     start = sub.add_parser("start")
     start.add_argument("--host", default=None)
@@ -422,6 +423,14 @@ def main() -> None:
         from clawlite.configure_menu import run_configure_menu
 
         run_configure_menu()
+        return
+    if args.cmd == "tui":
+        try:
+            from clawlite.cli.tui import ClawLiteTUI
+            app = ClawLiteTUI()
+            app.run()
+        except ImportError:
+            _fail("Bibliotecas Textual/Rich não instaladas. Rode `pip install textual rich`.")
         return
     if args.cmd == "start":
         _run_gateway_cli(args.host, args.port)
