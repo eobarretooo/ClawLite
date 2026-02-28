@@ -30,6 +30,7 @@ slug: /
 
 - Configure estilo OpenClaw + onboarding wizard guiado
 - Operação local com `doctor`, `status` e `start`
+- Catálogo de 79 skills/aliases no runtime (37 nativas + 42 compat OpenClaw)
 - Learning analytics com `clawlite stats`
 - Reddit OAuth + postagem de milestones + monitor de menções
 - Bots operacionais com gateway WebSocket e skills modulares

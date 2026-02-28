@@ -8,15 +8,33 @@ Wizard guiado para configurar tudo sem editar JSON manualmente.
 clawlite onboarding
 ```
 
-## Exemplo (ASCII screenshot)
+## Modos disponíveis
 
-```text
-[1/9] Idioma: pt-br
-[2/9] Modelo: openai/gpt-4o-mini
-[3/9] Canais: telegram
-[4/9] Perfil de Skills: Dev
-...
-✅ Configuração salva
+- **QuickStart:** aplica defaults seguros para levantar rápido.
+- **Avançado:** fluxo completo com revisão antes de salvar.
+
+## Etapas do wizard (estado atual)
+
+1. Model/Auth
+2. Workspace
+3. Gateway
+4. Canais
+5. Daemon
+6. Health check
+7. Skills
+8. Review + Apply
+
+## Pós-onboarding recomendado
+
+```bash
+clawlite doctor
+clawlite start --host 127.0.0.1 --port 8787
+```
+
+Se você habilitou daemon:
+
+```bash
+clawlite install-daemon --host 127.0.0.1 --port 8787
 ```
 
 ➡️ Próxima página: [Comandos CLI](/comandos-cli)

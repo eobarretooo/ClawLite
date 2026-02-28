@@ -1,5 +1,11 @@
 # Skills marketplace (install / publish / search)
 
+## Estado atual do catálogo
+
+- Snapshot de 28/02/2026: **79 skills registradas no runtime**
+- Composição: **37 nativas** + **42 aliases de compatibilidade OpenClaw**
+- Documentação de compatibilidade: [`docs/SKILLS_OPENCLAW_COMPAT.md`](https://github.com/eobarretooo/ClawLite/blob/main/docs/SKILLS_OPENCLAW_COMPAT.md)
+
 ## Buscar skills com filtros
 
 ```bash

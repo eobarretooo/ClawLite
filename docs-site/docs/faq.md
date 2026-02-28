@@ -7,7 +7,7 @@ As 10 dúvidas mais comuns sobre ClawLite.
 3. **Tem modo offline?** Sim, com fallback para Ollama.
 4. **Como vejo status do runtime?** `clawlite status`.
 5. **Como subir dashboard?** `clawlite start --port 8787`.
-6. **Quantas skills existem?** Atualmente 37 registradas.
+6. **Quantas skills existem?** Snapshot de 28/02/2026: 79 registradas no runtime (37 nativas + 42 aliases de compatibilidade OpenClaw).
 7. **Como publicar skill?** `clawlite skill publish ...`.
 8. **Como garantir updates seguros?** `--strict` no auto-update.
 9. **O assistente lembra contexto?** Sim, memória persistente + busca semântica.

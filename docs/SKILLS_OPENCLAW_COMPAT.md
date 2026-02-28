@@ -2,8 +2,10 @@
 
 Comparativo entre o catálogo OpenClaw e a adaptação aplicada no ClawLite.
 
+- Snapshot de referência: **28/02/2026**
 - Skills OpenClaw analisadas: **52**
 - Skills no catálogo ClawLite após adaptação: **80**
+- Skills registradas no runtime (`clawlite.skills.registry`): **79**
 - Overlap direto por slug: **52**
 - Skills OpenClaw adicionadas ao catálogo ClawLite (antes ausentes): **42**
 
