@@ -18,6 +18,15 @@
     .chat{height:300px}.msg{padding:8px;border-radius:8px;margin:8px 0;white-space:pre-wrap}.u{background:#1d3768}.a{background:#1b3221}
     .kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.k{border:1px solid var(--line);border-radius:8px;padding:10px;background:#0b1328}
     .ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)} .hide{display:none}
+    .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--err);flex-shrink:0;transition:background .3s}
+    .dot.online{background:var(--ok)}
+    .status-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
+    .status-badge{display:flex;align-items:center;gap:6px;font-size:.9em}
+    .status-meta{font-size:.82em;color:var(--muted);margin:3px 0}
+    .token-row{display:flex;gap:6px;align-items:center;margin-top:8px}
+    .token-mask{flex:1;font-family:monospace;font-size:.84em;color:var(--text);background:#0b1328;border:1px solid var(--line);border-radius:6px;padding:5px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+    .copy-btn{font-size:.8em;cursor:pointer;white-space:nowrap;background:#1a2a50;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:5px 10px;flex-shrink:0}
+    .copy-btn:hover{border-color:var(--a);color:var(--a)}.copy-btn.copied{color:var(--ok);border-color:var(--ok)}
     @media(max-width:980px){.layout{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}}
   </style>
 </head>
@@ -31,11 +40,18 @@
       <input id="token" placeholder="Bearer token" />
       <div class="row"><button id="btnConnect">Conectar</button></div>
       <div id="auth" class="muted">Aguardando autenticação</div>
+      <div class="token-row hide" id="tokenDisplay">
+        <span class="token-mask" id="tokenMask" title="Token de autenticação">—</span>
+        <button class="copy-btn" id="btnCopyToken" title="Copiar token">⎘</button>
+      </div>
     </div>
-    <div class="card" style="margin-top:10px">
-      <div id="gw" class="muted">gateway: -</div>
-      <div id="model" class="muted">model: -</div>
-      <div id="uptime" class="muted">uptime: -</div>
+    <div class="card" style="margin-top:10px" id="statusCard">
+      <div class="status-row">
+        <span class="status-badge"><span class="dot" id="gwDot"></span><span id="gwLabel" style="font-size:.9em">offline</span></span>
+        <span class="muted" id="gwConns" style="font-size:.78em">—</span>
+      </div>
+      <div class="status-meta" id="gwModel">modelo: —</div>
+      <div class="status-meta" id="gwUptime">uptime: —</div>
     </div>
     <div class="tabs" style="margin-top:10px" id="tabs"></div>
   </aside>
@@ -99,7 +115,7 @@
 
 <script>
 const TABS=[['chat','💬 Chat'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
-const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[]}
+const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null}
 const q=id=>document.getElementById(id)
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
 
@@ -107,9 +123,17 @@ function renderTabs(){q('tabs').innerHTML=TABS.map(([id,l])=>`<button class="${s
 function switchTab(id){state.tab=id;document.querySelectorAll('.tabview').forEach(v=>v.classList.add('hide'));q('tab-'+id).classList.remove('hide');renderTabs()}
 async function api(path,opts={}){const h={'Content-Type':'application/json',...(opts.headers||{})}; if(state.token)h.Authorization=`Bearer ${state.token}`; const r=await fetch(path,{...opts,headers:h}); const d=await r.json().catch(()=>({})); if(!r.ok||d.ok===false) throw new Error(d.detail||d.message||('HTTP '+r.status)); return d}
 
+function formatUptime(s){s=Math.max(0,Math.floor(s));if(s<60)return s+'s';if(s<3600){const m=Math.floor(s/60),sc=s%60;return `${m}m ${sc}s`}const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return `${h}h ${m}m`}
+function maskToken(t){if(!t||t.length<8)return t||'—';return '••••'+t.slice(-6)}
+function renderStatus(st){const online=st&&st.online!==false;q('gwDot').className='dot'+(online?' online':'');q('gwLabel').textContent=online?'online':'offline';q('gwLabel').style.color=online?'var(--ok)':'var(--err)';if(st){q('gwModel').textContent='modelo: '+(st.model||'—');q('gwUptime').textContent='uptime: '+formatUptime(st.uptime_seconds||0);const c=st.connections||0;q('gwConns').textContent=c+' conn'}}
+async function pollStatus(){try{const d=await api('/api/dashboard/status');renderStatus(d)}catch(e){renderStatus({online:false})}}
+function startStatusPoller(){if(state.statusPoller)clearInterval(state.statusPoller);state.statusPoller=setInterval(pollStatus,30000)}
+function showTokenDisplay(){q('tokenMask').textContent=maskToken(state.token);q('tokenDisplay').classList.remove('hide')}
+async function copyToken(){try{await navigator.clipboard.writeText(state.token);q('btnCopyToken').textContent='✓';q('btnCopyToken').classList.add('copied');setTimeout(()=>{q('btnCopyToken').textContent='⎘';q('btnCopyToken').classList.remove('copied')},2000)}catch{const el=document.createElement('textarea');el.value=state.token;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);q('btnCopyToken').textContent='✓';setTimeout(()=>q('btnCopyToken').textContent='⎘',2000)}}
+
 async function connect(){state.token=q('token').value.trim();const a=await fetch('/api/dashboard/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:state.token})}).then(r=>r.json());if(!a.ok){q('auth').innerHTML='<span class="err">token inválido</span>';return}
   q('auth').innerHTML='<span class="ok">autenticado</span>'; const b=await api('/api/dashboard/bootstrap');
-  q('gw').innerHTML='<span class="ok">gateway online</span>'; q('model').textContent='model: '+(b.status.model||'-'); q('uptime').textContent='uptime: '+(b.status.uptime_seconds||0)+'s';
+  renderStatus(b.status); startStatusPoller(); showTokenDisplay();
   q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||'';
   await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug()]); connectWs()}
 
@@ -145,7 +169,7 @@ async function loadTelemetry(){const p=q('period').value,s=q('telemetrySession')
 function renderLogs(){q('logs').innerHTML=(state.logs||[]).slice().reverse().map(l=>`<div>[${esc(l.level||'info').toUpperCase()}] ${esc(l.event||'-')}<br><span class='muted'>${esc(JSON.stringify(l.data||{}))}</span></div>`).join('')||'<div class="muted">sem logs</div>'}
 async function loadLogs(){const d=await api('/api/dashboard/logs?limit=200&level='+encodeURIComponent(q('logLevel').value||'')+'&event='+encodeURIComponent(q('logEvent').value||'')+'&q='+encodeURIComponent(q('logQuery').value||'')); state.logs=d.logs||[]; renderLogs()}
 
-q('btnConnect').onclick=connect; q('btnSend').onclick=sendChat; q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
+q('btnConnect').onclick=connect; q('btnCopyToken').onclick=copyToken; q('btnSend').onclick=sendChat; q('btnCronAdd').onclick=addCron; q('btnCronRefresh').onclick=loadCron;
 q('btnChannelsLoad').onclick=loadChannels; q('btnChannelsSave').onclick=saveChannels;
 q('btnSaveCfg').onclick=saveCfg; q('btnApplyCfg').onclick=()=>applyCfg(false); q('btnApplyDryCfg').onclick=()=>applyCfg(true); q('btnRestartCfg').onclick=restartCfg;
 q('btnDebugLoad').onclick=loadDebug; q('btnUpdateDry').onclick=()=>runUpdate(true); q('btnUpdateApply').onclick=()=>runUpdate(false);
