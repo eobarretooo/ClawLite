@@ -1,3 +1,8 @@
+---
+name: browser
+description: Skill de browser (legado) para consultar histórico local do Chrome via SQLite.
+---
+
 # Skill: browser-history — Search Chrome History
 
 Search Das's Chrome browsing history to find URLs, videos, sites he's visited before.

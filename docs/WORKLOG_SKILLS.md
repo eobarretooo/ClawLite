@@ -87,3 +87,36 @@ Resultado:
 ---
 
 Status Sprint 1: **concluído (hardening inicial + base de teste fortalecida)**.
+
+---
+
+## Ciclo curto — validação de skills runtime (2026-02-28)
+
+### Escopo
+- Validar as 9 skills do runtime atual com presença de `SKILL.md`.
+- Corrigir 1 inconsistência de metadata/documentação.
+
+### Validação executada
+Comando de verificação (script Python local) em:
+- `browser`
+- `coding-agent`
+- `docker`
+- `find-skills`
+- `firebase`
+- `github`
+- `healthcheck`
+- `weather`
+- `web-search`
+
+Resultado:
+- **9/9 skills com `SKILL.md` presente**.
+- Identificada inconsistência: `skills/browser/SKILL.md` sem frontmatter `name`, enquanto as demais skills runtime usam metadata explícita.
+
+### Ajuste aplicado (1 inconsistência)
+Arquivo: `skills/browser/SKILL.md`
+- Adicionado frontmatter mínimo:
+  - `name: browser`
+  - `description: Skill de browser (legado) para consultar histórico local do Chrome via SQLite.`
+
+### Observação
+- O conteúdo funcional da skill `browser` permanece inalterado neste ciclo (ajuste apenas de metadata/documentação para padronização mínima).
