@@ -26,7 +26,21 @@ jobs:
       - name: Instalar dependências
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]"
+          if python - <<'PY'
+          import pathlib
+          try:
+              import tomllib
+          except Exception:
+              import tomli as tomllib  # type: ignore
+          data = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+          optional = (data.get('project', {}) or {}).get('optional-dependencies', {}) or {}
+          raise SystemExit(0 if 'dev' in optional else 1)
+          PY
+          then
+            pip install -e ".[dev]"
+          else
+            pip install -e .
+          fi
           pip install pytest pytest-anyio httpx "fastapi[all]" uvicorn questionary rich
 
       - name: Rodar testes
