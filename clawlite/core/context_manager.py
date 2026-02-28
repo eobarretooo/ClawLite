@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from clawlite.core.model_catalog import estimate_tokens, context_window, get_model_or_default
+from clawlite.core.model_catalog import estimate_tokens, context_window
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,6 @@ def evaluate_context_budget(
 ) -> ContextBudget:
     """Avalia o orçamento de contexto para uma chamada."""
     window = context_window(model_key)
-    entry = get_model_or_default(model_key)
 
     prompt_tokens = estimate_tokens(prompt_text)
     history_tokens = estimate_tokens(history_text)

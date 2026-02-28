@@ -18,17 +18,19 @@ def run(command: str = "") -> str:
     """Pesquisa nativa sem depender de bash."""
     if not command:
         return f"{SKILL_NAME} ready. Use: '{SKILL_NAME} <query>' to search."
-    
+
+    # Comando utilitário de teste deve funcionar mesmo com DDG disponível.
+    try:
+        args = parse_command(command)
+    except ValueError as exc:
+        return str(exc)
+    if args and args[0].lower() == "echo":
+        return " ".join(args[1:]).strip()
+
     if not HAS_DDG:
-        # Fallback compatível com testes e ambientes mínimos sem duckduckgo-search.
-        try:
-            args = parse_command(command)
-        except ValueError as exc:
-            return str(exc)
-        if args and args[0].lower() == "echo":
-            return " ".join(args[1:]).strip()
+        # Fallback compatível com ambientes mínimos sem duckduckgo-search.
         return safe_run(args)
-    
+
     query = command.strip().strip("'\"")
     try:
         results = []

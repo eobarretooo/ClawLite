@@ -400,41 +400,43 @@ def run_task_stream_with_meta(prompt: str, skill: str = "", session_id: str = ""
     try:
         out_stream, meta = run_with_offline_fallback_stream(prompt, cfg)
     except ProviderExecutionError as exc:
+        exc_msg = str(exc)
         create_notification(
             event="provider_failed",
-            message=f"Falha no provedor remoto (stream): {exc}",
+            message=f"Falha no provedor remoto (stream): {exc_msg}",
             priority="high",
-            dedupe_key=f"provider_failed:{exc}",
+            dedupe_key=f"provider_failed:{exc_msg}",
             dedupe_window_seconds=300,
         )
 
         def _err_stream() -> Iterator[str]:
-            yield f"Falha no provedor remoto: {exc}"
+            yield f"Falha no provedor remoto: {exc_msg}"
 
         meta = {
             "mode": "error",
             "reason": "provider-failed",
             "model": requested_model,
-            "error": str(exc),
+            "error": exc_msg,
         }
         return _err_stream(), _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
     except OllamaExecutionError as exc:
+        exc_msg = str(exc)
         create_notification(
             event="ollama_failed",
-            message=f"Falha no fallback Ollama (stream): {exc}",
+            message=f"Falha no fallback Ollama (stream): {exc_msg}",
             priority="high",
-            dedupe_key=f"ollama_failed:{exc}",
+            dedupe_key=f"ollama_failed:{exc_msg}",
             dedupe_window_seconds=300,
         )
 
         def _err_stream() -> Iterator[str]:
-            yield f"Falha no fallback Ollama: {exc}"
+            yield f"Falha no fallback Ollama: {exc_msg}"
 
         meta = {
             "mode": "error",
             "reason": "ollama-failed",
             "model": requested_model,
-            "error": str(exc),
+            "error": exc_msg,
         }
         return _err_stream(), _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
 

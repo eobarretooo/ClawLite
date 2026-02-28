@@ -20,5 +20,5 @@ def exec_cmd(command: str, cwd: str | None = None) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(args, cwd=cwd, text=True, capture_output=True)
         return proc.returncode, proc.stdout, proc.stderr
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         return 127, "", f"Comando não encontrado: {args[0] if args else command}"
