@@ -85,7 +85,7 @@
     <section id="tab-chat" class="card tabview">
       <h2>💬 Chat</h2>
       <div id="chat" class="chat"></div>
-      <div class="row"><input id="sessionId" value="dashboard-session"><input id="chatInput" placeholder="Digite mensagem"><button id="btnSend">Enviar</button></div>
+      <div class="row"><input id="sessionId" value="dashboard-session"><input id="chatInput" placeholder="Digite mensagem"><button id="btnSend" disabled title="Conecte o chat para enviar">Enviar</button></div>
     </section>
 
     <section id="tab-sessions" class="card tabview hide">
@@ -169,7 +169,7 @@
 
 <script>
 const TABS=[['chat','💬 Chat'],['sessions','📋 Sessions'],['cron','⏱️ Cron'],['channels','📡 Channels'],['config','⚙️ Config'],['workspace','📝 Workspace'],['skills','🔧 Skills'],['debug','🧪 Debug'],['update','⬆️ Update'],['telemetry','📊 Telemetria'],['logs','📜 Logs']]
-const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null,hbPoller:null}
+const state={token:'',wsChat:null,wsLogs:null,tab:'chat',logs:[],channels:[],statusPoller:null,hbPoller:null,wsReconnectTimer:null}
 const q=id=>document.getElementById(id)
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
 
@@ -191,9 +191,17 @@ async function connect(){state.token=q('token').value.trim();const a=await fetch
   q('cfgModel').value=b.settings.model||''; q('hookPre').value=b.settings.hooks?.pre||''; q('hookPost').value=b.settings.hooks?.post||'';
   await Promise.all([loadCron(),loadChannels(),loadTelemetry(),loadLogs(),loadDebug(),loadSessions(),loadHeartbeat(),loadSkills()]); startHeartbeatPoller(); connectWs()}
 
-function connectWs(){const base=location.origin.replace('http','ws'); if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
- state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`); state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat') addMsg('a',m.message?.text||'')}
+function setChatConnectionState(online,msg=''){q('btnSend').disabled=!online;q('btnSend').title=online?'Enviar mensagem':'Conecte o chat para enviar';if(msg){q('auth').innerHTML=msg}}
+function scheduleWsReconnect(){if(state.wsReconnectTimer||!state.token)return;state.wsReconnectTimer=setTimeout(()=>{state.wsReconnectTimer=null;connectWs()},2000)}
+function connectWs(){const wsProto=location.protocol==='https:'?'wss':'ws';const base=`${wsProto}://${location.host}`; if(state.wsReconnectTimer){clearTimeout(state.wsReconnectTimer);state.wsReconnectTimer=null} if(state.wsChat)state.wsChat.close(); if(state.wsLogs)state.wsLogs.close();
+ setChatConnectionState(false,'<span class="warn">chat conectando…</span>');
+ state.wsChat=new WebSocket(`${base}/ws/chat?token=${encodeURIComponent(state.token)}`);
+ state.wsChat.onopen=()=>setChatConnectionState(true,'<span class="ok">chat conectado</span>');
+ state.wsChat.onclose=()=>{setChatConnectionState(false,'<span class="warn">chat desconectado, tentando reconectar…</span>');scheduleWsReconnect()};
+ state.wsChat.onerror=()=>setChatConnectionState(false,'<span class="err">erro na conexão de chat</span>');
+ state.wsChat.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='chat') addMsg('a',m.message?.text||'')}
  state.wsLogs=new WebSocket(`${base}/ws/logs?token=${encodeURIComponent(state.token)}`); state.wsLogs.onmessage=(e)=>{const m=JSON.parse(e.data); if(m.type==='snapshot'){state.logs=m.logs||[]; renderLogs()} if(m.type==='log'){state.logs.push(m.payload); if(state.logs.length>500)state.logs.shift(); renderLogs()}}
+ state.wsLogs.onclose=()=>scheduleWsReconnect()
 }
 function addMsg(role,text){const d=document.createElement('div'); d.className='msg '+role; d.innerHTML=esc(text); q('chat').appendChild(d); q('chat').scrollTop=q('chat').scrollHeight}
 async function sendChat(){const t=q('chatInput').value.trim(); if(!t||!state.wsChat||state.wsChat.readyState!==1)return; addMsg('u',t); state.wsChat.send(JSON.stringify({type:'chat',session_id:q('sessionId').value||'dashboard-session',text:t})); q('chatInput').value=''}

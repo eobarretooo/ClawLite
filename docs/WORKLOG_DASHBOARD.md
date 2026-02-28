@@ -46,3 +46,28 @@ Data: 2026-02-27
 ## Observações
 - Mantido comportamento compatível com ambiente de teste.
 - Restart de config é intencionalmente seguro/noop neste estágio P0 para evitar side effects em runtime embutido.
+
+---
+
+Data: 2026-02-28
+
+## Ciclo curto (validação APIs/WS + UX)
+
+### Validação executada
+- Testes de integração do dashboard/API/WS executados com sucesso:
+  - `tests/test_gateway_dashboard.py`
+  - `tests/test_cron_channels_metrics.py`
+  - `tests/test_cli_gateway_dashboard_integration.py`
+- Resultado: **17 testes passando** (incluindo cobertura de endpoints e WebSocket `/ws/chat` e `/ws/logs`).
+
+### Melhoria pequena de UX/integração aplicada
+- Arquivo: `clawlite/gateway/dashboard.html`
+- Ajustes no chat WebSocket:
+  - botão **Enviar** começa desabilitado até a conexão WS ficar pronta;
+  - construção de URL WS ficou explícita por protocolo (`ws://`/`wss://`) usando `location.protocol` + `location.host`;
+  - feedback visual no bloco de auth para estados: conectando, conectado, desconectado e erro;
+  - reconexão automática curta (2s) quando a conexão cai.
+
+### Impacto
+- Evita clique “silencioso” em Enviar antes do socket abrir.
+- Melhora resiliência do painel em quedas transitórias de WS sem exigir refresh manual.
