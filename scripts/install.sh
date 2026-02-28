@@ -178,8 +178,59 @@ def doctor_check():
 
 
 def verify_gateway_runtime():
-    code = "import fastapi,uvicorn,websockets; print('ok')"
+    code = """
+import importlib
+import sys
+
+missing = []
+for mod in ("fastapi", "uvicorn"):
+    try:
+        importlib.import_module(mod)
+    except Exception as exc:
+        missing.append(f"{mod}({exc.__class__.__name__})")
+
+ws_ok = False
+for mod in ("websockets", "wsproto"):
+    try:
+        importlib.import_module(mod)
+        ws_ok = True
+        break
+    except Exception:
+        pass
+
+if not ws_ok:
+    missing.append("websocket-stack(websockets|wsproto)")
+
+if missing:
+    print("missing:" + ",".join(missing))
+    sys.exit(1)
+
+print("ok")
+"""
     run([PYBIN, "-c", code], "verify gateway runtime")
+
+
+def repair_gateway_runtime():
+    run(
+        PIP
+        + [
+            "install",
+            "--upgrade",
+            "fastapi>=0.112",
+            "uvicorn[standard]>=0.30",
+            "websockets>=12.0",
+            "wsproto>=1.2",
+        ],
+        "repair gateway runtime",
+    )
+
+
+def ensure_gateway_runtime():
+    try:
+        verify_gateway_runtime()
+    except Exception:
+        repair_gateway_runtime()
+        verify_gateway_runtime()
 
 
 def install_playwright_runtime():
@@ -235,7 +286,7 @@ def rich_flow():
         t = sp.add_task("[5/5] Verificando instalação...", total=None)
         install_playwright_runtime()
         doctor_check()
-        verify_gateway_runtime()
+        ensure_gateway_runtime()
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
@@ -258,7 +309,7 @@ def simple_flow():
     print("[5/5] Verificando instalação...")
     install_playwright_runtime()
     doctor_check()
-    verify_gateway_runtime()
+    ensure_gateway_runtime()
     print("✓")
     print("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding")
 
@@ -276,10 +327,19 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         msg = str(e)
-        if "verify gateway runtime" in msg or "fastapi" in msg or "uvicorn" in msg:
+        if (
+            "verify gateway runtime" in msg
+            or "repair gateway runtime" in msg
+            or "fastapi" in msg
+            or "uvicorn" in msg
+            or "websockets" in msg
+            or "wsproto" in msg
+        ):
             msg = (
                 "Gateway runtime nao esta pronto (fastapi/uvicorn/websockets). "
-                "Execute: ~/.clawlite/venv/bin/pip install fastapi 'uvicorn[standard]' websockets wsproto"
+                "Execute: ~/.clawlite/venv/bin/python -m pip install --upgrade "
+                "fastapi 'uvicorn[standard]' websockets wsproto\n\n"
+                f"Detalhes tecnicos: {str(e)}"
             )
         if USE_RICH:
             console.print(f"[red]✗[/red] {msg}")
