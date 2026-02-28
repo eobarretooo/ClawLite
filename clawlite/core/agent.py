@@ -41,6 +41,13 @@ Ferramentas:
 1. {"name": "exec_cmd", "description": "Executa um comando no terminal", "arguments": {"command": "string"}}
 2. {"name": "read_file", "description": "Lê um arquivo do disco", "arguments": {"path": "string"}}
 3. {"name": "write_file", "description": "Escreve conteúdo em um arquivo", "arguments": {"path": "string", "content": "string"}}
+
+Para interagir com web, utilize as ferramentas de `browser_`:
+4. {"name": "browser_goto", "description": "Abre uma URL no navegador e retorna um snapshot (texto + IDs)", "arguments": {"url": "string"}}
+5. {"name": "browser_click", "description": "Clica em um elemento pelo seu claw-id", "arguments": {"cid": "string"}}
+6. {"name": "browser_fill", "description": "Preenche um elemento com texto pelo seu claw-id", "arguments": {"cid": "string", "text": "string"}}
+7. {"name": "browser_read", "description": "Tira um novo snapshot da DOM atual mostrando IDs atualizados", "arguments": {}}
+8. {"name": "browser_press", "description": "Pressiona uma tecla especial (ex: Enter, Escape, Tab)", "arguments": {"key": "string"}}
 """
 
 def _execute_local_tool(name: str, args: dict[str, Any]) -> str:
@@ -53,6 +60,28 @@ def _execute_local_tool(name: str, args: dict[str, Any]) -> str:
         elif name == "write_file":
             write_file(str(args.get("path", "")), str(args.get("content", "")))
             return "Arquivo escrito com sucesso."
+        
+        # Tools de Navegador Automático via Playwright
+        elif name.startswith("browser_"):
+            from clawlite.runtime.browser_manager import get_browser_manager
+            bm = get_browser_manager()
+            if name == "browser_goto":
+                res = bm.goto(str(args.get("url", "")))
+                return f"{res}\n{bm.get_snapshot()}"
+            elif name == "browser_click":
+                res = bm.click(str(args.get("cid", "")))
+                return f"{res}\n{bm.get_snapshot()}"
+            elif name == "browser_fill":
+                res = bm.fill(str(args.get("cid", "")), str(args.get("text", "")))
+                return f"{res}\n{bm.get_snapshot()}"
+            elif name == "browser_press":
+                res = bm.press(str(args.get("key", "")))
+                return f"{res}\n{bm.get_snapshot()}"
+            elif name == "browser_read":
+                return bm.get_snapshot()
+            else:
+                return f"Erro: ferramenta browser '{name}' não mapeada."
+                
         else:
             return f"Erro: ferramenta '{name}' não existe."
     except Exception as exc:
