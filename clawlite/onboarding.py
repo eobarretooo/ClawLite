@@ -283,6 +283,14 @@ def _fox_banner() -> str:
     )
 
 
+def _is_valid_telegram_token_format(token: str) -> bool:
+    token = token.strip()
+    if not token or ":" not in token:
+        return False
+    left, right = token.split(":", 1)
+    return left.isdigit() and len(left) >= 7 and len(right) >= 20
+
+
 def _test_telegram(token: str) -> tuple[bool, str]:
     try:
         url = f"https://api.telegram.org/bot{token}/getMe"
@@ -556,6 +564,73 @@ def _show_completion_panel(cfg: dict[str, Any]) -> None:
     )
 
 
+def _quickstart_telegram(cfg: dict[str, Any]) -> None:
+    console.print("\n[bold #00f5ff]Telegram (QuickStart)[/bold #00f5ff]")
+    enable = questionary.confirm("Conectar Telegram agora? (recomendado)", default=True).ask()
+    tg = cfg.setdefault("channels", {}).setdefault("telegram", {})
+    tg["enabled"] = bool(enable)
+    if not enable:
+        return
+
+    console.print("1) Abra o Telegram e pesquise @BotFather")
+    console.print("2) Envie /newbot e finalize a criação")
+
+    attempts = 3
+    token = str(tg.get("token", "")).strip()
+    for i in range(1, attempts + 1):
+        token = (
+            questionary.text(
+                f"Cole o token do bot (tentativa {i}/{attempts}):",
+                default=token,
+                validate=lambda t: _is_valid_telegram_token_format(str(t)) or "Formato inválido de token Telegram",
+            ).ask()
+            or ""
+        ).strip()
+        if not token:
+            continue
+
+        with console.status("Testando conexão Telegram...", spinner="dots"):
+            ok, msg = _test_telegram(token)
+        if ok:
+            tg["token"] = token
+            console.print(f"  [bold green]✓[/] {msg}")
+            console.print("  [dim]Próximo passo: abra seu bot e envie /start[/dim]")
+            return
+
+        console.print(f"  [bold red]✗[/] {msg}")
+        if i < attempts and not questionary.confirm("Tentar novamente?", default=True).ask():
+            break
+
+    console.print("  [bold yellow]⚠[/] Telegram ficou habilitado sem validação concluída.")
+    tg["token"] = token
+
+
+def _run_onboarding_quickstart(cfg: dict[str, Any]) -> None:
+    console.print("[bold #00f5ff]QuickStart[/bold #00f5ff] — defaults seguros + validação essencial.")
+    _section_language(cfg)
+    _section_identity(cfg)
+    _section_model(cfg)
+    _step_test_api_key(cfg)
+    _quickstart_telegram(cfg)
+    _skills_quickstart_profile(cfg)
+
+    cfg.setdefault("gateway", {})
+    cfg["gateway"].setdefault("host", "127.0.0.1")
+    cfg["gateway"].setdefault("port", 8787)
+    cfg.setdefault("security", {})
+    cfg["security"].setdefault("require_gateway_token", True)
+    cfg["security"].setdefault("redact_tokens_in_logs", True)
+
+    token_generated = _ensure_gateway_token_if_required(cfg)
+    _save_identity_files(cfg)
+    tests = _live_channel_tests(cfg)
+    checks = _build_readiness_checks(cfg, tests)
+    report = _write_onboarding_report(cfg, checks, tests)
+    save_config(cfg)
+    _show_readiness_panel(checks, report, token_generated)
+    _show_completion_panel(cfg)
+
+
 def _section_identity(cfg: dict) -> None:
     assistant_name = questionary.text(
         "Nome do assistente:",
@@ -643,8 +718,21 @@ def run_onboarding() -> None:
     _ensure_defaults(cfg)
 
     simple_ui = os.getenv("CLAWLITE_SIMPLE_UI") == "1" or os.getenv("TERM", "").lower() in {"", "dumb", "unknown"}
-    if simple_ui:
+    if simple_ui or not sys.stdin.isatty():
         _run_onboarding_simple(cfg)
+        return
+
+    mode = questionary.select(
+        "Como você quer configurar?",
+        choices=[
+            "QuickStart — padrões recomendados (2 min)",
+            "Avançado — controle total",
+        ],
+        default="QuickStart — padrões recomendados (2 min)",
+    ).ask()
+
+    if mode and mode.startswith("QuickStart"):
+        _run_onboarding_quickstart(cfg)
         return
 
     steps = [
