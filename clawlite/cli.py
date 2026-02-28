@@ -58,6 +58,14 @@ from clawlite.runtime.reddit import (
     post_milestone as reddit_post_milestone,
     reddit_status,
 )
+from clawlite.runtime.daemon import DaemonError, daemon_status, install_systemd_user_service
+from clawlite.runtime.backup import BackupError, create_backup, list_backups, restore_backup
+from clawlite.runtime.pairing import (
+    approve_pairing,
+    list_approved as pairing_list_approved,
+    list_pending as pairing_list_pending,
+    reject_pairing,
+)
 from clawlite.runtime.learning import get_stats as learning_get_stats
 from clawlite.runtime.preferences import get_preferences
 from clawlite.skills.marketplace import (
@@ -235,6 +243,13 @@ def main() -> None:
     start = sub.add_parser("start")
     start.add_argument("--host", default=None)
     start.add_argument("--port", type=int, default=None)
+
+    daemon = sub.add_parser("install-daemon")
+    daemon.add_argument("--host", default="127.0.0.1")
+    daemon.add_argument("--port", type=int, default=8787)
+    daemon.add_argument("--service-name", default="clawlite")
+    daemon.add_argument("--no-enable", action="store_true")
+    daemon.add_argument("--no-start", action="store_true")
 
     ws = sub.add_parser("workspace")
     ws_sub = ws.add_subparsers(dest="wcmd")
@@ -434,6 +449,28 @@ def main() -> None:
 
     rd_sub.add_parser("monitor-once")
 
+    pairing = sub.add_parser("pairing")
+    pairing_sub = pairing.add_subparsers(dest="pcmd")
+    pairing_list = pairing_sub.add_parser("list")
+    pairing_list.add_argument("--channel", default="")
+    pairing_approved = pairing_sub.add_parser("approved")
+    pairing_approved.add_argument("--channel", default="")
+    pairing_approve = pairing_sub.add_parser("approve")
+    pairing_approve.add_argument("channel")
+    pairing_approve.add_argument("code")
+    pairing_reject = pairing_sub.add_parser("reject")
+    pairing_reject.add_argument("channel")
+    pairing_reject.add_argument("code")
+
+    backup = sub.add_parser("backup")
+    backup_sub = backup.add_subparsers(dest="bcmd")
+    backup_create = backup_sub.add_parser("create")
+    backup_create.add_argument("--label", default="manual")
+    backup_create.add_argument("--keep-last", type=int, default=7)
+    backup_sub.add_parser("list")
+    backup_restore = backup_sub.add_parser("restore")
+    backup_restore.add_argument("archive")
+
     args = p.parse_args()
 
     if args.cmd == "doctor":
@@ -464,6 +501,28 @@ def main() -> None:
         return
     if args.cmd == "start":
         _run_gateway_cli(args.host, args.port)
+        return
+    if args.cmd == "install-daemon":
+        try:
+            result = install_systemd_user_service(
+                host=str(args.host),
+                port=int(args.port),
+                service_name=str(args.service_name),
+                enable_now=(not bool(args.no_enable)),
+                start_now=(not bool(args.no_start)),
+            )
+            print("✅ Daemon instalado.")
+            print(f"service: {result['service_name']}")
+            print(f"unit: {result['unit_path']}")
+            status = daemon_status(service_name=str(args.service_name))
+            print(f"enabled: {status['enabled_state']}")
+            print(f"active: {status['active_state']}")
+        except DaemonError as exc:
+            _fail(f"Falha no comando 'install-daemon': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'install-daemon': {_exc_message(exc)}")
         return
     if args.cmd == "gateway":
         _run_gateway_cli(args.host, args.port)
@@ -895,6 +954,70 @@ def main() -> None:
             raise
         except Exception as exc:
             _fail(f"Falha no comando 'reddit': {_exc_message(exc)}")
+
+    if args.cmd == "pairing":
+        try:
+            if args.pcmd == "list":
+                rows = pairing_list_pending(channel=args.channel)
+                if not rows:
+                    print("ℹ️ Nenhuma solicitação de pairing pendente.")
+                    return
+                for row in rows:
+                    print(f"- {row['channel']} code={row['code']} peer={row['peer_id']} display={row.get('display', '')}")
+                return
+            if args.pcmd == "approved":
+                rows = pairing_list_approved(channel=args.channel)
+                if not rows:
+                    print("ℹ️ Nenhum peer aprovado.")
+                    return
+                for row in rows:
+                    print(f"- {row['channel']} peer={row['peer_id']}")
+                return
+            if args.pcmd == "approve":
+                row = approve_pairing(args.channel, args.code)
+                print(f"✅ Pairing aprovado: channel={row['channel']} peer={row['peer_id']}")
+                return
+            if args.pcmd == "reject":
+                row = reject_pairing(args.channel, args.code)
+                print(f"✅ Pairing rejeitado: channel={row['channel']} peer={row['peer_id']}")
+                return
+            _fail("Subcomando obrigatório para 'pairing'.")
+        except ValueError as exc:
+            _fail(f"Falha no comando 'pairing': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'pairing': {_exc_message(exc)}")
+
+    if args.cmd == "backup":
+        try:
+            if args.bcmd == "create":
+                row = create_backup(label=args.label, keep_last=args.keep_last)
+                print(f"✅ Backup criado: {row['archive']}")
+                print(f"itens: {', '.join(row['entries'])}")
+                print(f"size_bytes: {row['size_bytes']}")
+                return
+            if args.bcmd == "list":
+                rows = list_backups()
+                if not rows:
+                    print("ℹ️ Nenhum backup encontrado.")
+                    return
+                for row in rows:
+                    print(f"- {row['name']} ({row['size_bytes']} bytes) {row['modified_at']}")
+                return
+            if args.bcmd == "restore":
+                row = restore_backup(args.archive)
+                print(f"✅ Backup restaurado: {row['archive']}")
+                print(f"destino: {row['target_dir']}")
+                print(f"itens: {', '.join(row['restored_entries'])}")
+                return
+            _fail("Subcomando obrigatório para 'backup'.")
+        except BackupError as exc:
+            _fail(f"Falha no comando 'backup': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'backup': {_exc_message(exc)}")
 
     if args.cmd == "memory":
         if args.mcmd == "add":

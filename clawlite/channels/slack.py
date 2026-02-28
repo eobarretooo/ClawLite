@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
+from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
 from clawlite.channels.base import BaseChannel
 
 try:
@@ -24,13 +25,35 @@ class SlackChannel(BaseChannel):
     *Assumimos que o 'token' seja o bot_token e que app_token venha em kwargs.
     """
 
-    def __init__(self, token: str, app_token: str = "", allowed_channels: list[str] = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        token: str,
+        app_token: str = "",
+        allowed_channels: list[str] = None,
+        allowed_users: list[str] = None,
+        pairing_enabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__("slack", token, **kwargs)
         self.app_token = app_token or kwargs.get("app_token", "")
         self.allowed_channels = allowed_channels or []
+        self.allowed_users = allowed_users or []
+        self.pairing_enabled = bool(pairing_enabled)
         self._app: AsyncApp | None = None
         self._handler: AsyncSocketModeHandler | None = None
         self._app_task: asyncio.Task | None = None
+
+    def _is_user_allowed(self, user_id: str) -> bool:
+        candidates = [str(user_id).strip()]
+        return is_sender_allowed("slack", candidates, self.allowed_users)
+
+    def _pairing_text(self, user_id: str) -> str:
+        req = issue_pairing_code("slack", str(user_id), display=str(user_id))
+        return (
+            "⛔ Acesso pendente de aprovação.\n"
+            f"Código: {req['code']}\n"
+            f"Aprove com: clawlite pairing approve slack {req['code']}"
+        )
 
     async def start(self) -> None:
         if not HAS_SLACK:
@@ -47,13 +70,19 @@ class SlackChannel(BaseChannel):
         async def handle_message_events(body: dict[str, Any], say: Any, logger_obj: logging.Logger) -> None:
             event = body.get("event", {})
             # Ignora mensagens de bots
-            if event.get("bot_id"):
+            if event.get("bot_id") or event.get("subtype"):
                 return
 
             text = event.get("text", "").strip()
             channel_id = event.get("channel", "")
+            user_id = str(event.get("user", "")).strip()
             
             if self.allowed_channels and channel_id not in self.allowed_channels:
+                return
+
+            if user_id and not self._is_user_allowed(user_id):
+                if self.pairing_enabled:
+                    await say(text=self._pairing_text(user_id), channel=channel_id)
                 return
                 
             if not text:

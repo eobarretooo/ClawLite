@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "C:\Users\renan\OneDrive\햞ea de Trabalho\Nova pasta\ClawLite\test_import.py", line 5, in <module>
-    import clawlite.gateway.server
-  File "C:\Users\renan\OneDrive\햞ea de Trabalho\Nova pasta\ClawLite\clawlite\gateway\server.py", line 8, in <module>
-    from clawlite.gateway.routes import admin, agents, channels, cron, mcp, sessions, skills, websockets, workspace
-  File "C:\Users\renan\OneDrive\햞ea de Trabalho\Nova pasta\ClawLite\clawlite\gateway\routes\sessions.py", line 10, in <module>
-    from clawlite.gateway.utils import (
-ImportError: cannot import name '_telemetry_costs' from 'clawlite.gateway.utils' (C:\Users\renan\OneDrive\햞ea de Trabalho\Nova pasta\ClawLite\clawlite\gateway\utils.py)

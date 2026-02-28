@@ -1,8 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from contextlib import contextmanager
 import json
 import os
+import shlex
 import signal
 import sqlite3
 import subprocess
@@ -562,15 +563,32 @@ def _finish_task(task_id: int, ok: bool, result: str) -> None:
         )
 
 
-def _render_command(template: str, payload: dict[str, Any]) -> str:
+def _render_command_args(template: str, payload: dict[str, Any]) -> list[str]:
+    if not template or not template.strip():
+        raise ValueError("template de comando vazio")
+
+    try:
+        tokens = shlex.split(template)
+    except ValueError as exc:
+        raise ValueError(f"template de comando inválido: {exc}") from exc
+    if not tokens:
+        raise ValueError("template de comando inválido: sem argumentos")
+
     merged = {
-        "text": payload.get("text", ""),
-        "label": payload.get("label", ""),
-        "chat_id": payload.get("chat_id", ""),
-        "thread_id": payload.get("thread_id", ""),
-        "channel": payload.get("channel", "telegram"),
+        "text": str(payload.get("text", "")),
+        "label": str(payload.get("label", "")),
+        "chat_id": str(payload.get("chat_id", "")),
+        "thread_id": str(payload.get("thread_id", "")),
+        "channel": str(payload.get("channel", "telegram")),
     }
-    return template.format(**merged)
+    rendered: list[str] = []
+    for token in tokens:
+        try:
+            rendered.append(token.format(**merged))
+        except KeyError as exc:
+            key = str(exc).strip("'")
+            raise ValueError(f"template de comando inválido: campo desconhecido '{key}'") from exc
+    return rendered
 
 
 def worker_loop(worker_id: int) -> None:
@@ -595,22 +613,24 @@ def worker_loop(worker_id: int) -> None:
 
         payload = json.loads(row["payload"])
         try:
-            command = _render_command(worker.command_template, payload)
-            proc = subprocess.run(command, shell=True, capture_output=True, text=True)
+            command_args = _render_command_args(worker.command_template, payload)
+            proc = subprocess.run(command_args, capture_output=True, text=True, timeout=180)
             out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
             ok = proc.returncode == 0
 
             if ok and payload.get("reply_in_audio") and payload.get("channel") == "telegram":
                 ch_cfg = payload.get("channel_cfg") or {}
-                audio_path = synthesize_tts(out.strip() or "Resposta concluÃ­da.", ch_cfg)
+                audio_path = synthesize_tts(out.strip() or "Resposta concluída.", ch_cfg)
                 send_telegram_audio_reply(
                     telegram_token=str(ch_cfg.get("token", "")),
                     chat_id=str(payload.get("chat_id", "")),
                     audio_path=audio_path,
-                    caption="Resposta em Ã¡udio",
+                    caption="Resposta em áudio",
                 )
 
             _finish_task(task_id, ok, out.strip())
+        except subprocess.TimeoutExpired:
+            _finish_task(task_id, False, "worker error: timeout ao executar comando")
         except Exception as exc:
             _finish_task(task_id, False, f"worker error: {exc}")
 
@@ -642,7 +662,7 @@ def format_agents_table(rows: list[AgentRow]) -> str:
 
 def format_bindings_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "(sem vÃ­nculos)"
+        return "(sem vínculos)"
     lines = ["id | agente | canal | conta"]
     for r in rows:
         lines.append(f"{r['id']} | {r['name']} | {r['channel']} | {r['account']}")
@@ -664,4 +684,3 @@ def task_status(limit: int = 20) -> str:
             f"{r['id']} | {r['channel']} | {r['chat_id']} | {r['thread_id'] or '-'} | {r['label']} | {r['status']} | {r['worker_id'] or '-'}"
         )
     return "\n".join(lines)
-

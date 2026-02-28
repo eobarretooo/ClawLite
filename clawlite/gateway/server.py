@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from clawlite.config.settings import load_config
-from clawlite.gateway.routes import admin, agents, channels, cron, mcp, sessions, skills, websockets, workspace, webhooks
+from clawlite.gateway.routes import admin, agents, channels, cron, mcp, pairing, sessions, skills, websockets, workspace, webhooks
 from clawlite.gateway.utils import _log
 
 import contextlib
@@ -35,6 +35,7 @@ app.include_router(agents.router)
 app.include_router(channels.router)
 app.include_router(cron.router)
 app.include_router(mcp.router)
+app.include_router(pairing.router)
 app.include_router(sessions.router)
 app.include_router(skills.router)
 app.include_router(websockets.router)

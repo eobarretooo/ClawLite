@@ -194,3 +194,27 @@ def test_heartbeat_status_with_state(monkeypatch, tmp_path):
     assert data["runs_today"] == 3
     assert data["next_run"] is not None
     assert isinstance(data["seconds_until_next"], int)
+
+
+def test_pairing_api_pending_and_approve(monkeypatch, tmp_path):
+    server = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+    token = server._token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    pairing = importlib.import_module("clawlite.runtime.pairing")
+    importlib.reload(pairing)
+
+    req = pairing.issue_pairing_code("telegram", "9988", display="@tester")
+    pending = client.get("/api/pairing/pending?channel=telegram", headers=headers)
+    assert pending.status_code == 200
+    assert any(item["code"] == req["code"] for item in pending.json()["pending"])
+
+    approved = client.post(
+        "/api/pairing/approve",
+        headers=headers,
+        json={"channel": "telegram", "code": req["code"]},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["ok"] is True
+    assert approved.json()["approved"]["peer_id"] == "9988"

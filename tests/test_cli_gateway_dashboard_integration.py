@@ -167,3 +167,22 @@ def test_skill_publish_cli_and_gateway_hub_lookup(monkeypatch, tmp_path):
 
     boot = client.get("/api/dashboard/bootstrap", headers=_auth_headers(server))
     assert boot.status_code == 200
+
+
+def test_pairing_cli_list_empty(tmp_path):
+    out = _run_cli(tmp_path, "pairing", "list")
+    assert out.returncode == 0
+    assert "Nenhuma solicitação de pairing pendente" in out.stdout
+
+
+def test_backup_cli_create_and_list(tmp_path):
+    seed = _run_cli(tmp_path, "battery", "set", "--enabled", "false")
+    assert seed.returncode == 0
+
+    created = _run_cli(tmp_path, "backup", "create", "--label", "ci")
+    assert created.returncode == 0
+    assert "Backup criado" in created.stdout
+
+    listed = _run_cli(tmp_path, "backup", "list")
+    assert listed.returncode == 0
+    assert "clawlite_backup_" in listed.stdout

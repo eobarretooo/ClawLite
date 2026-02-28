@@ -229,6 +229,8 @@ def _status_agents() -> str:
 def _status_security(cfg: dict) -> str:
     sec = cfg.get("security", {})
     token = str(cfg.get("gateway", {}).get("token", "")).strip()
+    pairing_cfg = sec.get("pairing", {}) if isinstance(sec.get("pairing"), dict) else {}
+    pairing_enabled = bool(pairing_cfg.get("enabled", False))
     issues = []
     if not token:
         issues.append("sem token")
@@ -236,6 +238,8 @@ def _status_security(cfg: dict) -> str:
         issues.append("logs expostos")
     if issues:
         return f"[{C_YELLOW}]⚠️  {', '.join(issues)}[/{C_YELLOW}]"
+    if pairing_enabled:
+        return f"[{C_GREEN}]ok + pairing[/{C_GREEN}]"
     return f"[{C_GREEN}]ok[/{C_GREEN}]"
 
 def _status_identity(cfg: dict) -> str:
@@ -314,18 +318,18 @@ def _ensure_defaults(cfg: dict[str, Any]) -> None:
     cfg.setdefault("notifications", {"enabled": True, "dedupe_window_seconds": 300})
     cfg.setdefault("channels", {})
     for ch_name, defaults in {
-        "telegram":  {"enabled": False, "token": "", "chat_id": "", "accounts": [],
+        "telegram":  {"enabled": False, "token": "", "chat_id": "", "accounts": [], "allowFrom": [],
                       "stt_enabled": False, "stt_model": "base", "stt_language": "pt",
                       "tts_enabled": False, "tts_provider": "local",
                       "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy",
                       "tts_default_reply": False},
-        "whatsapp":  {"enabled": False, "token": "", "phone": "", "accounts": [],
+        "whatsapp":  {"enabled": False, "token": "", "phone": "", "accounts": [], "allowFrom": [],
                       "stt_enabled": False, "stt_model": "base", "stt_language": "pt",
                       "tts_enabled": False, "tts_provider": "local",
                       "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy",
                       "tts_default_reply": False},
-        "discord":   {"enabled": False, "token": "", "guild_id": "", "accounts": []},
-        "slack":     {"enabled": False, "token": "", "workspace": "", "accounts": []},
+        "discord":   {"enabled": False, "token": "", "guild_id": "", "accounts": [], "allowFrom": [], "allowChannels": []},
+        "slack":     {"enabled": False, "token": "", "workspace": "", "app_token": "", "accounts": [], "allowFrom": [], "allowChannels": []},
         "teams":     {"enabled": False, "token": "", "tenant": "", "accounts": []},
     }.items():
         cfg["channels"].setdefault(ch_name, defaults)
@@ -343,6 +347,7 @@ def _ensure_defaults(cfg: dict[str, Any]) -> None:
         "allow_shell_exec": True,
         "redact_tokens_in_logs": True,
         "require_gateway_token": True,
+        "pairing": {"enabled": False, "code_ttl_seconds": 86400},
     })
     cfg.setdefault("skills", [])
 
@@ -1273,6 +1278,7 @@ def _section_web_tools(cfg: dict[str, Any]) -> None:
 def _section_security(cfg: dict[str, Any]) -> None:
     _section_header("Security", "🔒")
     sec = cfg.setdefault("security", {})
+    pairing_cfg = sec.get("pairing", {}) if isinstance(sec.get("pairing"), dict) else {}
     token = str(cfg.get("gateway", {}).get("token", "")).strip()
 
     _show_table("Config atual", [
@@ -1280,6 +1286,7 @@ def _section_security(cfg: dict[str, Any]) -> None:
         ("Shell exec",         str(sec.get("allow_shell_exec", True))),
         ("Redact tokens logs", str(sec.get("redact_tokens_in_logs", True))),
         ("Require token",      str(sec.get("require_gateway_token", True))),
+        ("Pairing",            str(pairing_cfg.get("enabled", False))),
     ])
     console.print()
 
@@ -1295,13 +1302,29 @@ def _section_security(cfg: dict[str, Any]) -> None:
             Choice("require-gateway-token  — exige auth Bearer no gateway",
                    value="require_gateway_token",
                    checked=sec.get("require_gateway_token", True)),
+            Choice("pairing-enabled  — exige aprovação por código para remetentes novos",
+                   value="pairing_enabled",
+                   checked=pairing_cfg.get("enabled", False)),
         ],
     ).ask() or []
+
+    ttl_default = pairing_cfg.get("code_ttl_seconds", 86400)
+    ttl_raw = questionary.text(
+        "TTL do código de pairing (segundos):",
+        default=str(ttl_default),
+        validate=lambda v: str(v).strip().isdigit() and int(str(v).strip()) > 0 or "Informe inteiro > 0",
+    ).ask() or str(ttl_default)
 
     cfg["security"] = {
         "allow_shell_exec":       "allow_shell_exec"       in selected,
         "redact_tokens_in_logs":  "redact_tokens_in_logs"  in selected,
         "require_gateway_token":  "require_gateway_token"  in selected,
+        "pairing": {
+            "enabled": "pairing_enabled" in selected,
+            "code_ttl_seconds": int(ttl_raw),
+        },
+        "rbac": sec.get("rbac", {"viewer_tokens": []}),
+        "tool_policies": sec.get("tool_policies", {}),
     }
 
     # Auto-gerar token se necessário

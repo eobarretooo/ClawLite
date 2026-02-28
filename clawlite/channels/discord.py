@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
+from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
 from clawlite.channels.base import BaseChannel
 
 try:
@@ -21,11 +22,32 @@ class DiscordChannel(BaseChannel):
     Integração real com o Discord via discord.py.
     """
 
-    def __init__(self, token: str, allowed_channels: list[str] = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        token: str,
+        allowed_channels: list[str] = None,
+        allowed_users: list[str] = None,
+        pairing_enabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__("discord", token, **kwargs)
         self.allowed_channels = allowed_channels or []
+        self.allowed_users = allowed_users or []
+        self.pairing_enabled = bool(pairing_enabled)
         self._client: discord.Client | None = None
         self._app_task: asyncio.Task | None = None
+
+    def _is_user_allowed(self, user_id: str, username: str) -> bool:
+        candidates = [str(user_id).strip(), str(username).strip()]
+        return is_sender_allowed("discord", candidates, self.allowed_users)
+
+    def _pairing_text(self, user_id: str, username: str) -> str:
+        req = issue_pairing_code("discord", str(user_id), display=username)
+        return (
+            "⛔ Acesso pendente de aprovação.\n"
+            f"Código: {req['code']}\n"
+            f"Aprove com: clawlite pairing approve discord {req['code']}"
+        )
 
     async def start(self) -> None:
         if not HAS_DISCORD:
@@ -51,6 +73,16 @@ class DiscordChannel(BaseChannel):
 
             text = message.content.strip()
             if not text:
+                return
+
+            author_id = str(message.author.id)
+            author_name = getattr(message.author, "name", "") or author_id
+            if not self._is_user_allowed(author_id, str(author_name)):
+                if self.pairing_enabled:
+                    try:
+                        await message.channel.send(self._pairing_text(author_id, str(author_name)))
+                    except Exception:
+                        logger.exception("Falha ao enviar mensagem de pairing no Discord.")
                 return
 
             chat_id = str(message.channel.id)

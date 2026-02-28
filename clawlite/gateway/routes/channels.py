@@ -5,10 +5,83 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 
+from clawlite.channels.manager import manager
 from clawlite.config.settings import load_config, save_config
 from clawlite.gateway.utils import _check_bearer, _log
 
 router = APIRouter()
+
+
+def _normalize_accounts(value: Any) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if not isinstance(value, list):
+        return rows
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        account = str(entry.get("account") or entry.get("name") or "").strip()
+        token = str(entry.get("token", "")).strip()
+        if not account and not token:
+            continue
+        row: dict[str, str] = {
+            "account": account,
+            "token": token,
+        }
+        if entry.get("app_token") is not None:
+            row["app_token"] = str(entry.get("app_token", "")).strip()
+        if entry.get("phone_number_id") is not None:
+            row["phone_number_id"] = str(entry.get("phone_number_id", "")).strip()
+        rows.append(row)
+    return rows
+
+
+def _normalize_allow_from(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return []
+
+
+def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
+    clean: dict[str, Any] = {
+        "enabled": bool(raw.get("enabled", False)),
+        "token": str(raw.get("token", "")).strip(),
+        "account": str(raw.get("account", "")).strip(),
+        "accounts": _normalize_accounts(raw.get("accounts", [])),
+        "allowFrom": _normalize_allow_from(raw.get("allowFrom", [])),
+        "allowChannels": _normalize_allow_from(raw.get("allowChannels", [])),
+        "stt_enabled": bool(raw.get("stt_enabled", False)),
+        "tts_enabled": bool(raw.get("tts_enabled", False)),
+    }
+    if "stt_model" in raw:
+        clean["stt_model"] = str(raw.get("stt_model", "")).strip()
+    if "stt_language" in raw:
+        clean["stt_language"] = str(raw.get("stt_language", "")).strip()
+    if "tts_provider" in raw:
+        clean["tts_provider"] = str(raw.get("tts_provider", "")).strip()
+    if "tts_model" in raw:
+        clean["tts_model"] = str(raw.get("tts_model", "")).strip()
+    if "tts_voice" in raw:
+        clean["tts_voice"] = str(raw.get("tts_voice", "")).strip()
+    if "tts_default_reply" in raw:
+        clean["tts_default_reply"] = bool(raw.get("tts_default_reply", False))
+
+    channel = str(name).strip().lower()
+    if channel == "telegram":
+        clean["chat_id"] = str(raw.get("chat_id", "")).strip()
+    elif channel == "discord":
+        clean["guild_id"] = str(raw.get("guild_id", "")).strip()
+    elif channel == "slack":
+        clean["workspace"] = str(raw.get("workspace", "")).strip()
+        clean["app_token"] = str(raw.get("app_token") or raw.get("socket_mode_token") or "").strip()
+    elif channel == "whatsapp":
+        clean["phone"] = str(raw.get("phone", "")).strip()
+        clean["phone_number_id"] = str(raw.get("phone_number_id", "")).strip()
+    elif channel == "teams":
+        clean["tenant"] = str(raw.get("tenant", "")).strip()
+
+    return clean
 
 
 @router.get("/api/channels/status")
@@ -21,15 +94,57 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
         if not isinstance(ch_cfg, dict):
             continue
         enabled = bool(ch_cfg.get("enabled", False))
-        has_token = bool(ch_cfg.get("token") or ch_cfg.get("accounts"))
+        channel_name = str(name).strip().lower()
+        base_token = str(ch_cfg.get("token", "")).strip()
+        account_count = len(_normalize_accounts(ch_cfg.get("accounts", [])))
+        has_token = bool(base_token or account_count > 0)
+        if channel_name == "slack":
+            account_rows = _normalize_accounts(ch_cfg.get("accounts", []))
+            has_account_app_token = any(str(row.get("app_token", "")).strip() for row in account_rows)
+            has_token = has_token and bool(
+                str(ch_cfg.get("app_token") or ch_cfg.get("socket_mode_token") or "").strip()
+                or has_account_app_token
+            )
+        instance_prefix = f"{channel_name}:"
+        online_instances = sum(
+            1
+            for key in manager.active_channels.keys()
+            if key == channel_name or key.startswith(instance_prefix)
+        )
         result.append({
             "channel": name,
             "enabled": enabled,
             "configured": has_token,
+            "instances_online": online_instances,
+            "accounts_configured": account_count,
             "stt_enabled": bool(ch_cfg.get("stt_enabled", False)),
             "tts_enabled": bool(ch_cfg.get("tts_enabled", False)),
         })
     return JSONResponse({"ok": True, "channels": result})
+
+
+@router.get("/api/channels/instances")
+def api_channels_instances(
+    authorization: str | None = Header(default=None),
+    channel: str = "",
+) -> JSONResponse:
+    _check_bearer(authorization)
+    rows = manager.describe_instances(channel_name=channel)
+    return JSONResponse({"ok": True, "instances": rows})
+
+
+@router.post("/api/channels/reconnect")
+async def api_channels_reconnect(
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    channel = str(payload.get("channel", "")).strip().lower()
+    if not channel:
+        raise HTTPException(status_code=400, detail="Campo 'channel' é obrigatório")
+    result = await manager.reconnect_channel(channel)
+    _log("channels.reconnected", data={"channel": channel, "started": len(result.get("started", []))})
+    return JSONResponse({"ok": True, **result})
 
 
 @router.put("/api/channels/config")
@@ -44,13 +159,7 @@ def api_channels_config_save(payload: dict[str, Any], authorization: str | None 
     for name, raw in channels.items():
         if not isinstance(raw, dict):
             continue
-        clean_channels[str(name)] = {
-            "enabled": bool(raw.get("enabled", False)),
-            "token": str(raw.get("token", "")).strip(),
-            "account": str(raw.get("account", "")).strip(),
-            "stt_enabled": bool(raw.get("stt_enabled", False)),
-            "tts_enabled": bool(raw.get("tts_enabled", False)),
-        }
+        clean_channels[str(name)] = _sanitize_channel(str(name), raw)
     cfg["channels"] = clean_channels
     save_config(cfg)
     _log("channels.updated", data={"count": len(clean_channels)})
@@ -75,13 +184,7 @@ def api_dashboard_config_apply(payload: dict[str, Any], authorization: str | Non
     for name, raw in channels.items():
         if not isinstance(raw, dict):
             continue
-        sanitized_channels[str(name)] = {
-            "enabled": bool(raw.get("enabled", False)),
-            "token": str(raw.get("token", "")).strip(),
-            "account": str(raw.get("account", "")).strip(),
-            "stt_enabled": bool(raw.get("stt_enabled", False)),
-            "tts_enabled": bool(raw.get("tts_enabled", False)),
-        }
+        sanitized_channels[str(name)] = _sanitize_channel(str(name), raw)
 
     pending_cfg = dict(cfg)
     pending_cfg["model"] = model

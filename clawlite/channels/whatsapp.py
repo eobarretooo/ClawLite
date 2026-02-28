@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
 from clawlite.channels.base import BaseChannel
 
 try:
@@ -24,11 +25,31 @@ class WhatsAppChannel(BaseChannel):
     para a Graph API do WhatsApp.
     """
 
-    def __init__(self, token: str, phone_number_id: str = "", allowed_numbers: list[str] = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        token: str,
+        phone_number_id: str = "",
+        allowed_numbers: list[str] = None,
+        pairing_enabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__("whatsapp", token, **kwargs)
         self.phone_number_id = phone_number_id or kwargs.get("phone_number_id", "")
         self.allowed_numbers = allowed_numbers or []
+        self.pairing_enabled = bool(pairing_enabled)
         self._client: httpx.AsyncClient | None = None
+
+    def _is_sender_allowed(self, sender: str) -> bool:
+        candidates = [str(sender).strip()]
+        return is_sender_allowed("whatsapp", candidates, self.allowed_numbers)
+
+    def _pairing_text(self, sender: str) -> str:
+        req = issue_pairing_code("whatsapp", str(sender), display=str(sender))
+        return (
+            "⛔ Este número ainda não foi aprovado.\n"
+            f"Código de pairing: {req['code']}\n"
+            f"Aprove com: clawlite pairing approve whatsapp {req['code']}"
+        )
 
     async def start(self) -> None:
         if not HAS_HTTPX:
@@ -71,7 +92,9 @@ class WhatsAppChannel(BaseChannel):
                             text = msg.get("text", {}).get("body", "")
                             sender = msg.get("from", "")
 
-                            if self.allowed_numbers and sender not in self.allowed_numbers:
+                            if not self._is_sender_allowed(sender):
+                                if self.pairing_enabled:
+                                    await self.send_message(f"wa_{sender}", self._pairing_text(sender))
                                 continue
 
                             session_id = f"wa_{sender}"

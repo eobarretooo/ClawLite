@@ -38,7 +38,8 @@ TEMPLATES = {
                 "enabled": True,
                 "token": "<DISCORD_BOT_TOKEN>",
                 "accounts": [{"account": "guild-main", "token": "<TOKEN>"}],
-                "allowFrom": ["<DISCORD_USER_ID>"]
+                "allowFrom": ["<DISCORD_USER_ID>"],
+                "allowChannels": ["<DISCORD_CHANNEL_ID>"]
             }
         }
     },
@@ -47,6 +48,7 @@ TEMPLATES = {
             "slack": {
                 "enabled": True,
                 "token": "<SLACK_BOT_TOKEN>",
+                "app_token": "<SLACK_APP_TOKEN>",
                 "accounts": [{"account": "workspace-main", "token": "<TOKEN>"}]
             }
         }

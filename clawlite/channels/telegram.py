@@ -4,6 +4,8 @@ import asyncio
 import logging
 from typing import Any
 
+from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
+
 try:
     from telegram import Update
     from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -22,9 +24,16 @@ class TelegramChannel(BaseChannel):
     Processa mensagens de usuários e envia as respostas de volta.
     """
 
-    def __init__(self, token: str, allowed_accounts: list[str] = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        token: str,
+        allowed_accounts: list[str] = None,
+        pairing_enabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__("telegram", token, **kwargs)
         self.allowed_accounts = allowed_accounts or []
+        self.pairing_enabled = bool(pairing_enabled)
         self._app: Application | None = None
 
     async def start(self) -> None:
@@ -51,20 +60,34 @@ class TelegramChannel(BaseChannel):
             self.running = False
             logger.info("Canal Telegram encerrado.")
 
-    def _is_allowed(self, username: str | None) -> bool:
-        if not self.allowed_accounts:
-            return True  # Se vazio, aceita tudo (cuidado)
-        if not username:
-            return False
-        return username.lower() in [u.lower() for u in self.allowed_accounts]
+    def _is_allowed(self, user_id: str, username: str | None) -> bool:
+        candidates = [str(user_id).strip()]
+        if username:
+            raw_user = str(username).strip()
+            if raw_user:
+                candidates.append(raw_user)
+                candidates.append("@" + raw_user.lstrip("@"))
+        return is_sender_allowed("telegram", candidates, self.allowed_accounts)
+
+    def _pairing_text(self, user_id: str, username: str | None) -> str:
+        req = issue_pairing_code("telegram", str(user_id), display=str(username or "").strip())
+        return (
+            "⛔ Acesso pendente de aprovação.\n"
+            f"Código de pairing: {req['code']}\n"
+            f"Aprove com: clawlite pairing approve telegram {req['code']}"
+        )
 
     async def _command_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
         
+        user_id = str(update.effective_user.id)
         username = update.effective_user.username
-        if not self._is_allowed(username):
-            await update.message.reply_text("⛔ Acesso não autorizado a este bot.")
+        if not self._is_allowed(user_id, username):
+            if self.pairing_enabled:
+                await update.message.reply_text(self._pairing_text(user_id, username))
+            else:
+                await update.message.reply_text("⛔ Acesso não autorizado a este bot.")
             return
             
         await update.message.reply_text("👋 Sou o ClawLite! Envie suas mensagens e eu irei processá-las.")
@@ -73,9 +96,13 @@ class TelegramChannel(BaseChannel):
         if not update.effective_user or not update.message or not update.message.text:
             return
 
+        user_id = str(update.effective_user.id)
         username = update.effective_user.username
-        if not self._is_allowed(username):
-            await update.message.reply_text("⛔ Acesso não autorizado.")
+        if not self._is_allowed(user_id, username):
+            if self.pairing_enabled:
+                await update.message.reply_text(self._pairing_text(user_id, username))
+            else:
+                await update.message.reply_text("⛔ Acesso não autorizado.")
             return
 
         text = update.message.text

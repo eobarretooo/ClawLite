@@ -477,6 +477,183 @@
       );
     };
 
+    // --- Channels Screen ---
+    const ChannelsScreen = () => {
+      const { apiCall, isConnected } = useContext(AppContext);
+      const [channels, setChannels] = useState([]);
+      const [instances, setInstances] = useState([]);
+      const [pending, setPending] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [busyChannel, setBusyChannel] = useState('');
+      const [busyCode, setBusyCode] = useState('');
+
+      const loadAll = async () => {
+        if (!isConnected) return;
+        setLoading(true);
+        try {
+          const [statusRes, instancesRes, pendingRes] = await Promise.all([
+            apiCall('/api/channels/status'),
+            apiCall('/api/channels/instances'),
+            apiCall('/api/pairing/pending')
+          ]);
+          setChannels(statusRes.channels || []);
+          setInstances(instancesRes.instances || []);
+          setPending(pendingRes.pending || []);
+        } catch (err) {
+          console.error('Channels load failed', err);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const reconnectChannel = async (channel) => {
+        setBusyChannel(channel);
+        try {
+          await apiCall('/api/channels/reconnect', {
+            method: 'POST',
+            body: JSON.stringify({ channel })
+          });
+          await loadAll();
+        } catch (err) {
+          alert(`Falha no reconnect de ${channel}: ${err.message}`);
+        } finally {
+          setBusyChannel('');
+        }
+      };
+
+      const approveCode = async (channel, code) => {
+        setBusyCode(code);
+        try {
+          await apiCall('/api/pairing/approve', {
+            method: 'POST',
+            body: JSON.stringify({ channel, code })
+          });
+          await loadAll();
+        } catch (err) {
+          alert(`Falha ao aprovar código ${code}: ${err.message}`);
+        } finally {
+          setBusyCode('');
+        }
+      };
+
+      const rejectCode = async (channel, code) => {
+        setBusyCode(code);
+        try {
+          await apiCall('/api/pairing/reject', {
+            method: 'POST',
+            body: JSON.stringify({ channel, code })
+          });
+          await loadAll();
+        } catch (err) {
+          alert(`Falha ao rejeitar código ${code}: ${err.message}`);
+        } finally {
+          setBusyCode('');
+        }
+      };
+
+      useEffect(() => {
+        loadAll();
+      }, [isConnected]);
+
+      if (!isConnected) {
+        return (
+          <div className="flex-1 flex items-center justify-center text-drk-300">
+            Conecte ao gateway para monitorar canais.
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex flex-col h-full gap-4">
+          <div className="flex items-center justify-between pb-4 border-b border-drk-700">
+            <h2 className="text-lg font-bold flex items-center gap-2"><Icon name="satellite-dish" /> Channels Watchtower</h2>
+            <button onClick={loadAll} className="bg-drk-800 hover:bg-drk-700 p-1.5 rounded-lg border border-drk-700 text-drk-300">
+              {loading ? <div className="loader w-4 h-4"></div> : <Icon name="refresh-cw" size={16} />}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <h3 className="text-sm font-semibold mb-3 text-drk-100">Canais</h3>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {channels.length === 0 ? (
+                  <div className="text-drk-300 text-sm">Nenhum canal configurado.</div>
+                ) : channels.map((row) => (
+                  <div key={row.channel} className="bg-drk-900/60 border border-drk-700 rounded-lg p-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium">{row.channel}</div>
+                      <div className="text-xs text-drk-300">
+                        {row.enabled ? 'enabled' : 'disabled'} · {row.configured ? 'configured' : 'missing token'}
+                        {' · '}instances: {row.instances_online ?? 0}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => reconnectChannel(row.channel)}
+                      disabled={busyChannel === row.channel}
+                      className={`px-3 py-1.5 rounded-lg text-xs border ${busyChannel === row.channel ? 'border-drk-600 text-drk-400' : 'border-fox-500/40 text-fox-500 hover:bg-fox-500/10'}`}
+                    >
+                      {busyChannel === row.channel ? 'Reconectando...' : 'Reconnect'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card>
+              <h3 className="text-sm font-semibold mb-3 text-drk-100">Instâncias Ativas</h3>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {instances.length === 0 ? (
+                  <div className="text-drk-300 text-sm">Nenhuma instância ativa.</div>
+                ) : instances.map((row) => (
+                  <div key={row.instance_key} className="bg-drk-900/60 border border-drk-700 rounded-lg p-3 flex items-center justify-between">
+                    <div>
+                      <div className="font-mono text-xs text-drk-100">{row.instance_key}</div>
+                      <div className="text-xs text-drk-300">account: {row.account || '-'}</div>
+                    </div>
+                    <span className={`text-xs px-2 py-1 rounded ${row.running ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                      {row.running ? 'online' : 'offline'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+
+          <Card className="flex-1 min-h-0">
+            <h3 className="text-sm font-semibold mb-3 text-drk-100">Pairing Pendente</h3>
+            <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+              {pending.length === 0 ? (
+                <div className="text-drk-300 text-sm">Sem solicitações pendentes.</div>
+              ) : pending.map((row) => (
+                <div key={`${row.channel}:${row.code}`} className="bg-drk-900/60 border border-drk-700 rounded-lg p-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-medium">{row.channel} · <span className="font-mono">{row.code}</span></div>
+                    <div className="text-xs text-drk-300">peer: {row.peer_id}{row.display ? ` (${row.display})` : ''}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => approveCode(row.channel, row.code)}
+                      disabled={busyCode === row.code}
+                      className="px-3 py-1.5 rounded-lg text-xs border border-green-700/50 text-green-400 hover:bg-green-900/20"
+                    >
+                      Aprovar
+                    </button>
+                    <button
+                      onClick={() => rejectCode(row.channel, row.code)}
+                      disabled={busyCode === row.code}
+                      className="px-3 py-1.5 rounded-lg text-xs border border-red-700/50 text-red-400 hover:bg-red-900/20"
+                    >
+                      Rejeitar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      );
+    };
+
     // --- Main App Orchestrator ---
     const MainApp = () => {
       const [tab, setTab] = useState('chat');
@@ -549,7 +726,7 @@
           case 'chat': return <ChatScreen />;
           case 'telemetry': return <TelemetryScreen />;
           case 'skills': return <SkillsScreen />;
-          case 'channels': return <ConstructionScreen title="Channels Watchtower" icon="satellite-dish" />;
+          case 'channels': return <ChannelsScreen />;
           default: return <ConstructionScreen title="Em Desenvolvimento" icon="wrench" />;
         }
       };

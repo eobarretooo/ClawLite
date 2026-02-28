@@ -177,16 +177,30 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "account": "acc",
                         "stt_enabled": True,
                         "tts_enabled": False,
-                    }
+                    },
+                    "slack": {
+                        "enabled": True,
+                        "token": "xoxb-main",
+                        "app_token": "xapp-main",
+                        "workspace": "main",
+                        "allowFrom": ["C-main"],
+                        "accounts": [{"account": "dev", "token": "xoxb-dev", "app_token": "xapp-dev"}],
+                    },
                 }
             },
         )
         assert saved.status_code == 200
         assert saved.json()["channels"]["telegram"]["enabled"] is True
+        assert saved.json()["channels"]["slack"]["app_token"] == "xapp-main"
+        assert saved.json()["channels"]["slack"]["accounts"][0]["account"] == "dev"
+        assert saved.json()["channels"]["slack"]["accounts"][0]["app_token"] == "xapp-dev"
 
         status = client.get("/api/channels/status", headers=headers)
         tg = next(c for c in status.json()["channels"] if c["channel"] == "telegram")
         assert tg["configured"] is True
+        sl = next(c for c in status.json()["channels"] if c["channel"] == "slack")
+        assert sl["configured"] is True
+        assert "accounts_configured" in sl
 
         # evita rede no teste do update
         monkeypatch.setattr(server, "update_skills", lambda **kwargs: {"updated": [], "skipped": [], "blocked": [], "missing": []})
@@ -194,6 +208,46 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
         assert up.status_code == 200
         assert up.json()["ok"] is True
         assert up.json()["dry_run"] is True
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path
+
+
+def test_channels_instances_and_reconnect_endpoint(monkeypatch, tmp_path):
+    old_dir, old_path = _patch_db(tmp_path)
+    try:
+        server = _boot(monkeypatch, tmp_path)
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        monkeypatch.setattr(
+            server.channels.manager,
+            "describe_instances",
+            lambda channel_name=None: [
+                {"instance_key": "telegram", "channel": "telegram", "account": "", "running": True}
+            ],
+        )
+        async def _fake_reconnect(channel):
+            return {
+                "channel": channel,
+                "enabled": True,
+                "stopped": [channel],
+                "started": [channel],
+            }
+
+        monkeypatch.setattr(server.channels.manager, "reconnect_channel", _fake_reconnect)
+
+        instances = client.get("/api/channels/instances", headers=headers)
+        assert instances.status_code == 200
+        assert instances.json()["ok"] is True
+        assert instances.json()["instances"][0]["instance_key"] == "telegram"
+
+        reconnect = client.post("/api/channels/reconnect", headers=headers, json={"channel": "telegram"})
+        assert reconnect.status_code == 200
+        assert reconnect.json()["ok"] is True
+        assert reconnect.json()["channel"] == "telegram"
+        assert reconnect.json()["started"] == ["telegram"]
     finally:
         multiagent.DB_DIR = old_dir
         multiagent.DB_PATH = old_path
