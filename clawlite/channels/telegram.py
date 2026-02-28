@@ -31,6 +31,8 @@ class TelegramChannel(BaseChannel):
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
+        # Compat: o ChannelManager pode injetar `name`.
+        kwargs.pop("name", None)
         super().__init__("telegram", token, **kwargs)
         self.allowed_accounts = allowed_accounts or []
         self.pairing_enabled = bool(pairing_enabled)

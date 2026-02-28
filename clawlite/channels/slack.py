@@ -34,6 +34,8 @@ class SlackChannel(BaseChannel):
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
+        # Compat: o ChannelManager pode injetar `name`.
+        kwargs.pop("name", None)
         super().__init__("slack", token, **kwargs)
         self.app_token = app_token or kwargs.get("app_token", "")
         self.allowed_channels = allowed_channels or []

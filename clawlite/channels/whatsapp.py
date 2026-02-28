@@ -33,6 +33,8 @@ class WhatsAppChannel(BaseChannel):
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
+        # Compat: o ChannelManager pode injetar `name`.
+        kwargs.pop("name", None)
         super().__init__("whatsapp", token, **kwargs)
         self.phone_number_id = phone_number_id or kwargs.get("phone_number_id", "")
         self.allowed_numbers = allowed_numbers or []

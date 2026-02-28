@@ -30,6 +30,8 @@ class DiscordChannel(BaseChannel):
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
+        # Compat: o ChannelManager pode injetar `name`.
+        kwargs.pop("name", None)
         super().__init__("discord", token, **kwargs)
         self.allowed_channels = allowed_channels or []
         self.allowed_users = allowed_users or []
