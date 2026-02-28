@@ -279,9 +279,51 @@ Título: {data.get("title")}
                 }
             return
 
-        # fallback parser (very limited) if BeautifulSoup is unavailable
-        self._mock_title = "Untitled"
-        self._mock_text_preview = html[:1500]
+        # fallback parser (regex simples) quando BeautifulSoup não está disponível
+        import re
+
+        m_title = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+        self._mock_title = (m_title.group(1).strip() if m_title else "Untitled")
+        self._mock_text_preview = re.sub(r"\s+", " ", html)[:1500]
+
+        patterns = [
+            ("button", r"<button[^>]*>(.*?)</button>"),
+            ("a", r"<a[^>]*>(.*?)</a>"),
+            ("input", r"<input([^>]*)>"),
+            ("textarea", r"<textarea[^>]*>(.*?)</textarea>"),
+            ("select", r"<select[^>]*>(.*?)</select>"),
+        ]
+
+        def _strip_tags(s: str) -> str:
+            return re.sub(r"<[^>]+>", "", s or "").strip()
+
+        for tag, pat in patterns:
+            for match in re.finditer(pat, html, re.IGNORECASE | re.DOTALL):
+                cid = str(self._mock_next_id)
+                self._mock_next_id += 1
+                raw = match.group(1) if match.groups() else ""
+                text = _strip_tags(raw)
+                placeholder = ""
+                input_type = "text"
+                if tag == "input":
+                    attrs = match.group(1) if match.groups() else ""
+                    m_ph = re.search(r'placeholder=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+                    m_ty = re.search(r'type=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+                    m_val = re.search(r'value=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+                    placeholder = m_ph.group(1).strip() if m_ph else ""
+                    input_type = (m_ty.group(1).strip().lower() if m_ty else "text")
+                    if not text:
+                        text = (m_val.group(1).strip() if m_val else "") or placeholder
+
+                item_type = f"input[type={input_type}]" if tag == "input" else tag
+                self._mock_interactables[cid] = {
+                    "id": cid,
+                    "tag": tag,
+                    "type": item_type,
+                    "text": text,
+                    "value": "",
+                    "placeholder": placeholder,
+                }
 
     def _mock_click(self, cid: str) -> str:
         item = self._mock_interactables.get(str(cid))
