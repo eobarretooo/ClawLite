@@ -21,12 +21,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Instalar dependências
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]" || pip install -e .
-          pip install pytest pytest-anyio httpx fastapi[all] uvicorn questionary rich
+          pip install -e ".[dev]"
+          pip install pytest pytest-anyio httpx "fastapi[all]" uvicorn questionary rich
 
       - name: Rodar testes
         run: python -m pytest tests/ -q --tb=short
@@ -41,13 +42,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Instalar ruff
         run: pip install ruff
 
       - name: Verificar formatação e linting
-        # Falha apenas em erros críticos (E9xx = erros de runtime, F = pyflakes)
-        run: ruff check clawlite/ --select E9,F --ignore F401,F811 || true
+        # Falha em erros críticos (E9xx = erros de runtime, F = pyflakes)
+        run: ruff check clawlite/ --select E9,F --ignore F401,F811
 
   smoke:
     name: Smoke test (doctor)
@@ -59,11 +61,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Instalar ClawLite
         run: |
           pip install --upgrade pip
-          pip install -e . || true
+          pip install -e .
           pip install httpx fastapi uvicorn rich questionary
 
       - name: Smoke — importação dos módulos principais
