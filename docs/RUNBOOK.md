@@ -82,6 +82,15 @@ curl -sf "https://api.telegram.org/bot${TOKEN}/getMe"
 kill -HUP $(pgrep -f "clawlite start")
 ```
 
+**Ação (Slack Socket Mode):**
+```bash
+# Slack exige os dois tokens:
+# - Bot token: xoxb-...
+# - App token: xapp-...
+cat ~/.clawlite/config.json | python -m json.tool | grep -A10 '"slack"'
+```
+Se `channels.slack.app_token` estiver vazio, o canal não inicia.
+
 ---
 
 ## 3. DB lock / SQLite busy

@@ -207,15 +207,22 @@ def _status_model(cfg: dict) -> str:
 def _status_channels(cfg: dict) -> str:
     ch = cfg.get("channels", {})
     active = [n for n in CHANNEL_NAMES if ch.get(n, {}).get("enabled")]
-    missing_token = [
-        n for n in active
-        if not str(ch.get(n, {}).get("token", "")).strip()
-    ]
+    missing_token: list[str] = []
+    for name in active:
+        row = ch.get(name, {}) if isinstance(ch.get(name), dict) else {}
+        token = str(row.get("token", "")).strip()
+        if not token:
+            missing_token.append(name)
+            continue
+        if name == "slack":
+            app_token = str(row.get("app_token", "")).strip()
+            if not app_token:
+                missing_token.append(name)
     if not active:
         return f"[{C_GRAY}]nenhum ativo[/{C_GRAY}]"
     label = " · ".join(active)
     if missing_token:
-        return f"[{C_YELLOW}]{label} ⚠️ sem token[/{C_YELLOW}]"
+        return f"[{C_YELLOW}]{label} ⚠️ credenciais incompletas[/{C_YELLOW}]"
     return f"[{C_GREEN}]{label}[/{C_GREEN}]"
 
 def _status_skills(cfg: dict) -> str:
@@ -469,6 +476,10 @@ def _channel_status_row(name: str, ch_cfg: dict) -> tuple[str, str]:
     token = str(ch_cfg.get("token", "")).strip()
     if not token:
         return (name, f"[{C_YELLOW}]ativo · ⚠️  sem token[/{C_YELLOW}]")
+    if name == "slack":
+        app_token = str(ch_cfg.get("app_token", "")).strip()
+        if not app_token:
+            return (name, f"[{C_YELLOW}]ativo · ⚠️  sem app token (xapp)[/{C_YELLOW}]")
     return (name, f"[{C_GREEN}]ativo · token configurado[/{C_GREEN}]")
 
 
@@ -629,7 +640,8 @@ def _edit_slack(ch: dict) -> None:
     _section_header("Slack", "💬")
     _show_table("Config atual", [
         ("Ativado", str(ch.get("enabled", False))),
-        ("Token bot", "***" + str(ch.get("token", ""))[-6:] if ch.get("token") else "—"),
+        ("Bot Token", "***" + str(ch.get("token", ""))[-6:] if ch.get("token") else "—"),
+        ("App Token", "***" + str(ch.get("app_token", ""))[-6:] if ch.get("app_token") else "—"),
         ("Workspace", str(ch.get("workspace", "")) or "—"),
     ])
     console.print()
@@ -642,22 +654,48 @@ def _edit_slack(ch: dict) -> None:
         "Bot Token (xoxb-...):", default=ch.get("token", ""),
         validate=_validate_required("Token"),
     ).ask()
+    ch["app_token"] = questionary.text(
+        "App Token Socket Mode (xapp-...):", default=ch.get("app_token", ""),
+        validate=_validate_required("App Token"),
+    ).ask()
     ch["workspace"] = questionary.text(
         "Workspace padrão:", default=ch.get("workspace", ""),
     ).ask()
 
+    accounts_default_rows: list[str] = []
+    for account in ch.get("accounts", []):
+        if not isinstance(account, dict):
+            continue
+        workspace = str(account.get("account", "")).strip()
+        bot_token = str(account.get("token", "")).strip()
+        app_token = str(account.get("app_token", "")).strip()
+        if not workspace:
+            continue
+        if app_token:
+            accounts_default_rows.append(f"{workspace}:{bot_token}:{app_token}")
+        else:
+            accounts_default_rows.append(f"{workspace}:{bot_token}")
+
     raw = questionary.text(
-        "Workspaces adicionais (workspace:token, vírgula — opcional):",
-        default=", ".join(
-            f"{a.get('account','')}:{a.get('token','')}"
-            for a in ch.get("accounts", []) if a.get("account")
-        ),
+        "Workspaces adicionais (workspace:bot_token[:app_token], vírgula — opcional):",
+        default=", ".join(accounts_default_rows),
     ).ask() or ""
     if raw.strip():
-        ch["accounts"] = [
-            {"account": p.split(":", 1)[0].strip(), "token": p.split(":", 1)[1].strip() if ":" in p else ""}
-            for p in raw.split(",") if p.strip()
-        ]
+        parsed_accounts: list[dict[str, str]] = []
+        for part in raw.split(","):
+            entry = part.strip()
+            if not entry:
+                continue
+            # workspace:bot_token[:app_token]
+            pieces = entry.split(":", 2)
+            account = pieces[0].strip()
+            bot_token = pieces[1].strip() if len(pieces) >= 2 else ""
+            app_token = pieces[2].strip() if len(pieces) >= 3 else ""
+            row = {"account": account, "token": bot_token}
+            if app_token:
+                row["app_token"] = app_token
+            parsed_accounts.append(row)
+        ch["accounts"] = parsed_accounts
 
 
 def _edit_teams(ch: dict) -> None:

@@ -49,7 +49,13 @@ TEMPLATES = {
                 "enabled": True,
                 "token": "<SLACK_BOT_TOKEN>",
                 "app_token": "<SLACK_APP_TOKEN>",
-                "accounts": [{"account": "workspace-main", "token": "<TOKEN>"}]
+                "accounts": [
+                    {
+                        "account": "workspace-main",
+                        "token": "<SLACK_BOT_TOKEN>",
+                        "app_token": "<SLACK_APP_TOKEN>"
+                    }
+                ]
             }
         }
     },

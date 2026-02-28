@@ -565,7 +565,16 @@ def _live_channel_tests(cfg: dict) -> list[str]:
         data = channels.get(ch, {}) if isinstance(channels.get(ch), dict) else {}
         if data.get("enabled"):
             token = str(data.get("token", "")).strip()
-            out.append(("✅ " if token else "⚠️ ") + f"{ch}: {'token informado' if token else 'token ausente'}")
+            if ch == "slack":
+                app_token = str(data.get("app_token", "")).strip()
+                if token and app_token:
+                    out.append("✅ slack: bot token + app token informados")
+                elif token:
+                    out.append("⚠️ slack: bot token informado, mas app token (xapp) ausente")
+                else:
+                    out.append("⚠️ slack: token ausente")
+            else:
+                out.append(("✅ " if token else "⚠️ ") + f"{ch}: {'token informado' if token else 'token ausente'}")
     if not out:
         out.append("ℹ️ Nenhum canal habilitado para teste")
     return out

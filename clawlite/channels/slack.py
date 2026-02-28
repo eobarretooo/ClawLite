@@ -63,7 +63,10 @@ class SlackChannel(BaseChannel):
             return
 
         if not self.app_token:
-            logger.error("Falha ao iniciar SlackChannel: app_token é obrigatório para Socket Mode (xapp-...).")
+            logger.error(
+                "Falha ao iniciar SlackChannel: app_token (xapp-...) é obrigatório para Socket Mode. "
+                "Use channels.slack.token=xoxb-... e channels.slack.app_token=xapp-..."
+            )
             return
 
         self._app = AsyncApp(token=self.token)

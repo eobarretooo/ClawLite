@@ -44,9 +44,13 @@ clawlite agents bind docs --channel teams --account tenant-docs
 Em cada canal, use o campo de contas múltiplas no formato:
 
 - Telegram: `account:token`
-- Slack: `workspace:token`
+- Slack: `workspace:bot_token[:app_token]`
 - Discord: `guild:token`
 - WhatsApp: `instance:token`
 - Teams: `tenant:token`
 
 Separar por vírgula quando houver múltiplas contas.
+
+Observação Slack:
+- Em Socket Mode, o canal Slack sempre precisa de `token` (`xoxb-...`) + `app_token` (`xapp-...`).
+- Se a conta extra não tiver `app_token`, o ClawLite usa `channels.slack.app_token` como fallback global.

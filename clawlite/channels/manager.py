@@ -192,6 +192,12 @@ class ChannelManager:
                 channel = channel_cls(token=cred["token"], name=normalized_channel, **channel_kwargs)
                 channel.on_message(self._handle_message)
                 await channel.start()
+                if not channel.running:
+                    logger.error(
+                        f"Falha ao iniciar canal '{instance_key}': inicialização incompleta. "
+                        "Verifique token(s), dependências e logs do canal."
+                    )
+                    continue
                 self.active_channels[instance_key] = channel
                 self.active_metadata[instance_key] = {
                     "channel": normalized_channel,
