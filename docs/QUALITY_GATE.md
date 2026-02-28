@@ -99,3 +99,53 @@ Critérios de saída atendidos:
 - smoke oficial verde
 - validações específicas de gateway/onboarding verdes
 - installer validado (sintaxe + guards de runtime Termux)
+
+---
+
+## 7) Quality gate curto (rodada rápida)
+
+Data: 2026-02-28 (UTC)
+Escopo: validação rápida pré-push em `main`.
+
+### 7.1 Pytest subset crítico
+
+Comando:
+
+```bash
+pytest -q \
+  tests/test_gateway_dashboard.py \
+  tests/test_cli_gateway_dashboard_integration.py \
+  tests/test_configure_onboarding_status_doctor.py \
+  tests/test_mcp.py \
+  tests/test_multiagent_channels.py \
+  tests/test_cron_channels_metrics.py
+```
+
+Resultado:
+
+- ✅ `28 passed in 35.67s`
+
+### 7.2 Smoke oficial
+
+Comando:
+
+```bash
+bash scripts/smoke_test.sh
+```
+
+Resultado:
+
+- ✅ imports críticos (gateway/runtime/conversation_cron)
+- ✅ suíte unitária executada no smoke (`141 passed in 48.08s`)
+- ✅ dependências essenciais presentes (`httpx`, `fastapi`, `uvicorn`)
+- ⚠️ gateway não estava rodando no momento do smoke (comportamento esperado quando não iniciado)
+- ✅ consolidado do script: `7 ok / 0 falha(s)`
+
+### 7.3 Regressões
+
+- ✅ Nenhuma regressão identificada nesta rodada.
+- ✅ Não foi necessário patch de correção.
+
+### 7.4 Decisão
+
+**QUALITY GATE CURTO: APROVADO ✅**
