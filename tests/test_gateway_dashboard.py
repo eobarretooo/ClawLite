@@ -40,14 +40,16 @@ def test_dashboard_auth_and_settings(monkeypatch, tmp_path):
 
 def test_skills_and_telemetry_flow(monkeypatch, tmp_path):
     server = _boot(monkeypatch, tmp_path)
-    import clawlite.gateway.chat as gc
+    import clawlite.core.agent as agent_module
+    def mock_stream(prompt):
+        def _yield():
+            yield f"[pipeline] {prompt}"
+        return _yield(), {"mode": "online", "reason": "provider-ok", "model": "openai/gpt-4o-mini"}
+        
     monkeypatch.setattr(
-        gc,
-        "run_task_with_meta",
-        lambda prompt: (
-            f"[pipeline] {prompt}",
-            {"mode": "online", "reason": "provider-ok", "model": "openai/gpt-4o-mini"},
-        ),
+        agent_module,
+        "run_task_stream_with_meta",
+        mock_stream,
     )
     client = TestClient(server.app)
 
@@ -65,14 +67,16 @@ def test_skills_and_telemetry_flow(monkeypatch, tmp_path):
         _ = ws.receive_json()  # welcome
         ws.send_json({"type": "chat", "session_id": "s1", "text": "oi"})
         msg = ws.receive_json()
+        while msg["type"] != "chat":
+            msg = ws.receive_json()
         assert msg["type"] == "chat"
         assert msg["meta"]["model"] == "openai/gpt-4o-mini"
         assert "[pipeline]" in msg["message"]["text"]
 
         ws.send_json({"type": "chat", "session_id": "s1", "text": "segunda"})
-        _ = ws.receive_json()
+        while ws.receive_json()["type"] != "chat": pass
         ws.send_json({"type": "chat", "session_id": "s2", "text": "terceira"})
-        _ = ws.receive_json()
+        while ws.receive_json()["type"] != "chat": pass
 
     telem = client.get("/api/dashboard/telemetry", headers=headers)
     assert telem.status_code == 200

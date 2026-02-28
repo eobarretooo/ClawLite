@@ -177,6 +177,36 @@ def startup_context_text(path: str | None = None) -> str:
     return "\n\n".join(blocks)
 
 
+def read_recent_session_messages(session_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    """
+    Reads the last N messages for a specific session_id from the JSONL log 
+    in clawlite/gateway/state.py SESSIONS_FILE without importing it directly
+    to avoid circular dependencies.
+    """
+    import json
+    
+    # Derivamos o caminho do gateway onde os JSONLs são armazenados
+    cwd = Path(__file__).parent.parent / "gateway" / ".data"
+    sessions_file = cwd / "sessions.jsonl"
+    if not sessions_file.exists():
+        return []
+
+    lines = sessions_file.read_text(encoding="utf-8").splitlines()
+    matches = []
+    
+    for ln in lines:
+        if not ln.strip():
+            continue
+        try:
+            row = json.loads(ln)
+            if str(row.get("session_id")) == session_id:
+                matches.append(row)
+        except json.JSONDecodeError:
+            pass
+
+    return matches[-limit:]
+
+
 def memory_hits_to_json(hits: list[MemoryHit]) -> str:
     return json.dumps([
         {"path": h.path, "score": h.score, "snippet": h.snippet} for h in hits

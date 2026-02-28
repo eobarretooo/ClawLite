@@ -4,7 +4,7 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from clawlite.gateway.chat import _handle_chat_message
+from clawlite.gateway.chat import _handle_chat_message, _stream_chat_message
 from clawlite.gateway.state import LOG_RING, chat_connections, connections, log_connections
 from clawlite.gateway.utils import _filter_logs, _iso_now, _token
 
@@ -32,19 +32,26 @@ async def ws_endpoint(websocket: WebSocket):
                 session_id = str(msg.get("session_id") or "default")
                 text = str(msg.get("text") or "").strip()
                 try:
-                    result = await _handle_chat_message(session_id=session_id, text=text)
+                    async for chunk_payload in _stream_chat_message(session_id=session_id, text=text):
+                        if chunk_payload["type"] == "meta":
+                            await websocket.send_json({"type": "chat_meta", "meta": chunk_payload["data"]})
+                        elif chunk_payload["type"] == "chunk":
+                            await websocket.send_json({"type": "chat_chunk", "chunk": chunk_payload["data"]})
+                        elif chunk_payload["type"] == "error":
+                            await websocket.send_json({"type": "error", "detail": chunk_payload["data"]})
+                        elif chunk_payload["type"] == "done":
+                            await websocket.send_json(
+                                {
+                                    "type": "chat",
+                                    "message": chunk_payload["assistant_message"],
+                                    "meta": chunk_payload["meta"],
+                                    "telemetry": chunk_payload["telemetry"],
+                                }
+                            )
                 except Exception as exc:
                     detail = exc.detail if hasattr(exc, "detail") else str(exc)
                     await websocket.send_json({"type": "error", "detail": detail})
                     continue
-                await websocket.send_json(
-                    {
-                        "type": "chat",
-                        "message": result["assistant_message"],
-                        "meta": result["meta"],
-                        "telemetry": result["telemetry"],
-                    }
-                )
             else:
                 await websocket.send_json({"type": "echo", "payload": msg})
     except WebSocketDisconnect:
@@ -72,19 +79,26 @@ async def ws_chat(websocket: WebSocket):
             session_id = str(msg.get("session_id") or "default")
             text = str(msg.get("text") or "").strip()
             try:
-                result = await _handle_chat_message(session_id=session_id, text=text)
+                async for chunk_payload in _stream_chat_message(session_id=session_id, text=text):
+                    if chunk_payload["type"] == "meta":
+                        await websocket.send_json({"type": "chat_meta", "meta": chunk_payload["data"]})
+                    elif chunk_payload["type"] == "chunk":
+                        await websocket.send_json({"type": "chat_chunk", "chunk": chunk_payload["data"]})
+                    elif chunk_payload["type"] == "error":
+                        await websocket.send_json({"type": "error", "detail": chunk_payload["data"]})
+                    elif chunk_payload["type"] == "done":
+                        await websocket.send_json(
+                            {
+                                "type": "chat",
+                                "message": chunk_payload["assistant_message"],
+                                "meta": chunk_payload["meta"],
+                                "telemetry": chunk_payload["telemetry"],
+                            }
+                        )
             except Exception as exc:
                 detail = exc.detail if hasattr(exc, "detail") else str(exc)
                 await websocket.send_json({"type": "error", "detail": detail})
                 continue
-            await websocket.send_json(
-                {
-                    "type": "chat",
-                    "message": result["assistant_message"],
-                    "meta": result["meta"],
-                    "telemetry": result["telemetry"],
-                }
-            )
     except WebSocketDisconnect:
         pass
     finally:

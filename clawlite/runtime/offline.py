@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import httpx
 
@@ -242,6 +242,17 @@ def resolve_ollama_fallback(cfg: dict[str, Any]) -> str:
     return f"ollama/{model_name}"
 
 
+def resolve_online_fallbacks(cfg: dict[str, Any], excluded_model: str) -> list[str]:
+    fallback_models = cfg.get("model_fallback", [])
+    result = []
+    if isinstance(fallback_models, list):
+        for item in fallback_models:
+            value = str(item).strip()
+            if value and not is_ollama_model(value) and value != excluded_model:
+                result.append(value)
+    return result
+
+
 def _offline_enabled(cfg: dict[str, Any]) -> bool:
     return bool(cfg.get("offline_mode", {}).get("enabled", True))
 
@@ -276,6 +287,22 @@ def _run_ollama_fallback(
     return output, meta
 
 
+def _run_ollama_fallback_stream(
+    prompt: str,
+    cfg: dict[str, Any],
+    reason: str,
+    ollama_executor: Callable[[str, str], Iterator[str]],
+) -> tuple[Iterator[str], dict[str, str]]:
+    fallback = resolve_ollama_fallback(cfg)
+    fallback_name = extract_ollama_model(fallback)
+    meta = {
+        "mode": "offline-fallback",
+        "reason": reason,
+        "model": f"ollama/{fallback_name}",
+    }
+    return ollama_executor(prompt, fallback_name), meta
+
+
 def run_with_offline_fallback(
     prompt: str,
     cfg: dict[str, Any],
@@ -304,8 +331,63 @@ def run_with_offline_fallback(
     try:
         return online(prompt, model, token), {"mode": "online", "model": model, "reason": "provider-ok"}
     except Exception as exc:
+        # Try online fallbacks first
+        online_fallbacks = resolve_online_fallbacks(cfg, model)
+        for fb_model in online_fallbacks:
+            fb_provider = provider_from_model(fb_model)
+            fb_token = _provider_token(cfg, fb_provider)
+            if fb_token:
+                try:
+                    return online(prompt, fb_model, fb_token), {"mode": "online", "model": fb_model, "reason": "online-fallback"}
+                except Exception:
+                    continue
+
         if _offline_auto_fallback(cfg):
             out, meta = _run_ollama_fallback(prompt, cfg, "provider_failure", ollama)
             meta["error"] = str(exc)
             return out, meta
+        raise
+
+def run_with_offline_fallback_stream(
+    prompt: str,
+    cfg: dict[str, Any],
+) -> tuple[Iterator[str], dict[str, str]]:
+    from clawlite.runtime.streaming import run_remote_provider_stream, run_ollama_stream
+    
+    online = run_remote_provider_stream
+    ollama = run_ollama_stream
+    
+    model = str(cfg.get("model", "openai/gpt-4o-mini"))
+    provider = provider_from_model(model)
+    
+    if is_ollama_model(model):
+        chosen = extract_ollama_model(model)
+        return ollama(prompt, chosen), {"mode": "ollama", "model": f"ollama/{chosen}", "reason": "explicit"}
+        
+    token = _provider_token(cfg, provider)
+    if not _offline_enabled(cfg):
+        return online(prompt, model, token), {"mode": "online", "model": model, "reason": "offline-disabled"}
+        
+    if not check_connectivity(_connectivity_timeout(cfg)):
+        if _offline_auto_fallback(cfg):
+            return _run_ollama_fallback_stream(prompt, cfg, "connectivity", ollama)
+        raise ProviderExecutionError("sem conectividade e fallback offline desativado")
+        
+    try:
+        return online(prompt, model, token), {"mode": "online", "model": model, "reason": "provider-ok"}
+    except Exception as exc:
+        online_fallbacks = resolve_online_fallbacks(cfg, model)
+        for fb_model in online_fallbacks:
+            fb_provider = provider_from_model(fb_model)
+            fb_token = _provider_token(cfg, fb_provider)
+            if fb_token:
+                try:
+                    return online(prompt, fb_model, fb_token), {"mode": "online", "model": fb_model, "reason": "online-fallback"}
+                except Exception:
+                    continue
+
+        if _offline_auto_fallback(cfg):
+            out_stream, meta = _run_ollama_fallback_stream(prompt, cfg, "provider_failure", ollama)
+            meta["error"] = str(exc)
+            return out_stream, meta
         raise

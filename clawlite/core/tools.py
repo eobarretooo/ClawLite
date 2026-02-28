@@ -1,4 +1,5 @@
 from __future__ import annotations
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -15,5 +16,9 @@ def write_file(path: str, content: str) -> None:
 
 
 def exec_cmd(command: str, cwd: str | None = None) -> tuple[int, str, str]:
-    proc = subprocess.run(command, shell=True, cwd=cwd, text=True, capture_output=True)
-    return proc.returncode, proc.stdout, proc.stderr
+    args = shlex.split(command)
+    try:
+        proc = subprocess.run(args, cwd=cwd, text=True, capture_output=True)
+        return proc.returncode, proc.stdout, proc.stderr
+    except FileNotFoundError as e:
+        return 127, "", f"Comando não encontrado: {args[0] if args else command}"
