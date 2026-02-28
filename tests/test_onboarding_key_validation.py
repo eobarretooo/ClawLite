@@ -36,6 +36,10 @@ def test_provider_from_ollama():
     assert _provider_from_model("ollama/llama3.1:8b") == "ollama"
 
 
+def test_provider_from_google_alias():
+    assert _provider_from_model("google/gemini-2.5-flash") == "gemini"
+
+
 def test_provider_no_slash():
     assert _provider_from_model("openai") == "openai"
 
@@ -56,6 +60,12 @@ def test_get_token_from_cfg():
 
 def test_get_token_empty():
     assert _get_stored_token({}, "anthropic") == ""
+
+
+def test_get_token_from_google_env(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-google-env")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    assert _get_stored_token({}, "gemini") == "g-google-env"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +137,18 @@ def test_ollama_not_reachable():
 def test_groq_valid():
     with patch("httpx.post", return_value=_mock_response(200)):
         ok, msg = _test_api_key("groq", "gsk-valid")
+    assert ok is True
+
+
+def test_minimax_valid():
+    with patch("httpx.post", return_value=_mock_response(200)):
+        ok, _msg = _test_api_key("minimax", "mm-valid")
+    assert ok is True
+
+
+def test_litellm_token_optional():
+    with patch("httpx.post", return_value=_mock_response(200)):
+        ok, _msg = _test_api_key("litellm", "")
     assert ok is True
 
 

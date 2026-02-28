@@ -6,6 +6,7 @@ import subprocess
 from typing import Any, Callable, Iterator
 
 import httpx
+from clawlite.core.providers import get_provider_spec, normalize_provider, resolve_provider_token
 
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_CONNECTIVITY_TIMEOUT = 1.5
@@ -24,8 +25,8 @@ class OllamaExecutionError(RuntimeError):
 def provider_from_model(model: str) -> str:
     value = (model or "").strip()
     if "/" in value:
-        return value.split("/", 1)[0].lower()
-    return value.lower()
+        return normalize_provider(value.split("/", 1)[0])
+    return normalize_provider(value)
 
 
 def is_ollama_model(model: str) -> bool:
@@ -50,20 +51,14 @@ def check_connectivity(timeout_seconds: float = DEFAULT_CONNECTIVITY_TIMEOUT) ->
 
 
 def _provider_token(cfg: dict[str, Any], provider: str) -> str:
-    env_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-    env_name = env_map.get(provider, "")
-    if env_name:
-        env_value = os.getenv(env_name, "").strip()
-        if env_value:
-            return env_value
-
+    normalized = normalize_provider(provider)
     providers = cfg.get("auth", {}).get("providers", {})
-    token = providers.get(provider, {}).get("token", "")
-    return str(token).strip()
+    if not isinstance(providers, dict):
+        providers = {}
+    token = providers.get(normalized, {}).get("token", "")
+    if not token and provider != normalized:
+        token = providers.get(provider, {}).get("token", "")
+    return resolve_provider_token(normalized, str(token).strip())
 
 
 def _model_name_without_provider(model: str) -> str:
@@ -134,53 +129,35 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
     model_name = _model_name_without_provider(model)
     if not provider or not model_name:
         raise ProviderExecutionError("modelo remoto inválido; use provider/model")
+    spec = get_provider_spec(provider)
+    if not spec or spec.api_style == "local":
+        raise ProviderExecutionError(f"provedor remoto não suportado: '{provider}'")
 
-    env_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-    env_name = env_map.get(provider)
-    resolved_token = (os.getenv(env_name, "").strip() if env_name else "") or str(token or "").strip()
-    if not resolved_token:
+    resolved_token = resolve_provider_token(provider, str(token or "").strip())
+    if not resolved_token and not spec.token_optional:
         raise ProviderExecutionError(f"token ausente para provedor remoto '{provider}'")
 
     timeout = _remote_timeout_seconds()
+    url = spec.request_url
+    headers = {"Content-Type": "application/json"}
+    if resolved_token:
+        if spec.api_style == "anthropic":
+            headers["x-api-key"] = resolved_token
+        else:
+            headers["Authorization"] = f"Bearer {resolved_token}"
 
-    if provider == "openai":
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {resolved_token}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-    elif provider == "anthropic":
-        url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "x-api-key": resolved_token,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        }
+    if spec.api_style == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
         payload = {
             "model": model_name,
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": prompt}],
         }
-    elif provider == "openrouter":
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {resolved_token}",
-            "Content-Type": "application/json",
-        }
+    else:
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
         }
-    else:
-        raise ProviderExecutionError(f"provedor remoto não suportado: '{provider}'")
 
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -205,7 +182,7 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
     except ValueError as exc:
         raise ProviderExecutionError(f"resposta JSON inválida do provedor remoto '{provider}'") from exc
 
-    if provider == "anthropic":
+    if spec.api_style == "anthropic":
         return _extract_anthropic_content(data)
     return _extract_chat_content(data)
 

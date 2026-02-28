@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import threading
@@ -10,34 +9,50 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from clawlite.config.settings import load_config, save_config
+from clawlite.core.providers import get_provider_spec, normalize_provider
 
-PROVIDERS: dict[str, dict[str, str]] = {
-    "openai": {
-        "display": "OpenAI",
-        "auth_url": "https://platform.openai.com/api-keys",
-        "note": "OpenAI não expõe OAuth público padrão para API. Abra a página e gere/paste token.",
-    },
-    "anthropic": {
-        "display": "Anthropic",
-        "auth_url": "https://console.anthropic.com/settings/keys",
-        "note": "Anthropic não expõe OAuth público padrão para API. Abra a página e gere/paste token.",
-    },
-    "gemini": {
-        "display": "Google Gemini",
-        "auth_url": "https://aistudio.google.com/app/apikey",
-        "note": "Gemini API usa chave; abra a página e gere/paste token.",
-    },
-    "openrouter": {
-        "display": "OpenRouter",
-        "auth_url": "https://openrouter.ai/keys",
-        "note": "OpenRouter usa chave; abra a página e gere/paste token.",
-    },
-    "groq": {
-        "display": "Groq",
-        "auth_url": "https://console.groq.com/keys",
-        "note": "Groq usa chave; abra a página e gere/paste token.",
-    },
-}
+_AUTH_PROVIDER_KEYS = (
+    "openai",
+    "anthropic",
+    "gemini",
+    "openrouter",
+    "groq",
+    "moonshot",
+    "mistral",
+    "xai",
+    "together",
+    "huggingface",
+    "nvidia",
+    "qianfan",
+    "venice",
+    "minimax",
+    "xiaomi",
+    "zai",
+    "litellm",
+    "vercel-ai-gateway",
+    "kilocode",
+    "vllm",
+)
+
+
+def _build_providers() -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for key in _AUTH_PROVIDER_KEYS:
+        spec = get_provider_spec(key)
+        if not spec:
+            continue
+        out[key] = {
+            "display": spec.display,
+            "auth_url": spec.auth_url,
+            "note": spec.note,
+            "env_vars": spec.env_vars,
+            # API-key based providers: callback usually does not exist.
+            "supports_callback": False,
+        }
+    return out
+
+
+PROVIDERS: dict[str, dict[str, Any]] = _build_providers()
 
 
 def _cfg_auth(cfg: dict) -> dict:
@@ -56,7 +71,7 @@ def auth_status() -> list[dict[str, Any]]:
 
 
 def auth_logout(provider: str) -> bool:
-    p = provider.lower()
+    p = normalize_provider(provider)
     cfg = _cfg_auth(load_config())
     if p in cfg["auth"]["providers"]:
         cfg["auth"]["providers"].pop(p, None)
@@ -104,20 +119,26 @@ def _try_local_callback(timeout_seconds: int = 120) -> str:
 
 
 def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple[bool, str]:
-    p = provider.lower()
+    p = normalize_provider(provider)
     if p not in PROVIDERS:
         return False, f"Provider não suportado: {provider}"
 
     meta = PROVIDERS[p]
     cfg = _cfg_auth(load_config())
 
-    state = secrets.token_urlsafe(16)
-    callback = "http://127.0.0.1:8765/callback"
-    auth_url = f"{meta['auth_url']}?state={state}&redirect_uri={urllib.parse.quote(callback)}"
+    supports_callback = bool(meta.get("supports_callback", False))
+    auth_url = str(meta["auth_url"])
+    if supports_callback:
+        state = secrets.token_urlsafe(16)
+        callback = "http://127.0.0.1:8765/callback"
+        auth_url = f"{auth_url}?state={state}&redirect_uri={urllib.parse.quote(callback)}"
 
     print(f"\n🔐 Iniciando login em {meta['display']}")
     print(f"URL de autorização: {auth_url}")
     print(meta["note"])
+    env_vars = meta.get("env_vars", ())
+    if isinstance(env_vars, tuple) and env_vars:
+        print(f"Env vars aceitas: {', '.join(env_vars)}")
 
     token = non_interactive_token or ""
     if not token:
@@ -125,8 +146,9 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
             webbrowser.open(auth_url)
         except Exception:
             pass
-        print("\nSe o provedor suportar callback com token/code, aguarde captura automática...\n")
-        token = _try_local_callback(timeout_seconds=25)
+        if supports_callback:
+            print("\nAguardando callback automático...\n")
+            token = _try_local_callback(timeout_seconds=25)
 
     if not token:
         token = os.getenv(f"CLAWLITE_{p.upper()}_TOKEN", "").strip()

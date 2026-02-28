@@ -18,6 +18,7 @@ from rich.syntax import Syntax
 
 from clawlite.config.settings import load_config, save_config
 from clawlite.core.model_catalog import get_model_or_default
+from clawlite.core.providers import get_provider_spec, normalize_provider, provider_env_vars
 from clawlite.runtime.daemon import DaemonError, install_systemd_user_service
 from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.session_memory import ensure_memory_layout
@@ -172,13 +173,23 @@ def _build_readiness_checks(
 
     provider = _provider_from_model(model_key) if model_key else ""
     if provider and provider not in {"ollama", "local"}:
+        spec = get_provider_spec(provider)
         token = _get_stored_token(cfg, provider)
+        token_optional = bool(spec.token_optional) if spec else False
         if token:
             checks.append(
                 {
                     "name": "Provider Auth",
                     "ok": "true",
                     "detail": f"{provider} key present ({_mask_token(token)})",
+                }
+            )
+        elif token_optional:
+            checks.append(
+                {
+                    "name": "Provider Auth",
+                    "ok": "true",
+                    "detail": f"{provider} token opcional (nao configurado)",
                 }
             )
         else:
@@ -597,95 +608,90 @@ def _save_identity_files(cfg: dict) -> None:
 # Teste de API Key ao vivo
 # ---------------------------------------------------------------------------
 
-_PROVIDER_BASES: dict[str, str] = {
-    "anthropic":  "https://api.anthropic.com",
-    "openai":     "https://api.openai.com",
-    "groq":       "https://api.groq.com/openai",
-    "openrouter": "https://openrouter.ai/api",
-}
-
-_CHAT_MODELS: dict[str, str] = {
-    "openai":     "gpt-4o-mini",
-    "groq":       "llama-3.1-8b-instant",
-    "openrouter": "openai/gpt-4o-mini",
-}
-
 
 def _provider_from_model(model: str) -> str:
-    """Extrai o nome do provedor de uma string de modelo (ex: 'anthropic/...' → 'anthropic')."""
-    return model.split("/")[0].lower().strip() if "/" in model else model.lower().strip()
+    """Extrai o nome do provedor de uma string de modelo (ex: 'anthropic/...' -> 'anthropic')."""
+    value = model.split("/", 1)[0] if "/" in model else model
+    return normalize_provider(value)
 
 
 def _get_stored_token(cfg: dict[str, Any], provider: str) -> str:
-    """Lê token do env ou do cfg."""
-    env_map = {
-        "anthropic":  "ANTHROPIC_API_KEY",
-        "openai":     "OPENAI_API_KEY",
-        "groq":       "GROQ_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-    env_val = os.getenv(env_map.get(provider, ""), "").strip()
-    if env_val:
-        return env_val
-    return str(cfg.get("auth", {}).get("providers", {}).get(provider, {}).get("token", "")).strip()
+    """Le token do env (prioridade) ou do cfg."""
+    normalized = normalize_provider(provider)
+    for env_name in provider_env_vars(normalized):
+        env_val = os.getenv(env_name, "").strip()
+        if env_val:
+            return env_val
+    providers_cfg = cfg.get("auth", {}).get("providers", {})
+    if not isinstance(providers_cfg, dict):
+        return ""
+    token = providers_cfg.get(normalized, {}).get("token", "")
+    if token:
+        return str(token).strip()
+    # backward-compat: provider salvo sem normalizacao
+    token = providers_cfg.get(provider, {}).get("token", "")
+    return str(token).strip()
 
 
 def _test_api_key(provider: str, key: str) -> tuple[bool, str]:
-    """Faz chamada mínima ao provider. Retorna (ok, mensagem)."""
+    """Faz chamada minima ao provider. Retorna (ok, mensagem)."""
     try:
         import httpx
     except ImportError:
-        return True, "(httpx ausente — validação pulada)"
+        return True, "(httpx ausente - validacao pulada)"
 
+    normalized = normalize_provider(provider)
     timeout = 10.0
+
     try:
-        if provider == "ollama":
+        if normalized == "ollama":
             r = httpx.get("http://localhost:11434/api/tags", timeout=timeout)
             if r.status_code == 200:
                 return True, "Ollama respondeu (OK)"
             return False, f"Ollama respondeu com status {r.status_code}"
 
-        if provider == "anthropic":
-            r = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 1,
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
-                timeout=timeout,
-            )
-        else:
-            base = _PROVIDER_BASES.get(provider, "https://api.openai.com")
-            model = _CHAT_MODELS.get(provider, "gpt-4o-mini")
-            r = httpx.post(
-                f"{base}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
-                json={
-                    "model": model,
-                    "max_tokens": 1,
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
-                timeout=timeout,
-            )
+        spec = get_provider_spec(normalized)
+        if not spec or spec.api_style == "local":
+            return False, f"Provider nao suportado para validacao: {normalized}"
 
+        resolved_key = str(key or "").strip()
+        if not resolved_key and not spec.token_optional:
+            return False, f"Token ausente para provider '{normalized}'"
+
+        headers = {"content-type": "application/json"}
+        if resolved_key:
+            if spec.api_style == "anthropic":
+                headers["x-api-key"] = resolved_key
+            else:
+                headers["Authorization"] = f"Bearer {resolved_key}"
+
+        if spec.api_style == "anthropic":
+            headers["anthropic-version"] = "2023-06-01"
+            payload = {
+                "model": spec.default_model or "claude-haiku-4-5-20251001",
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+        else:
+            payload = {
+                "model": spec.default_model or "gpt-4o-mini",
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+
+        r = httpx.post(spec.request_url, headers=headers, json=payload, timeout=timeout)
         if r.status_code in (200, 201):
-            return True, "Key válida ✓"
+            return True, "Key valida ✓"
         if r.status_code == 401:
-            return False, "Erro 401: key inválida ou sem permissão"
+            return False, "Erro 401: key invalida ou sem permissao"
         if r.status_code == 429:
-            return True, "Erro 429: rate limit — key válida mas sem quota agora"
+            return True, "Erro 429: rate limit - key valida mas sem quota agora"
         return False, f"Erro {r.status_code}: {r.text[:120]}"
 
     except Exception as exc:
         msg = str(exc)
         if "connect" in msg.lower() or "timeout" in msg.lower() or "network" in msg.lower():
-            return False, f"Erro de conexão — verifique internet ou endpoint ({msg[:80]})"
+            return False, f"Erro de conexao - verifique internet ou endpoint ({msg[:80]})"
         return False, f"Erro inesperado: {msg[:120]}"
 
 
@@ -710,8 +716,8 @@ def _step_test_api_key(cfg: dict[str, Any]) -> None:
             console.print(f"  [bold yellow]⚠[/] {msg}")
         return
 
-    # Provedores não mapeados: pula silenciosamente
-    if provider not in _PROVIDER_BASES:
+    spec = get_provider_spec(provider)
+    if not spec or spec.api_style == "local":
         return
 
     key = _get_stored_token(cfg, provider)

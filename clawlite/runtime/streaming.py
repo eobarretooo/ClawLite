@@ -7,6 +7,7 @@ from typing import Iterator
 
 import httpx
 
+from clawlite.core.providers import get_provider_spec, resolve_provider_token
 from clawlite.runtime.offline import (
     ProviderExecutionError,
     _model_name_without_provider,
@@ -17,7 +18,7 @@ from clawlite.runtime.offline import (
 def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[str]:
     """
     Executa a requisição no provedor remoto com stream=True e yield chunks.
-    Suporta OpenAI, Anthropic e OpenRouter via Server-Sent Events (SSE).
+    Suporta provedores OpenAI-compatible e Anthropic-compatible via SSE.
     """
     if os.getenv("CLAWLITE_SIMULATE_PROVIDER_FAILURE", "").strip() == "1":
         raise ProviderExecutionError("falha simulada de provedor")
@@ -26,56 +27,37 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
     model_name = _model_name_without_provider(model)
     if not provider or not model_name:
         raise ProviderExecutionError("modelo remoto inválido; use provider/model")
+    spec = get_provider_spec(provider)
+    if not spec or spec.api_style == "local":
+        raise ProviderExecutionError(f"provedor remoto não suportado para streaming: '{provider}'")
 
-    env_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-    env_name = env_map.get(provider)
-    resolved_token = (os.getenv(env_name, "").strip() if env_name else "") or str(token or "").strip()
-    if not resolved_token:
+    resolved_token = resolve_provider_token(provider, str(token or "").strip())
+    if not resolved_token and not spec.token_optional:
         raise ProviderExecutionError(f"token ausente para provedor remoto '{provider}'")
 
     timeout = _remote_timeout_seconds()
+    url = spec.request_url
+    headers = {"Content-Type": "application/json"}
+    if resolved_token:
+        if spec.api_style == "anthropic":
+            headers["x-api-key"] = resolved_token
+        else:
+            headers["Authorization"] = f"Bearer {resolved_token}"
 
-    if provider == "openai":
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {resolved_token}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": True,
-        }
-    elif provider == "anthropic":
-        url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "x-api-key": resolved_token,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        }
+    if spec.api_style == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
         payload = {
             "model": model_name,
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True,
         }
-    elif provider == "openrouter":
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {resolved_token}",
-            "Content-Type": "application/json",
-        }
+    else:
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True,
         }
-    else:
-        raise ProviderExecutionError(f"provedor remoto não suportado para streaming: '{provider}'")
 
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -87,7 +69,7 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
                     if not line:
                         continue
 
-                    if provider == "anthropic":
+                    if spec.api_style == "anthropic":
                         if line.startswith("data: "):
                             data_str = line[6:]
                             try:

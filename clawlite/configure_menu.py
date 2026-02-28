@@ -28,6 +28,7 @@ from rich import box
 
 from clawlite.auth import PROVIDERS, auth_login
 from clawlite.config.settings import CONFIG_DIR, load_config, save_config
+from clawlite.core.providers import normalize_provider
 from clawlite.runtime.locale import detect_language
 from clawlite.skills.registry import SKILLS, describe_skill
 
@@ -48,18 +49,21 @@ C_WHITE   = "#f9fafb"
 # Opções de modelo por provedor
 # ──────────────────────────────────────────────
 MODEL_OPTIONS: dict[str, list[str]] = {
-    "anthropic": [
-        "anthropic/claude-sonnet-4-6",
-        "anthropic/claude-opus-4-6",
-        "anthropic/claude-haiku-4-5",
-        "anthropic/claude-3-5-sonnet",
-        "anthropic/claude-3-5-haiku",
-    ],
     "openai": [
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
         "openai/gpt-4.1",
         "openai/gpt-4.1-mini",
+    ],
+    "anthropic": [
+        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-opus-4-6",
+        "anthropic/claude-haiku-4-5",
+    ],
+    "gemini": [
+        "gemini/gemini-2.5-flash",
+        "gemini/gemini-2.5-pro",
+        "gemini/gemini-2.0-flash",
     ],
     "openrouter": [
         "openrouter/auto",
@@ -67,15 +71,67 @@ MODEL_OPTIONS: dict[str, list[str]] = {
         "openrouter/openai/gpt-4o",
         "openrouter/meta-llama/llama-3.3-70b-instruct",
     ],
-    "gemini": [
-        "gemini/gemini-2.0-flash",
-        "gemini/gemini-2.0-pro",
-        "gemini/gemini-1.5-pro",
-    ],
     "groq": [
         "groq/llama-3.3-70b-versatile",
         "groq/llama-3.1-8b-instant",
         "groq/mixtral-8x7b-32768",
+    ],
+    "moonshot": [
+        "moonshot/kimi-k2.5",
+        "moonshot/kimi-k2-thinking",
+        "moonshot/kimi-k2-turbo-preview",
+    ],
+    "mistral": [
+        "mistral/mistral-large-latest",
+        "mistral/mistral-medium-latest",
+    ],
+    "xai": [
+        "xai/grok-4",
+        "xai/grok-4-fast",
+    ],
+    "together": [
+        "together/moonshotai/Kimi-K2.5",
+        "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    ],
+    "huggingface": [
+        "huggingface/deepseek-ai/DeepSeek-R1",
+        "huggingface/meta-llama/Llama-3.3-70B-Instruct",
+    ],
+    "nvidia": [
+        "nvidia/llama-3.1-nemotron-70b-instruct",
+    ],
+    "qianfan": [
+        "qianfan/deepseek-v3.2",
+    ],
+    "venice": [
+        "venice/llama-3.3-70b",
+        "venice/claude-opus-45",
+    ],
+    "minimax": [
+        "minimax/MiniMax-M2.1",
+    ],
+    "xiaomi": [
+        "xiaomi/mimo-v2-flash",
+    ],
+    "zai": [
+        "zai/glm-5",
+        "zai/glm-4.7",
+    ],
+    "litellm": [
+        "litellm/claude-opus-4-6",
+        "litellm/gpt-4o",
+    ],
+    "vercel-ai-gateway": [
+        "vercel-ai-gateway/anthropic/claude-opus-4.6",
+        "vercel-ai-gateway/openai/gpt-4o",
+    ],
+    "kilocode": [
+        "kilocode/anthropic/claude-opus-4.6",
+        "kilocode/google/gemini-2.5-pro",
+    ],
+    "vllm": [
+        "vllm/Qwen/Qwen2.5-7B-Instruct",
+        "vllm/meta-llama/Llama-3.1-8B-Instruct",
     ],
     "ollama": [
         "ollama/llama3.1:8b",
@@ -359,6 +415,9 @@ def _ensure_defaults(cfg: dict[str, Any]) -> None:
 def _section_model(cfg: dict[str, Any]) -> None:
     _section_header("Model & Provider", "🤖")
     current_model = cfg.get("model", "openai/gpt-4o-mini")
+    default_provider = normalize_provider(current_model.split("/")[0] if "/" in current_model else "openai")
+    if default_provider not in MODEL_OPTIONS:
+        default_provider = "openai"
     _show_table("Estado atual", [
         ("Modelo ativo", current_model),
         ("Fallback 1", cfg.get("model_fallback", ["—"])[0] if cfg.get("model_fallback") else "—"),
@@ -368,7 +427,7 @@ def _section_model(cfg: dict[str, Any]) -> None:
     provider = questionary.select(
         "Provedor principal:",
         choices=list(MODEL_OPTIONS.keys()),
-        default=current_model.split("/")[0] if "/" in current_model else "openai",
+        default=default_provider,
     ).ask()
     if provider is None:
         return
@@ -392,6 +451,10 @@ def _section_model(cfg: dict[str, Any]) -> None:
 
     # Login de API
     if provider in PROVIDERS:
+        meta = PROVIDERS.get(provider, {})
+        auth_url = str(meta.get("auth_url", "")).strip()
+        if auth_url:
+            console.print(f"[dim]Link para login/chave: {auth_url}[/dim]")
         if questionary.confirm(f"Configurar chave de API para {provider}?", default=False).ask():
             auth_login(provider)
 

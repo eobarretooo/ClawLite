@@ -58,6 +58,29 @@ class RemoteProviderTests(unittest.TestCase):
 
         self.assertEqual(out, "resposta-openai")
 
+    def test_provider_selection_gemini_uses_openai_compat_url(self) -> None:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [{"message": {"content": "ok-gemini"}}],
+        }
+
+        client = MagicMock()
+        client.post.return_value = response
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            out = run_remote_provider("ping", "gemini/gemini-2.5-flash", "cfg-token")
+
+        self.assertEqual(out, "ok-gemini")
+        args, kwargs = client.post.call_args
+        self.assertEqual(args[0], "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+        self.assertEqual(kwargs["json"]["model"], "gemini-2.5-flash")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer cfg-token")
+
     def test_anthropic_response_parsing(self) -> None:
         response = MagicMock()
         response.raise_for_status.return_value = None
@@ -79,6 +102,29 @@ class RemoteProviderTests(unittest.TestCase):
             out = run_remote_provider("ping", "anthropic/claude-sonnet-4-5", "cfg-token")
 
         self.assertEqual(out, "linha 1\nlinha 2")
+
+    def test_provider_selection_minimax_uses_anthropic_messages(self) -> None:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "content": [{"type": "text", "text": "ok-minimax"}],
+        }
+
+        client = MagicMock()
+        client.post.return_value = response
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            out = run_remote_provider("ping", "minimax/MiniMax-M2.1", "cfg-token")
+
+        self.assertEqual(out, "ok-minimax")
+        args, kwargs = client.post.call_args
+        self.assertEqual(args[0], "https://api.minimax.io/anthropic/messages")
+        self.assertEqual(kwargs["json"]["model"], "MiniMax-M2.1")
+        self.assertEqual(kwargs["headers"]["x-api-key"], "cfg-token")
 
     def test_timeout_error_triggers_offline_fallback(self) -> None:
         cfg = {

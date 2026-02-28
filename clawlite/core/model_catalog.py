@@ -145,6 +145,98 @@ CATALOG: dict[str, ModelEntry] = {
         cost=ModelCost(input=0.0001, output=0.0004),
         capabilities=ModelCapabilities(image_input=True),
     ),
+    "gemini/gemini-2.5-flash": ModelEntry(
+        id="gemini-2.5-flash", provider="gemini", display_name="Gemini 2.5 Flash",
+        context_window=1_000_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0001, output=0.0004),
+        capabilities=ModelCapabilities(image_input=True, json_mode=True),
+    ),
+    "groq/llama-3.3-70b-versatile": ModelEntry(
+        id="llama-3.3-70b-versatile", provider="groq", display_name="Llama 3.3 70B Versatile (Groq)",
+        context_window=131_072, max_output_tokens=8_192,
+        cost=ModelCost(input=0.00059, output=0.00079),
+    ),
+    "moonshot/kimi-k2.5": ModelEntry(
+        id="kimi-k2.5", provider="moonshot", display_name="Kimi K2.5",
+        context_window=256_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0, output=0.0),
+        capabilities=ModelCapabilities(image_input=True),
+    ),
+    "mistral/mistral-large-latest": ModelEntry(
+        id="mistral-large-latest", provider="mistral", display_name="Mistral Large Latest",
+        context_window=262_144, max_output_tokens=8_192,
+        cost=ModelCost(input=0.004, output=0.012),
+    ),
+    "xai/grok-4": ModelEntry(
+        id="grok-4", provider="xai", display_name="Grok 4",
+        context_window=131_072, max_output_tokens=8_192,
+        cost=ModelCost(input=0.003, output=0.015),
+        capabilities=ModelCapabilities(reasoning=True, json_mode=True),
+    ),
+    "together/moonshotai/Kimi-K2.5": ModelEntry(
+        id="moonshotai/Kimi-K2.5", provider="together", display_name="Together Kimi K2.5",
+        context_window=262_144, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0008, output=0.0024),
+    ),
+    "huggingface/deepseek-ai/DeepSeek-R1": ModelEntry(
+        id="deepseek-ai/DeepSeek-R1", provider="huggingface", display_name="DeepSeek R1 (HF Router)",
+        context_window=128_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "nvidia/llama-3.1-nemotron-70b-instruct": ModelEntry(
+        id="llama-3.1-nemotron-70b-instruct", provider="nvidia", display_name="Llama 3.1 Nemotron 70B",
+        context_window=131_072, max_output_tokens=4_096,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "qianfan/deepseek-v3.2": ModelEntry(
+        id="deepseek-v3.2", provider="qianfan", display_name="DeepSeek V3.2 (Qianfan)",
+        context_window=98_304, max_output_tokens=32_768,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "venice/llama-3.3-70b": ModelEntry(
+        id="llama-3.3-70b", provider="venice", display_name="Venice Llama 3.3 70B",
+        context_window=128_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "minimax/MiniMax-M2.1": ModelEntry(
+        id="MiniMax-M2.1", provider="minimax", display_name="MiniMax M2.1",
+        context_window=200_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0003, output=0.0012),
+        capabilities=ModelCapabilities(reasoning=True),
+        api_format="anthropic",
+    ),
+    "xiaomi/mimo-v2-flash": ModelEntry(
+        id="mimo-v2-flash", provider="xiaomi", display_name="Xiaomi MiMo V2 Flash",
+        context_window=262_144, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0, output=0.0),
+        api_format="anthropic",
+    ),
+    "zai/glm-5": ModelEntry(
+        id="glm-5", provider="zai", display_name="GLM 5",
+        context_window=128_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0, output=0.0),
+        capabilities=ModelCapabilities(reasoning=True),
+    ),
+    "litellm/claude-opus-4-6": ModelEntry(
+        id="claude-opus-4-6", provider="litellm", display_name="Claude Opus 4.6 via LiteLLM",
+        context_window=200_000, max_output_tokens=16_384,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "vercel-ai-gateway/anthropic/claude-opus-4.6": ModelEntry(
+        id="anthropic/claude-opus-4.6", provider="vercel-ai-gateway", display_name="Claude Opus 4.6 via Vercel AI Gateway",
+        context_window=200_000, max_output_tokens=16_384,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "kilocode/anthropic/claude-opus-4.6": ModelEntry(
+        id="anthropic/claude-opus-4.6", provider="kilocode", display_name="Claude Opus 4.6 via Kilo Gateway",
+        context_window=200_000, max_output_tokens=16_384,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
+    "vllm/Qwen/Qwen2.5-7B-Instruct": ModelEntry(
+        id="Qwen/Qwen2.5-7B-Instruct", provider="vllm", display_name="Qwen2.5 7B via vLLM",
+        context_window=128_000, max_output_tokens=8_192,
+        cost=ModelCost(input=0.0, output=0.0),
+    ),
 }
 
 
