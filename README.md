@@ -49,7 +49,7 @@
 
 > ClawLite é um assistente de IA focado em execução real — não só chat bonito.
 
-CLI produtiva, gateway WebSocket, memória persistente entre sessões, 9 skills operacionais no runtime atual, multi-agente em múltiplos canais e suporte a MCP — tudo rodando nativamente no Linux e Termux, sem proot, sem Docker, sem Node.js.
+CLI produtiva, gateway WebSocket, memória persistente entre sessões, 38 skills operacionais no runtime atual, multi-agente em múltiplos canais e suporte a MCP — tudo rodando nativamente no Linux e Termux, sem proot e sem Node.js no runtime principal.
 
 ---
 
@@ -127,8 +127,8 @@ clawlite start --host 0.0.0.0 --port 8787
 | Feature | Descrição |
 |---|---|
 | ⚙️ Onboarding interativo | Wizard estilo OpenClaw — Model, Channels, Skills, Hooks, Gateway, Security |
-| 🌐 Gateway + Dashboard | WebSocket com chat ao vivo, logs filtráveis e telemetria em tempo real |
-| 🧩 9 Skills runtime | browser, coding-agent, docker, find-skills, firebase, github, healthcheck, weather, web-search |
+| 🌐 Gateway + Dashboard | WebSocket com chat ao vivo, logs filtráveis e telemetria em tempo real (HTML + SPA React/Tailwind) |
+| 🧩 38 Skills runtime | Catálogo ampliado: integração web, canais, automação, cloud e ferramentas de produtividade |
 | 🧠 Memória persistente | AGENTS/SOUL/USER/IDENTITY/MEMORY + diário + busca semântica |
 | 📊 Learning system | Aprende com uso: métricas de sucesso, retry e preferências do usuário |
 | 🔋 Runtime resiliente | Fallback offline com Ollama, cron por conversa, modo bateria |
@@ -144,11 +144,23 @@ clawlite start --host 0.0.0.0 --port 8787
 - ✅ Bootstrap cycle completo com self-delete
 - ✅ Heartbeat loop automático a cada 30min
 - ✅ Onboarding com validação de API key ao vivo
-- ✅ Dashboard completo — status, token, sessions, heartbeat, skills, workspace editor
-- ✅ 9 skills funcionando (browser, coding-agent, docker, find-skills, firebase, github, healthcheck, weather, web-search)
-- ✅ 138+ testes passando
+- ✅ Dashboard completo — status, token, sessions, heartbeat, skills, workspace editor + SPA React/Tailwind
+- ✅ 38 skills funcionando (incluindo browser, coding-agent, docker, find-skills, firebase, github, healthcheck, weather, web-search)
+- ✅ 140+ testes passando
 - ✅ Compatível com Termux + Linux
 - 🔜 Futuro: multi-OS (macOS, Windows, iOS)
+
+---
+
+## 🆕 Atualizações recentes (main)
+
+- ✅ Refactor do gateway em módulos menores + skills core em Python
+- ✅ Canais nativos reais: Telegram, Discord, Slack e webhook WhatsApp
+- ✅ Runtime de agente com streaming, tool-calling e failover robusto de modelo
+- ✅ Dashboard SPA React/Tailwind com telemetria e interface de gerenciamento de skills
+- ✅ Plugin SDK inicial para expansão modular
+- ✅ Onboarding com readiness assessment, defaults seguros e relatório final
+- ✅ Doctor mais resiliente: dependências de voz opcionais não bloqueiam startup
 
 ---
 
@@ -232,7 +244,7 @@ clawlite mcp remove meu-server
 | Offline com Ollama | ✅ | ❌ | ❌ |
 | Dashboard web | ✅ | ✅ | ❌ |
 | MCP suportado | ✅ | ❌ | ❌ |
-| Skills marketplace | ✅ 9 (runtime atual) | ✅ 5700+ | ⚠️ ~10 |
+| Skills marketplace | ✅ 38 (runtime atual) | ✅ 5700+ | ⚠️ ~10 |
 
 ---
 
