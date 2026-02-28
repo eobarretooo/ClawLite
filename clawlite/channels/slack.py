@@ -57,6 +57,30 @@ class SlackChannel(BaseChannel):
             f"Aprove com: clawlite pairing approve slack {req['code']}"
         )
 
+    async def _handle_incoming_event(self, event: dict[str, Any], say: Any) -> None:
+        # Ignora mensagens de bots e eventos sem usuário/canal.
+        if event.get("bot_id") or event.get("subtype"):
+            return
+
+        text = str(event.get("text", "")).strip()
+        channel_id = str(event.get("channel", "")).strip()
+        user_id = str(event.get("user", "")).strip()
+
+        if not text or not channel_id:
+            return
+
+        if self.allowed_channels and channel_id not in self.allowed_channels:
+            return
+
+        if user_id and not self._is_user_allowed(user_id):
+            if self.pairing_enabled:
+                await say(text=self._pairing_text(user_id), channel=channel_id)
+            return
+
+        session_id = f"sl_{channel_id}"
+        if self._on_message_callback:
+            asyncio.create_task(self._process_and_reply(session_id, text, say, channel_id))
+
     async def start(self) -> None:
         if not HAS_SLACK:
             logger.error("slack-bolt não instalado. O canal Slack não iniciará.")
@@ -72,32 +96,12 @@ class SlackChannel(BaseChannel):
         self._app = AsyncApp(token=self.token)
 
         @self._app.event("message")
-        async def handle_message_events(body: dict[str, Any], say: Any, logger_obj: logging.Logger) -> None:
-            event = body.get("event", {})
-            # Ignora mensagens de bots
-            if event.get("bot_id") or event.get("subtype"):
-                return
+        async def handle_message_events(body: dict[str, Any], say: Any, logger: logging.Logger) -> None:
+            await self._handle_incoming_event(body.get("event", {}), say)
 
-            text = event.get("text", "").strip()
-            channel_id = event.get("channel", "")
-            user_id = str(event.get("user", "")).strip()
-            
-            if self.allowed_channels and channel_id not in self.allowed_channels:
-                return
-
-            if user_id and not self._is_user_allowed(user_id):
-                if self.pairing_enabled:
-                    await say(text=self._pairing_text(user_id), channel=channel_id)
-                return
-                
-            if not text:
-                return
-
-            session_id = f"sl_{channel_id}"
-            
-            if self._on_message_callback:
-                # O SocketModeHandler gerencia concurrency internamente de forma asyncio safe
-                asyncio.create_task(self._process_and_reply(session_id, text, say, channel_id))
+        @self._app.event("app_mention")
+        async def handle_app_mention_events(body: dict[str, Any], say: Any, logger: logging.Logger) -> None:
+            await self._handle_incoming_event(body.get("event", {}), say)
 
         self._handler = AsyncSocketModeHandler(self._app, self.app_token)
         self._app_task = asyncio.create_task(self._handler.start_async())
