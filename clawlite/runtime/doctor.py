@@ -49,7 +49,7 @@ def run_doctor() -> str:
     except Exception:
         gateway_deps = "optional-missing"
         warnings.append(
-            "Dependencias do gateway ausentes (fastapi/uvicorn). CLI funciona; para gateway rode: pip install fastapi 'uvicorn[standard]'"
+            "Dependencias do gateway ausentes (fastapi/uvicorn). CLI funciona; para gateway rode: pip install fastapi uvicorn"
         )
     lines.append(f"gateway.deps: {gateway_deps}")
 
@@ -65,7 +65,7 @@ def run_doctor() -> str:
             websocket_stack = "ok:wsproto"
         except Exception:
             warnings.append(
-                "Suporte WebSocket ausente. Instale: pip install 'uvicorn[standard]' ou pip install websockets wsproto"
+                "Suporte WebSocket ausente. Instale: pip install websockets wsproto"
             )
     lines.append(f"gateway.websocket_stack: {websocket_stack}")
 

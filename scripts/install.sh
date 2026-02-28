@@ -132,7 +132,7 @@ def bootstrap_workspace():
 def install_deps():
     base_requirements = [
         "fastapi>=0.112",
-        "uvicorn[standard]>=0.30",
+        "uvicorn>=0.30",
         "websockets>=12.0",
         "wsproto>=1.2",
         "questionary>=2.0.1",
@@ -148,6 +148,40 @@ def install_deps():
         "edge-tts>=6.1.12",
         "groq>=0.11.0",
     ]
+    termux_requirements = [
+        "fastapi<0.100",
+        "pydantic<2",
+        "starlette<0.28",
+        "uvicorn>=0.30",
+        "websockets>=12.0",
+        "wsproto>=1.2",
+        "questionary>=2.0.1",
+        "rich>=13.7.1",
+        "httpx>=0.27",
+        "beautifulsoup4>=4.12.0",
+    ]
+    termux_optional = [
+        "duckduckgo-search>=6.0.0",
+        "python-telegram-bot>=21.0",
+        "discord.py>=2.3.0",
+        "slack-bolt>=1.22.0",
+        "textual>=0.73.0",
+        "playwright>=1.46.0",
+        "edge-tts>=6.1.12",
+        "groq>=0.11.0",
+    ]
+    compat_requirements = [
+        "fastapi<0.100",
+        "pydantic<2",
+        "starlette<0.28",
+        "uvicorn>=0.30",
+        "websockets>=12.0",
+        "wsproto>=1.2",
+        "questionary>=2.0.1",
+        "rich>=13.7.1",
+        "httpx>=0.27",
+        "beautifulsoup4>=4.12.0",
+    ]
 
     req_file = Path(ROOT_DIR) / "requirements.txt" if ROOT_DIR else None
     pip_target = ["install", "--upgrade"]
@@ -161,9 +195,22 @@ def install_deps():
         run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install deps")
         env = os.environ.copy()
         env["ANDROID_API_LEVEL"] = env.get("ANDROID_API_LEVEL", "24")
-        run(PIP + pip_target, "pip requirements", env=env)
+        run(PIP + ["install", "--upgrade", *termux_requirements], "pip requirements (termux-compat)", env=env)
+        for dep in termux_optional:
+            try:
+                run(PIP + ["install", "--upgrade", dep], f"pip optional ({dep})", env=env)
+            except Exception:
+                # Opcional em Termux/Android: não bloqueia instalação principal.
+                pass
     else:
-        run(PIP + pip_target, "pip requirements")
+        try:
+            run(PIP + pip_target, "pip requirements")
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(x in msg for x in ("pydantic-core", "maturin", "-llog", "-lunwind", "aarch64-linux-android")):
+                run(PIP + ["install", "--upgrade", *compat_requirements], "pip requirements (compat)")
+            else:
+                raise
 
 
 def install_package():
@@ -211,18 +258,32 @@ print("ok")
 
 
 def repair_gateway_runtime():
-    run(
-        PIP
-        + [
-            "install",
-            "--upgrade",
-            "fastapi>=0.112",
-            "uvicorn[standard]>=0.30",
-            "websockets>=12.0",
-            "wsproto>=1.2",
-        ],
-        "repair gateway runtime",
-    )
+    preferred = [
+        "install",
+        "--upgrade",
+        "fastapi>=0.112",
+        "uvicorn>=0.30",
+        "websockets>=12.0",
+        "wsproto>=1.2",
+    ]
+    compat = [
+        "install",
+        "--upgrade",
+        "fastapi<0.100",
+        "pydantic<2",
+        "starlette<0.28",
+        "uvicorn>=0.30",
+        "websockets>=12.0",
+        "wsproto>=1.2",
+    ]
+    try:
+        run(PIP + preferred, "repair gateway runtime")
+    except Exception as exc:
+        msg = str(exc).lower()
+        if any(x in msg for x in ("pydantic-core", "maturin", "-llog", "-lunwind", "aarch64-linux-android")):
+            run(PIP + compat, "repair gateway runtime (compat)")
+            return
+        raise
 
 
 def ensure_gateway_runtime():
@@ -338,7 +399,7 @@ if __name__ == "__main__":
             msg = (
                 "Gateway runtime nao esta pronto (fastapi/uvicorn/websockets). "
                 "Execute: ~/.clawlite/venv/bin/python -m pip install --upgrade "
-                "fastapi 'uvicorn[standard]' websockets wsproto\n\n"
+                "fastapi uvicorn websockets wsproto\n\n"
                 f"Detalhes tecnicos: {str(e)}"
             )
         if USE_RICH:

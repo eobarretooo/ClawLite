@@ -163,8 +163,8 @@ def _run_gateway_cli(host: str | None, port: int | None) -> None:
         if missing in {"fastapi", "uvicorn"}:
             _fail(
                 "Dependências do gateway ausentes (fastapi/uvicorn). "
-                "No Termux: pkg install rust clang && ~/.clawlite/venv/bin/pip install fastapi 'uvicorn[standard]'; "
-                "no Linux: pip install fastapi 'uvicorn[standard]'."
+                "No Termux: ~/.clawlite/venv/bin/python -m pip install --upgrade fastapi uvicorn websockets wsproto; "
+                "no Linux: pip install fastapi uvicorn websockets wsproto."
             )
         _fail(f"Falha ao carregar gateway: {_exc_message(exc)}")
     except Exception as exc:

@@ -393,7 +393,7 @@ def run_self_update(*, channel: str | None = None) -> tuple[bool, str]:
         if not ok:
             return False, f"Falha ao atualizar repositorio local: {err}"
 
-        ok, err = _run([python_bin, "-m", "pip", "install", "--upgrade", "-e", str(repo_root)])
+        ok, err = _run([python_bin, "-m", "pip", "install", "--upgrade", "--no-deps", "-e", str(repo_root)])
         if not ok:
             return False, f"Repositorio atualizado, mas falhou no pip install -e: {err}"
 
@@ -420,7 +420,7 @@ def run_self_update(*, channel: str | None = None) -> tuple[bool, str]:
     elif target and target.ref == "main":
         install_spec = f"git+{REPO_URL}@main"
 
-    ok, err = _run([python_bin, "-m", "pip", "install", "--upgrade", install_spec])
+    ok, err = _run([python_bin, "-m", "pip", "install", "--upgrade", "--no-deps", install_spec])
     if not ok:
         return False, f"Falha no self-update via pip/git: {err}"
 

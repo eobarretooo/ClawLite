@@ -1,5 +1,5 @@
 fastapi>=0.112
-uvicorn[standard]>=0.30
+uvicorn>=0.30
 websockets>=12.0
 wsproto>=1.2
 questionary>=2.0.1
