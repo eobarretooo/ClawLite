@@ -9,8 +9,19 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional, Generator, AsyncGenerator
-import edge_tts
-from groq import Groq
+try:
+    import edge_tts
+    _EDGE_TTS_AVAILABLE = True
+except Exception:
+    edge_tts = None  # type: ignore[assignment]
+    _EDGE_TTS_AVAILABLE = False
+
+try:
+    from groq import Groq
+    _GROQ_AVAILABLE = True
+except Exception:
+    Groq = Any  # type: ignore[assignment]
+    _GROQ_AVAILABLE = False
 try:
     import pygame
     _PYGAME_AVAILABLE = True
@@ -31,6 +42,8 @@ class VoicePipeline:
             pygame.mixer.init()
 
     def get_groq_client(self) -> Groq:
+        if not _GROQ_AVAILABLE:
+            raise VoiceError("Pacote opcional 'groq' não instalado para STT rápido.")
         if not self._groq_client:
             api_key = os.environ.get("GROQ_API_KEY")
             if not api_key:
@@ -41,7 +54,10 @@ class VoicePipeline:
     async def speak(self, text: str, voice: str = DEFAULT_VOICE) -> None:
         if not text.strip() or not _PYGAME_AVAILABLE:
             return
-            
+        if not _EDGE_TTS_AVAILABLE:
+            logger.warning("edge_tts não instalado; speak() ignorado.")
+            return
+
         communicate = edge_tts.Communicate(text, voice)
         fd, temp_file = tempfile.mkstemp(prefix="claw-tts-", suffix=".mp3")
         os.close(fd)
@@ -250,6 +266,9 @@ def _tts_openai(text: str, voice: str = "alloy", model: str = "gpt-4o-mini-tts")
 import asyncio
 def _tts_local(text: str) -> str:
     # Substituindo espeak rudimentar pelo Edge-TTS local de alta qualidade
+    if not _EDGE_TTS_AVAILABLE:
+        raise VoiceError("Pacote opcional 'edge_tts' não instalado para TTS local.")
+
     fd, mp3_path = tempfile.mkstemp(prefix="clawlite-tts-", suffix=".mp3")
     os.close(fd)
     
