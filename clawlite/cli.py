@@ -5,6 +5,7 @@ import sys
 import time
 
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
+from clawlite.config.settings import load_config
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
 from clawlite.runtime.session_memory import (
@@ -86,7 +87,39 @@ def _exc_message(exc: Exception) -> str:
     return msg or exc.__class__.__name__
 
 
+def _mask_token(token: str) -> str:
+    if not token:
+        return "(não configurado)"
+    if len(token) <= 10:
+        return "*" * len(token)
+    return f"{token[:6]}...{token[-3:]}"
+
+
+def _print_gateway_boot_banner(host: str, port: int, token: str) -> None:
+    base = f"http://{host}:{port}"
+    dash = f"{base}/#token={token}" if token else base
+    print("╭─────────────────────────────────────────────────╮")
+    print("│ 🦊 ClawLite Gateway                             │")
+    print("│                                                 │")
+    print(f"│ URL: {base:<43}│")
+    print(f"│ Token: {_mask_token(token):<41}│")
+    print(f"│ Dashboard: {dash[:34]:<34} │")
+    print("╰─────────────────────────────────────────────────╯")
+
+
 def _run_gateway_cli(host: str | None, port: int | None) -> None:
+    cfg = load_config()
+    gcfg = (cfg.get("gateway") or {}) if isinstance(cfg, dict) else {}
+    effective_host = host or str(gcfg.get("host") or "127.0.0.1")
+    raw_port = port if port is not None else gcfg.get("port", 8787)
+    try:
+        effective_port = int(raw_port)
+    except Exception:
+        effective_port = 8787
+    token = str(gcfg.get("token") or "")
+    show_host = "127.0.0.1" if effective_host in {"0.0.0.0", "::"} else effective_host
+    _print_gateway_boot_banner(show_host, effective_port, token)
+
     try:
         from clawlite.gateway.server import run_gateway
     except ModuleNotFoundError as exc:
