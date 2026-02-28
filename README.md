@@ -5,8 +5,8 @@
 <h1 align="center">ClawLite</h1>
 
 <p align="center">
-  Assistente de IA open source para Linux e Termux, com gateway WebSocket,
-  multi-canal, memória persistente, marketplace de skills e suporte a MCP.
+  Assistente de IA pessoal, open source e local-first para Linux e Termux.
+  Gateway WebSocket, multicanal, memória persistente, skills e MCP.
 </p>
 
 <p align="center">
@@ -23,38 +23,16 @@
   <a href="https://github.com/eobarretooo/ClawLite/discussions">Discussões</a>
 </p>
 
-## Visão Geral
+## ClawLite como assistente pessoal
 
-O ClawLite foi projetado para execução prática, não apenas chat. O projeto combina:
+O ClawLite foi desenhado para rodar como seu assistente pessoal, no seu ambiente, com controle explícito sobre canais, ferramentas e memória.
 
-- CLI operacional para uso diário.
-- Gateway FastAPI + WebSocket com dashboard web.
-- Runtime com fallback online/offline (incluindo Ollama).
-- Integrações de canal em Python (Telegram, Discord, Slack e WhatsApp Cloud API).
-- Memória persistente e learning loop.
-- Marketplace de skills com validação e rollback.
-- MCP client/server para integração com ferramentas externas.
+Princípios:
 
-## Status Atual
-
-- `159` testes passando (`pytest -q`).
-- Streaming de resposta em WebSocket.
-- Multiagente com persistência SQLite.
-- Pairing por código (aprovação/rejeição) para novos remetentes.
-- Operação com `install-daemon`, `backup` e `restore` via CLI.
-
-## Requisitos
-
-- Python `3.10+`
-- Linux (Ubuntu/Debian/Arch etc.) ou Termux no Android
-- `curl` e `git`
-
-Para Termux (recomendado via F-Droid):
-
-```bash
-pkg update && pkg upgrade
-pkg install python curl git
-```
+- Local-first: estado e operação no seu dispositivo por padrão.
+- Um operador confiável: o setup padrão assume uso pessoal, não multi-tenant.
+- Segurança pragmática: token no gateway, pareamento de remetentes e políticas configuráveis.
+- Operação contínua: daemon, backup/restore e checks de saúde.
 
 ## Instalação
 
@@ -62,154 +40,104 @@ pkg install python curl git
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-## Primeiros Passos
+Requisitos mínimos:
+
+- Python `3.10+`
+- Linux ou Termux
+- `git` e `curl`
+
+## Onboarding (fluxo estilo OpenClaw, adaptado ao ClawLite)
+
+Comando:
 
 ```bash
-# 1) Diagnóstico do ambiente
-clawlite doctor
-
-# 2) Setup guiado (recomendado)
 clawlite onboarding
 ```
 
-## Onboarding Wizard (QuickStart vs Avançado)
+Modos:
 
-O `clawlite onboarding` agora segue um fluxo próximo ao OpenClaw:
+- QuickStart: defaults seguros para subir rápido em ambiente local.
+- Avançado: fluxo completo com revisão antes de aplicar.
 
-- **QuickStart (recomendado)**: aplica defaults seguros para rodar rápido em ambiente local.
-- **Avançado**: expõe todas as etapas com revisão antes de salvar.
+Etapas do wizard:
 
-Etapas principais cobertas no wizard:
+1. Model/Auth
+2. Workspace
+3. Gateway
+4. Canais
+5. Daemon
+6. Health check
+7. Skills
+8. Review + Apply
 
-1. **Model/Auth** (provedor e validação de API key)
-2. **Workspace** (inicialização dos arquivos de memória)
-3. **Gateway** (host/porta/token)
-4. **Canais** (Telegram/Discord/Slack/WhatsApp/Teams)
-5. **Daemon** (planejamento de `systemd --user`)
-6. **Health check** (preflight de doctor + porta + token)
-7. **Skills** (perfil inicial e seleção)
-8. **Review + Apply** (prévia com segredos mascarados antes de persistir)
+Referências:
 
-Após o onboarding:
+- [Onboarding Overview](docs/start/onboarding-overview.md)
+- [Onboarding Wizard (CLI)](docs/start/wizard.md)
+
+## Primeiros comandos
 
 ```bash
-# Ajustes avançados
-clawlite configure
-
-# Subir gateway local
-clawlite start --host 0.0.0.0 --port 8787
-
-# Dashboard
-# http://127.0.0.1:8787
+clawlite doctor
+clawlite onboarding
+clawlite start --host 127.0.0.1 --port 8787
 ```
 
-## Operação de Produção
+Dashboard local:
 
-### Daemon (systemd user)
+- `http://127.0.0.1:8787`
+
+## Segurança
+
+O ClawLite conecta canais reais (Telegram/Discord/Slack/WhatsApp/Teams). Trate mensagens de entrada como input não confiável.
+
+Checklist mínimo:
+
+- Mantenha `security.require_gateway_token=true`.
+- Use `clawlite pairing` para aprovar remetentes novos.
+- Evite expor gateway em rede pública sem camada extra de proteção.
+- Rode `clawlite doctor` após mudanças de configuração.
+
+Política completa em [SECURITY.md](SECURITY.md).
+
+## Operação de produção
+
+Daemon (systemd user):
 
 ```bash
 clawlite install-daemon --host 127.0.0.1 --port 8787
 ```
 
-### Pairing de novos remetentes
+Backup e restore:
 
 ```bash
-# listar pendências
-clawlite pairing list
-
-# aprovar/rejeitar
-clawlite pairing approve telegram ABC123
-clawlite pairing reject telegram ABC123
-
-# listar aprovados
-clawlite pairing approved
-```
-
-### Backup e restore
-
-```bash
-# criar backup
 clawlite backup create --label daily
-
-# listar backups
 clawlite backup list
-
-# restaurar
 clawlite backup restore ~/.clawlite/backups/clawlite_backup_YYYYMMDD_HHMMSS_daily.tar.gz
 ```
 
-## Comandos Principais
-
-```bash
-clawlite run "seu prompt"
-clawlite status
-clawlite doctor
-clawlite start
-clawlite skill search github
-clawlite skill install github
-clawlite mcp list
-clawlite agents list
-clawlite cron list
-```
-
-## Arquitetura (Resumo)
+## Arquitetura (resumo)
 
 ```text
-Canais (Telegram/Discord/Slack/WhatsApp)
-                |
-                v
-        FastAPI + WebSocket Gateway
-                |
-      +---------+---------+
-      |                   |
-      v                   v
-  Runtime Agent       Dashboard Web
- (model/tools/memory) (status/skills/logs/channels)
-      |
-      v
- Skills + MCP + Workspace
+Canais -> Gateway FastAPI/WebSocket -> Runtime Agent -> Skills/MCP/Workspace
 ```
 
-### Componentes principais
+Componentes:
 
-- `clawlite/gateway`: rotas HTTP/WS e dashboard.
-- `clawlite/channels`: conectores de canais e manager.
-- `clawlite/core`: agent runtime, ferramentas, plugins, RBAC.
-- `clawlite/runtime`: memória, learning, cron, backup, pairing, daemon, voz.
+- `clawlite/gateway`: HTTP/WS, dashboard e rotas operacionais.
+- `clawlite/channels`: conectores e manager multicanal.
+- `clawlite/core`: runtime do agente e ferramentas.
+- `clawlite/runtime`: memória, cron, daemon, backup, pairing e status.
 - `clawlite/skills`: catálogo de skills Python.
 
-## Segurança
+## Documentação principal
 
-- Token Bearer para acesso ao gateway.
-- Pairing por código para controle de remetentes novos.
-- Políticas de segurança no `configure` e `security` config.
-- Execução de worker multiagente sem `shell=True`.
-
-## Skills e MCP
-
-- Skills instaláveis/publicáveis via CLI.
-- Auto-update com validação de integridade.
-- MCP com `add/list/remove/install`.
-
-Exemplos:
-
-```bash
-clawlite skill search weather
-clawlite skill install weather
-
-clawlite mcp install filesystem
-clawlite mcp list
-```
-
-## Documentação Técnica
-
+- [Wizard](docs/start/wizard.md)
 - [Dashboard](docs/DASHBOARD.md)
 - [MCP](docs/MCP.md)
-- [Multiagente e Multicanal](docs/MULTIAGENTE_MULTICANAL_PTBR.md)
-- [Session Memory](docs/SESSION_MEMORY.md)
-- [Voice](docs/VOICE.md)
 - [Runbook](docs/RUNBOOK.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Session Memory](docs/SESSION_MEMORY.md)
 
 ## Desenvolvimento
 
@@ -222,12 +150,9 @@ pip install -e .
 pytest -q
 ```
 
-## Contribuição
+## Contribuindo
 
-1. Abra uma issue descrevendo problema/feature.
-2. Crie branch com escopo claro.
-3. Adicione ou ajuste testes.
-4. Abra PR com contexto técnico objetivo.
+Veja [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licença
 

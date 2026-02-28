@@ -1,48 +1,34 @@
-# ClawLite — Plano de Produção v1 (7 dias)
+# ClawLite Roadmap
 
-Objetivo: levar o ClawLite para produção com operação contínua, segurança e cadência de evolução.
+Roadmap para consolidar o ClawLite como assistente pessoal de produção, com foco em segurança, operação contínua e UX.
 
-## Dia 1-2 — P0 Produção
-- Hardening de canais (retry, rate-limit, reconexão automática em Telegram/Slack/Discord/WhatsApp/Teams)
-- Secrets management (.env + suporte vault + rotação de tokens)
-- Backup/restore automático de:
-  - `~/.clawlite/multiagent.db`
-  - `~/.clawlite/learning.db`
-  - `~/.clawlite/config.json`
-  - `~/.clawlite/workspace/`
+## Horizonte atual
 
-## Dia 2-3 — P0 Qualidade
-- Pipeline CI completo (unit + integration + e2e + secret scan + lint + type-check)
-- Smoke test pós-deploy (`doctor/status/start/ws/chat`)
-- Versionamento semântico + changelog automático
+### P0 — Base estável
 
-## Dia 3-4 — P0 Observabilidade
-- Métricas: erro, latência, fila, worker down
-- Alertas automáticos no Telegram
-- Runbook de incidentes (gateway down, channel auth, DB lock)
+- Robustez de canais (retry, reconexão, rate-limit)
+- Onboarding/configure com fluxo claro e seguro
+- Backup/restore confiável do estado local
+- CI com testes e secret scan obrigatórios
 
-## Dia 4-5 — P1 Dashboard parity
-- Cron completo no UI
-- Channels panel completo
-- Config avançada + apply/restart
-- Debug/update panel
+### P1 — Operação de assistente pessoal
 
-## Dia 5-6 — P1 Multi-agente
-- Finalizar `agents create/list/bind` multi-canal
-- Menção + handoff + orquestrador em todos os canais
-- Testes de carga + soak test real 30 min
+- Melhorias de pairing e allowlist por canal
+- Observabilidade operacional (status, alertas, health checks)
+- Workflows de daemon mais simples para Linux/Termux
+- Runbook de incidentes com recuperação rápida
 
-## Dia 6-7 — P1 Segurança + Operação contínua
-- Política de permissões por agente/canal
-- Auditoria de ações sensíveis
-- Isolamento de sessão
-- Cron interno de manutenção diário/semanal
-- Aprovação: low-risk auto-merge / high-risk requer OK
-- Cadência release: patch semanal (`v0.4.x`), minor quinzenal (`v0.5.x`)
+### P2 — Evolução de capacidade
 
-## Definição de pronto
-1. Uptime estável + reconexão automática ✅
-2. Testes e smoke 100% no CI ✅
-3. Backup/restore validado ✅
-4. Observabilidade com alertas ✅
-5. Runbook + rollback funcionando ✅
+- Mais skills de produtividade pessoal
+- Melhorias de memória e recuperação de contexto
+- Integrações MCP adicionais para ferramentas externas
+- Dashboard com paridade de operações avançadas
+
+## Critérios de pronto por release
+
+1. Testes passando em CI
+2. Sem regressão em `doctor`, `onboarding`, `start`
+3. Documentação atualizada para mudanças de comportamento
+4. Migração/configuração backward compatible
+5. Risco operacional documentado no changelog
