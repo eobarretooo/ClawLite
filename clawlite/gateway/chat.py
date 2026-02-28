@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
 
+from clawlite.config import settings as app_settings
 from clawlite.config.settings import load_config
-from clawlite.core.agent import run_task_with_meta
-from clawlite.gateway.state import SESSIONS_FILE, TELEMETRY_FILE
 from clawlite.gateway.utils import (
     _append_jsonl,
     _estimate_cost_parts_usd,
@@ -17,6 +17,26 @@ from clawlite.gateway.utils import (
     _log,
     _read_jsonl,
 )
+
+
+def _dashboard_dir() -> Path:
+    return Path(app_settings.CONFIG_DIR) / "dashboard"
+
+
+def _sessions_file() -> Path:
+    return _dashboard_dir() / "sessions.jsonl"
+
+
+def _telemetry_file() -> Path:
+    return _dashboard_dir() / "telemetry.jsonl"
+
+
+def _normalize_chat_meta(meta: dict[str, Any] | None, requested_model: str) -> dict[str, Any]:
+    row = dict(meta or {})
+    row["model"] = str(row.get("model") or requested_model)
+    row["mode"] = str(row.get("mode") or "unknown")
+    row["reason"] = str(row.get("reason") or "unknown")
+    return row
 
 
 def _build_chat_prompt(text: str, hooks: dict[str, Any]) -> str:
@@ -35,11 +55,13 @@ def _build_chat_reply(raw_output: str, hooks: dict[str, Any]) -> str:
 
 async def _run_agent_reply(session_id: str, text: str, hooks: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     prompt = _build_chat_prompt(text, hooks)
-    
-    from clawlite.core.agent import run_task_with_learning
-    output = await asyncio.to_thread(run_task_with_learning, prompt, skill="", session_id=session_id)
-    # Trocando run_task_with_meta por run_task_with_learning, o meta fake é retornado por enquanto caso n seja suportado o meta no learning default
-    meta = {"mode": "online", "model": "openai/gpt-4o-mini", "reason": "session"}
+
+    from clawlite.core.agent import run_task_with_meta
+
+    try:
+        output, meta = await asyncio.to_thread(run_task_with_meta, prompt, "", session_id)
+    except TypeError:
+        output, meta = await asyncio.to_thread(run_task_with_meta, prompt)
     return _build_chat_reply(output, hooks), meta
 
 
@@ -72,7 +94,9 @@ def _record_telemetry(
         "completion_cost_usd": completion_cost_usd,
         "cost_usd": cost_usd,
     }
-    _append_jsonl(TELEMETRY_FILE, row)
+    telem_path = _telemetry_file()
+    telem_path.parent.mkdir(parents=True, exist_ok=True)
+    _append_jsonl(telem_path, row)
     return row
 
 
@@ -88,12 +112,17 @@ async def _handle_chat_message(session_id: str, text: str) -> dict[str, Any]:
     if not isinstance(hooks, dict):
         hooks = {}
 
+    sessions_path = _sessions_file()
+    sessions_path.parent.mkdir(parents=True, exist_ok=True)
+
     user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": clean_text}
-    _append_jsonl(SESSIONS_FILE, user_msg)
+    _append_jsonl(sessions_path, user_msg)
 
     reply, meta = await _run_agent_reply(session_id, clean_text, hooks)
+    meta = _normalize_chat_meta(meta, requested_model)
+
     assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
-    _append_jsonl(SESSIONS_FILE, assistant_msg)
+    _append_jsonl(sessions_path, assistant_msg)
 
     effective_model = str(meta.get("model") or requested_model)
     telemetry_row = _record_telemetry(
@@ -123,7 +152,7 @@ async def _handle_chat_message(session_id: str, text: str) -> dict[str, Any]:
     }
 
 
-async def _stream_chat_message(session_id: str, text: str): # -> AsyncGenerator[dict[str, Any], None]
+async def _stream_chat_message(session_id: str, text: str):  # -> AsyncGenerator[dict[str, Any], None]
     clean_text = text.strip()
     if not clean_text:
         raise HTTPException(status_code=400, detail="Mensagem vazia")
@@ -135,20 +164,25 @@ async def _stream_chat_message(session_id: str, text: str): # -> AsyncGenerator[
     if not isinstance(hooks, dict):
         hooks = {}
 
+    sessions_path = _sessions_file()
+    sessions_path.parent.mkdir(parents=True, exist_ok=True)
+
     user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": clean_text}
-    _append_jsonl(SESSIONS_FILE, user_msg)
+    _append_jsonl(sessions_path, user_msg)
 
     prompt = _build_chat_prompt(clean_text, hooks)
-    
+
     loop = asyncio.get_running_loop()
     q = asyncio.Queue()
 
-    from clawlite.core.agent import run_task_stream_with_learning
-    
+    from clawlite.core.agent import run_task_stream_with_meta
+
     def _worker():
         try:
-            out_stream = run_task_stream_with_learning(prompt, skill="", session_id=session_id)
-            meta = {"mode": "online", "model": "openai/gpt-4o-mini", "reason": "session"}
+            try:
+                out_stream, meta = run_task_stream_with_meta(prompt, "", session_id)
+            except TypeError:
+                out_stream, meta = run_task_stream_with_meta(prompt)
             asyncio.run_coroutine_threadsafe(q.put(("meta", meta)), loop)
             for chunk in out_stream:
                 asyncio.run_coroutine_threadsafe(q.put(("chunk", chunk)), loop)
@@ -157,33 +191,35 @@ async def _stream_chat_message(session_id: str, text: str): # -> AsyncGenerator[
             asyncio.run_coroutine_threadsafe(q.put(("error", str(e))), loop)
 
     import threading
+
     threading.Thread(target=_worker, daemon=True).start()
 
     meta = None
-    full_reply = []
-    
+    full_reply: list[str] = []
+
     while True:
         msg_type, data = await q.get()
         if msg_type == "meta":
-            meta = data
+            meta = _normalize_chat_meta(data if isinstance(data, dict) else {}, requested_model)
             yield {"type": "meta", "data": meta}
         elif msg_type == "chunk":
             full_reply.append(data)
             yield {"type": "chunk", "data": data}
         elif msg_type == "error":
             yield {"type": "error", "data": data}
-            break
+            return
         elif msg_type == "done":
             break
 
     reply = "".join(full_reply)
     reply = _build_chat_reply(reply, hooks)
-    
+
     assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
-    _append_jsonl(SESSIONS_FILE, assistant_msg)
+    _append_jsonl(sessions_path, assistant_msg)
 
     if not meta:
-        meta = {"mode": "error", "reason": "stream_failed"}
+        meta = {"mode": "error", "reason": "stream_failed", "model": requested_model}
+    meta = _normalize_chat_meta(meta, requested_model)
 
     effective_model = str(meta.get("model") or requested_model)
     telemetry_row = _record_telemetry(
@@ -213,9 +249,10 @@ async def _stream_chat_message(session_id: str, text: str): # -> AsyncGenerator[
         "meta": meta,
     }
 
+
 def _collect_session_index(query: str = "") -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
-    for row in _read_jsonl(SESSIONS_FILE):
+    for row in _read_jsonl(_sessions_file()):
         sid = str(row.get("session_id", "")).strip()
         if not sid:
             continue
@@ -244,4 +281,4 @@ def _collect_session_index(query: str = "") -> list[dict[str, Any]]:
 
 
 def _session_messages(session_id: str) -> list[dict[str, Any]]:
-    return [r for r in _read_jsonl(SESSIONS_FILE) if str(r.get("session_id", "")) == session_id]
+    return [r for r in _read_jsonl(_sessions_file()) if str(r.get("session_id", "")) == session_id]

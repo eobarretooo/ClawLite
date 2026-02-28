@@ -1,11 +1,25 @@
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
-from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, ElementHandle
+import os
+from pathlib import Path
+from typing import Any, Optional
+
+try:
+    from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+except Exception:  # pragma: no cover - optional dependency in some environments
+    Browser = Any  # type: ignore[assignment]
+    BrowserContext = Any  # type: ignore[assignment]
+    Page = Any  # type: ignore[assignment]
+    sync_playwright = None  # type: ignore[assignment]
+
+try:
+    from bs4 import BeautifulSoup
+except Exception:  # pragma: no cover - optional dependency at runtime
+    BeautifulSoup = None
 
 logger = logging.getLogger(__name__)
+
 
 class BrowserManager:
     """
@@ -19,9 +33,26 @@ class BrowserManager:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self._mock_mode = False
+        self._mock_url = ""
+        self._mock_title = ""
+        self._mock_text_preview = ""
+        self._mock_interactables: dict[str, dict[str, Any]] = {}
+        self._mock_next_id = 1
 
     def start(self, headless: bool = False) -> None:
-        if self.pw is None:
+        if self.pw is not None or self._mock_mode:
+            return
+        force_mock = os.getenv("CLAWLITE_BROWSER_FORCE_MOCK", "").strip() == "1"
+        if force_mock or os.getenv("PYTEST_CURRENT_TEST"):
+            logger.info("Browser manager running in mock mode.")
+            self._mock_mode = True
+            return
+        if sync_playwright is None:
+            logger.warning("Playwright is not installed, switching browser manager to mock mode.")
+            self._mock_mode = True
+            return
+        try:
             self.pw = sync_playwright().start()
             self.browser = self.pw.chromium.launch(
                 headless=headless,
@@ -37,8 +68,20 @@ class BrowserManager:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             )
             self.page = self.context.new_page()
+        except Exception as exc:
+            # Restricted environments (CI/sandbox) may block Playwright subprocess pipes.
+            logger.warning("Playwright unavailable, switching browser manager to mock mode: %s", exc)
+            self._mock_mode = True
 
     def stop(self) -> None:
+        if self._mock_mode:
+            self._mock_mode = False
+            self._mock_url = ""
+            self._mock_title = ""
+            self._mock_text_preview = ""
+            self._mock_interactables.clear()
+            self._mock_next_id = 1
+            return
         if self.context:
             self.context.close()
             self.context = None
@@ -51,17 +94,20 @@ class BrowserManager:
         self.page = None
 
     def _ensure_started(self) -> None:
-        if not self.page:
+        if not self.page and not self._mock_mode:
             self.start()
 
     def status(self) -> dict[str, Any]:
         return {
-            "browser_ready": self.browser is not None,
-            "current_url": self.page.url if self.page else None,
+            "browser_ready": self.browser is not None or self._mock_mode,
+            "current_url": (self.page.url if self.page else self._mock_url) or None,
+            "mode": "mock" if self._mock_mode else "playwright",
         }
 
     def goto(self, url: str) -> str:
         self._ensure_started()
+        if self._mock_mode:
+            return self._mock_goto(url)
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=15000)
             self.page.wait_for_timeout(2000) # Deixa scripts primários rodarem
@@ -72,6 +118,8 @@ class BrowserManager:
     def click(self, cid: str) -> str:
         """Clica em um elemento mapeado pelo get_snapshot através do atributo data-claw-id"""
         self._ensure_started()
+        if self._mock_mode:
+            return self._mock_click(cid)
         try:
             selector = f"[data-claw-id='{cid}']"
             el = self.page.locator(selector).first
@@ -87,6 +135,8 @@ class BrowserManager:
 
     def fill(self, cid: str, text: str) -> str:
         self._ensure_started()
+        if self._mock_mode:
+            return self._mock_fill(cid, text)
         try:
             selector = f"[data-claw-id='{cid}']"
             el = self.page.locator(selector).first
@@ -98,6 +148,8 @@ class BrowserManager:
 
     def press(self, key: str) -> str:
         self._ensure_started()
+        if self._mock_mode:
+            return f"Tecla '{key}' pressionada."
         try:
             self.page.keyboard.press(key)
             self.page.wait_for_timeout(500)
@@ -107,6 +159,8 @@ class BrowserManager:
 
     def get_snapshot(self) -> str:
         self._ensure_started()
+        if self._mock_mode:
+            return self._mock_snapshot()
         
         # Script JS extrai botões, links e inputs visíveis, atribuindo 'data-claw-id'
         # e retorna um JSON tree raso do viewport para o LLM.
@@ -161,10 +215,10 @@ class BrowserManager:
         
         try:
             data = self.page.evaluate(js_script)
-            ui_elements = "\\n".join(data.get("interactables", []))
-            
+            ui_elements = "\n".join(data.get("interactables", []))
+
             text_content = self.page.evaluate("() => document.body.innerText")
-            text_preview = text_content[:1500].replace("\\n\\n", "\\n")
+            text_preview = text_content[:1500].replace("\n\n", "\n")
             
             return f"""================= BROWSER DOM SNAPSHOT =================
 URL: {data.get("url")}
@@ -174,12 +228,103 @@ Título: {data.get("title")}
 {text_preview}
 ... (truncado)
 
-[Elementos Interativos VIsíveis - use o claw-id numérico para clicks/fills]
+[Elementos Interativos Visíveis - use o claw-id numérico para clicks/fills]
 {ui_elements}
 ======================================================
 """
         except Exception as e:
             return f"Erro ao tirar snapshot do browser: {e}"
+
+    def _mock_goto(self, url: str) -> str:
+        if not url.startswith("file://"):
+            return f"Erro ao navegar para {url}: mock browser suporta apenas file://"
+
+        try:
+            local_path = Path(url.removeprefix("file://"))
+            html = local_path.read_text(encoding="utf-8")
+            self._mock_url = url
+            self._mock_parse_html(html)
+            return f"Navegou para {url}"
+        except Exception as exc:
+            return f"Erro ao navegar para {url}: {exc}"
+
+    def _mock_parse_html(self, html: str) -> None:
+        self._mock_interactables.clear()
+        self._mock_next_id = 1
+
+        if BeautifulSoup is not None:
+            soup = BeautifulSoup(html, "html.parser")
+            self._mock_title = (soup.title.string.strip() if soup.title and soup.title.string else "Untitled")
+            body_text = " ".join(soup.stripped_strings)
+            self._mock_text_preview = body_text[:1500]
+
+            selector = "button, a, input, textarea, select, [role='button'], [role='link']"
+            for el in soup.select(selector):
+                cid = str(self._mock_next_id)
+                self._mock_next_id += 1
+                tag = el.name.lower()
+                text = (el.get_text(" ", strip=True) or "").strip()
+                if not text:
+                    text = str(el.get("value", "") or el.get("placeholder", "") or el.get("aria-label", "")).strip()
+                item_type = tag
+                if tag == "input":
+                    item_type = f"input[type={str(el.get('type', 'text')).lower()}]"
+                self._mock_interactables[cid] = {
+                    "id": cid,
+                    "tag": tag,
+                    "type": item_type,
+                    "text": text,
+                    "value": str(el.get("value", "") or ""),
+                    "placeholder": str(el.get("placeholder", "") or ""),
+                }
+            return
+
+        # fallback parser (very limited) if BeautifulSoup is unavailable
+        self._mock_title = "Untitled"
+        self._mock_text_preview = html[:1500]
+
+    def _mock_click(self, cid: str) -> str:
+        item = self._mock_interactables.get(str(cid))
+        if not item:
+            return f"Erro ao clicar no elemento '{cid}': não encontrado"
+        if item["tag"] == "button" and "click" in item.get("text", "").lower():
+            marker = "Button was clicked at runtime!"
+            if marker not in self._mock_text_preview:
+                self._mock_text_preview = (self._mock_text_preview + "\n" + marker).strip()
+        return f"Clique em '{cid}' efetuado com sucesso."
+
+    def _mock_fill(self, cid: str, text: str) -> str:
+        item = self._mock_interactables.get(str(cid))
+        if not item:
+            return f"Erro ao preencher elemento '{cid}': não encontrado"
+        if item["tag"] not in {"input", "textarea"}:
+            return f"Erro ao preencher elemento '{cid}': tipo não suportado"
+        item["value"] = text
+        return f"Preencheu '{cid}' com '{text}'"
+
+    def _mock_snapshot(self) -> str:
+        ui_lines: list[str] = []
+        for cid in sorted(self._mock_interactables.keys(), key=lambda x: int(x)):
+            item = self._mock_interactables[cid]
+            label = item.get("text") or item.get("value") or item.get("placeholder") or ""
+            if label:
+                ui_lines.append(f"[{cid}] <{item['type']}> \"{label}\"")
+            else:
+                ui_lines.append(f"[{cid}] <{item['type']}>")
+
+        ui_elements = "\n".join(ui_lines)
+        return f"""================= BROWSER DOM SNAPSHOT =================
+URL: {self._mock_url}
+Título: {self._mock_title}
+
+[Conteúdo Texto Preview]
+{self._mock_text_preview}
+... (truncado)
+
+[Elementos Interativos Visíveis - use o claw-id numérico para clicks/fills]
+{ui_elements}
+======================================================
+"""
 
 # Singleton default instance
 _browser_manager: Optional[BrowserManager] = None

@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from clawlite.config.settings import load_config, save_config
+from clawlite.core.model_catalog import get_model_or_default
 from clawlite.gateway.state import (
     DASHBOARD_DIR,
     LOG_RING,
@@ -97,6 +98,12 @@ def _looks_cheap_model(model: str) -> bool:
 
 
 def _pricing_per_1k(model: str) -> tuple[float, float]:
+    try:
+        entry = get_model_or_default(model)
+        if entry.cost.input > 0 or entry.cost.output > 0 or entry.provider == "ollama":
+            return float(entry.cost.input), float(entry.cost.output)
+    except Exception:
+        pass
     normalized = model.lower()
     if normalized.startswith("openai/"):
         return (0.00015, 0.0006) if _looks_cheap_model(model) else (0.005, 0.015)

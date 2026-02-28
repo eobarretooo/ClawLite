@@ -1,10 +1,47 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
-CONFIG_DIR = Path.home() / ".clawlite"
+
+def _can_write_under(path: Path) -> bool:
+    probe_dir = path / ".clawlite"
+    probe_file = probe_dir / ".write_probe"
+    try:
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        probe_file.write_text("ok", encoding="utf-8")
+        probe_file.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _resolve_home_dir() -> Path:
+    """
+    Resolve home directory consistently across OSes and test environments.
+
+    Priority:
+    1) CLAWLITE_HOME
+    2) HOME
+    3) platform default (Path.home())
+    """
+    for env_name in ("CLAWLITE_HOME", "HOME"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return Path(value).expanduser()
+    home = Path.home()
+    if _can_write_under(home):
+        return home
+    temp_home = Path(tempfile.gettempdir()) / "clawlite-home"
+    if _can_write_under(temp_home):
+        return temp_home
+    return Path.cwd()
+
+
+CONFIG_DIR = _resolve_home_dir() / ".clawlite"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 DEFAULT_CONFIG = {
@@ -80,6 +117,10 @@ DEFAULT_CONFIG = {
         "allow_shell_exec": True,
         "redact_tokens_in_logs": True,
         "require_gateway_token": True,
+        "rbac": {
+            "viewer_tokens": [],
+        },
+        "tool_policies": {},
     },
     "skills": ["core-tools", "memory", "gateway"],
     "reddit": {

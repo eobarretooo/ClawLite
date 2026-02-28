@@ -86,6 +86,7 @@ def run_gateway(host: str | None = None, port: int | None = None) -> None:
 from clawlite.gateway.utils import _token, _log
 from clawlite.gateway import state
 from clawlite.core.agent import run_task_with_meta
+from clawlite.skills.marketplace import update_skills
 
 LOG_RING = state.LOG_RING
 connections = state.connections

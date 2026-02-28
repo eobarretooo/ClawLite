@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from contextlib import closing
 import socket
 import sqlite3
-from pathlib import Path
 
-from clawlite.config.settings import load_config
+from clawlite.config import settings as app_settings
 from clawlite.runtime.conversation_cron import init_cron_db, list_cron_jobs
-from clawlite.runtime.multiagent import DB_PATH, list_workers
+from clawlite.runtime import multiagent
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -19,21 +19,22 @@ def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 
 
 def _task_counts() -> tuple[int, int]:
-    if not DB_PATH.exists():
+    db_path = multiagent.current_db_path()
+    if not db_path.exists():
         return (0, 0)
-    with sqlite3.connect(DB_PATH) as c:
+    with closing(sqlite3.connect(db_path)) as c:
         queued = c.execute("SELECT COUNT(*) FROM tasks WHERE status='queued'").fetchone()[0]
         running = c.execute("SELECT COUNT(*) FROM tasks WHERE status='running'").fetchone()[0]
     return int(queued), int(running)
 
 
 def runtime_status() -> str:
-    cfg = load_config()
+    cfg = app_settings.load_config()
     gw = cfg.get("gateway", {})
 
     gateway_running = _port_open(str(gw.get("host", "0.0.0.0")), int(gw.get("port", 8787)))
 
-    workers = list_workers()
+    workers = multiagent.list_workers()
     running_workers = [w for w in workers if w.status == "running" and w.pid]
 
     init_cron_db()
@@ -44,7 +45,7 @@ def runtime_status() -> str:
 
     reddit_cfg = cfg.get("web_tools", {}).get("reddit", {})
     reddit_enabled = bool(reddit_cfg.get("enabled") or cfg.get("reddit", {}).get("enabled"))
-    state_file = Path.home() / ".clawlite" / "reddit_state.json"
+    state_file = app_settings.CONFIG_DIR / "reddit_state.json"
 
     lines = [
         "📊 ClawLite Status",

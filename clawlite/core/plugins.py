@@ -1,65 +1,94 @@
-from __future__ import annotations
-import inspect
+﻿from __future__ import annotations
+
 import importlib.util
-import os
+import inspect
+import logging
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Type
+from typing import Any, Dict, List
+
+from clawlite.config import settings as app_settings
+from clawlite.core.plugin_sdk import (
+    HookContext,
+    HookPhase,
+    ToolDefinition,
+    ToolPlugin,
+    ToolResult,
+    get_plugin_registry,
+)
+
+logger = logging.getLogger(__name__)
+
 
 class Plugin:
     """
-    Base class for ClawLite Plugins (Sprint 6).
-    Extensions should inherit from this class to inject custom tools
-    and listen to agent lifecycle events.
+    Legacy plugin base for backward compatibility.
+
+    New plugins should prefer `plugin_sdk` and expose `register(registry)`.
     """
+
     name: str = "unnamed-plugin"
     version: str = "1.0.0"
     description: str = "A custom ClawLite plugin."
-    
+
     def on_load(self) -> None:
-        """Called when the plugin is first loaded into memory."""
         pass
 
     def on_unload(self) -> None:
-        """Called if the plugin is disabled or the host shuts down."""
         pass
 
     def register_tools(self) -> List[Dict[str, Any]]:
-        """
-        Return a list of tool definitions (JSON Schema format) that this 
-        plugin exposes to the LLM agent.
-        """
         return []
 
     def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str | None:
-        """
-        If the LLM calls a tool registered by this plugin, this method handles it.
-        Return None if the tool_name doesn't belong to this plugin.
-        """
         return None
 
     def on_message(self, role: str, message: str, session_id: str) -> None:
-        """
-        Hook: Triggered every time a message is added to the session history.
-        `role` can be 'user', 'agent' or 'system'.
-        """
         pass
-        
+
     def on_thought(self, text: str, session_id: str) -> None:
-        """
-        Hook: Triggered during token streaming when the agent thinks.
-        """
         pass
+
+
+class _LegacyToolAdapter(ToolPlugin):
+    def __init__(self, plugin: Plugin):
+        self._plugin = plugin
+
+    def get_tools(self) -> list[ToolDefinition]:
+        out: list[ToolDefinition] = []
+        for item in self._plugin.register_tools() or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            out.append(
+                ToolDefinition(
+                    name=name,
+                    description=str(item.get("description", "")).strip() or f"Plugin tool '{name}'",
+                    parameters=item.get("parameters") if isinstance(item.get("parameters"), dict) else {},
+                    category=str(item.get("category", "general")).strip() or "general",
+                    dangerous=bool(item.get("dangerous", False)),
+                )
+            )
+        return out
+
+    def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        result = self._plugin.execute_tool(tool_name, arguments)
+        if result is None:
+            return ToolResult(output=f"Tool '{tool_name}' not handled by plugin", success=False)
+        return ToolResult(output=str(result), success=True)
 
 
 class PluginManager:
-    """Manages the lifecycle and discovery of ClawLite plugins."""
-    _instance = None
+    """Loads plugins from workspace and bridges legacy + plugin_sdk styles."""
 
-    def __init__(self):
+    _instance: "PluginManager | None" = None
+
+    def __init__(self) -> None:
         self.plugins: Dict[str, Plugin] = {}
-        self.tools_cache: List[Dict[str, Any]] = []
-        
+        self.registry = get_plugin_registry()
+
     @classmethod
     def get(cls) -> "PluginManager":
         if cls._instance is None:
@@ -67,74 +96,109 @@ class PluginManager:
         return cls._instance
 
     def get_plugins_dir(self) -> Path:
-        base = Path.home() / ".clawlite" / "workspace" / "plugins"
+        base = Path(app_settings.CONFIG_DIR) / "workspace" / "plugins"
         base.mkdir(parents=True, exist_ok=True)
         return base
 
-    def load_all(self):
-        """Scans the plugins directory and loads all valid Python modules containing Plugins."""
+    def load_all(self) -> None:
+        self._unload_all()
+        self.registry.clear()
+
         plugins_dir = self.get_plugins_dir()
-        if not plugins_dir.exists():
-            return
-            
         for filepath in plugins_dir.glob("*.py"):
             if filepath.name.startswith("_"):
                 continue
             self._load_plugin_file(filepath)
-            
-        self._rebuild_caches()
 
-    def _load_plugin_file(self, filepath: Path):
-        try:
-            module_name = f"clawlite_plugin_{filepath.stem}"
-            spec = importlib.util.spec_from_file_location(module_name, filepath)
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
-                
-                for name, obj in inspect.getmembers(module, inspect.isclass):
-                    if issubclass(obj, Plugin) and obj is not Plugin:
-                        instance = obj()
-                        plugin_id = getattr(instance, "name", name).lower()
-                        self.plugins[plugin_id] = instance
-                        instance.on_load()
-        except Exception as e:
-            print(f"⚠️ Failed to load plugin {filepath.name}: {e}")
-
-    def _rebuild_caches(self):
-        """Aggregate all tool definitions from all registered plugins"""
-        self.tools_cache = []
-        for p in self.plugins.values():
+    def _unload_all(self) -> None:
+        for plugin in list(self.plugins.values()):
             try:
-                tools = p.register_tools()
-                if tools:
-                    self.tools_cache.extend(tools)
-            except Exception:
-                pass
+                plugin.on_unload()
+            except Exception as exc:
+                logger.warning("Plugin unload failure '%s': %s", getattr(plugin, "name", "?"), exc)
+        self.plugins.clear()
+
+    def _load_plugin_file(self, filepath: Path) -> None:
+        module_name = f"clawlite_plugin_{filepath.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, filepath)
+            if not spec or not spec.loader:
+                logger.warning("Plugin skipped (invalid spec): %s", filepath)
+                return
+
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+            # Modern SDK style: register(registry) or register_plugin(registry)
+            register_fn = getattr(module, "register", None) or getattr(module, "register_plugin", None)
+            if callable(register_fn):
+                register_fn(self.registry)
+
+            # Legacy style: subclass of Plugin
+            for _, obj in inspect.getmembers(module, inspect.isclass):
+                if not issubclass(obj, Plugin) or obj is Plugin:
+                    continue
+                instance = obj()
+                plugin_id = (getattr(instance, "name", obj.__name__) or obj.__name__).strip().lower()
+                self.plugins[plugin_id] = instance
+                instance.on_load()
+                adapter = _LegacyToolAdapter(instance)
+                if adapter.get_tools():
+                    self.registry.register_tool_plugin(f"legacy:{plugin_id}", adapter)
+
+            logger.info("Plugin loaded: %s", filepath.name)
+        except Exception as exc:
+            logger.warning("Failed to load plugin %s: %s", filepath.name, exc)
 
     def get_all_tool_definitions(self) -> List[Dict[str, Any]]:
-        return self.tools_cache
+        out: List[Dict[str, Any]] = []
+        for tool in self.registry.get_all_tools():
+            out.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "category": tool.category,
+                    "dangerous": tool.dangerous,
+                }
+            )
+        return out
 
     def try_execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str | None:
-        """Passes the tool execution broadcast to all plugins."""
-        for p in self.plugins.values():
+        result = self.registry.execute_tool(tool_name, args)
+        if result is not None:
+            return result.output
+
+        for plugin in self.plugins.values():
             try:
-                result = p.execute_tool(tool_name, args)
-                if result is not None:
-                    return result
-            except Exception as e:
-                return f"❌ Plugin Tool Error: {e}"
+                legacy_result = plugin.execute_tool(tool_name, args)
+                if legacy_result is not None:
+                    return str(legacy_result)
+            except Exception as exc:
+                return f"Plugin tool error: {exc}"
         return None
 
-    def broadcast_message(self, role: str, msg: str, session_id: str):
-        for p in self.plugins.values():
-            try:
-                p.on_message(role, msg, session_id)
-            except: pass
+    def fire_hooks(self, phase: HookPhase, *, session_id: str = "", prompt: str = "", response: str = "", metadata: dict[str, Any] | None = None) -> HookContext:
+        context = HookContext(
+            phase=phase,
+            session_id=session_id,
+            prompt=prompt,
+            response=response,
+            metadata=metadata or {},
+        )
+        return self.registry.fire_hooks(context)
 
-    def broadcast_thought(self, text: str, session_id: str):
-        for p in self.plugins.values():
+    def broadcast_message(self, role: str, msg: str, session_id: str) -> None:
+        for name, plugin in self.plugins.items():
             try:
-                p.on_thought(text, session_id)
-            except: pass
+                plugin.on_message(role, msg, session_id)
+            except Exception as exc:
+                logger.warning("Plugin '%s' error in on_message: %s", name, exc)
+
+    def broadcast_thought(self, text: str, session_id: str) -> None:
+        for name, plugin in self.plugins.items():
+            try:
+                plugin.on_thought(text, session_id)
+            except Exception as exc:
+                logger.warning("Plugin '%s' error in on_thought: %s", name, exc)

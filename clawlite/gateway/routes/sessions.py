@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from clawlite.config import settings as app_settings
 from clawlite.gateway.chat import _collect_session_index, _session_messages
-from clawlite.gateway.state import TELEMETRY_FILE
 from clawlite.gateway.utils import (
     _check_bearer,
     _parse_ts,
@@ -17,6 +18,10 @@ from clawlite.gateway.utils import (
 )
 
 router = APIRouter()
+
+
+def _telemetry_file() -> Path:
+    return Path(app_settings.CONFIG_DIR) / "dashboard" / "telemetry.jsonl"
 
 
 @router.get("/api/dashboard/sessions")
@@ -45,12 +50,12 @@ def api_dashboard_telemetry(
     limit: int = Query(default=200),
 ) -> JSONResponse:
     _check_bearer(authorization)
-    rows = _read_jsonl(TELEMETRY_FILE)
+    rows = _read_jsonl(_telemetry_file())
     clean_session = session_id.strip()
     start_dt = _parse_ts(start) if start else _period_start(period)
     end_dt = _parse_ts(end) if end else None
     if start_dt and end_dt and end_dt < start_dt:
-        raise HTTPException(status_code=400, detail="Intervalo inválido: end < start")
+        raise HTTPException(status_code=400, detail="Intervalo invalido: end < start")
 
     filtered: list[dict[str, Any]] = []
     for row in rows:
@@ -146,17 +151,19 @@ def api_dashboard_telemetry(
     timeline = [timeline_map[k] for k in sorted(timeline_map)]
     n = max(1, min(limit, 500))
 
-    return JSONResponse({
-        "ok": True,
-        "filters": {
-            "session_id": clean_session,
-            "period": period,
-            "granularity": "hour" if use_hour else "day",
-            "start": start_dt.isoformat() if start_dt else "",
-            "end": end_dt.isoformat() if end_dt else "",
-        },
-        "summary": summary,
-        "sessions": sessions,
-        "timeline": timeline,
-        "events": filtered[-n:],
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "filters": {
+                "session_id": clean_session,
+                "period": period,
+                "granularity": "hour" if use_hour else "day",
+                "start": start_dt.isoformat() if start_dt else "",
+                "end": end_dt.isoformat() if end_dt else "",
+            },
+            "summary": summary,
+            "sessions": sessions,
+            "timeline": timeline,
+            "events": filtered[-n:],
+        }
+    )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import atexit
+import builtins
 import sys
 import time
 
@@ -70,6 +71,35 @@ from clawlite.skills.marketplace import (
     update_skills,
 )
 from clawlite.mcp import add_server, install_template, list_servers, remove_server, search_marketplace
+
+
+def _safe_print(*args, **kwargs) -> None:
+    """
+    Print wrapper resilient to Windows legacy encodings (cp1252/charmap).
+    Falls back to replacing unsupported glyphs instead of crashing the CLI.
+    """
+    try:
+        builtins.print(*args, **kwargs)
+        return
+    except UnicodeEncodeError:
+        pass
+
+    sep = kwargs.get("sep", " ")
+    end = kwargs.get("end", "\n")
+    text = sep.join(str(arg) for arg in args) + end
+    stream = kwargs.get("file", sys.stdout)
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    payload = text.encode(encoding, errors="replace")
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(payload)
+        stream.flush()
+        return
+    builtins.print(text.encode("ascii", errors="replace").decode("ascii"), end="")
+
+
+# Keep all existing prints in this module safe without editing each call.
+print = _safe_print
 
 
 def cmd_doctor() -> int:

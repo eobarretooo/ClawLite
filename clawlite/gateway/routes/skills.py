@@ -8,9 +8,28 @@ from fastapi.responses import JSONResponse
 from clawlite.config.settings import load_config, save_config
 from clawlite.gateway.state import LOG_RING
 from clawlite.gateway.utils import _check_bearer, _filter_logs, _hub_manifest_path, _log, _safe_slug, _skills_dir
-from clawlite.skills.marketplace import DEFAULT_DOWNLOAD_BASE_URL, SkillMarketplaceError, load_hub_manifest, publish_skill, update_skills
+from clawlite.skills.marketplace import (
+    DEFAULT_DOWNLOAD_BASE_URL,
+    SkillMarketplaceError,
+    load_hub_manifest,
+    publish_skill,
+    update_skills as _marketplace_update_skills,
+)
 
 router = APIRouter()
+
+
+def _resolve_update_skills():
+    # Backward-compatible indirection so tests (and integrations) can monkeypatch server.update_skills.
+    try:
+        from clawlite.gateway import server as gateway_server
+
+        fn = getattr(gateway_server, "update_skills", None)
+        if callable(fn):
+            return fn
+    except Exception:
+        pass
+    return _marketplace_update_skills
 
 
 @router.get("/api/dashboard/skills")
@@ -164,8 +183,9 @@ def api_dashboard_update(payload: dict[str, Any], authorization: str | None = He
     if not isinstance(slugs, list):
         raise HTTPException(status_code=400, detail="Campo 'slugs' deve ser lista")
     dry_run = bool(payload.get("dry_run", True))
+    update_fn = _resolve_update_skills()
     try:
-        result = update_skills(slugs=[str(s) for s in slugs], dry_run=dry_run)
+        result = update_fn(slugs=[str(s) for s in slugs], dry_run=dry_run)
     except SkillMarketplaceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _log("skills.update", data={"dry_run": dry_run, "count": len(result.get("updated", []))})

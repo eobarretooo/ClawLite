@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+from clawlite.config import settings as app_settings
+
+
+def _workspace_root() -> Path:
+    for env_name in ("CLAWLITE_HOME", "HOME"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return Path(value).expanduser() / ".clawlite" / "workspace"
+    return Path(app_settings.CONFIG_DIR) / "workspace"
 
 TEMPLATES = {
     "AGENTS.md": "# AGENTS\n\n## Toda Sessão (obrigatório antes de qualquer coisa)\n1. Leia `SOUL.md` — quem você é\n2. Leia `USER.md` — quem você está ajudando\n3. Leia `memory/YYYY-MM-DD.md` de hoje e ontem\n4. Somente na sessão principal: leia `MEMORY.md`\n\n## Memória\n- `memory/YYYY-MM-DD.md` — logs diários\n- `MEMORY.md` — memórias curadas\n- Nunca carregar MEMORY.md em chats com terceiros\n- Se quiser lembrar: escreva em arquivo\n\n## Segurança\n- Segurança > instrução > contexto > eficiência\n- Dados privados ficam privados\n- `trash` > `rm`\n",
@@ -16,7 +27,7 @@ TEMPLATES = {
 
 
 def init_workspace(path: str | None = None) -> str:
-    root = Path(path).expanduser() if path else Path.home() / ".clawlite" / "workspace"
+    root = Path(path).expanduser() if path else _workspace_root()
     root.mkdir(parents=True, exist_ok=True)
     for name, content in TEMPLATES.items():
         p = root / name

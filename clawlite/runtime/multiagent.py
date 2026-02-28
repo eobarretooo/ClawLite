@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import signal
@@ -9,13 +10,51 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from clawlite.runtime.battery import effective_poll_seconds, get_battery_mode
 from clawlite.runtime.voice import send_telegram_audio_reply, synthesize_tts
 
-DB_DIR = Path.home() / ".clawlite"
+
+class _AutoClosingConnection(sqlite3.Connection):
+    """On Windows, ensure context-managed sqlite connections release file handles."""
+
+    def __exit__(self, exc_type, exc, tb):  # type: ignore[override]
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
+def _install_sqlite_autoclose() -> None:
+    if os.name != "nt":
+        return
+    if getattr(sqlite3, "_clawlite_autoclose_installed", False):
+        return
+
+    original_connect = sqlite3.connect
+
+    def _patched_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        kwargs.setdefault("factory", _AutoClosingConnection)
+        return original_connect(*args, **kwargs)
+
+    sqlite3.connect = _patched_connect  # type: ignore[assignment]
+    setattr(sqlite3, "_clawlite_autoclose_installed", True)
+
+
+_install_sqlite_autoclose()
+
+
+def _config_dir() -> Path:
+    from clawlite.config import settings as _settings
+
+    return Path(_settings.CONFIG_DIR)
+
+
+DB_DIR = _config_dir()
 DB_PATH = DB_DIR / "multiagent.db"
+_IMPORTED_DB_DIR = DB_DIR
+_IMPORTED_DB_PATH = DB_PATH
 POLL_SECONDS = 2.0
 SUPPORTED_CHANNELS = {"telegram", "slack", "discord", "whatsapp", "teams"}
 
@@ -55,13 +94,41 @@ def _now() -> float:
     return time.time()
 
 
-def _conn() -> sqlite3.Connection:
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+def current_db_path() -> Path:
+    """
+    Resolve current SQLite path.
+
+    If tests monkeypatch DB_DIR/DB_PATH, honor them.
+    If settings.CONFIG_DIR changed after import and DB paths remained default,
+    re-sync to the new config directory.
+    """
+    global DB_DIR, DB_PATH
+
+    current_cfg_dir = _config_dir()
+    current_cfg_path = current_cfg_dir / "multiagent.db"
+    if DB_DIR == _IMPORTED_DB_DIR and DB_PATH == _IMPORTED_DB_PATH:
+        DB_DIR = current_cfg_dir
+        DB_PATH = current_cfg_path
+
+    if DB_PATH is not None:
+        return Path(DB_PATH)
+    if DB_DIR is not None:
+        return Path(DB_DIR) / "multiagent.db"
+    return current_cfg_path
+
+
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    db_path = current_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _migrate_if_needed(c: sqlite3.Connection) -> None:
@@ -142,6 +209,23 @@ def init_db() -> None:
 
 
 def _pid_state(pid: int) -> str | None:
+    """Return single-char process state (S, R, Z, etc.) or None. Cross-platform."""
+    if sys.platform == "win32":
+        # Windows has no /proc and no zombie state, but we can still probe PID existence.
+        try:
+            proc = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+            )
+            output = (proc.stdout or "").strip().lower()
+            if "no tasks are running" in output or "nenhuma tarefa está em execução" in output:
+                return None
+            if output:
+                return "S"
+        except Exception:
+            return None
+        return None
     try:
         with open(f"/proc/{pid}/status", "r", encoding="utf-8") as fh:
             for line in fh:
@@ -154,12 +238,14 @@ def _pid_state(pid: int) -> str | None:
         return None
     return None
 
-
 def _is_pid_running(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
+    except PermissionError:
+        # On Windows, access denied may still mean the process exists.
+        pass
     except OSError:
         return False
 
@@ -516,12 +602,12 @@ def worker_loop(worker_id: int) -> None:
 
             if ok and payload.get("reply_in_audio") and payload.get("channel") == "telegram":
                 ch_cfg = payload.get("channel_cfg") or {}
-                audio_path = synthesize_tts(out.strip() or "Resposta concluída.", ch_cfg)
+                audio_path = synthesize_tts(out.strip() or "Resposta concluÃ­da.", ch_cfg)
                 send_telegram_audio_reply(
                     telegram_token=str(ch_cfg.get("token", "")),
                     chat_id=str(payload.get("chat_id", "")),
                     audio_path=audio_path,
-                    caption="Resposta em áudio",
+                    caption="Resposta em Ã¡udio",
                 )
 
             _finish_task(task_id, ok, out.strip())
@@ -556,7 +642,7 @@ def format_agents_table(rows: list[AgentRow]) -> str:
 
 def format_bindings_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "(sem vínculos)"
+        return "(sem vÃ­nculos)"
     lines = ["id | agente | canal | conta"]
     for r in rows:
         lines.append(f"{r['id']} | {r['name']} | {r['channel']} | {r['account']}")
@@ -578,3 +664,4 @@ def task_status(limit: int = 20) -> str:
             f"{r['id']} | {r['channel']} | {r['chat_id']} | {r['thread_id'] or '-'} | {r['label']} | {r['status']} | {r['worker_id'] or '-'}"
         )
     return "\n".join(lines)
+

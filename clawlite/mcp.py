@@ -8,9 +8,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from clawlite.config import settings as app_settings
 from clawlite.skills.registry import SKILLS, describe_skill
 
-MCP_CONFIG_PATH = Path.home() / ".clawlite" / "mcp.json"
 MCP_CATALOG_URL = "https://raw.githubusercontent.com/modelcontextprotocol/servers/main/README.md"
 
 KNOWN_SERVER_TEMPLATES: dict[str, dict[str, str]] = {
@@ -29,6 +29,10 @@ KNOWN_SERVER_TEMPLATES: dict[str, dict[str, str]] = {
 
 def _default_config() -> dict[str, Any]:
     return {"servers": {}}
+
+
+def _config_path(path: Path | None = None) -> Path:
+    return path or (Path(app_settings.CONFIG_DIR) / "mcp.json")
 
 
 def _normalize_name(name: str) -> str:
@@ -50,7 +54,7 @@ def _validate_url(url: str) -> str:
 
 
 def load_mcp_config(path: Path | None = None) -> dict[str, Any]:
-    target = path or MCP_CONFIG_PATH
+    target = _config_path(path)
     if not target.exists():
         return _default_config()
     raw = json.loads(target.read_text(encoding="utf-8"))
@@ -63,7 +67,7 @@ def load_mcp_config(path: Path | None = None) -> dict[str, Any]:
 
 
 def save_mcp_config(config: dict[str, Any], path: Path | None = None) -> Path:
-    target = path or MCP_CONFIG_PATH
+    target = _config_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     return target

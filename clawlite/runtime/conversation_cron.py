@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 from clawlite.runtime import multiagent
 from clawlite.runtime.notifications import create_notification
@@ -39,14 +40,18 @@ def _now() -> float:
     return time.time()
 
 
-def _conn() -> sqlite3.Connection:
-    db_path = multiagent.DB_PATH
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    db_path = multiagent.current_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def init_cron_db() -> None:
