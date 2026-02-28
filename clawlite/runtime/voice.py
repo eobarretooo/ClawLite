@@ -18,6 +18,7 @@ except ImportError:
     _PYGAME_AVAILABLE = False
 
 from clawlite.skills.whisper import whisper_transcribe
+import logging
 
 logger = logging.getLogger(__name__)
 
