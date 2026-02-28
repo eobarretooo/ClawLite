@@ -121,7 +121,9 @@ def bootstrap_workspace():
         "from clawlite.config.settings import load_config,save_config;"
         "from clawlite.runtime.workspace import init_workspace;"
         "cfg=load_config();init_workspace();"
-        "cfg.setdefault('gateway',{}).setdefault('token',secrets.token_urlsafe(24));"
+        "cfg.setdefault('gateway',{});"
+        "tok=str(cfg['gateway'].get('token','')).strip();"
+        "cfg['gateway']['token']=tok or secrets.token_urlsafe(24);"
         "save_config(cfg)"
     )
     run([PYBIN, "-c", code], "bootstrap")
