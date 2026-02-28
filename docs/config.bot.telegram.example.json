@@ -1,0 +1,129 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "model_fallback": [
+    "openrouter/auto",
+    "ollama/llama3.1:8b"
+  ],
+  "offline_mode": {
+    "enabled": true,
+    "auto_fallback_to_ollama": true,
+    "connectivity_timeout_sec": 1.5
+  },
+  "ollama": {
+    "model": "llama3.1:8b"
+  },
+  "auth": {
+    "providers": {
+      "openai": {
+        "token": "sk-COLOQUE_SUA_OPENAI_KEY_AQUI"
+      }
+    }
+  },
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "token": "COLOQUE_UM_TOKEN_FORTE_AQUI",
+    "dashboard_enabled": true
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "1234567890:COLOQUE_SEU_TOKEN_DO_BOTFATHER_AQUI",
+      "chat_id": "",
+      "accounts": [],
+      "allowFrom": [],
+      "stt_enabled": false,
+      "stt_model": "base",
+      "stt_language": "pt",
+      "tts_enabled": false,
+      "tts_provider": "local",
+      "tts_model": "gpt-4o-mini-tts",
+      "tts_voice": "alloy",
+      "tts_default_reply": false
+    },
+    "discord": {
+      "enabled": false,
+      "token": "",
+      "guild_id": "",
+      "accounts": [],
+      "allowFrom": [],
+      "allowChannels": []
+    },
+    "slack": {
+      "enabled": false,
+      "token": "",
+      "workspace": "",
+      "app_token": "",
+      "accounts": [],
+      "allowFrom": [],
+      "allowChannels": []
+    },
+    "whatsapp": {
+      "enabled": false,
+      "token": "",
+      "phone": "",
+      "accounts": [],
+      "allowFrom": [],
+      "stt_enabled": false,
+      "stt_model": "base",
+      "stt_language": "pt",
+      "tts_enabled": false,
+      "tts_provider": "local",
+      "tts_model": "gpt-4o-mini-tts",
+      "tts_voice": "alloy",
+      "tts_default_reply": false
+    },
+    "teams": {
+      "enabled": false,
+      "token": "",
+      "tenant": "",
+      "accounts": []
+    }
+  },
+  "hooks": {
+    "boot": true,
+    "session_memory": true,
+    "command_logger": false
+  },
+  "web_tools": {
+    "web_search": {
+      "enabled": true,
+      "provider": "brave"
+    },
+    "reddit": {
+      "enabled": false,
+      "subreddits": [
+        "selfhosted",
+        "Python"
+      ]
+    },
+    "threads": {
+      "enabled": false,
+      "username": ""
+    }
+  },
+  "language": "pt-br",
+  "security": {
+    "allow_shell_exec": true,
+    "redact_tokens_in_logs": true,
+    "require_gateway_token": true,
+    "pairing": {
+      "enabled": false,
+      "code_ttl_seconds": 86400
+    },
+    "rbac": {
+      "viewer_tokens": []
+    },
+    "tool_policies": {}
+  },
+  "skills": [
+    "coding-agent",
+    "github",
+    "web-search",
+    "web-fetch",
+    "memory-search",
+    "cron",
+    "healthcheck",
+    "find-skills"
+  ]
+}
