@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,8 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
 
 from clawlite.config.settings import load_config, save_config
+from clawlite.core.model_catalog import get_model_or_default
+from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.session_memory import ensure_memory_layout
 from clawlite.runtime.workspace import init_workspace
 from clawlite.configure_menu import (
@@ -37,6 +41,228 @@ SKILL_PRESETS = {
     "creator": ["threads", "twitter", "youtube", "rss", "image-gen", "web-search", "web-fetch"],
     "ops": ["healthcheck", "cron", "tailscale", "ssh", "docker", "weather", "memory-search"],
 }
+
+CORE_MEMORY_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "MEMORY.md"]
+
+
+def _mask_token(token: str) -> str:
+    if not token:
+        return ""
+    if len(token) <= 10:
+        return "*" * len(token)
+    return f"{token[:6]}...{token[-3:]}"
+
+
+def _ensure_gateway_token_if_required(cfg: dict[str, Any]) -> bool:
+    security = cfg.get("security", {}) if isinstance(cfg.get("security"), dict) else {}
+    require_token = bool(security.get("require_gateway_token", True))
+    if not require_token:
+        return False
+
+    gateway = cfg.setdefault("gateway", {})
+    token = str(gateway.get("token", "")).strip()
+    if token:
+        return False
+
+    gateway["token"] = secrets.token_urlsafe(24)
+    return True
+
+
+def _build_readiness_checks(cfg: dict[str, Any], channel_tests: list[str]) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+
+    model_key = str(cfg.get("model", "")).strip()
+    if model_key:
+        entry = get_model_or_default(model_key)
+        checks.append(
+            {
+                "name": "Model Catalog",
+                "ok": "true",
+                "detail": f"{entry.provider}/{entry.id} · context {entry.context_window}",
+            }
+        )
+    else:
+        checks.append({"name": "Model Catalog", "ok": "false", "detail": "No model selected"})
+
+    provider = _provider_from_model(model_key) if model_key else ""
+    if provider and provider not in {"ollama", "local"}:
+        token = _get_stored_token(cfg, provider)
+        if token:
+            checks.append(
+                {
+                    "name": "Provider Auth",
+                    "ok": "true",
+                    "detail": f"{provider} key present ({_mask_token(token)})",
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "name": "Provider Auth",
+                    "ok": "false",
+                    "detail": f"Missing API key for provider '{provider}'",
+                }
+            )
+    else:
+        checks.append(
+            {
+                "name": "Provider Auth",
+                "ok": "true",
+                "detail": "Local/ollama provider does not require API key",
+            }
+        )
+
+    gateway = cfg.get("gateway", {}) if isinstance(cfg.get("gateway"), dict) else {}
+    security = cfg.get("security", {}) if isinstance(cfg.get("security"), dict) else {}
+    gw_host = str(gateway.get("host", "0.0.0.0"))
+    gw_port = str(gateway.get("port", 8787))
+    gw_token = str(gateway.get("token", "")).strip()
+    require_token = bool(security.get("require_gateway_token", True))
+    gateway_ok = bool(gw_token or not require_token)
+    checks.append(
+        {
+            "name": "Gateway Security",
+            "ok": "true" if gateway_ok else "false",
+            "detail": (
+                f"{gw_host}:{gw_port} · token {'set' if gw_token else 'missing'}"
+                if require_token
+                else f"{gw_host}:{gw_port} · token optional"
+            ),
+        }
+    )
+
+    channels = cfg.get("channels", {}) if isinstance(cfg.get("channels"), dict) else {}
+    enabled_channels = [name for name, data in channels.items() if isinstance(data, dict) and data.get("enabled")]
+    channels_ok = bool(enabled_channels)
+    checks.append(
+        {
+            "name": "Channels",
+            "ok": "true" if channels_ok else "false",
+            "detail": ", ".join(enabled_channels) if enabled_channels else "No enabled channels",
+        }
+    )
+
+    enabled_skills = cfg.get("skills", [])
+    skill_count = len(enabled_skills) if isinstance(enabled_skills, list) else 0
+    checks.append(
+        {
+            "name": "Skills Profile",
+            "ok": "true" if skill_count >= 3 else "false",
+            "detail": f"{skill_count} active skills",
+        }
+    )
+
+    workspace = Path(init_workspace())
+    missing_files = [name for name in CORE_MEMORY_FILES if not (workspace / name).exists()]
+    checks.append(
+        {
+            "name": "Workspace Memory",
+            "ok": "true" if not missing_files else "false",
+            "detail": "All core memory files ready" if not missing_files else f"Missing: {', '.join(missing_files)}",
+        }
+    )
+
+    security_ok = bool(security.get("redact_tokens_in_logs", True))
+    checks.append(
+        {
+            "name": "Security Defaults",
+            "ok": "true" if security_ok else "false",
+            "detail": "Token redaction enabled" if security_ok else "Token redaction disabled",
+        }
+    )
+
+    doctor_out = run_doctor()
+    doctor_has_warnings = "warnings: none" not in doctor_out.lower()
+    checks.append(
+        {
+            "name": "Doctor Healthcheck",
+            "ok": "false" if doctor_has_warnings else "true",
+            "detail": "Warnings found in doctor output" if doctor_has_warnings else "No doctor warnings",
+        }
+    )
+
+    if channel_tests:
+        lowered = [str(line).lower() for line in channel_tests]
+        channel_ok = not any(
+            ("falha" in line) or ("inválido" in line) or ("invalido" in line) or ("ausente" in line)
+            for line in lowered
+        )
+        checks.append(
+            {
+                "name": "Live Channel Tests",
+                "ok": "true" if channel_ok else "false",
+                "detail": "; ".join(channel_tests[:3]),
+            }
+        )
+
+    return checks
+
+
+def _readiness_score(checks: list[dict[str, str]]) -> int:
+    if not checks:
+        return 0
+    passed = sum(1 for c in checks if c.get("ok") == "true")
+    return int(round((passed / len(checks)) * 100))
+
+
+def _write_onboarding_report(
+    cfg: dict[str, Any],
+    checks: list[dict[str, str]],
+    channel_tests: list[str],
+) -> Path:
+    root = Path(init_workspace())
+    report = root / "ONBOARDING_REPORT.md"
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    score = _readiness_score(checks)
+
+    lines = [
+        "# ONBOARDING REPORT",
+        "",
+        f"- Generated at: {ts}",
+        f"- Readiness score: {score}/100",
+        f"- Model: {cfg.get('model', 'n/a')}",
+        f"- Language: {cfg.get('language', 'pt-br')}",
+        "",
+        "## Readiness Checks",
+    ]
+
+    for check in checks:
+        icon = "PASS" if check.get("ok") == "true" else "WARN"
+        lines.append(f"- [{icon}] {check.get('name', 'Unnamed')}: {check.get('detail', '')}")
+
+    lines.append("")
+    lines.append("## Live Channel Tests")
+    if channel_tests:
+        lines.extend([f"- {line}" for line in channel_tests])
+    else:
+        lines.append("- No channel tests executed")
+
+    lines.append("")
+    lines.append("## Next Steps")
+    lines.append("- Run `clawlite doctor`")
+    lines.append("- Run `clawlite start`")
+    lines.append("- Open the gateway dashboard and test `/ws/chat` flow")
+
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report
+
+
+def _show_readiness_panel(checks: list[dict[str, str]], report: Path, token_generated: bool) -> None:
+    score = _readiness_score(checks)
+    color = "green" if score >= 80 else "yellow" if score >= 60 else "red"
+    lines = [f"[bold {color}]Readiness score: {score}/100[/bold {color}]"]
+    if token_generated:
+        lines.append("[bold cyan]Gateway token auto-generated for secure default setup.[/bold cyan]")
+    lines.append("")
+
+    for check in checks:
+        ok = check.get("ok") == "true"
+        prefix = "✅" if ok else "⚠️"
+        lines.append(f"{prefix} {check.get('name', 'Check')}: {check.get('detail', '')}")
+
+    lines.append("")
+    lines.append(f"[dim]Report saved at: {report}[/dim]")
+    console.print(Panel("\n".join(lines), title="ClawLite Readiness", border_style=color, padding=(1, 2)))
 
 
 def _simple_prompt(prompt: str, default: str = "") -> str:
@@ -400,8 +626,14 @@ def _run_onboarding_simple(cfg: dict) -> None:
     if profile in SKILL_PRESETS:
         cfg["skills"] = SKILL_PRESETS[profile]
 
+    token_generated = _ensure_gateway_token_if_required(cfg)
     _save_identity_files(cfg)
+    channel_tests = _live_channel_tests(cfg)
+    checks = _build_readiness_checks(cfg, channel_tests)
+    report_path = _write_onboarding_report(cfg, checks, channel_tests)
     save_config(cfg)
+    _show_readiness_panel(checks, report_path, token_generated)
+    _show_completion_panel(cfg)
     console.print("✅ Onboarding simples concluído.")
 
 
@@ -446,7 +678,10 @@ def run_onboarding() -> None:
             progress.advance(task)
 
     test_results = _live_channel_tests(cfg)
+    token_generated = _ensure_gateway_token_if_required(cfg)
+    checks = _build_readiness_checks(cfg, test_results)
     _save_identity_files(cfg)
+    save_config(cfg)
 
     console.print(Panel("Resumo final", border_style="#00f5ff"))
     console.print(Syntax(json.dumps(cfg, ensure_ascii=False, indent=2), "json", line_numbers=False))
@@ -455,7 +690,9 @@ def run_onboarding() -> None:
         console.print(f"- {line}")
 
     if questionary.confirm("Concluir onboarding e manter essas configurações?", default=True).ask():
+        report_path = _write_onboarding_report(cfg, checks, test_results)
         save_config(cfg)
+        _show_readiness_panel(checks, report_path, token_generated)
         _show_completion_panel(cfg)
     else:
         console.print("🟡 Onboarding cancelado no final. As alterações já estavam salvas durante o wizard.")

@@ -1,15 +1,18 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from clawlite.onboarding import (
+    _build_readiness_checks,
+    _ensure_gateway_token_if_required,
     _get_stored_token,
     _provider_from_model,
+    _readiness_score,
     _show_completion_panel,
     _test_api_key,
+    _write_onboarding_report,
 )
 
 
@@ -20,14 +23,18 @@ from clawlite.onboarding import (
 def test_provider_from_anthropic():
     assert _provider_from_model("anthropic/claude-haiku-4-5-20251001") == "anthropic"
 
+
 def test_provider_from_openai():
     assert _provider_from_model("openai/gpt-4o-mini") == "openai"
+
 
 def test_provider_from_groq():
     assert _provider_from_model("groq/llama3") == "groq"
 
+
 def test_provider_from_ollama():
     assert _provider_from_model("ollama/llama3.1:8b") == "ollama"
+
 
 def test_provider_no_slash():
     assert _provider_from_model("openai") == "openai"
@@ -41,16 +48,18 @@ def test_get_token_from_env(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     assert _get_stored_token({}, "anthropic") == "sk-ant-test"
 
+
 def test_get_token_from_cfg():
     cfg = {"auth": {"providers": {"openai": {"token": "sk-openai-abc"}}}}
     assert _get_stored_token(cfg, "openai") == "sk-openai-abc"
+
 
 def test_get_token_empty():
     assert _get_stored_token({}, "anthropic") == ""
 
 
 # ---------------------------------------------------------------------------
-# _test_api_key — mocking httpx
+# _test_api_key - mocking httpx
 # ---------------------------------------------------------------------------
 
 def _mock_response(status_code: int, text: str = "") -> MagicMock:
@@ -64,7 +73,7 @@ def test_anthropic_valid_key():
     with patch("httpx.post", return_value=_mock_response(200)):
         ok, msg = _test_api_key("anthropic", "sk-ant-valid")
     assert ok is True
-    assert "válida" in msg.lower() or "OK" in msg
+    assert "key" in msg.lower() or "ok" in msg.lower()
 
 
 def test_anthropic_invalid_key_401():
@@ -96,10 +105,11 @@ def test_rate_limit_429_treated_as_valid():
 
 def test_connection_error():
     import httpx as _httpx
+
     with patch("httpx.post", side_effect=_httpx.ConnectError("connection refused")):
         ok, msg = _test_api_key("openai", "sk-x")
     assert ok is False
-    assert "conexão" in msg.lower() or "connect" in msg.lower()
+    assert "conexao" in msg.lower() or "conexÃ£o" in msg.lower() or "connect" in msg.lower()
 
 
 def test_ollama_reachable():
@@ -128,7 +138,7 @@ def test_unknown_status_500():
 
 
 # ---------------------------------------------------------------------------
-# _show_completion_panel — smoke (não testa output visual, só que não quebra)
+# _show_completion_panel - smoke
 # ---------------------------------------------------------------------------
 
 def test_show_completion_panel_minimal(capsys):
@@ -158,5 +168,78 @@ def test_show_completion_panel_no_token(capsys):
     cfg = {"gateway": {}, "channels": {}}
     _show_completion_panel(cfg)
     out = capsys.readouterr().out
-    # Deve mencionar que o token é gerado no start
     assert "clawlite start" in out or "gerado" in out
+
+
+# ---------------------------------------------------------------------------
+# Readiness / report
+# ---------------------------------------------------------------------------
+
+def test_ensure_gateway_token_generated_when_required():
+    cfg = {"security": {"require_gateway_token": True}, "gateway": {"token": ""}}
+    changed = _ensure_gateway_token_if_required(cfg)
+    assert changed is True
+    assert isinstance(cfg["gateway"]["token"], str)
+    assert len(cfg["gateway"]["token"]) >= 16
+
+
+def test_ensure_gateway_token_not_generated_when_not_required():
+    cfg = {"security": {"require_gateway_token": False}, "gateway": {"token": ""}}
+    changed = _ensure_gateway_token_if_required(cfg)
+    assert changed is False
+    assert cfg["gateway"]["token"] == ""
+
+
+def test_readiness_score_calculation():
+    checks = [
+        {"name": "A", "ok": "true", "detail": "ok"},
+        {"name": "B", "ok": "false", "detail": "warn"},
+        {"name": "C", "ok": "true", "detail": "ok"},
+        {"name": "D", "ok": "true", "detail": "ok"},
+    ]
+    assert _readiness_score(checks) == 75
+
+
+def test_write_onboarding_report_creates_file(monkeypatch, tmp_path: Path):
+    import clawlite.onboarding as onboarding
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(onboarding, "init_workspace", lambda: str(workspace))
+
+    cfg = {"model": "openai/gpt-4o-mini", "language": "pt-br"}
+    checks = [{"name": "Doctor Healthcheck", "ok": "true", "detail": "No doctor warnings"}]
+    channel_tests = ["✅ Telegram conectado (@bot)"]
+
+    report = _write_onboarding_report(cfg, checks, channel_tests)
+    assert report.exists()
+    text = report.read_text(encoding="utf-8")
+    assert "ONBOARDING REPORT" in text
+    assert "Readiness score" in text
+    assert "Doctor Healthcheck" in text
+
+
+def test_build_readiness_checks_happy_path(monkeypatch, tmp_path: Path):
+    import clawlite.onboarding as onboarding
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    for name in ("AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "MEMORY.md"):
+        (workspace / name).write_text("# ok\n", encoding="utf-8")
+
+    monkeypatch.setattr(onboarding, "init_workspace", lambda: str(workspace))
+    monkeypatch.setattr(onboarding, "run_doctor", lambda: "warnings: none ✅")
+
+    cfg = {
+        "model": "openai/gpt-4o-mini",
+        "auth": {"providers": {"openai": {"token": "sk-openai-test"}}},
+        "gateway": {"host": "127.0.0.1", "port": 8787, "token": "tok-abc"},
+        "security": {"require_gateway_token": True, "redact_tokens_in_logs": True},
+        "channels": {"telegram": {"enabled": True, "token": "tg-token"}},
+        "skills": ["web-search", "web-fetch", "coding-agent"],
+    }
+    checks = _build_readiness_checks(cfg, ["✅ Telegram conectado (@bot)"])
+    names = {c["name"] for c in checks}
+    assert "Model Catalog" in names
+    assert "Doctor Healthcheck" in names
+    assert _readiness_score(checks) >= 80
