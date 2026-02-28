@@ -1386,6 +1386,12 @@ def run_gateway(host: str | None = None, port: int | None = None) -> None:
         )
 
     _log("gateway.started", data={"host": h, "port": p})
+
+    # Inicia heartbeat em thread daemon (para quando o processo encerra)
+    hb_interval = int(cfg.get("gateway", {}).get("heartbeat_interval_s", 1800))
+    from clawlite.core.heartbeat import start_heartbeat_thread
+    start_heartbeat_thread(interval_s=hb_interval)
+
     try:
         uvicorn.run(
             app,
