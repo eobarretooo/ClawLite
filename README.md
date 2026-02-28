@@ -114,10 +114,25 @@ Somente checar:
 clawlite update --check
 ```
 
+Selecionar canal de atualização:
+
+```bash
+clawlite update --channel stable
+clawlite update --channel beta --check
+clawlite update --channel dev
+```
+
+Regras de canal:
+
+- `stable`: segue a release estável mais recente no GitHub (tag `vX.Y.Z`).
+- `beta`: segue a prerelease beta mais recente (tag `vX.Y.Z-beta.N`), com fallback para stable quando beta estiver atrás.
+- `dev`: segue `main` (snapshot contínuo).
+- Ao informar `--channel`, o canal fica salvo em `~/.clawlite/config.json` (`update.channel`).
+
 Comportamento no `start`:
 
 - Ao rodar `clawlite start`, o ClawLite faz checagem rápida de versão e avisa se houver update.
-- Para desativar a checagem no boot do gateway: `export CLAWLITE_SKIP_UPDATE_CHECK=1`.
+- Para desativar a checagem no boot do gateway: `export CLAWLITE_SKIP_UPDATE_CHECK=1` ou `update.check_on_start=false` no config.
 
 Dashboard local:
 

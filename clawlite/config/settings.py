@@ -69,6 +69,10 @@ DEFAULT_CONFIG = {
         "token": "",
         "dashboard_enabled": True,
     },
+    "update": {
+        "channel": "stable",
+        "check_on_start": True,
+    },
     "channels": {
         "telegram": {
             "enabled": False,

@@ -6,7 +6,7 @@ import sys
 import time
 
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
-from clawlite.config.settings import load_config
+from clawlite.config.settings import load_config, save_config
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
 from clawlite.runtime.session_memory import (
@@ -247,6 +247,12 @@ def main() -> None:
     sub.add_parser("tui")
     upd = sub.add_parser("update")
     upd.add_argument("--check", action="store_true", help="Apenas verifica se existe nova versao")
+    upd.add_argument(
+        "--channel",
+        choices=["stable", "beta", "dev"],
+        default=None,
+        help="Canal de atualização (persistido no config quando informado).",
+    )
 
     start = sub.add_parser("start")
     start.add_argument("--host", default=None)
@@ -514,18 +520,31 @@ def main() -> None:
         try:
             from clawlite.runtime.self_update import check_for_updates, run_self_update
 
+            if args.channel:
+                cfg = load_config()
+                cfg.setdefault("update", {})
+                if not isinstance(cfg["update"], dict):
+                    cfg["update"] = {}
+                cfg["update"]["channel"] = args.channel
+                save_config(cfg)
+                print(f"ℹ️ Canal de atualização definido para: {args.channel}")
+
             if args.check:
-                status = check_for_updates(force_remote=True)
+                status = check_for_updates(force_remote=True, channel=args.channel)
                 if status.available:
                     print(
-                        f"⬆️ Atualizacao disponivel: {status.current_version} -> {status.latest_version}. "
+                        f"⬆️ Atualizacao ({status.channel}) disponivel: "
+                        f"{status.current_version} -> {status.latest_version}. "
                         "Rode `clawlite update`."
                     )
                 else:
-                    print(f"✅ ClawLite ja esta atualizado ({status.current_version}).")
+                    print(
+                        f"✅ ClawLite ({status.channel}) ja esta atualizado "
+                        f"({status.current_version})."
+                    )
                 return
 
-            ok, msg = run_self_update()
+            ok, msg = run_self_update(channel=args.channel)
             print(("✅ " if ok else "❌ ") + msg)
             if not ok:
                 raise SystemExit(1)

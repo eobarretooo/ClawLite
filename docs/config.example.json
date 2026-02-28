@@ -25,6 +25,10 @@
     "port": 8787,
     "token": ""
   },
+  "update": {
+    "channel": "stable",
+    "check_on_start": true
+  },
   "channels": {
     "telegram": {
       "enabled": false,
