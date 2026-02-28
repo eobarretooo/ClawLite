@@ -133,11 +133,19 @@ Componentes:
 ## Documentação principal
 
 - [Wizard](docs/start/wizard.md)
+- [Skills OpenClaw Compatibility](docs/SKILLS_OPENCLAW_COMPAT.md)
 - [Dashboard](docs/DASHBOARD.md)
 - [MCP](docs/MCP.md)
 - [Runbook](docs/RUNBOOK.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Session Memory](docs/SESSION_MEMORY.md)
+
+## Compatibilidade de skills (OpenClaw → ClawLite)
+
+O catálogo `skills/` do ClawLite agora inclui skills importadas do OpenClaw com adaptação para este runtime.
+
+- Skills com equivalente direto foram mapeadas para backends nativos do ClawLite (ex.: `gh-issues` → `github`, `openai-whisper` → `whisper`, `xurl` → `web-fetch`).
+- Skills sem backend nativo no ClawLite retornam guidance operacional com alternativas.
 
 ## Desenvolvimento
 

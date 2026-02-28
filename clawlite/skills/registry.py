@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from clawlite.skills.openclaw_compat import (
+    OPENCLAW_COMPAT_DESCRIPTIONS,
+    OPENCLAW_COMPAT_SKILLS,
+)
+
 SKILLS = {
     "coding-agent": "clawlite.skills.coding_agent:run",
     "github": "clawlite.skills.github:run",
@@ -79,6 +84,9 @@ SKILL_DESCRIPTIONS = {
     "voice-call": "Fluxos de voz/chamada.",
     "find-skills": "Descoberta de skills disponíveis.",
 }
+
+SKILLS.update(OPENCLAW_COMPAT_SKILLS)
+SKILL_DESCRIPTIONS.update(OPENCLAW_COMPAT_DESCRIPTIONS)
 
 
 def describe_skill(name: str) -> str:

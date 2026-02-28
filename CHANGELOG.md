@@ -11,6 +11,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Onboarding flow updated with explicit Workspace, Daemon and Health check steps.
 - Review + Apply stage in onboarding before persisting advanced configuration.
 - New onboarding docs structure: overview + CLI wizard reference for ClawLite.
+- Imported missing OpenClaw skill catalogs into `skills/` with ClawLite adaptation notes.
+- OpenClaw compatibility aliases in runtime skill registry (delegated and guided fallbacks).
 
 ### Changed
 - README onboarding documentation to reflect QuickStart vs Advanced flow.
