@@ -45,6 +45,25 @@ Requisitos mínimos:
 - Python `3.10+`
 - Linux ou Termux
 - `git` e `curl`
+- Dependências Python em `requirements.txt` (instaladas automaticamente pelo `install.sh`)
+
+## Providers de IA (atualizado)
+
+O ClawLite suporta providers no padrão `provider/model`, incluindo:
+
+- `openai`, `anthropic`, `gemini`, `openrouter`, `groq`
+- `moonshot`, `mistral`, `xai`, `together`, `huggingface`
+- `nvidia`, `qianfan`, `venice`, `minimax`, `xiaomi`, `zai`
+- `litellm`, `vercel-ai-gateway`, `kilocode`, `vllm`, `ollama`
+
+Configuração de auth:
+
+```bash
+clawlite auth login <provider>
+clawlite auth status
+```
+
+No `clawlite configure`, ao selecionar o provider o link oficial de login/chave também é exibido.
 
 ## Onboarding (fluxo estilo OpenClaw, adaptado ao ClawLite)
 

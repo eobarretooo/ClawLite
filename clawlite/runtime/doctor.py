@@ -40,7 +40,7 @@ def run_doctor() -> str:
     online = _check_connectivity()
     lines.append(f"connectivity.optional: {'ok' if online else 'offline/blocked'}")
 
-    # dependências opcionais do gateway (podem faltar em Termux sem Rust)
+    # dependencias do gateway
     try:
         import fastapi  # type: ignore
         import uvicorn  # type: ignore
@@ -49,9 +49,25 @@ def run_doctor() -> str:
     except Exception:
         gateway_deps = "optional-missing"
         warnings.append(
-            "Dependências do gateway ausentes (fastapi/uvicorn). CLI funciona; para gateway rode: pkg install rust clang && ~/.clawlite/venv/bin/pip install fastapi uvicorn"
+            "Dependencias do gateway ausentes (fastapi/uvicorn). CLI funciona; para gateway rode: pip install fastapi 'uvicorn[standard]'"
         )
     lines.append(f"gateway.deps: {gateway_deps}")
+
+    websocket_stack = "missing"
+    try:
+        import websockets  # type: ignore  # noqa: F401
+
+        websocket_stack = "ok:websockets"
+    except Exception:
+        try:
+            import wsproto  # type: ignore  # noqa: F401
+
+            websocket_stack = "ok:wsproto"
+        except Exception:
+            warnings.append(
+                "Suporte WebSocket ausente. Instale: pip install 'uvicorn[standard]' ou pip install websockets wsproto"
+            )
+    lines.append(f"gateway.websocket_stack: {websocket_stack}")
 
     model = cfg.get("model", "")
     if not model:

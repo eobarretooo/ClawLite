@@ -130,16 +130,40 @@ def bootstrap_workspace():
 
 
 def install_deps():
+    base_requirements = [
+        "fastapi>=0.112",
+        "uvicorn[standard]>=0.30",
+        "websockets>=12.0",
+        "wsproto>=1.2",
+        "questionary>=2.0.1",
+        "rich>=13.7.1",
+        "httpx>=0.27",
+        "duckduckgo-search>=6.0.0",
+        "beautifulsoup4>=4.12.0",
+        "python-telegram-bot>=21.0",
+        "discord.py>=2.3.0",
+        "slack-bolt>=1.22.0",
+        "textual>=0.73.0",
+        "playwright>=1.46.0",
+        "edge-tts>=6.1.12",
+        "groq>=0.11.0",
+    ]
+
+    req_file = Path(ROOT_DIR) / "requirements.txt" if ROOT_DIR else None
+    pip_target = ["install", "--upgrade"]
+    if req_file and req_file.exists():
+        pip_target += ["-r", str(req_file)]
+    else:
+        pip_target += base_requirements
+
     if IS_TERMUX:
         run(["pkg", "update", "-y"], "pkg update")
         run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install deps")
         env = os.environ.copy()
         env["ANDROID_API_LEVEL"] = env.get("ANDROID_API_LEVEL", "24")
-        run(PIP + ["install", "--upgrade", "rich", "questionary", "httpx"], "pip base", env=env)
-        run(PIP + ["install", "--upgrade", "pydantic==1.10.21", "--only-binary=:all:"], "pip pydantic v1", env=env)
-        run(PIP + ["install", "--upgrade", "fastapi==0.100.1", "uvicorn", "--only-binary=:all:"], "pip fastapi/uvicorn termux", env=env)
+        run(PIP + pip_target, "pip requirements", env=env)
     else:
-        run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "httpx"], "pip deps")
+        run(PIP + pip_target, "pip requirements")
 
 
 def install_package():
@@ -154,8 +178,16 @@ def doctor_check():
 
 
 def verify_gateway_runtime():
-    code = "import fastapi,uvicorn; print('ok')"
+    code = "import fastapi,uvicorn,websockets; print('ok')"
     run([PYBIN, "-c", code], "verify gateway runtime")
+
+
+def install_playwright_runtime():
+    try:
+        run([PYBIN, "-m", "playwright", "install", "chromium"], "playwright chromium runtime")
+    except Exception:
+        # Browser tools continuam operando em modo mock se o runtime nao puder ser instalado.
+        pass
 
 
 def rich_flow():
@@ -179,22 +211,8 @@ def rich_flow():
         console=console,
     ) as pb:
         t = pb.add_task("deps", total=100)
-        if IS_TERMUX:
-            env = os.environ.copy()
-            env["ANDROID_API_LEVEL"] = env.get("ANDROID_API_LEVEL", "24")
-            run(["pkg", "update", "-y"], "pkg update")
-            pb.advance(t, 25)
-            run(["pkg", "install", "-y", "rust", "clang", "python", "git", "curl"], "pkg install")
-            pb.advance(t, 25)
-            run(PIP + ["install", "--upgrade", "rich", "questionary", "httpx"], "pip base", env=env)
-            pb.advance(t, 15)
-            run(PIP + ["install", "--upgrade", "pydantic==1.10.21", "--only-binary=:all:"], "pip pydantic v1", env=env)
-            pb.advance(t, 15)
-            run(PIP + ["install", "--upgrade", "fastapi==0.100.1", "uvicorn", "--only-binary=:all:"], "pip fastapi/uvicorn termux", env=env)
-            pb.advance(t, 20)
-        else:
-            run(PIP + ["install", "--upgrade", "rich", "questionary", "fastapi", "uvicorn", "httpx"], "pip deps")
-            pb.advance(t, 100)
+        install_deps()
+        pb.advance(t, 100)
     console.print("[green]✓[/green]")
 
     # [3/5]
@@ -215,6 +233,7 @@ def rich_flow():
     # [5/5]
     with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
         t = sp.add_task("[5/5] Verificando instalação...", total=None)
+        install_playwright_runtime()
         doctor_check()
         verify_gateway_runtime()
         sp.update(t, completed=1)
@@ -237,6 +256,7 @@ def simple_flow():
     print("[4/5] Configurando workspace...")
     ensure_path(); bootstrap_workspace(); print("✓")
     print("[5/5] Verificando instalação...")
+    install_playwright_runtime()
     doctor_check()
     verify_gateway_runtime()
     print("✓")
@@ -258,8 +278,8 @@ if __name__ == "__main__":
         msg = str(e)
         if "verify gateway runtime" in msg or "fastapi" in msg or "uvicorn" in msg:
             msg = (
-                "Gateway runtime não está pronto (fastapi/uvicorn). "
-                "No Termux, execute: pkg install rust clang && ~/.clawlite/venv/bin/pip install pydantic==1.10.21 --only-binary=:all: fastapi==0.100.1 uvicorn --only-binary=:all:"
+                "Gateway runtime nao esta pronto (fastapi/uvicorn/websockets). "
+                "Execute: ~/.clawlite/venv/bin/pip install fastapi 'uvicorn[standard]' websockets wsproto"
             )
         if USE_RICH:
             console.print(f"[red]✗[/red] {msg}")
