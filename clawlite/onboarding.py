@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import socket
 import sys
 import urllib.parse
 import urllib.request
@@ -18,6 +19,7 @@ from rich.syntax import Syntax
 
 from clawlite.config.settings import load_config, save_config
 from clawlite.core.model_catalog import get_model_or_default
+from clawlite.runtime.daemon import DaemonError, install_systemd_user_service
 from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.session_memory import ensure_memory_layout
 from clawlite.runtime.workspace import init_workspace
@@ -43,6 +45,7 @@ SKILL_PRESETS = {
 }
 
 CORE_MEMORY_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "MEMORY.md"]
+_ONBOARDING_META_KEY = "__onboarding_meta"
 
 
 def _mask_token(token: str) -> str:
@@ -68,7 +71,91 @@ def _ensure_gateway_token_if_required(cfg: dict[str, Any]) -> bool:
     return True
 
 
-def _build_readiness_checks(cfg: dict[str, Any], channel_tests: list[str]) -> list[dict[str, str]]:
+def _clone_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    return json.loads(json.dumps(cfg, ensure_ascii=False))
+
+
+def _meta(cfg: dict[str, Any]) -> dict[str, Any]:
+    existing = cfg.get(_ONBOARDING_META_KEY)
+    if isinstance(existing, dict):
+        return existing
+    meta: dict[str, Any] = {}
+    cfg[_ONBOARDING_META_KEY] = meta
+    return meta
+
+
+def _public_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    out = _clone_config(cfg)
+    out.pop(_ONBOARDING_META_KEY, None)
+    return out
+
+
+def _record_extra_check(cfg: dict[str, Any], name: str, ok: bool, detail: str) -> None:
+    bucket = _meta(cfg).setdefault("extra_checks", [])
+    if not isinstance(bucket, list):
+        bucket = []
+        _meta(cfg)["extra_checks"] = bucket
+    bucket.append({"name": name, "ok": "true" if ok else "false", "detail": detail})
+
+
+def _collect_extra_checks(cfg: dict[str, Any]) -> list[dict[str, str]]:
+    meta = cfg.get(_ONBOARDING_META_KEY, {})
+    if not isinstance(meta, dict):
+        return []
+    raw = meta.get("extra_checks", [])
+    if not isinstance(raw, list):
+        return []
+    checks: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        checks.append(
+            {
+                "name": str(item.get("name", "Wizard Check")),
+                "ok": "true" if str(item.get("ok", "false")).lower() == "true" else "false",
+                "detail": str(item.get("detail", "")),
+            }
+        )
+    return checks
+
+
+def _mask_secret_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _mask_token(value)
+    if isinstance(value, list):
+        return [_mask_secret_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _mask_secret_value(v) for k, v in value.items()}
+    if value in (None, False, 0):
+        return value
+    return "***"
+
+
+def _redacted_config_for_preview(cfg: dict[str, Any]) -> dict[str, Any]:
+    sensitive_keys = ("token", "secret", "password", "api_key", "apikey")
+
+    def _walk(value: Any, parent_key: str = "") -> Any:
+        if isinstance(value, dict):
+            out: dict[str, Any] = {}
+            for key, child in value.items():
+                key_l = key.lower()
+                if any(flag in key_l for flag in sensitive_keys):
+                    out[key] = _mask_secret_value(child)
+                else:
+                    out[key] = _walk(child, key)
+            return out
+        if isinstance(value, list):
+            return [_walk(item, parent_key) for item in value]
+        return value
+
+    return _walk(_public_config(cfg))
+
+
+def _build_readiness_checks(
+    cfg: dict[str, Any],
+    channel_tests: list[str],
+    extra_checks: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
     checks: list[dict[str, str]] = []
 
     model_key = str(cfg.get("model", "")).strip()
@@ -195,6 +282,9 @@ def _build_readiness_checks(cfg: dict[str, Any], channel_tests: list[str]) -> li
             }
         )
 
+    if extra_checks:
+        checks.extend(extra_checks)
+
     return checks
 
 
@@ -263,6 +353,151 @@ def _show_readiness_panel(checks: list[dict[str, str]], report: Path, token_gene
     lines.append("")
     lines.append(f"[dim]Report saved at: {report}[/dim]")
     console.print(Panel("\n".join(lines), title="ClawLite Readiness", border_style=color, padding=(1, 2)))
+
+
+def _section_workspace(cfg: dict[str, Any]) -> None:
+    console.print("\n[bold #00f5ff]Workspace[/bold #00f5ff]")
+    root = Path(init_workspace())
+    console.print(f"  [bold green]✓[/] Workspace pronto em [bold]{root}[/bold]")
+    _record_extra_check(cfg, "Workspace Setup", True, f"Initialized at {root}")
+
+
+def _section_daemon(cfg: dict[str, Any]) -> None:
+    console.print("\n[bold #00f5ff]Daemon[/bold #00f5ff]")
+    if os.name == "nt":
+        console.print("  [bold yellow]⚠[/] install-daemon não é suportado no Windows sem WSL/systemd.")
+        _record_extra_check(cfg, "Daemon", False, "Unsupported on this platform without WSL/systemd")
+        return
+
+    install_later = questionary.confirm(
+        "Instalar daemon systemd user no passo Apply?",
+        default=False,
+    ).ask()
+    if not install_later:
+        _record_extra_check(cfg, "Daemon", True, "Skipped by user")
+        return
+
+    gateway = cfg.get("gateway", {}) if isinstance(cfg.get("gateway"), dict) else {}
+    host = str(gateway.get("host", "127.0.0.1") or "127.0.0.1").strip()
+    port_raw = gateway.get("port", 8787)
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        port = 8787
+
+    service_name = (
+        questionary.text(
+            "Nome do serviço systemd user:",
+            default="clawlite",
+            validate=lambda t: bool(str(t).strip()) or "Informe um nome válido",
+        ).ask()
+        or "clawlite"
+    ).strip()
+    enable_now = bool(questionary.confirm("Habilitar para iniciar com usuário?", default=True).ask())
+    start_now = bool(questionary.confirm("Iniciar/reiniciar agora após instalar?", default=True).ask())
+
+    meta = _meta(cfg)
+    meta["daemon_plan"] = {
+        "install": True,
+        "host": host,
+        "port": port,
+        "service_name": service_name,
+        "enable_now": enable_now,
+        "start_now": start_now,
+    }
+    console.print("  [dim]Daemon será aplicado no final (Review + Apply).[/dim]")
+
+
+def _apply_daemon_setup(cfg: dict[str, Any]) -> None:
+    meta = cfg.get(_ONBOARDING_META_KEY, {})
+    if not isinstance(meta, dict):
+        return
+    plan = meta.get("daemon_plan", {})
+    if not isinstance(plan, dict) or not plan.get("install"):
+        return
+
+    try:
+        result = install_systemd_user_service(
+            host=str(plan.get("host", "127.0.0.1")),
+            port=int(plan.get("port", 8787)),
+            service_name=str(plan.get("service_name", "clawlite")),
+            enable_now=bool(plan.get("enable_now", True)),
+            start_now=bool(plan.get("start_now", True)),
+        )
+        detail = (
+            f"systemd user service '{result.get('service_name', 'clawlite')}' "
+            f"configured at {result.get('unit_path', '')}"
+        )
+        _record_extra_check(cfg, "Daemon", True, detail)
+        console.print(f"  [bold green]✓[/] {detail}")
+    except DaemonError as exc:
+        _record_extra_check(cfg, "Daemon", False, str(exc))
+        console.print(f"  [bold yellow]⚠[/] Falha ao instalar daemon: {exc}")
+    except Exception as exc:  # pragma: no cover - proteção extra
+        _record_extra_check(cfg, "Daemon", False, str(exc))
+        console.print(f"  [bold yellow]⚠[/] Falha inesperada no daemon: {exc}")
+
+
+def _gateway_port_preflight(host: str, port: int) -> tuple[bool, str]:
+    bind_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((bind_host, port))
+        return True, f"{bind_host}:{port} disponível"
+    except OSError as exc:
+        return False, f"{bind_host}:{port} indisponível ({exc})"
+
+
+def _section_healthcheck(cfg: dict[str, Any]) -> None:
+    console.print("\n[bold #00f5ff]Health check (preflight)[/bold #00f5ff]")
+    gateway = cfg.get("gateway", {}) if isinstance(cfg.get("gateway"), dict) else {}
+    security = cfg.get("security", {}) if isinstance(cfg.get("security"), dict) else {}
+
+    host = str(gateway.get("host", "127.0.0.1") or "127.0.0.1").strip()
+    try:
+        port = int(gateway.get("port", 8787))
+    except (TypeError, ValueError):
+        port = 8787
+
+    require_token = bool(security.get("require_gateway_token", True))
+    has_token = bool(str(gateway.get("token", "")).strip())
+
+    with console.status("Rodando doctor...", spinner="dots"):
+        doctor_out = run_doctor()
+    doctor_ok = "warnings: none" in doctor_out.lower()
+    port_ok, port_detail = _gateway_port_preflight(host, port)
+    token_ok = (not require_token) or has_token
+
+    console.print(f"- Doctor: {'ok' if doctor_ok else 'warnings detectados'}")
+    console.print(f"- Porta gateway: {port_detail}")
+    console.print(f"- Token gateway: {'ok' if token_ok else 'ausente'}")
+
+    overall_ok = doctor_ok and port_ok and token_ok
+    detail = (
+        f"doctor={'ok' if doctor_ok else 'warn'}; "
+        f"port={'ok' if port_ok else 'fail'}; "
+        f"token={'ok' if token_ok else 'missing'}"
+    )
+    _record_extra_check(cfg, "Gateway Preflight", overall_ok, detail)
+
+
+def _finalize_onboarding(cfg: dict[str, Any], *, token_generated: bool | None = None) -> None:
+    generated = _ensure_gateway_token_if_required(cfg) if token_generated is None else token_generated
+    _apply_daemon_setup(cfg)
+    _save_identity_files(cfg)
+
+    public_cfg = _public_config(cfg)
+    channel_tests = _live_channel_tests(public_cfg)
+    checks = _build_readiness_checks(
+        public_cfg,
+        channel_tests,
+        extra_checks=_collect_extra_checks(cfg),
+    )
+    report_path = _write_onboarding_report(public_cfg, checks, channel_tests)
+    save_config(public_cfg)
+    _show_readiness_panel(checks, report_path, generated)
+    _show_completion_panel(public_cfg)
 
 
 def _simple_prompt(prompt: str, default: str = "") -> str:
@@ -606,29 +841,29 @@ def _quickstart_telegram(cfg: dict[str, Any]) -> None:
 
 
 def _run_onboarding_quickstart(cfg: dict[str, Any]) -> None:
-    console.print("[bold #00f5ff]QuickStart[/bold #00f5ff] — defaults seguros + validação essencial.")
+    console.print(
+        "[bold #00f5ff]QuickStart[/bold #00f5ff] — fluxo recomendado: Model/Auth, Workspace, Gateway, Channels, Daemon e Health check."
+    )
     _section_language(cfg)
     _section_identity(cfg)
     _section_model(cfg)
     _step_test_api_key(cfg)
-    _quickstart_telegram(cfg)
-    _skills_quickstart_profile(cfg)
+    _section_workspace(cfg)
 
     cfg.setdefault("gateway", {})
-    cfg["gateway"].setdefault("host", "127.0.0.1")
+    cfg["gateway"]["host"] = "127.0.0.1"
     cfg["gateway"].setdefault("port", 8787)
     cfg.setdefault("security", {})
     cfg["security"].setdefault("require_gateway_token", True)
     cfg["security"].setdefault("redact_tokens_in_logs", True)
 
+    console.print("  [dim]Gateway local padrão: 127.0.0.1:8787[/dim]")
+    _quickstart_telegram(cfg)
+    _skills_quickstart_profile(cfg)
+    _section_daemon(cfg)
     token_generated = _ensure_gateway_token_if_required(cfg)
-    _save_identity_files(cfg)
-    tests = _live_channel_tests(cfg)
-    checks = _build_readiness_checks(cfg, tests)
-    report = _write_onboarding_report(cfg, checks, tests)
-    save_config(cfg)
-    _show_readiness_panel(checks, report, token_generated)
-    _show_completion_panel(cfg)
+    _section_healthcheck(cfg)
+    _finalize_onboarding(cfg, token_generated=token_generated)
 
 
 def _section_identity(cfg: dict) -> None:
@@ -701,14 +936,9 @@ def _run_onboarding_simple(cfg: dict) -> None:
     if profile in SKILL_PRESETS:
         cfg["skills"] = SKILL_PRESETS[profile]
 
+    _section_workspace(cfg)
     token_generated = _ensure_gateway_token_if_required(cfg)
-    _save_identity_files(cfg)
-    channel_tests = _live_channel_tests(cfg)
-    checks = _build_readiness_checks(cfg, channel_tests)
-    report_path = _write_onboarding_report(cfg, checks, channel_tests)
-    save_config(cfg)
-    _show_readiness_panel(checks, report_path, token_generated)
-    _show_completion_panel(cfg)
+    _finalize_onboarding(cfg, token_generated=token_generated)
     console.print("✅ Onboarding simples concluído.")
 
 
@@ -722,29 +952,34 @@ def run_onboarding() -> None:
         _run_onboarding_simple(cfg)
         return
 
+    draft = _clone_config(cfg)
+
     mode = questionary.select(
         "Como você quer configurar?",
         choices=[
             "QuickStart — padrões recomendados (2 min)",
-            "Avançado — controle total",
+            "Avançado — fluxo completo (Model/Auth, Workspace, Gateway, Canais, Daemon, Health check, Skills)",
         ],
         default="QuickStart — padrões recomendados (2 min)",
     ).ask()
 
     if mode and mode.startswith("QuickStart"):
-        _run_onboarding_quickstart(cfg)
+        _run_onboarding_quickstart(draft)
         return
 
     steps = [
         ("Idioma", _section_language),
         ("Identidade", _section_identity),
-        ("Modelo", _section_model),
+        ("Model/Auth", _section_model),
         ("Teste de API Key", _step_test_api_key),
+        ("Workspace", _section_workspace),
+        ("Gateway", _section_gateway),
         ("Canais", _section_channels),
+        ("Daemon", _section_daemon),
+        ("Health check", _section_healthcheck),
         ("Perfil de Skills", _skills_quickstart_profile),
         ("Skills", _section_skills),
         ("Hooks", _section_hooks),
-        ("Gateway", _section_gateway),
         ("Web Tools", _section_web_tools),
         ("Security", _section_security),
     ]
@@ -761,26 +996,27 @@ def run_onboarding() -> None:
         for idx, (name, fn) in enumerate(steps, start=1):
             progress.update(task, description=f"Etapa [{idx}/{len(steps)}]: {name}")
             with console.status(f"Configurando {name}...", spinner="dots"):
-                fn(cfg)
-                save_config(cfg)
+                fn(draft)
             progress.advance(task)
 
-    test_results = _live_channel_tests(cfg)
-    token_generated = _ensure_gateway_token_if_required(cfg)
-    checks = _build_readiness_checks(cfg, test_results)
-    _save_identity_files(cfg)
-    save_config(cfg)
+    token_generated = _ensure_gateway_token_if_required(draft)
+    public_preview = _public_config(draft)
+    test_results = _live_channel_tests(public_preview)
+    checks = _build_readiness_checks(
+        public_preview,
+        test_results,
+        extra_checks=_collect_extra_checks(draft),
+    )
 
-    console.print(Panel("Resumo final", border_style="#00f5ff"))
-    console.print(Syntax(json.dumps(cfg, ensure_ascii=False, indent=2), "json", line_numbers=False))
+    console.print(Panel("Review + Apply", border_style="#00f5ff"))
+    console.print(Syntax(json.dumps(_redacted_config_for_preview(draft), ensure_ascii=False, indent=2), "json", line_numbers=False))
     console.print("\n[bold #00f5ff]Teste de conexões:[/bold #00f5ff]")
     for line in test_results:
         console.print(f"- {line}")
+    console.print("\n[bold #00f5ff]Readiness parcial:[/bold #00f5ff]")
+    console.print(f"- Score: {_readiness_score(checks)}/100")
 
-    if questionary.confirm("Concluir onboarding e manter essas configurações?", default=True).ask():
-        report_path = _write_onboarding_report(cfg, checks, test_results)
-        save_config(cfg)
-        _show_readiness_panel(checks, report_path, token_generated)
-        _show_completion_panel(cfg)
+    if questionary.confirm("Aplicar essas configurações agora?", default=True).ask():
+        _finalize_onboarding(draft, token_generated=token_generated)
     else:
-        console.print("🟡 Onboarding cancelado no final. As alterações já estavam salvas durante o wizard.")
+        console.print("🟡 Onboarding cancelado. Nenhuma alteração foi persistida.")
