@@ -38,6 +38,6 @@ Notes
 - Use smaller models for speed, larger for accuracy.
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

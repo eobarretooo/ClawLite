@@ -63,10 +63,10 @@ Local TTS using the sherpa-onnx offline CLI.
 
 ## Install
 
-1. Download the runtime for your OS (extracts into `~/.openclaw/tools/sherpa-onnx-tts/runtime`)
-2. Download a voice model (extracts into `~/.openclaw/tools/sherpa-onnx-tts/models`)
+1. Download the runtime for your OS (extracts into `~/.clawlite/tools/sherpa-onnx-tts/runtime`)
+2. Download a voice model (extracts into `~/.clawlite/tools/sherpa-onnx-tts/models`)
 
-Update `~/.openclaw/openclaw.json`:
+Update `~/.clawlite/clawlite.json`:
 
 ```json5
 {
@@ -74,8 +74,8 @@ Update `~/.openclaw/openclaw.json`:
     entries: {
       "sherpa-onnx-tts": {
         env: {
-          SHERPA_ONNX_RUNTIME_DIR: "~/.openclaw/tools/sherpa-onnx-tts/runtime",
-          SHERPA_ONNX_MODEL_DIR: "~/.openclaw/tools/sherpa-onnx-tts/models/vits-piper-en_US-lessac-high",
+          SHERPA_ONNX_RUNTIME_DIR: "~/.clawlite/tools/sherpa-onnx-tts/runtime",
+          SHERPA_ONNX_MODEL_DIR: "~/.clawlite/tools/sherpa-onnx-tts/models/vits-piper-en_US-lessac-high",
         },
       },
     },
@@ -103,6 +103,6 @@ Notes:
 - Windows: run `node {baseDir}\\bin\\sherpa-onnx-tts -o tts.wav "Hello from local TTS."`
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

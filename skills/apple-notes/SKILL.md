@@ -1,6 +1,6 @@
 ---
 name: apple-notes
-description: Manage Apple Notes via the `memo` CLI on macOS (create, view, edit, delete, search, move, and export notes). Use when a user asks OpenClaw to add a note, list notes, search notes, or manage note folders.
+description: Manage Apple Notes via the `memo` CLI on macOS (create, view, edit, delete, search, move, and export notes). Use when a user asks ClawLite to add a note, list notes, search notes, or manage note folders.
 homepage: https://github.com/antoniorodr/memo
 metadata:
   {
@@ -77,6 +77,6 @@ Notes
 - For automation, grant permissions in System Settings > Privacy & Security > Automation.
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

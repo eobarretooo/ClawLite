@@ -1,6 +1,6 @@
 # Canvas Skill
 
-Display HTML content on connected OpenClaw nodes (Mac app, iOS, Android).
+Display HTML content on connected ClawLite nodes (Mac app, iOS, Android).
 
 ## Overview
 
@@ -57,7 +57,7 @@ This is why localhost URLs don't work - the node receives the Tailscale hostname
 
 ## Configuration
 
-In `~/.openclaw/openclaw.json`:
+In `~/.clawlite/clawlite.json`:
 
 ```json
 {
@@ -106,7 +106,7 @@ HTML
 Check how your gateway is bound:
 
 ```bash
-cat ~/.openclaw/openclaw.json | jq '.gateway.bind'
+cat ~/.clawlite/clawlite.json | jq '.gateway.bind'
 ```
 
 Then construct the URL:
@@ -123,7 +123,7 @@ tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'
 ### 3. Find connected nodes
 
 ```bash
-openclaw nodes list
+clawlite nodes list
 ```
 
 Look for Mac/iOS/Android nodes with canvas capability.
@@ -156,7 +156,7 @@ canvas action:hide node:<node-id>
 
 **Debug steps:**
 
-1. Check server bind: `cat ~/.openclaw/openclaw.json | jq '.gateway.bind'`
+1. Check server bind: `cat ~/.clawlite/clawlite.json | jq '.gateway.bind'`
 2. Check what port canvas is on: `lsof -i :18793`
 3. Test URL directly: `curl http://<hostname>:18793/__openclaw__/canvas/<file>.html`
 
@@ -168,7 +168,7 @@ Always specify `node:<node-id>` parameter.
 
 ### "node not connected" error
 
-Node is offline. Use `openclaw nodes list` to find online nodes.
+Node is offline. Use `clawlite nodes list` to find online nodes.
 
 ### Content not updating
 
@@ -198,6 +198,6 @@ The `/__openclaw__/canvas/` prefix is defined by `CANVAS_HOST_PATH` constant.
 - A2UI JSON push is WIP - use HTML files for now
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

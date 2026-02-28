@@ -65,6 +65,6 @@ Use `sonos` to control Sonos speakers on the local network.
 - Advise the user that they may be running via a Codex or other sandbox that does not permit network access (this can be replicated by running `sonos discover` within a Codex CLI session with sandbox enabled and not approving the escalation request)
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

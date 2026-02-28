@@ -48,16 +48,16 @@ uv run {baseDir}/scripts/generate_image.py --prompt "combine these into one scen
 API key
 
 - `GEMINI_API_KEY` env var
-- Or set `skills."nano-banana-pro".apiKey` / `skills."nano-banana-pro".env.GEMINI_API_KEY` in `~/.openclaw/openclaw.json`
+- Or set `skills."nano-banana-pro".apiKey` / `skills."nano-banana-pro".env.GEMINI_API_KEY` in `~/.clawlite/clawlite.json`
 
 Notes
 
 - Resolutions: `1K` (default), `2K`, `4K`.
 - Use timestamps in filenames: `yyyy-mm-dd-hh-mm-ss-name.png`.
-- The script prints a `MEDIA:` line for OpenClaw to auto-attach on supported chat providers.
+- The script prints a `MEDIA:` line for ClawLite to auto-attach on supported chat providers.
 - Do not read the image back; report the saved path only.
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

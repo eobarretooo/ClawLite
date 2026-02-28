@@ -10,7 +10,7 @@ metadata:
 
 You are an orchestrator. Follow these 6 phases exactly. Do not skip phases.
 
-IMPORTANT — No `gh` CLI dependency. This skill uses curl + the GitHub REST API exclusively. The GH_TOKEN env var is already injected by OpenClaw. Pass it as a Bearer token in all API calls:
+IMPORTANT — No `gh` CLI dependency. This skill uses curl + the GitHub REST API exclusively. The GH_TOKEN env var is already injected by ClawLite. Pass it as a Bearer token in all API calls:
 
 ```
 curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" ...
@@ -79,13 +79,13 @@ echo $GH_TOKEN
 If empty, read from config:
 
 ```
-cat ~/.openclaw/openclaw.json | jq -r '.skills.entries["gh-issues"].apiKey // empty'
+cat ~/.clawlite/clawlite.json | jq -r '.skills.entries["gh-issues"].apiKey // empty'
 ```
 
-If still empty, check `/data/.clawdbot/openclaw.json`:
+If still empty, check `/data/.clawdbot/clawlite.json`:
 
 ```
-cat /data/.clawdbot/openclaw.json | jq -r '.skills.entries["gh-issues"].apiKey // empty'
+cat /data/.clawdbot/clawlite.json | jq -r '.skills.entries["gh-issues"].apiKey // empty'
 ```
 
 Export as GH_TOKEN for subsequent commands:
@@ -114,7 +114,7 @@ If in watch mode: Also filter out any issue numbers already in the PROCESSED_ISS
 Error handling:
 
 - If curl returns an HTTP 401 or 403 → stop and tell the user:
-  > "GitHub authentication failed. Please check your apiKey in the OpenClaw dashboard or in ~/.openclaw/openclaw.json under skills.entries.gh-issues."
+  > "GitHub authentication failed. Please check your apiKey in the ClawLite dashboard or in ~/.clawlite/clawlite.json under skills.entries.gh-issues."
 - If the response is an empty array (after filtering) → report "No issues found matching filters" and stop (or loop back if in watch mode).
 - If curl fails or returns any other error → report the error verbatim and stop.
 
@@ -212,7 +212,7 @@ Run these checks sequentially via exec:
 
    If HTTP status is not 200, stop with:
 
-   > "GitHub authentication failed. Please check your apiKey in the OpenClaw dashboard or in ~/.openclaw/openclaw.json under skills.entries.gh-issues."
+   > "GitHub authentication failed. Please check your apiKey in the ClawLite dashboard or in ~/.clawlite/clawlite.json under skills.entries.gh-issues."
 
 5. **Check for existing PRs:**
    For each confirmed issue number N, run:
@@ -288,7 +288,7 @@ Run these checks sequentially via exec:
 
   ```
   CURSOR_FILE="/data/.clawdbot/gh-issues-cursor-{SOURCE_REPO_SLUG}.json"
-  # SOURCE_REPO_SLUG = owner-repo with slashes replaced by hyphens (e.g., openclaw-openclaw)
+  # SOURCE_REPO_SLUG = owner-repo with slashes replaced by hyphens (e.g., clawlite-clawlite)
   ```
 
   Read the cursor file (create if missing):
@@ -346,7 +346,7 @@ You are a focused code-fix agent. Your task is to fix a single GitHub issue and 
 IMPORTANT: Do NOT use the gh CLI — it is not installed. Use curl with the GitHub REST API for all GitHub operations.
 
 First, ensure GH_TOKEN is set. Check: `echo $GH_TOKEN`. If empty, read from config:
-GH_TOKEN=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty') || GH_TOKEN=$(cat /data/.clawdbot/openclaw.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty')
+GH_TOKEN=$(cat ~/.clawlite/clawlite.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty') || GH_TOKEN=$(cat /data/.clawdbot/clawlite.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty')
 
 Use the token in all GitHub API calls:
 curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" ...
@@ -375,13 +375,13 @@ Follow these steps in order. If any step fails, report the failure and stop.
 0. SETUP — Ensure GH_TOKEN is available:
 ```
 
-export GH_TOKEN=$(node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('/data/.clawdbot/openclaw.json','utf8')); console.log(c.skills?.entries?.['gh-issues']?.apiKey || '')")
+export GH_TOKEN=$(node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('/data/.clawdbot/clawlite.json','utf8')); console.log(c.skills?.entries?.['gh-issues']?.apiKey || '')")
 
 ```
 If that fails, also try:
 ```
 
-export GH_TOKEN=$(cat ~/.openclaw/openclaw.json 2>/dev/null | node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync(0,'utf8'));console.log(d.skills?.entries?.['gh-issues']?.apiKey||'')")
+export GH_TOKEN=$(cat ~/.clawlite/clawlite.json 2>/dev/null | node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync(0,'utf8'));console.log(d.skills?.entries?.['gh-issues']?.apiKey||'')")
 
 ```
 Verify: echo "Token: ${GH_TOKEN:0:10}..."
@@ -714,7 +714,7 @@ You are a PR review handler agent. Your task is to address review comments on a 
 IMPORTANT: Do NOT use the gh CLI — it is not installed. Use curl with the GitHub REST API for all GitHub operations.
 
 First, ensure GH_TOKEN is set. Check: echo $GH_TOKEN. If empty, read from config:
-GH_TOKEN=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty') || GH_TOKEN=$(cat /data/.clawdbot/openclaw.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty')
+GH_TOKEN=$(cat ~/.clawlite/clawlite.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty') || GH_TOKEN=$(cat /data/.clawdbot/clawlite.json 2>/dev/null | jq -r '.skills.entries["gh-issues"].apiKey // empty')
 
 <config>
 Repository: {SOURCE_REPO}
@@ -745,7 +745,7 @@ Follow these steps in order:
 0. SETUP — Ensure GH_TOKEN is available:
 ```
 
-export GH_TOKEN=$(node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('/data/.clawdbot/openclaw.json','utf8')); console.log(c.skills?.entries?.['gh-issues']?.apiKey || '')")
+export GH_TOKEN=$(node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('/data/.clawdbot/clawlite.json','utf8')); console.log(c.skills?.entries?.['gh-issues']?.apiKey || '')")
 
 ```
 Verify: echo "Token: ${GH_TOKEN:0:10}..."
@@ -865,6 +865,6 @@ Only retain between poll cycles:
   Do NOT retain issue bodies, comment bodies, sub-agent transcripts, or codebase analysis between polls.
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

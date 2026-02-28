@@ -11,7 +11,7 @@ metadata:
 
 # Trello Skill
 
-Manage Trello boards, lists, and cards directly from OpenClaw.
+Manage Trello boards, lists, and cards directly from ClawLite.
 
 ## Setup
 
@@ -95,6 +95,6 @@ curl -s "https://api.trello.com/1/boards/{boardId}/cards?key=$TRELLO_API_KEY&tok
 ```
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

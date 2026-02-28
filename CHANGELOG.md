@@ -13,6 +13,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - New onboarding docs structure: overview + CLI wizard reference for ClawLite.
 - Imported missing OpenClaw skill catalogs into `skills/` with ClawLite adaptation notes.
 - OpenClaw compatibility aliases in runtime skill registry (delegated and guided fallbacks).
+- Full sync of overlapping OpenClaw skill guides (`SKILL.md`) into ClawLite catalog with nomenclature adaptation.
 
 ### Changed
 - README onboarding documentation to reflect QuickStart vs Advanced flow.

@@ -32,7 +32,7 @@ metadata:
 # wacli
 
 Use `wacli` only when the user explicitly asks you to message someone else on WhatsApp or when they ask to sync/search WhatsApp history.
-Do NOT use `wacli` for normal user chats; OpenClaw routes WhatsApp conversations automatically.
+Do NOT use `wacli` for normal user chats; ClawLite routes WhatsApp conversations automatically.
 If the user is chatting with you on WhatsApp, you should not reach for this tool unless they ask you to contact a third party.
 
 Safety
@@ -72,6 +72,6 @@ Notes
 - JIDs: direct chats look like `<number>@s.whatsapp.net`; groups look like `<id>@g.us` (use `wacli chats list` to find).
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

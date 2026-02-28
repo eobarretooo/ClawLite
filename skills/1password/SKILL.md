@@ -48,9 +48,9 @@ The shell tool uses a fresh TTY per command. To avoid re-prompts and failures, a
 Example (see `tmux` skill for socket conventions, do not reuse old session names):
 
 ```bash
-SOCKET_DIR="${OPENCLAW_TMUX_SOCKET_DIR:-${CLAWDBOT_TMUX_SOCKET_DIR:-${TMPDIR:-/tmp}/openclaw-tmux-sockets}}"
+SOCKET_DIR="${CLAWLITE_TMUX_SOCKET_DIR:-${CLAWDBOT_TMUX_SOCKET_DIR:-${TMPDIR:-/tmp}/clawlite-tmux-sockets}}"
 mkdir -p "$SOCKET_DIR"
-SOCKET="$SOCKET_DIR/openclaw-op.sock"
+SOCKET="$SOCKET_DIR/clawlite-op.sock"
 SESSION="op-auth-$(date +%Y%m%d-%H%M%S)"
 
 tmux -S "$SOCKET" new -d -s "$SESSION" -n shell
@@ -70,6 +70,6 @@ tmux -S "$SOCKET" kill-session -t "$SESSION"
 - Do not run `op` outside tmux; stop and ask if tmux is unavailable.
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

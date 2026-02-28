@@ -73,10 +73,10 @@ clawhub publish ./my-skill --slug my-skill --name "My Skill" --version 1.2.0 --c
 Notes
 
 - Default registry: https://clawhub.com (override with CLAWHUB_REGISTRY or --registry)
-- Default workdir: cwd (falls back to OpenClaw workspace); install dir: ./skills (override with --workdir / --dir / CLAWHUB_WORKDIR)
+- Default workdir: cwd (falls back to ClawLite workspace); install dir: ./skills (override with --workdir / --dir / CLAWHUB_WORKDIR)
 - Update command hashes local files, resolves matching version, and upgrades to latest unless --version is set
 
 ## ClawLite Adaptation
-Esta skill foi importada do OpenClaw e adaptada para o catálogo do ClawLite.
-Se algum comando depender de ferramenta não disponível no host, use `clawlite skill search` para alternativa equivalente.
+Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.
+Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.
 

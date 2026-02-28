@@ -60,3 +60,4 @@ Comparativo entre o catálogo OpenClaw e a adaptação aplicada no ClawLite.
 - Skills importadas ficam em `skills/<slug>/SKILL.md` com seção de adaptação.
 - Skills não suportadas no runtime retornam orientação com alternativas quando chamadas via alias de compatibilidade.
 - O runtime do ClawLite mantém as skills nativas existentes e agrega aliases OpenClaw no registry.
+- Os `SKILL.md` das skills compartilhadas entre OpenClaw e ClawLite foram sincronizados e adaptados (branding/comandos/path/env).
