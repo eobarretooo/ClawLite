@@ -1,13 +1,18 @@
 from __future__ import annotations
-import subprocess
+
+from clawlite.skills._safe_exec import parse_command, safe_run, require_bin
 
 SKILL_NAME = "tailscale"
-SKILL_DESCRIPTION = "Gerenciar rede privada Tailscale"
+SKILL_DESCRIPTION = 'Gerenciar rede privada Tailscale'
+
 
 def run(command: str = "") -> str:
+    """Executa a skill de forma segura (sem shell=True)."""
     if not command:
         return f"{SKILL_NAME} pronta. {SKILL_DESCRIPTION}"
-    p = subprocess.run(command, shell=True, text=True, capture_output=True)
-    if p.returncode != 0:
-        return p.stderr.strip() or "erro"
-    return p.stdout.strip()
+    try:
+        args = parse_command(command)
+    except ValueError as exc:
+        return str(exc)
+    return safe_run(args)
+

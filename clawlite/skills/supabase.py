@@ -1,16 +1,21 @@
 from __future__ import annotations
-import shutil
-import subprocess
+
+from clawlite.skills._safe_exec import parse_command, safe_run, require_bin
 
 SKILL_NAME = "supabase"
-SKILL_DESCRIPTION = "Gerenciar banco de dados Supabase"
+SKILL_DESCRIPTION = 'Gerenciar banco de dados Supabase'
+
 
 def run(command: str = "") -> str:
-    if not shutil.which("supabase"):
-        return "Preciso instalar dependência para supabase."
+    """Executa a skill de forma segura (sem shell=True)."""
+    check = require_bin("supabase")
+    if check:
+        return check
     if not command:
         return f"{SKILL_NAME} pronta. {SKILL_DESCRIPTION}"
-    proc = subprocess.run(command, shell=True, text=True, capture_output=True)
-    if proc.returncode != 0:
-        return proc.stderr.strip() or "erro"
-    return proc.stdout.strip()
+    try:
+        args = parse_command(command)
+    except ValueError as exc:
+        return str(exc)
+    return safe_run(args)
+
