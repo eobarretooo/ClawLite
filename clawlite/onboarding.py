@@ -313,7 +313,7 @@ def _show_completion_panel(cfg: dict[str, Any]) -> None:
             username = tg_msg.split("@")[-1].rstrip(")") if "@" in tg_msg else "bot"
             lines.append(f"[bold cyan]Telegram:[/] @{username}" if tg_ok else f"[bold yellow]Telegram:[/] {tg_msg}")
         except Exception:
-            lines.append(f"[bold cyan]Telegram:[/] configurado")
+            lines.append("[bold cyan]Telegram:[/] configurado")
     elif tg.get("enabled"):
         lines.append("[bold yellow]Telegram:[/] ativo · token ausente")
 

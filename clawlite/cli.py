@@ -102,8 +102,8 @@ def _print_gateway_boot_banner(host: str, port: int, token: str) -> None:
     print("│ 🦊 ClawLite Gateway                             │")
     print("│                                                 │")
     print(f"│ URL: {base:<43}│")
-    print(f"│ Token: {token:<41}│")
-    print(f"│ Dashboard: {base:<37}│")
+    print(f"│ Token: {_mask_token(token):<41}│")
+    print(f"│ Dashboard: {dash[:37]:<37}│")
     print("╰─────────────────────────────────────────────────╯")
 
 
