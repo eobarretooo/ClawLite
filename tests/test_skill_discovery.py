@@ -11,7 +11,8 @@ def _write_skill(root: Path, name: str, frontmatter: str, body: str = "# Skill\n
     (skill_dir / "SKILL.md").write_text(frontmatter + "\n" + body, encoding="utf-8")
 
 
-def test_discovery_reads_always_and_requires(tmp_path: Path) -> None:
+def test_discovery_reads_always_and_requires(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
     _write_skill(
         tmp_path,
         "always-skill",

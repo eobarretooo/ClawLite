@@ -17,6 +17,10 @@ class DiscoveredSkill:
     requires_bins: list[str]
     requires_env: list[str]
     available: bool
+    command: str | None = None
+    script: str | None = None
+    script_path: str | None = None
+    executable: bool = False
 
 
 def _extract_frontmatter(content: str) -> str:
@@ -123,9 +127,45 @@ def _workspace_skills_roots(workspace_path: str | Path | None = None) -> list[tu
     return roots
 
 
+def ensure_runtime_skill_dirs(workspace_path: str | Path | None = None) -> list[Path]:
+    created: list[Path] = []
+    for root, _ in _workspace_skills_roots(workspace_path):
+        target = root.expanduser()
+        target.mkdir(parents=True, exist_ok=True)
+        created.append(target)
+    return created
+
+
+def _builtin_skills_root() -> Path:
+    # /repo/clawlite/skills/discovery.py -> /repo/skills
+    return Path(__file__).resolve().parents[2] / "skills"
+
+
+def _skill_roots(workspace_path: str | Path | None = None) -> list[tuple[Path, str]]:
+    roots: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+
+    for path, source in _workspace_skills_roots(workspace_path):
+        p = path.expanduser()
+        key = str(p)
+        if key in seen:
+            continue
+        roots.append((p, source))
+        seen.add(key)
+
+    builtin = _builtin_skills_root()
+    key = str(builtin)
+    if key not in seen:
+        roots.append((builtin, "builtin"))
+        seen.add(key)
+
+    return roots
+
+
 def discover_skill_docs(workspace_path: str | Path | None = None) -> list[DiscoveredSkill]:
+    ensure_runtime_skill_dirs(workspace_path)
     rows: dict[str, DiscoveredSkill] = {}
-    for root, source in _workspace_skills_roots(workspace_path):
+    for root, source in _skill_roots(workspace_path):
         if not root.exists() or not root.is_dir():
             continue
         for child in sorted(root.iterdir()):
@@ -141,8 +181,19 @@ def discover_skill_docs(workspace_path: str | Path | None = None) -> list[Discov
 
             frontmatter = _parse_frontmatter(_extract_frontmatter(content))
             name = str(frontmatter.get("name") or child.name).strip().lower()
+            if name in rows:
+                # Respeita precedência: workspace > marketplace > builtin.
+                continue
             description = str(frontmatter.get("description") or "").strip() or f"Skill '{name}'"
             always = _as_bool(frontmatter.get("always"), False)
+            command = str(frontmatter.get("command") or "").strip() or None
+            script = str(frontmatter.get("script") or "").strip() or None
+            script_path: str | None = None
+            if script:
+                candidate = Path(script).expanduser()
+                if not candidate.is_absolute():
+                    candidate = child / candidate
+                script_path = str(candidate)
 
             requires_obj = frontmatter.get("requires", {})
             bins: list[str] = []
@@ -151,6 +202,9 @@ def discover_skill_docs(workspace_path: str | Path | None = None) -> list[Discov
                 bins = _as_str_list(requires_obj.get("bins"))
                 envs = _as_str_list(requires_obj.get("env"))
             available = _requirements_met(bins, envs)
+            if script_path and not Path(script_path).exists():
+                available = False
+            executable = bool(command or script_path)
 
             rows[name] = DiscoveredSkill(
                 name=name,
@@ -161,12 +215,37 @@ def discover_skill_docs(workspace_path: str | Path | None = None) -> list[Discov
                 requires_bins=bins,
                 requires_env=envs,
                 available=available,
+                command=command,
+                script=script,
+                script_path=script_path,
+                executable=executable,
             )
     return sorted(rows.values(), key=lambda row: row.name)
 
 
 def always_loaded_skills(workspace_path: str | Path | None = None) -> list[DiscoveredSkill]:
     return [row for row in discover_skill_docs(workspace_path) if row.always and row.available]
+
+
+def discover_executable_skills(
+    workspace_path: str | Path | None = None,
+    *,
+    available_only: bool = True,
+) -> list[DiscoveredSkill]:
+    rows = [row for row in discover_skill_docs(workspace_path) if row.executable]
+    if available_only:
+        return [row for row in rows if row.available]
+    return rows
+
+
+def find_skill_doc(name: str, workspace_path: str | Path | None = None) -> DiscoveredSkill | None:
+    target = str(name or "").strip().lower()
+    if not target:
+        return None
+    for row in discover_skill_docs(workspace_path):
+        if row.name == target:
+            return row
+    return None
 
 
 def build_skills_summary(workspace_path: str | Path | None = None, max_items: int = 40) -> str:

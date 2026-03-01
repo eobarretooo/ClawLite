@@ -29,6 +29,7 @@ TEMPLATES = {
 def init_workspace(path: str | None = None) -> str:
     root = Path(path).expanduser() if path else _workspace_root()
     root.mkdir(parents=True, exist_ok=True)
+    (root / "skills").mkdir(parents=True, exist_ok=True)
     for name, content in TEMPLATES.items():
         p = root / name
         if not p.exists():

@@ -107,6 +107,10 @@ def discovered_skills(workspace_path: str | None = None) -> list[dict[str, objec
                 "requires_bins": item.requires_bins,
                 "requires_env": item.requires_env,
                 "description": item.description,
+                "command": item.command,
+                "script": item.script,
+                "script_path": item.script_path,
+                "executable": item.executable,
             }
         )
     return rows

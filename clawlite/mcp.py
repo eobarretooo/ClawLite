@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import re
+import shlex
+import shutil
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from clawlite.config import settings as app_settings
+from clawlite.skills.discovery import DiscoveredSkill, discover_executable_skills, find_skill_doc
 from clawlite.skills.registry import SKILLS, describe_skill
 
 MCP_CATALOG_URL = "https://raw.githubusercontent.com/modelcontextprotocol/servers/main/README.md"
+SKILL_EXEC_TIMEOUT_SECONDS = 45
 
 KNOWN_SERVER_TEMPLATES: dict[str, dict[str, str]] = {
     "filesystem": {
@@ -149,23 +156,134 @@ def install_template(name: str, path: Path | None = None) -> dict[str, str]:
     return add_server(tpl["name"], tpl["url"], path)
 
 
+def _tool_schema_for_skill() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "description": "Comando/texto de entrada para a skill"},
+            "prompt": {"type": "string", "description": "Alias para command"},
+        },
+        "additionalProperties": True,
+    }
+
+
+def _missing_dynamic_requirements(skill: DiscoveredSkill) -> str:
+    missing: list[str] = []
+    if skill.script_path and not Path(skill.script_path).exists():
+        missing.append(f"script={skill.script_path}")
+    for name in skill.requires_bins:
+        if not shutil.which(name):
+            missing.append(f"bin:{name}")
+    for key in skill.requires_env:
+        if not os.environ.get(key):
+            missing.append(f"env:{key}")
+    return ", ".join(missing)
+
+
+def _render_command_template(template: str, user_command: str) -> str:
+    cleaned = template.strip()
+    if not cleaned:
+        raise ValueError("Skill dinâmica inválida: campo 'command' vazio")
+    payload = str(user_command or "").strip()
+    if "{command}" in cleaned:
+        return cleaned.replace("{command}", shlex.quote(payload))
+    if payload:
+        return f"{cleaned} {shlex.quote(payload)}"
+    return cleaned
+
+
+def _run_dynamic_command(skill: DiscoveredSkill, user_command: str) -> str:
+    command = _render_command_template(str(skill.command or ""), user_command)
+    cwd = Path(skill.path).parent
+    completed = subprocess.run(
+        command,
+        shell=True,
+        text=True,
+        cwd=cwd,
+        capture_output=True,
+        timeout=SKILL_EXEC_TIMEOUT_SECONDS,
+    )
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        details = (stderr or stdout or "sem detalhes")[:500]
+        raise RuntimeError(
+            f"Skill dinâmica '{skill.name}' falhou (code={completed.returncode}): {details}"
+        )
+    return stdout or stderr or f"[skill:{skill.name}] executada sem saída"
+
+
+def _run_dynamic_script(skill: DiscoveredSkill, user_command: str) -> str:
+    if not skill.script_path:
+        raise ValueError("Skill dinâmica inválida: script não definido")
+    script = Path(skill.script_path).expanduser()
+    if not script.exists():
+        raise FileNotFoundError(f"Script da skill não encontrado: {script}")
+
+    suffix = script.suffix.lower()
+    if suffix == ".py":
+        argv = [sys.executable, str(script)]
+    elif suffix in {".sh", ".bash"}:
+        argv = ["bash", str(script)]
+    else:
+        argv = [str(script)]
+
+    payload = str(user_command or "").strip()
+    if payload:
+        argv.append(payload)
+
+    completed = subprocess.run(
+        argv,
+        text=True,
+        cwd=script.parent,
+        capture_output=True,
+        timeout=SKILL_EXEC_TIMEOUT_SECONDS,
+    )
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        details = (stderr or stdout or "sem detalhes")[:500]
+        raise RuntimeError(
+            f"Skill dinâmica '{skill.name}' falhou (code={completed.returncode}): {details}"
+        )
+    return stdout or stderr or f"[skill:{skill.name}] executada sem saída"
+
+
+def _run_dynamic_skill(skill: DiscoveredSkill, user_command: str) -> str:
+    if skill.command:
+        return _run_dynamic_command(skill, user_command)
+    if skill.script_path:
+        return _run_dynamic_script(skill, user_command)
+    raise ValueError("Skill dinâmica não possui 'command' ou 'script'")
+
+
 def mcp_tools_from_skills() -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for slug in sorted(SKILLS.keys()):
+        seen.add(slug)
         tools.append(
             {
                 "name": f"skill.{slug}",
                 "description": describe_skill(slug),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string", "description": "Comando/texto de entrada para a skill"},
-                        "prompt": {"type": "string", "description": "Alias para command"},
-                    },
-                    "additionalProperties": True,
-                },
+                "inputSchema": _tool_schema_for_skill(),
             }
         )
+
+    for row in discover_executable_skills(available_only=True):
+        slug = row.name
+        if slug in seen:
+            continue
+        mode = "command" if row.command else "script"
+        desc = f"{row.description} (autoload:{mode}, source:{row.source})"
+        tools.append(
+            {
+                "name": f"skill.{slug}",
+                "description": desc[:220],
+                "inputSchema": _tool_schema_for_skill(),
+            }
+        )
+        seen.add(slug)
     return tools
 
 
@@ -175,21 +293,34 @@ def dispatch_skill_tool(tool_name: str, arguments: dict[str, Any] | None = None)
         raise ValueError("Tool MCP inválida. Use prefixo skill.")
     slug = tool_name.split(".", 1)[1]
     entry = SKILLS.get(slug)
-    if not entry:
-        raise ValueError(f"Skill não encontrada: {slug}")
-
-    mod_name, fn_name = entry.split(":", 1)
-    mod = importlib.import_module(mod_name)
-    fn = getattr(mod, fn_name)
 
     command = args.get("command") or args.get("prompt") or ""
     if not isinstance(command, str):
         command = json.dumps(command, ensure_ascii=False)
 
-    try:
-        result = fn(command)
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Erro ao executar skill '{slug}': {exc}") from exc
+    if entry:
+        mod_name, fn_name = entry.split(":", 1)
+        mod = importlib.import_module(mod_name)
+        fn = getattr(mod, fn_name)
+        try:
+            result = fn(command)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Erro ao executar skill '{slug}': {exc}") from exc
+    else:
+        dynamic = find_skill_doc(slug)
+        if not dynamic or not dynamic.executable:
+            raise ValueError(f"Skill não encontrada: {slug}")
+        if not dynamic.available:
+            missing = _missing_dynamic_requirements(dynamic) or "requisitos ausentes"
+            raise RuntimeError(f"Skill dinâmica '{slug}' indisponível: {missing}")
+        try:
+            result = _run_dynamic_skill(dynamic, command)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Skill dinâmica '{slug}' excedeu timeout de {SKILL_EXEC_TIMEOUT_SECONDS}s"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Erro ao executar skill dinâmica '{slug}': {exc}") from exc
 
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
     return {
