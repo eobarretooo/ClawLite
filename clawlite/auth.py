@@ -87,6 +87,13 @@ def _run_codex_cli_oauth_login() -> str:
     return ""
 
 
+def _codex_cli_oauth_supported_here() -> bool:
+    # O pacote npm do Codex usa binário nativo linux-musl e, em Termux Android
+    # nativo, costuma falhar com erro ELF (e_type/platform). Em proot Linux,
+    # process.platform vira "linux" e o fluxo funciona.
+    return sys.platform != "android"
+
+
 def _build_providers() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for key in _AUTH_PROVIDER_KEYS:
@@ -199,7 +206,14 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
             token = codex_access
             print("Token OAuth do Codex CLI detectado e reutilizado de ~/.codex/auth.json")
         elif _can_prompt_user():
-            if shutil.which("codex") is None:
+            if not _codex_cli_oauth_supported_here():
+                print(
+                    "OAuth automático via Codex CLI não é suportado no Termux Android nativo.\n"
+                    "Use uma destas opções:\n"
+                    "1) rode `codex login` em um ambiente Linux/macOS compatível e copie ~/.codex/auth.json;\n"
+                    "2) configure OPENAI_CODEX_API_KEY/OPENAI_API_KEY."
+                )
+            elif shutil.which("codex") is None:
                 print(
                     "Codex CLI não encontrado no PATH. Instale o Codex CLI para fluxo OAuth automático "
                     "ou informe uma API key manualmente."
