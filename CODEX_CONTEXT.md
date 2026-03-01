@@ -28,9 +28,9 @@ Stack principal:
 
 ## Status atual
 
-- Autonomia: **16/20**
-- Testes: **263 passando** (`pytest -q`)
-- Linha de commits de referencia consolidada ate: **`60ac488`**
+- Autonomia: **16/20** (boot/reboot pendente de teste manual)
+- Testes: **264 passando** (`pytest -q`)
+- Linha de commits de referencia consolidada ate: **`b0f23d5`**
 - Estado recente de daemon/autostart:
   - `supervisord` configurado em `/root/.clawlite/supervisord.conf`
   - boot script Termux em `/data/data/com.termux/files/home/.termux/boot/clawlite-supervisord.sh`
@@ -39,7 +39,7 @@ Stack principal:
 
 ## Atualizacoes de hoje (2026-03-01)
 
-- Skills autoload executaveis implementadas e funcionando:
+- Skills autoload executaveis via `SKILL.md` implementadas e funcionando:
   - novo `SKILL.md` com `command:` ou `script:` vira tool executavel sem editar `registry.py`
   - fallback dinamico no dispatch MCP preservando compatibilidade com skills estaticas
 - Diretórios de skills alinhados:
@@ -50,9 +50,14 @@ Stack principal:
 - Exemplos de skill runtime criados:
   - `~/.clawlite/workspace/skills/git-operations/SKILL.md` (`always: true`)
   - `~/.clawlite/workspace/skills/code-analysis/SKILL.md` (`always: false`, `script: run.py`)
-- Testes adicionados para autoload dinamico e regressao:
+- Templates de identidade ricos com placeholders implementados:
+  - `IDENTITY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`, `TOOLS.md` com placeholders `{{...}}`
+  - defaults sensatos quando onboarding nao foi rodado
+  - `onboarding.py` preenchendo os templates com dados do wizard
+- Testes adicionados/atualizados para autoload dinamico e templates:
   - `tests/test_dynamic_skill_autoload.py`
-  - suite completa verde: `263 passed`
+  - `tests/test_onboarding_rich_templates.py`
+  - suite completa verde: `264 passed`
 
 ## Arquitetura do ClawLite
 
@@ -145,12 +150,12 @@ Docs e operacao:
 4. **Sobrevivencia a reboot do Android**  
    Necessita teste real apos reboot com Termux:Boot.
 
-## Planos futuros
+## Proximos passos (ordem)
 
-- Auto-desenvolvimento controlado (self-improve com guardrails)
-- Sistema de skills completo (descoberta, install/update, telemetria de uso)
-- Integracao com **ClawWork**
-- Benchmark com **Gemini 3.1 Pro** (latencia, custo, qualidade, resiliencia)
+1. Testar boot Android e fechar autonomia 20/20.
+2. Internacionalizacao (pt-BR -> English).
+3. Auto-desenvolvimento controlado.
+4. Integracao com ClawWork.
 
 ## Como retomar
 
