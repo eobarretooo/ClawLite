@@ -65,8 +65,17 @@ bash scripts/setup_termux_proot.sh
 Depois:
 
 ```bash
-proot-distro login ubuntu -- /bin/bash -lc 'cd /root/ClawLite && clawlite onboarding'
-proot-distro login ubuntu -- /bin/bash -lc 'cd /root/ClawLite && clawlite start --host 127.0.0.1 --port 8787'
+clawlitex status
+clawlitex onboarding
+clawlitex start
+```
+
+`clawlitex` funciona como proxy no Termux e repassa qualquer comando para o `clawlite` dentro do proot:
+
+```bash
+clawlitex doctor
+clawlitex update --check
+clawlitex configure
 ```
 
 ## Providers de IA (atualizado)
