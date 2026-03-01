@@ -79,16 +79,20 @@ Web dashboard embutido no gateway FastAPI para operar o ClawLite no estilo do Op
 - Health/metrics: `GET /health`, `GET /api/metrics`, `GET /api/dashboard/debug`, `GET /api/heartbeat/status`
 - Chat/log streams: `WS /ws/chat`, `WS /ws/logs`
 - Sessions: `GET /api/dashboard/sessions`, `GET /api/dashboard/sessions/{session_id}`
+- Sessions parity: `GET /api/sessions`, `GET /api/sessions/{session_id}/preview`,
+  `PATCH /api/sessions/{session_id}`, `POST /api/sessions/{session_id}/reset`,
+  `DELETE /api/sessions/{session_id}`, `POST /api/sessions/compact`
 - Telemetry: `GET /api/dashboard/telemetry`
 - Channels/pairing: `GET /api/channels/status`, `GET /api/channels/instances`, `POST /api/channels/reconnect`,
   `GET /api/pairing/pending`, `GET /api/pairing/approved`, `POST /api/pairing/approve`, `POST /api/pairing/reject`
 - Cron: `GET /api/cron`, `POST /api/cron`, `DELETE /api/cron/{job_id}`
 - Config/models: `GET /api/dashboard/settings`, `PUT /api/dashboard/settings`, `POST /api/dashboard/config/apply`,
-  `POST /api/dashboard/config/restart`, `GET /api/models/catalog`
+  `POST /api/dashboard/config/restart`, `GET /api/models/catalog`, `GET /api/models/list`,
+  `GET /api/talk/config`, `PUT /api/talk/mode`
 - Workspace: `GET /api/workspace/file`, `PUT /api/workspace/file`
 - Skills/hub/update: `GET /api/dashboard/skills`, `POST /api/dashboard/skills/install`,
   `POST /api/dashboard/skills/enable`, `POST /api/dashboard/skills/disable`,
-  `POST /api/dashboard/skills/remove`, `POST /api/dashboard/update`,
+  `POST /api/dashboard/skills/remove`, `POST /api/dashboard/update`, `POST /api/update/run`,
   `GET /api/hub/manifest`
 - Agents: `GET /api/agents`, `POST /api/agents`, `POST /api/agents/bind`
 - Security: `GET /api/security/rbac`, `PUT /api/security/tool-policy`, `GET /api/security/tool-audit`

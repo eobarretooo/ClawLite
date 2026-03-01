@@ -120,13 +120,14 @@ Modos:
 Etapas do wizard:
 
 1. Model/Auth
-2. Workspace
-3. Gateway
-4. Canais
-5. Daemon
-6. Health check
-7. Skills
-8. Review + Apply
+2. Teste de API key
+3. Workspace
+4. Gateway
+5. Canais
+6. Daemon
+7. Health check
+8. Skills
+9. Review + Apply
 
 Referências:
 
@@ -184,6 +185,7 @@ O dashboard web do ClawLite está em modo completo (estilo Control UI), com abas
 - `Overview`: status do gateway, uptime, conexões, métricas de runtime e heartbeat.
 - `Chat`: chat em tempo real via WebSocket (`/ws/chat`) com metadados de execução.
 - `Sessions`: busca/inspeção de sessões e reuso da sessão no chat.
+- `Sessions` (paridade): preview, rename (`patch`), reset, delete e compact de histórico.
 - `Telemetry`: eventos, tokens, custo estimado, timeline e ranking por sessão.
 - `Channels`: status de canais, instâncias, reconnect e fluxo de pairing (approve/reject).
 - `Cron`: criação/listagem/remoção de jobs recorrentes.
@@ -196,7 +198,7 @@ O dashboard web do ClawLite está em modo completo (estilo Control UI), com abas
 
 ## Segurança
 
-O ClawLite conecta canais reais (Telegram/Discord/Slack/WhatsApp/Teams). Trate mensagens de entrada como input não confiável.
+O ClawLite conecta canais reais (Telegram/Discord/Slack/WhatsApp/Google Chat/IRC/Signal/iMessage/Teams). Trate mensagens de entrada como input não confiável.
 
 Checklist mínimo:
 

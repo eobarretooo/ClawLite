@@ -21,6 +21,18 @@ Avançado (controle total):
 - revisão antes de aplicar
 - opção de planejar instalação de daemon no Apply
 
+## Canais suportados no wizard/configure
+
+- `telegram`
+- `whatsapp`
+- `discord`
+- `slack`
+- `googlechat`
+- `irc`
+- `signal`
+- `imessage`
+- `teams`
+
 ## Etapas do fluxo avançado
 
 1. Model/Auth
@@ -38,6 +50,14 @@ Avançado (controle total):
 - `~/.clawlite/config.json`
 - `~/.clawlite/workspace/` com arquivos base de memória e identidade
 - `~/.clawlite/workspace/ONBOARDING_REPORT.md`
+
+## Notas de canal
+
+- `slack`: requer `token` (xoxb) e `app_token` (xapp).
+- `googlechat`: requer `serviceAccountFile` (ou secret equivalente) e webhook em `/api/webhooks/googlechat`.
+- `irc`: usa modo bridge/webhook em `/api/webhooks/irc`; `relay_url` é opcional para outbound.
+- `signal`: funciona por `signal-cli` (`cliPath`) ou `httpUrl` de daemon externo.
+- `imessage`: integração legada via `imsg` (`cliPath`).
 
 ## Reexecutar onboarding
 

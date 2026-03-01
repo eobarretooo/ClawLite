@@ -17,6 +17,18 @@ clawlite onboarding
 
 Use quando quiser configurar modelo, auth, workspace, gateway, canais e skills em um fluxo único.
 
+Canais atualmente cobertos no onboarding/configure:
+
+- `telegram`
+- `whatsapp`
+- `discord`
+- `slack`
+- `googlechat` (webhook + service account)
+- `irc` (bridge/webhook + relay opcional)
+- `signal` (signal-cli/httpUrl)
+- `imessage` (imsg legado)
+- `teams`
+
 Referência completa:
 
 - [Onboarding Wizard (CLI)](wizard.md)

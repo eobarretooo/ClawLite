@@ -561,7 +561,7 @@ def _live_channel_tests(cfg: dict) -> list[str]:
         else:
             out.append("⚠️ Telegram habilitado sem token")
 
-    for ch in ("slack", "discord", "whatsapp", "teams"):
+    for ch in ("slack", "discord", "whatsapp", "googlechat", "irc", "signal", "imessage", "teams"):
         data = channels.get(ch, {}) if isinstance(channels.get(ch), dict) else {}
         if data.get("enabled"):
             token = str(data.get("token", "")).strip()
@@ -573,6 +573,33 @@ def _live_channel_tests(cfg: dict) -> list[str]:
                     out.append("⚠️ slack: bot token informado, mas app token (xapp) ausente")
                 else:
                     out.append("⚠️ slack: token ausente")
+            elif ch == "googlechat":
+                service_file = str(data.get("serviceAccountFile", "")).strip()
+                service_inline = str(data.get("serviceAccount", "")).strip()
+                if service_file or service_inline or data.get("serviceAccountRef"):
+                    out.append("✅ googlechat: service account configurado")
+                else:
+                    out.append("⚠️ googlechat: service account ausente")
+            elif ch == "irc":
+                host = str(data.get("host", "")).strip()
+                nick = str(data.get("nick", "")).strip()
+                if host and nick:
+                    out.append(f"✅ irc: {host} ({nick})")
+                else:
+                    out.append("⚠️ irc: host/nick ausente")
+            elif ch == "signal":
+                account = str(data.get("account", "")).strip()
+                http_url = str(data.get("httpUrl", "") or data.get("http_url", "")).strip()
+                if account or http_url:
+                    out.append("✅ signal: conta/daemon configurado")
+                else:
+                    out.append("⚠️ signal: informe account ou httpUrl")
+            elif ch == "imessage":
+                cli_path = str(data.get("cliPath", "") or data.get("cli_path", "")).strip()
+                if cli_path:
+                    out.append(f"✅ imessage: cliPath configurado ({cli_path})")
+                else:
+                    out.append("⚠️ imessage: cliPath ausente")
             else:
                 out.append(("✅ " if token else "⚠️ ") + f"{ch}: {'token informado' if token else 'token ausente'}")
     if not out:
@@ -788,6 +815,15 @@ def _show_completion_panel(cfg: dict[str, Any]) -> None:
         f"[bold cyan]Token:[/]   {token_display}",
     ]
 
+    channels_cfg = cfg.get("channels", {}) if isinstance(cfg.get("channels"), dict) else {}
+    enabled_channels = [
+        name
+        for name, row in channels_cfg.items()
+        if isinstance(row, dict) and bool(row.get("enabled", False))
+    ]
+    if enabled_channels:
+        lines.append(f"[bold cyan]Canais:[/] {', '.join(enabled_channels)}")
+
     # Telegram
     tg = cfg.get("channels", {}).get("telegram", {})
     if tg.get("enabled") and tg.get("token"):
@@ -799,6 +835,43 @@ def _show_completion_panel(cfg: dict[str, Any]) -> None:
             lines.append("[bold cyan]Telegram:[/] configurado")
     elif tg.get("enabled"):
         lines.append("[bold yellow]Telegram:[/] ativo · token ausente")
+
+    for ch in enabled_channels:
+        if ch == "telegram":
+            continue
+        row = channels_cfg.get(ch, {}) if isinstance(channels_cfg.get(ch), dict) else {}
+        if ch == "slack":
+            bot_token = str(row.get("token", "")).strip()
+            app_token = str(row.get("app_token", "")).strip()
+            if bot_token and app_token:
+                lines.append("[bold cyan]Slack:[/] bot/app tokens configurados")
+            else:
+                lines.append("[bold yellow]Slack:[/] faltam credenciais (xoxb/xapp)")
+        elif ch == "googlechat":
+            service_file = str(row.get("serviceAccountFile", "")).strip()
+            if service_file or row.get("serviceAccount") or row.get("serviceAccountRef"):
+                lines.append("[bold cyan]Google Chat:[/] service account configurado")
+            else:
+                lines.append("[bold yellow]Google Chat:[/] service account ausente")
+        elif ch == "irc":
+            host = str(row.get("host", "")).strip() or "host-n/a"
+            nick = str(row.get("nick", "")).strip() or "nick-n/a"
+            lines.append(f"[bold cyan]IRC:[/] {host} ({nick})")
+        elif ch == "signal":
+            account = str(row.get("account", "")).strip()
+            http_url = str(row.get("httpUrl", "") or row.get("http_url", "")).strip()
+            if account or http_url:
+                lines.append(f"[bold cyan]Signal:[/] {'daemon' if http_url else account}")
+            else:
+                lines.append("[bold yellow]Signal:[/] configure account ou httpUrl")
+        elif ch == "imessage":
+            cli_path = str(row.get("cliPath", "") or row.get("cli_path", "")).strip() or "imsg"
+            lines.append(f"[bold cyan]iMessage:[/] cliPath={cli_path}")
+        else:
+            token_hint = str(row.get("token", "")).strip()
+            lines.append(
+                f"[bold cyan]{ch}:[/] {'configurado' if token_hint else 'ativo (verificar credenciais)'}"
+            )
 
     lines.append("")
     lines.append("[dim]Próximo: clawlite start[/]")

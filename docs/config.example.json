@@ -23,7 +23,8 @@
   "gateway": {
     "host": "0.0.0.0",
     "port": 8787,
-    "token": ""
+    "token": "",
+    "dashboard_enabled": true
   },
   "update": {
     "channel": "stable",
@@ -34,6 +35,8 @@
       "enabled": false,
       "token": "",
       "chat_id": "",
+      "accounts": [],
+      "allowFrom": [],
       "stt_enabled": false,
       "stt_model": "base",
       "stt_language": "pt",
@@ -47,6 +50,8 @@
       "enabled": false,
       "token": "",
       "phone": "",
+      "accounts": [],
+      "allowFrom": [],
       "stt_enabled": false,
       "stt_model": "base",
       "stt_language": "pt",
@@ -57,12 +62,124 @@
       "tts_default_reply": false
     },
     "discord": {
-      "enabled": false
+      "enabled": false,
+      "token": "",
+      "guild_id": "",
+      "accounts": [],
+      "allowFrom": [],
+      "allowChannels": []
+    },
+    "slack": {
+      "enabled": false,
+      "token": "",
+      "workspace": "",
+      "app_token": "",
+      "accounts": [],
+      "allowFrom": [],
+      "allowChannels": []
+    },
+    "googlechat": {
+      "enabled": false,
+      "token": "",
+      "botUser": "",
+      "requireMention": true,
+      "allowFrom": [],
+      "allowChannels": [],
+      "serviceAccountFile": "",
+      "webhookPath": "/api/webhooks/googlechat",
+      "dm": {
+        "policy": "pairing",
+        "allowFrom": []
+      }
+    },
+    "irc": {
+      "enabled": false,
+      "token": "",
+      "host": "",
+      "port": 6697,
+      "tls": true,
+      "nick": "clawlite-bot",
+      "channels": [],
+      "allowFrom": [],
+      "allowChannels": [],
+      "requireMention": true,
+      "relay_url": ""
+    },
+    "signal": {
+      "enabled": false,
+      "token": "",
+      "account": "",
+      "cliPath": "signal-cli",
+      "httpUrl": "",
+      "allowFrom": []
+    },
+    "imessage": {
+      "enabled": false,
+      "token": "",
+      "cliPath": "imsg",
+      "service": "auto",
+      "allowFrom": []
+    },
+    "teams": {
+      "enabled": false,
+      "token": "",
+      "tenant": "",
+      "accounts": []
     }
+  },
+  "hooks": {
+    "boot": true,
+    "session_memory": true,
+    "command_logger": false
+  },
+  "web_tools": {
+    "web_search": {
+      "enabled": true,
+      "provider": "brave"
+    },
+    "reddit": {
+      "enabled": false,
+      "subreddits": [
+        "selfhosted",
+        "Python"
+      ]
+    },
+    "threads": {
+      "enabled": false,
+      "username": ""
+    }
+  },
+  "language": "pt-br",
+  "security": {
+    "allow_shell_exec": true,
+    "redact_tokens_in_logs": true,
+    "require_gateway_token": true,
+    "pairing": {
+      "enabled": false,
+      "code_ttl_seconds": 86400
+    },
+    "rbac": {
+      "viewer_tokens": []
+    },
+    "tool_policies": {}
   },
   "skills": [
     "core-tools",
     "memory",
     "gateway"
-  ]
+  ],
+  "reddit": {
+    "enabled": false,
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "http://127.0.0.1:8788/reddit/callback",
+    "refresh_token": "",
+    "subreddits": [
+      "selfhosted",
+      "Python",
+      "AIAssistants",
+      "termux"
+    ],
+    "notify_chat_id": ""
+  }
 }
