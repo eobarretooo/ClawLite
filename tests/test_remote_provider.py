@@ -9,6 +9,12 @@ from clawlite.runtime.offline import ProviderExecutionError, run_remote_provider
 
 
 class RemoteProviderTests(unittest.TestCase):
+    @staticmethod
+    def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+        request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+        response = httpx.Response(status_code, request=request, text='{"error":"rate_limit"}')
+        return httpx.HTTPStatusError(f"status {status_code}", request=request, response=response)
+
     def test_provider_selection_openrouter_uses_chat_completions(self) -> None:
         response = MagicMock()
         response.raise_for_status.return_value = None
@@ -102,6 +108,63 @@ class RemoteProviderTests(unittest.TestCase):
         self.assertEqual(args[0], "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
         self.assertEqual(kwargs["json"]["model"], "gemini-2.5-flash")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer cfg-token")
+
+    def test_gemini_429_retries_then_succeeds(self) -> None:
+        response_429_a = MagicMock()
+        response_429_a.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_429_b = MagicMock()
+        response_429_b.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_ok = MagicMock()
+        response_ok.raise_for_status.return_value = None
+        response_ok.json.return_value = {
+            "choices": [{"message": {"content": "ok-after-retry"}}],
+        }
+
+        client = MagicMock()
+        client.post.side_effect = [response_429_a, response_429_b, response_ok]
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            with patch("clawlite.runtime.offline.time.sleep") as sleep_mock:
+                out = run_remote_provider("ping", "gemini/gemini-2.5-flash", "cfg-token")
+
+        self.assertEqual(out, "ok-after-retry")
+        self.assertEqual(client.post.call_count, 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+        sleep_mock.assert_called_with(60.0)
+
+    def test_gemini_429_exhausted_returns_clear_message(self) -> None:
+        response_429_a = MagicMock()
+        response_429_a.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_429_b = MagicMock()
+        response_429_b.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_429_c = MagicMock()
+        response_429_c.raise_for_status.side_effect = self._http_status_error(429)
+
+        client = MagicMock()
+        client.post.side_effect = [response_429_a, response_429_b, response_429_c]
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            with patch("clawlite.runtime.offline.time.sleep") as sleep_mock:
+                with self.assertRaises(ProviderExecutionError) as ctx:
+                    run_remote_provider("ping", "gemini/gemini-2.5-flash", "cfg-token")
+
+        message = str(ctx.exception).lower()
+        self.assertIn("limite de requisições", message)
+        self.assertNotIn("erro http", message)
+        self.assertEqual(client.post.call_count, 3)
+        self.assertEqual(sleep_mock.call_count, 2)
 
     def test_anthropic_response_parsing(self) -> None:
         response = MagicMock()

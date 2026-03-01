@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 from typing import Any, Callable, Iterator
 
 import httpx
@@ -13,6 +14,8 @@ DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_CONNECTIVITY_TIMEOUT = 1.5
 DEFAULT_REMOTE_TIMEOUT = 30.0
 _CONNECTIVITY_PROBE = ("1.1.1.1", 53)
+GEMINI_RATE_LIMIT_MAX_ATTEMPTS = 3
+GEMINI_RATE_LIMIT_WAIT_SECONDS = 60.0
 
 
 class ProviderExecutionError(RuntimeError):
@@ -122,6 +125,37 @@ def _remote_timeout_seconds() -> float:
     return value if value > 0 else DEFAULT_REMOTE_TIMEOUT
 
 
+def gemini_rate_limit_max_attempts() -> int:
+    raw = os.getenv("CLAWLITE_GEMINI_429_MAX_ATTEMPTS", "").strip()
+    if not raw:
+        return GEMINI_RATE_LIMIT_MAX_ATTEMPTS
+    try:
+        value = int(raw)
+    except ValueError:
+        return GEMINI_RATE_LIMIT_MAX_ATTEMPTS
+    return value if value > 0 else GEMINI_RATE_LIMIT_MAX_ATTEMPTS
+
+
+def gemini_rate_limit_wait_seconds() -> float:
+    raw = os.getenv("CLAWLITE_GEMINI_429_WAIT_SECONDS", "").strip()
+    if not raw:
+        return GEMINI_RATE_LIMIT_WAIT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return GEMINI_RATE_LIMIT_WAIT_SECONDS
+    return value if value >= 0 else GEMINI_RATE_LIMIT_WAIT_SECONDS
+
+
+def gemini_rate_limit_user_message(max_attempts: int, wait_seconds: float) -> str:
+    wait_display = int(wait_seconds) if float(wait_seconds).is_integer() else wait_seconds
+    return (
+        "Gemini está temporariamente com limite de requisições. "
+        f"Já tentamos novamente {max_attempts} vezes com espera de {wait_display}s "
+        "e ainda não foi possível concluir. Tente novamente em alguns minutos."
+    )
+
+
 def run_remote_provider(prompt: str, model: str, token: str) -> str:
     if os.getenv("CLAWLITE_SIMULATE_PROVIDER_FAILURE", "").strip() == "1":
         raise ProviderExecutionError("falha simulada de provedor")
@@ -160,28 +194,44 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
             "messages": [{"role": "user", "content": prompt}],
         }
 
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.TimeoutException as exc:
-        raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
-    except httpx.HTTPStatusError as exc:
-        status_code = exc.response.status_code if exc.response is not None else "desconhecido"
-        detail = ""
-        if exc.response is not None:
-            detail = (exc.response.text or "").strip()
-            if len(detail) > 240:
-                detail = detail[:240] + "..."
-        msg = f"erro HTTP do provedor remoto '{provider}' (status {status_code})"
-        if detail:
-            msg = f"{msg}: {detail}"
-        raise ProviderExecutionError(msg) from exc
-    except httpx.RequestError as exc:
-        raise ProviderExecutionError(f"erro de rede ao chamar provedor remoto '{provider}': {exc}") from exc
-    except ValueError as exc:
-        raise ProviderExecutionError(f"resposta JSON inválida do provedor remoto '{provider}'") from exc
+    max_attempts = gemini_rate_limit_max_attempts() if provider == "gemini" else 1
+    wait_seconds = gemini_rate_limit_wait_seconds()
+    data: dict[str, Any] | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+            break
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if provider == "gemini" and status_code == 429:
+                if attempt < max_attempts:
+                    time.sleep(wait_seconds)
+                    continue
+                raise ProviderExecutionError(gemini_rate_limit_user_message(max_attempts, wait_seconds)) from exc
+
+            detail = ""
+            if exc.response is not None:
+                detail = (exc.response.text or "").strip()
+                if len(detail) > 240:
+                    detail = detail[:240] + "..."
+            status_display = status_code if status_code is not None else "desconhecido"
+            msg = f"erro HTTP do provedor remoto '{provider}' (status {status_display})"
+            if detail:
+                msg = f"{msg}: {detail}"
+            raise ProviderExecutionError(msg) from exc
+        except httpx.RequestError as exc:
+            raise ProviderExecutionError(f"erro de rede ao chamar provedor remoto '{provider}': {exc}") from exc
+        except ValueError as exc:
+            raise ProviderExecutionError(f"resposta JSON inválida do provedor remoto '{provider}'") from exc
+
+    if data is None:
+        raise ProviderExecutionError(f"falha ao chamar provedor remoto '{provider}'")
 
     if spec.api_style == "anthropic":
         return _extract_anthropic_content(data)

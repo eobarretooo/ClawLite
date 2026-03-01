@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from typing import Iterator
 
 import httpx
@@ -12,6 +13,9 @@ from clawlite.runtime.offline import (
     ProviderExecutionError,
     _model_name_without_provider,
     _remote_timeout_seconds,
+    gemini_rate_limit_max_attempts,
+    gemini_rate_limit_user_message,
+    gemini_rate_limit_wait_seconds,
     provider_from_model,
 )
 
@@ -59,50 +63,61 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
             "stream": True,
         }
 
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            with client.stream("POST", url, headers=headers, json=payload) as response:
-                response.raise_for_status()
+    max_attempts = gemini_rate_limit_max_attempts() if provider == "gemini" else 1
+    wait_seconds = gemini_rate_limit_wait_seconds()
 
-                for line in response.iter_lines():
-                    line = line.strip()
-                    if not line:
-                        continue
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                with client.stream("POST", url, headers=headers, json=payload) as response:
+                    response.raise_for_status()
 
-                    if spec.api_style == "anthropic":
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                data = json.loads(data_str)
-                                if data.get("type") == "content_block_delta":
-                                    delta = data.get("delta", {})
-                                    if delta.get("type") == "text_delta":
-                                        yield delta.get("text", "")
-                            except json.JSONDecodeError:
-                                pass
-                    else:
-                        # OpenAI / OpenRouter style
-                        if line == "data: [DONE]":
-                            break
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                data = json.loads(data_str)
-                                choices = data.get("choices", [])
-                                if choices:
-                                    delta = choices[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                pass
+                    for line in response.iter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
 
-    except httpx.TimeoutException as exc:
-        raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
-    except httpx.HTTPStatusError as exc:
-        raise ProviderExecutionError(f"erro HTTP '{provider}' (status {exc.response.status_code})") from exc
-    except httpx.RequestError as exc:
-        raise ProviderExecutionError(f"erro de rede ao chamar provedor remoto '{provider}': {exc}") from exc
+                        if spec.api_style == "anthropic":
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                try:
+                                    data = json.loads(data_str)
+                                    if data.get("type") == "content_block_delta":
+                                        delta = data.get("delta", {})
+                                        if delta.get("type") == "text_delta":
+                                            yield delta.get("text", "")
+                                except json.JSONDecodeError:
+                                    pass
+                        else:
+                            # OpenAI / OpenRouter style
+                            if line == "data: [DONE]":
+                                break
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                try:
+                                    data = json.loads(data_str)
+                                    choices = data.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            yield content
+                                except json.JSONDecodeError:
+                                    pass
+            return
+        except httpx.TimeoutException as exc:
+            raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if provider == "gemini" and status_code == 429:
+                if attempt < max_attempts:
+                    time.sleep(wait_seconds)
+                    continue
+                raise ProviderExecutionError(gemini_rate_limit_user_message(max_attempts, wait_seconds)) from exc
+            status_display = status_code if status_code is not None else "desconhecido"
+            raise ProviderExecutionError(f"erro HTTP '{provider}' (status {status_display})") from exc
+        except httpx.RequestError as exc:
+            raise ProviderExecutionError(f"erro de rede ao chamar provedor remoto '{provider}': {exc}") from exc
 
 
 def run_ollama_stream(prompt: str, model: str) -> Iterator[str]:
