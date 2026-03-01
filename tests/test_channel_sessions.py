@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from clawlite.runtime.channel_sessions import ChannelSessionManager
 
 
@@ -29,3 +31,29 @@ def test_channel_session_manager_replaces_session_on_new_sid() -> None:
     rows = mgr.list_by_channel("slack")
     assert len(rows) == 1
     assert rows[0].session_id == "sl_C2"
+
+
+def test_channel_session_manager_register_and_cancel_tasks() -> None:
+    mgr = ChannelSessionManager()
+
+    async def _run() -> None:
+        evt = asyncio.Event()
+
+        async def _waiter() -> None:
+            await evt.wait()
+
+        task = asyncio.create_task(_waiter())
+        mgr.register_task("tg_1", task)
+        assert mgr.active_task_count("tg_1") == 1
+
+        cancelled = mgr.cancel_session_tasks("tg_1")
+        assert cancelled == 1
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        mgr.unregister_task("tg_1", task)
+        assert mgr.active_task_count("tg_1") == 0
+
+    asyncio.run(_run())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -47,7 +48,6 @@ class ChannelManager:
         Callback central para processar mensagens recebidas de qualquer canal.
         Roteia diretamente para o core LLM.
         """
-        import asyncio
         # O run_task_with_meta é síncrono, então rodamos em uma thread
         prompt = text.strip()
         try:
@@ -65,7 +65,31 @@ class ChannelManager:
                     self.sessions.bind(instance_key=instance_key, channel=channel_name, session_id=sid)
                 except Exception:
                     pass
-            return await self._handle_message(session_id, text)
+
+            cmd = str(text or "").strip().lower()
+            if cmd in {"/stop", "stop", "/cancel"}:
+                cancelled = self.sessions.cancel_session_tasks(sid)
+                sub_cancelled = 0
+                if sid:
+                    try:
+                        from clawlite.runtime.subagents import get_subagent_runtime
+
+                        sub_cancelled = get_subagent_runtime().cancel_session(sid)
+                    except Exception:
+                        sub_cancelled = 0
+                total = cancelled + sub_cancelled
+                return f"⏹ Stopped {total} task(s)." if total > 0 else "No active task to stop."
+
+            task = asyncio.create_task(self._handle_message(session_id, text))
+            if sid:
+                self.sessions.register_task(sid, task)
+            try:
+                return await task
+            except asyncio.CancelledError:
+                return "⏹ Task cancelled."
+            finally:
+                if sid:
+                    self.sessions.unregister_task(sid, task)
 
         return _handler
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict, dataclass
 import threading
 import time
@@ -25,6 +26,7 @@ class ChannelSessionManager:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._by_instance: dict[str, ChannelSession] = {}
+        self._tasks_by_session: dict[str, set[asyncio.Task[Any]]] = {}
 
     def bind(
         self,
@@ -107,3 +109,46 @@ class ChannelSessionManager:
         with self._lock:
             rows = [asdict(row) for row in self._by_instance.values()]
         return {"instances": len(rows), "sessions": rows}
+
+    def register_task(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        with self._lock:
+            bucket = self._tasks_by_session.setdefault(sid, set())
+            bucket.add(task)
+
+    def unregister_task(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        with self._lock:
+            bucket = self._tasks_by_session.get(sid)
+            if not bucket:
+                return
+            bucket.discard(task)
+            if not bucket:
+                self._tasks_by_session.pop(sid, None)
+
+    def active_task_count(self, session_id: str) -> int:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return 0
+        with self._lock:
+            bucket = self._tasks_by_session.get(sid, set())
+            return sum(1 for task in bucket if not task.done())
+
+    def cancel_session_tasks(self, session_id: str) -> int:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return 0
+        with self._lock:
+            bucket = list(self._tasks_by_session.get(sid, set()))
+
+        cancelled = 0
+        for task in bucket:
+            if task.done():
+                continue
+            task.cancel()
+            cancelled += 1
+        return cancelled
