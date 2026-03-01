@@ -303,7 +303,12 @@ if [ -d "/data/data/com.termux/files/usr" ]; then
 fi
 PROOT_BIN="\${PREFIX_PATH}/bin/proot"
 ROOTFS_DIR="\${PREFIX_PATH}/var/lib/proot-distro/installed-rootfs/${DISTRO}"
-BOOT_LOG="/tmp/clawlite-boot.log"
+BOOT_LOG_DIR="\${PREFIX_PATH}/tmp"
+if [ ! -d "\${BOOT_LOG_DIR}" ]; then
+  BOOT_LOG_DIR="\${HOME:-/data/data/com.termux/files/home}/.clawlite/logs"
+fi
+mkdir -p "\${BOOT_LOG_DIR}" >/dev/null 2>&1 || true
+BOOT_LOG="\${BOOT_LOG_DIR}/clawlite-boot.log"
 TRACER_PID=\$(awk '/TracerPid:/ {print \$2}' /proc/\$\$/status 2>/dev/null || echo 0)
 
 if [ ! -x "\${PROOT_BIN}" ]; then
