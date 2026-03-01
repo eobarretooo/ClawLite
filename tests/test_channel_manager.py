@@ -328,6 +328,43 @@ class ChannelManagerTests(unittest.TestCase):
         finally:
             manager_mod.load_config = original_load_config
 
+    def test_channel_from_session_prefix_mapping(self) -> None:
+        self.assertEqual(ChannelManager._channel_from_session("tg_123"), "telegram")
+        self.assertEqual(ChannelManager._channel_from_session("dc_123"), "discord")
+        self.assertEqual(ChannelManager._channel_from_session("sl_123"), "slack")
+        self.assertEqual(ChannelManager._channel_from_session("wa_5511"), "whatsapp")
+        self.assertEqual(ChannelManager._channel_from_session("gc_group_X"), "googlechat")
+        self.assertEqual(ChannelManager._channel_from_session("irc_group_#ops"), "irc")
+        self.assertEqual(ChannelManager._channel_from_session("signal_dm_5511"), "signal")
+        self.assertEqual(ChannelManager._channel_from_session("imessage_dm_user"), "imessage")
+        self.assertEqual(ChannelManager._channel_from_session("unknown"), "")
+
+    def test_start_all_registers_and_clears_subagent_notifier(self) -> None:
+        from clawlite.channels import manager as manager_mod
+
+        cfg = {"channels": {}}
+        original_load_config = manager_mod.load_config
+        original_set_notifier = manager_mod.set_subagent_notifier
+        calls: list[object] = []
+        try:
+            manager_mod.load_config = lambda: cfg
+            manager_mod.set_subagent_notifier = lambda cb: calls.append(cb)
+
+            cm = ChannelManager()
+
+            async def _run() -> None:
+                await cm.start_all()
+                await cm.stop_all()
+
+            asyncio.run(_run())
+        finally:
+            manager_mod.load_config = original_load_config
+            manager_mod.set_subagent_notifier = original_set_notifier
+
+        self.assertTrue(calls)
+        self.assertTrue(callable(calls[0]))
+        self.assertIsNone(calls[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

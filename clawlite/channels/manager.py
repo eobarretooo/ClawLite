@@ -18,6 +18,7 @@ from clawlite.config.settings import load_config
 from clawlite.core.agent import run_task_with_meta
 from clawlite.runtime.channel_sessions import ChannelSessionManager
 from clawlite.runtime.message_bus import InboundEnvelope, MessageBus, OutboundEnvelope
+from clawlite.runtime.subagents import set_subagent_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,47 @@ class ChannelManager:
         self.active_metadata: dict[str, dict[str, Any]] = {}
         self.sessions = ChannelSessionManager()
         self._bus = MessageBus(inbound_handler=self._process_inbound, outbound_handler=self._send_outbound)
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    @staticmethod
+    def _channel_from_session(session_id: str) -> str:
+        sid = str(session_id or "").strip().lower()
+        if sid.startswith("tg_"):
+            return "telegram"
+        if sid.startswith("dc_"):
+            return "discord"
+        if sid.startswith("sl_"):
+            return "slack"
+        if sid.startswith("wa_"):
+            return "whatsapp"
+        if sid.startswith("gc_"):
+            return "googlechat"
+        if sid.startswith("irc_"):
+            return "irc"
+        if sid.startswith("signal_"):
+            return "signal"
+        if sid.startswith("imessage_"):
+            return "imessage"
+        return ""
+
+    def _subagent_notify(self, session_id: str, message: str) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        channel = self._channel_from_session(session_id)
+        if not channel:
+            return
+
+        def _schedule() -> None:
+            asyncio.create_task(
+                self._bus.publish_outbound(
+                    channel=channel,
+                    session_id=session_id,
+                    text=message,
+                )
+            )
+
+        loop.call_soon_threadsafe(_schedule)
 
     async def _process_inbound(self, env: InboundEnvelope) -> str:
         """
@@ -739,6 +781,8 @@ class ChannelManager:
 
     async def start_all(self) -> None:
         """Inicia todos os canais configurados e habilitados."""
+        self._loop = asyncio.get_running_loop()
+        set_subagent_notifier(self._subagent_notify)
         await self._bus.start()
         cfg = load_config()
         channels_cfg = cfg.get("channels", {})
@@ -749,6 +793,8 @@ class ChannelManager:
 
     async def stop_all(self) -> None:
         """Para todos os canais ativos."""
+        set_subagent_notifier(None)
+        self._loop = None
         for instance_key in list(self.active_channels.keys()):
             await self._stop_instance(instance_key)
         await self._bus.stop()
