@@ -1,67 +1,99 @@
-# Dashboard Web do ClawLite (v2)
+# ClawLite Dashboard (Control UI)
 
-Painel web integrado ao Gateway FastAPI para operacao local do agente.
+Web dashboard embutido no gateway FastAPI para operar o ClawLite no estilo do OpenClaw Control UI.
 
 ## Acesso
 
 - URL: `http://<host>:<port>/dashboard`
-- Auth: token do gateway (`~/.clawlite/config.json -> gateway.token`)
+- Token: `~/.clawlite/config.json` (`gateway.token`)
+- A URL aceita `#token=<TOKEN>` para login rapido.
 
-## Principais entregas da v2
+## Abas disponiveis
 
-1. **Chat conectado ao pipeline real do agente**
-   - `WS /ws/chat?token=<token>`
-   - Mensagem enviada:
-     - `{"type":"chat","session_id":"...","text":"..."}`
-   - Mensagem recebida:
-     - `{"type":"chat","message":{...},"meta":{...},"telemetry":{...}}`
-   - `meta` inclui `mode`, `reason` e `model` retornados pelo pipeline.
-   - Hooks `pre/post` salvos em settings sao aplicados no prompt/resposta.
+1. `Overview`
+   - status geral, uptime, conexoes;
+   - metrics de workers/tasks/log ring;
+   - snapshot de debug;
+   - heartbeat status.
 
-2. **Telemetria de tokens/custo por sessao e periodo**
-   - `GET /api/dashboard/telemetry`
-   - Query params:
-     - `session_id` (opcional)
-     - `period` (`24h`, `7d`, `30d`, `today`, `week`, `month`, `all`)
-     - `granularity` (`auto`, `hour`, `day`)
-     - `start`, `end` (ISO8601; opcionais)
-     - `limit` (1..500, default 200)
-   - Resposta inclui:
-     - `summary` (eventos, sessoes, prompt/completion/total tokens, custos)
-     - `sessions` (agregado por sessao)
-     - `timeline` (agregado por bucket de tempo)
-     - `events` (eventos filtrados recentes)
+2. `Chat`
+   - websocket streaming em tempo real (`/ws/chat`);
+   - mensagens com metadados (`mode`, `reason`, `model`);
+   - carga de historico por `session_id`.
 
-3. **Acoes de skills com feedback**
-   - `GET /api/dashboard/skills`
-   - `POST /api/dashboard/skills/install`
-   - `POST /api/dashboard/skills/enable`
-   - `POST /api/dashboard/skills/disable`
-   - `POST /api/dashboard/skills/remove`
-   - Frontend mostra loading/sucesso/erro por acao.
+3. `Sessions`
+   - busca de sessoes;
+   - inspecao de mensagens por sessao;
+   - envio da sessao selecionada para a aba de chat.
 
-4. **Logs realtime com filtros basicos e busca**
-   - `GET /api/dashboard/logs?limit=...&level=...&event=...&q=...`
-   - `WS /ws/logs?token=<token>&level=...&event=...&q=...`
-   - Filtros tambem podem ser atualizados via websocket:
-     - `{"type":"filters","level":"...","event":"...","q":"..."}`
+4. `Telemetry`
+   - resumo de eventos/tokens/custo;
+   - ranking por sessao;
+   - timeline por bucket;
+   - eventos recentes.
 
-5. **Persistencia local**
-   - `~/.clawlite/dashboard/sessions.jsonl`
-   - `~/.clawlite/dashboard/telemetry.jsonl`
-   - `~/.clawlite/dashboard/settings.json`
+5. `Channels`
+   - status/configuracao de canais;
+   - instancias ativas;
+   - reconnect por canal;
+   - pairing pendente/aprovado (approve/reject).
 
-## Endpoints auxiliares
+6. `Cron`
+   - criar/atualizar jobs;
+   - listar jobs correntes;
+   - remover jobs.
 
-- `POST /api/dashboard/auth`
-- `GET /api/dashboard/bootstrap`
-- `GET /api/dashboard/status`
-- `GET /api/dashboard/sessions?q=<texto>`
-- `GET /api/dashboard/sessions/{session_id}`
-- `GET /api/dashboard/settings`
-- `PUT /api/dashboard/settings`
+7. `Config`
+   - model/hook/theme;
+   - edicao do bloco `channels` em JSON;
+   - save settings;
+   - dry-run/apply config;
+   - restart request (safe/noop no runtime embutido).
 
-## Observacoes
+8. `Workspace`
+   - editor para `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`.
 
-- A estimativa de custo e local (heuristica por modelo), nao e billing oficial.
-- Para monitorar eventos em tempo real, mantenha o websocket de logs conectado.
+9. `Skills`
+   - listar skills locais (enable/disable/remove);
+   - instalar skill local por slug;
+   - update dry-run/apply;
+   - leitura do manifesto do hub.
+
+10. `Agents`
+    - listar agentes e bindings;
+    - criar agente;
+    - bind de agente por canal/conta.
+
+11. `Logs`
+    - stream realtime com filtros (`/ws/logs`);
+    - fallback pull (`/api/dashboard/logs`).
+
+12. `Security`
+    - mapa de roles/scopes;
+    - politicas de ferramenta (`allow/review/deny`);
+    - trilha de auditoria de ferramentas.
+
+## Endpoints usados
+
+- Auth/boot: `POST /api/dashboard/auth`, `GET /api/dashboard/bootstrap`, `GET /api/dashboard/status`
+- Health/metrics: `GET /health`, `GET /api/metrics`, `GET /api/dashboard/debug`, `GET /api/heartbeat/status`
+- Chat/log streams: `WS /ws/chat`, `WS /ws/logs`
+- Sessions: `GET /api/dashboard/sessions`, `GET /api/dashboard/sessions/{session_id}`
+- Telemetry: `GET /api/dashboard/telemetry`
+- Channels/pairing: `GET /api/channels/status`, `GET /api/channels/instances`, `POST /api/channels/reconnect`,
+  `GET /api/pairing/pending`, `GET /api/pairing/approved`, `POST /api/pairing/approve`, `POST /api/pairing/reject`
+- Cron: `GET /api/cron`, `POST /api/cron`, `DELETE /api/cron/{job_id}`
+- Config/models: `GET /api/dashboard/settings`, `PUT /api/dashboard/settings`, `POST /api/dashboard/config/apply`,
+  `POST /api/dashboard/config/restart`, `GET /api/models/catalog`
+- Workspace: `GET /api/workspace/file`, `PUT /api/workspace/file`
+- Skills/hub/update: `GET /api/dashboard/skills`, `POST /api/dashboard/skills/install`,
+  `POST /api/dashboard/skills/enable`, `POST /api/dashboard/skills/disable`,
+  `POST /api/dashboard/skills/remove`, `POST /api/dashboard/update`,
+  `GET /api/hub/manifest`
+- Agents: `GET /api/agents`, `POST /api/agents`, `POST /api/agents/bind`
+- Security: `GET /api/security/rbac`, `PUT /api/security/tool-policy`, `GET /api/security/tool-audit`
+
+## Notas
+
+- Custo em telemetry e estimado localmente, nao billing oficial.
+- Quando usar token em URL, prefira `#token=` (fragmento) para reduzir exposicao em logs/proxies.
