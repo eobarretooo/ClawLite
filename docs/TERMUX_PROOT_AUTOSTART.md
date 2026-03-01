@@ -49,6 +49,9 @@ Isso cria:
 - config do cliente: `/root/.clawlite/supervisorctl.conf`
 - start script: `/root/.clawlite/bin/clawlite-supervised-start.sh`
 - boot script Termux: `~/.termux/boot/clawlite-supervisord.sh`
+  - usa `proot` direto (sem `proot-distro login`) para evitar bloqueios no boot
+  - executa em background com `nohup` e log em `/tmp/clawlite-boot.log`
+  - ignora execução quando detecta sessão `nested proot` (evita falso erro em testes dentro do próprio proot)
 
 3) Verifique status:
 

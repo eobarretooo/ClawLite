@@ -297,10 +297,46 @@ fi
   mkdir -p "${TERMUX_BOOT_DIR}"
   cat > "${TERMUX_BOOT_SCRIPT}" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
-if ! command -v proot-distro >/dev/null 2>&1; then
+PREFIX_PATH="\${PREFIX:-/data/data/com.termux/files/usr}"
+if [ -d "/data/data/com.termux/files/usr" ]; then
+  PREFIX_PATH="/data/data/com.termux/files/usr"
+fi
+PROOT_BIN="\${PREFIX_PATH}/bin/proot"
+ROOTFS_DIR="\${PREFIX_PATH}/var/lib/proot-distro/installed-rootfs/${DISTRO}"
+BOOT_LOG="/tmp/clawlite-boot.log"
+TRACER_PID=\$(awk '/TracerPid:/ {print \$2}' /proc/\$\$/status 2>/dev/null || echo 0)
+
+if [ ! -x "\${PROOT_BIN}" ]; then
   exit 0
 fi
-nohup proot-distro login ${DISTRO} -- /bin/bash -lc '
+if [ ! -d "\${ROOTFS_DIR}" ]; then
+  exit 0
+fi
+if [ "\${TRACER_PID:-0}" != "0" ]; then
+  printf '%s\n' "nested-proot detectado (TracerPid=\${TRACER_PID}); boot direto ignorado." > "\${BOOT_LOG}"
+  exit 0
+fi
+
+nohup "\${PROOT_BIN}" \\
+  --link2symlink -L --kill-on-exit \\
+  --rootfs="\${ROOTFS_DIR}" \\
+  --cwd=/root \\
+  --bind=/dev \\
+  --bind=/dev/urandom:/dev/random \\
+  --bind=/proc \\
+  --bind=/proc/self/fd:/dev/fd \\
+  --bind=/proc/self/fd/0:/dev/stdin \\
+  --bind=/proc/self/fd/1:/dev/stdout \\
+  --bind=/proc/self/fd/2:/dev/stderr \\
+  --bind=/sys \\
+  --bind="\${ROOTFS_DIR}/tmp:/dev/shm" \\
+  /usr/bin/env -i \\
+  HOME=/root \\
+  USER=root \\
+  LANG=C.UTF-8 \\
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
+  TERM=xterm-256color \\
+  /bin/bash -lc '
 if [ ! -f ${PROOT_SUPERVISOR_CONF} ]; then
   exit 0
 fi
@@ -309,7 +345,7 @@ if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/
 else
   supervisord -c ${PROOT_SUPERVISOR_CONF} >/dev/null 2>&1 || true
 fi
-' > /tmp/clawlite-boot.log 2>&1 &
+' > "\${BOOT_LOG}" 2>&1 &
 exit 0
 EOF
   chmod +x "${TERMUX_BOOT_SCRIPT}"
