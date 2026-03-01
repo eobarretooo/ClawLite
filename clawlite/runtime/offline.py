@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 from typing import Any, Callable, Iterator
@@ -206,6 +207,10 @@ def run_ollama(prompt: str, model: str, timeout_seconds: int = 90) -> str:
     return out
 
 
+def has_ollama_binary() -> bool:
+    return shutil.which("ollama") is not None
+
+
 def resolve_ollama_fallback(cfg: dict[str, Any]) -> str:
     fallback_models = cfg.get("model_fallback", [])
     if isinstance(fallback_models, list):
@@ -280,6 +285,46 @@ def _run_ollama_fallback_stream(
     return ollama_executor(prompt, fallback_name), meta
 
 
+def _run_ollama_fallback_guarded(
+    prompt: str,
+    cfg: dict[str, Any],
+    reason: str,
+    ollama_executor: Callable[[str, str], str],
+    *,
+    upstream_error: Exception | None = None,
+) -> tuple[str, dict[str, str]]:
+    try:
+        return _run_ollama_fallback(prompt, cfg, reason, ollama_executor)
+    except OllamaExecutionError as exc:
+        detail = (
+            "fallback Ollama indisponível (instale o binário 'ollama' "
+            "ou desative offline_mode.auto_fallback_to_ollama)"
+        )
+        if upstream_error is not None:
+            raise ProviderExecutionError(f"{upstream_error}; {detail}: {exc}") from exc
+        raise ProviderExecutionError(f"{detail}: {exc}") from exc
+
+
+def _run_ollama_fallback_stream_guarded(
+    prompt: str,
+    cfg: dict[str, Any],
+    reason: str,
+    ollama_executor: Callable[[str, str], Iterator[str]],
+    *,
+    upstream_error: Exception | None = None,
+) -> tuple[Iterator[str], dict[str, str]]:
+    try:
+        return _run_ollama_fallback_stream(prompt, cfg, reason, ollama_executor)
+    except OllamaExecutionError as exc:
+        detail = (
+            "fallback Ollama indisponível (instale o binário 'ollama' "
+            "ou desative offline_mode.auto_fallback_to_ollama)"
+        )
+        if upstream_error is not None:
+            raise ProviderExecutionError(f"{upstream_error}; {detail}: {exc}") from exc
+        raise ProviderExecutionError(f"{detail}: {exc}") from exc
+
+
 def run_with_offline_fallback(
     prompt: str,
     cfg: dict[str, Any],
@@ -302,7 +347,7 @@ def run_with_offline_fallback(
 
     if not check_connectivity(_connectivity_timeout(cfg)):
         if _offline_auto_fallback(cfg):
-            return _run_ollama_fallback(prompt, cfg, "connectivity", ollama)
+            return _run_ollama_fallback_guarded(prompt, cfg, "connectivity", ollama)
         raise ProviderExecutionError("sem conectividade e fallback offline desativado")
 
     try:
@@ -320,7 +365,13 @@ def run_with_offline_fallback(
                     continue
 
         if _offline_auto_fallback(cfg):
-            out, meta = _run_ollama_fallback(prompt, cfg, "provider_failure", ollama)
+            out, meta = _run_ollama_fallback_guarded(
+                prompt,
+                cfg,
+                "provider_failure",
+                ollama,
+                upstream_error=exc,
+            )
             meta["error"] = str(exc)
             return out, meta
         raise
@@ -347,7 +398,7 @@ def run_with_offline_fallback_stream(
         
     if not check_connectivity(_connectivity_timeout(cfg)):
         if _offline_auto_fallback(cfg):
-            return _run_ollama_fallback_stream(prompt, cfg, "connectivity", ollama)
+            return _run_ollama_fallback_stream_guarded(prompt, cfg, "connectivity", ollama)
         raise ProviderExecutionError("sem conectividade e fallback offline desativado")
         
     try:
@@ -364,7 +415,13 @@ def run_with_offline_fallback_stream(
                     continue
 
         if _offline_auto_fallback(cfg):
-            out_stream, meta = _run_ollama_fallback_stream(prompt, cfg, "provider_failure", ollama)
+            out_stream, meta = _run_ollama_fallback_stream_guarded(
+                prompt,
+                cfg,
+                "provider_failure",
+                ollama,
+                upstream_error=exc,
+            )
             meta["error"] = str(exc)
             return out_stream, meta
         raise

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from clawlite.runtime.offline import ProviderExecutionError, run_with_offline_fallback
+from clawlite.runtime.offline import OllamaExecutionError, ProviderExecutionError, run_with_offline_fallback
 
 
 class OfflineModeTests(unittest.TestCase):
@@ -52,6 +52,47 @@ class OfflineModeTests(unittest.TestCase):
         self.assertEqual(out, "llama3.1:8b:teste")
         self.assertEqual(meta["mode"], "offline-fallback")
         self.assertEqual(meta["reason"], "provider_failure")
+
+    def test_connectivity_fallback_without_ollama_returns_provider_error(self) -> None:
+        cfg = {
+            "model": "openai/gpt-4o-mini",
+            "offline_mode": {"enabled": True, "auto_fallback_to_ollama": True},
+            "model_fallback": ["ollama/llama3.1:8b"],
+            "auth": {"providers": {"openai": {"token": "token"}}},
+        }
+
+        with patch("clawlite.runtime.offline.check_connectivity", return_value=False):
+            with self.assertRaisesRegex(ProviderExecutionError, "fallback Ollama indisponível"):
+                run_with_offline_fallback(
+                    "teste",
+                    cfg,
+                    online_executor=lambda *_: "should-not-run",
+                    ollama_executor=lambda *_: (_ for _ in ()).throw(
+                        OllamaExecutionError("binário 'ollama' não encontrado")
+                    ),
+                )
+
+    def test_provider_error_preserved_when_ollama_missing(self) -> None:
+        cfg = {
+            "model": "openai/gpt-4o-mini",
+            "offline_mode": {"enabled": True, "auto_fallback_to_ollama": True},
+            "model_fallback": ["ollama/llama3.1:8b"],
+            "auth": {"providers": {"openai": {"token": "token"}}},
+        }
+
+        def failing_online(*_args: str) -> str:
+            raise ProviderExecutionError("token ausente para provedor remoto 'openai'")
+
+        with patch("clawlite.runtime.offline.check_connectivity", return_value=True):
+            with self.assertRaisesRegex(ProviderExecutionError, "token ausente para provedor remoto 'openai'"):
+                run_with_offline_fallback(
+                    "teste",
+                    cfg,
+                    online_executor=failing_online,
+                    ollama_executor=lambda *_: (_ for _ in ()).throw(
+                        OllamaExecutionError("binário 'ollama' não encontrado")
+                    ),
+                )
 
 
 if __name__ == "__main__":
