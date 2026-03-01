@@ -46,6 +46,7 @@ Isso cria:
 
 - `supervisord` e `supervisorctl` no Ubuntu proot
 - config: `/root/.clawlite/supervisord.conf`
+- config do cliente: `/root/.clawlite/supervisorctl.conf`
 - start script: `/root/.clawlite/bin/clawlite-supervised-start.sh`
 - boot script Termux: `~/.termux/boot/clawlite-supervisord.sh`
 
@@ -79,7 +80,7 @@ Checagem rápida de saúde:
 
 ```bash
 clawlitex status
-proot-distro login ubuntu -- /bin/bash -lc "supervisorctl -c /root/.clawlite/supervisord.conf status"
+proot-distro login ubuntu -- /bin/bash -lc "supervisorctl -s http://127.0.0.1:9001 status"
 ```
 
 ---

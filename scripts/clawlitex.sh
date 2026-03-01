@@ -6,10 +6,21 @@ CLAWLITE_DIR="${CLAWLITEX_DIR:-/root/ClawLite}"
 SETUP_SCRIPT="${CLAWLITEX_SETUP_SCRIPT:-$HOME/.clawlite/setup_termux_proot.sh}"
 DEFAULT_HOST="${CLAWLITEX_HOST:-127.0.0.1}"
 DEFAULT_PORT="${CLAWLITEX_PORT:-8787}"
-TERMUX_BOOT_DIR="${HOME}/.termux/boot"
+TERMUX_HOME="${CLAWLITEX_TERMUX_HOME:-$HOME}"
+if [[ -d "/data/data/com.termux/files/home" ]]; then
+  TERMUX_HOME="/data/data/com.termux/files/home"
+fi
+TERMUX_BOOT_DIR="${TERMUX_HOME}/.termux/boot"
 TERMUX_BOOT_SCRIPT="${TERMUX_BOOT_DIR}/clawlite-supervisord.sh"
 PROOT_SUPERVISOR_CONF="${CLAWLITEX_SUPERVISOR_CONF:-/root/.clawlite/supervisord.conf}"
 PROOT_SUPERVISOR_START_SCRIPT="${CLAWLITEX_SUPERVISOR_START_SCRIPT:-/root/.clawlite/bin/clawlite-supervised-start.sh}"
+PROOT_SUPERVISORCTL_CONF="${CLAWLITEX_SUPERVISORCTL_CONF:-/root/.clawlite/supervisorctl.conf}"
+PROOT_SUPERVISOR_SERVER="${CLAWLITEX_SUPERVISOR_SERVER:-http://127.0.0.1:9001}"
+ROOTFS_BASE="${PREFIX:-/data/data/com.termux/files/usr}/var/lib/proot-distro/installed-rootfs"
+
+in_proot_runtime() {
+  uname -a 2>/dev/null | grep -qi "PRoot-Distro"
+}
 
 print_help() {
   cat <<EOF
@@ -34,6 +45,8 @@ Variaveis opcionais:
   CLAWLITEX_DIR (padrao: /root/ClawLite)
   CLAWLITEX_SETUP_SCRIPT (padrao: ~/.clawlite/setup_termux_proot.sh)
   CLAWLITEX_SUPERVISOR_CONF (padrao: /root/.clawlite/supervisord.conf)
+  CLAWLITEX_SUPERVISORCTL_CONF (padrao: /root/.clawlite/supervisorctl.conf)
+  CLAWLITEX_SUPERVISOR_SERVER (padrao: http://127.0.0.1:9001)
 EOF
 }
 
@@ -67,7 +80,25 @@ require_proot() {
 }
 
 distro_installed() {
-  proot-distro list 2>/dev/null | awk '{print $1}' | grep -Fxq "$DISTRO"
+  if in_proot_runtime; then
+    return 0
+  fi
+
+  if proot-distro list-installed >/dev/null 2>&1; then
+    if proot-distro list-installed 2>/dev/null | awk '{print $1}' | grep -Fxq "$DISTRO"; then
+      return 0
+    fi
+  fi
+
+  if [[ -d "${ROOTFS_BASE}/${DISTRO}" ]]; then
+    return 0
+  fi
+
+  if proot-distro login "$DISTRO" -- /bin/true >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
 }
 
 repo_exists_in_proot() {
@@ -80,6 +111,10 @@ clawlite_exists_in_proot() {
 
 run_in_proot() {
   local remote_cmd="$1"
+  if in_proot_runtime; then
+    /bin/bash -lc "$remote_cmd"
+    return
+  fi
   proot-distro login "$DISTRO" -- /bin/bash -lc "$remote_cmd"
 }
 
@@ -207,9 +242,8 @@ exec clawlite start --host ${DEFAULT_HOST} --port ${DEFAULT_PORT}
 EOS
 chmod +x ${PROOT_SUPERVISOR_START_SCRIPT}
 cat > ${PROOT_SUPERVISOR_CONF} <<'EOS'
-[unix_http_server]
-file=/root/.clawlite/run/supervisor.sock
-chmod=0700
+[inet_http_server]
+port=127.0.0.1:9001
 
 [supervisord]
 logfile=/root/.clawlite/logs/supervisord.log
@@ -223,15 +257,19 @@ minprocs=200
 supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
 [supervisorctl]
-serverurl=unix:///root/.clawlite/run/supervisor.sock
+serverurl=http://127.0.0.1:9001
 
 [program:clawlite]
 command=${PROOT_SUPERVISOR_START_SCRIPT}
 directory=${CLAWLITE_DIR}
 autostart=true
 autorestart=true
+# backoff de bootstrap via startsecs/startretries
 startsecs=5
 startretries=20
+exitcodes=0
+stopsignal=TERM
+stopwaitsecs=45
 stopasgroup=true
 killasgroup=true
 stdout_logfile=/root/.clawlite/logs/clawlite.out.log
@@ -242,10 +280,14 @@ stdout_logfile_backups=5
 stderr_logfile_backups=5
 environment=PYTHONUNBUFFERED=\"1\"
 EOS
+cat > ${PROOT_SUPERVISORCTL_CONF} <<'EOS'
+[supervisorctl]
+serverurl=http://127.0.0.1:9001
+EOS
 if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} reread >/dev/null 2>&1 || true
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} update >/dev/null 2>&1 || true
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} restart clawlite >/dev/null 2>&1 || true
+  supervisorctl -c ${PROOT_SUPERVISORCTL_CONF} reread >/dev/null 2>&1 || true
+  supervisorctl -c ${PROOT_SUPERVISORCTL_CONF} update >/dev/null 2>&1 || true
+  supervisorctl -c ${PROOT_SUPERVISORCTL_CONF} restart clawlite >/dev/null 2>&1 || true
 else
   supervisord -c ${PROOT_SUPERVISOR_CONF}
 fi
@@ -265,7 +307,7 @@ if [ ! -f ${PROOT_SUPERVISOR_CONF} ]; then
   exit 0
 fi
 if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} start clawlite >/dev/null 2>&1 || true
+  supervisorctl -s ${PROOT_SUPERVISOR_SERVER} start clawlite >/dev/null 2>&1 || true
 else
   supervisord -c ${PROOT_SUPERVISOR_CONF}
 fi
@@ -276,7 +318,21 @@ EOF
   echo "[3/4] Validando status do supervisor..."
   run_in_proot "
 set -euo pipefail
-supervisorctl -c ${PROOT_SUPERVISOR_CONF} status || true
+timeout_s=45
+elapsed=0
+while [ \$elapsed -lt \$timeout_s ]; do
+  line=\$(supervisorctl -s ${PROOT_SUPERVISOR_SERVER} status clawlite 2>/dev/null || true)
+  if echo \"\$line\" | grep -Eq 'clawlite\\s+RUNNING'; then
+    echo \"  \$line\"
+    exit 0
+  fi
+  sleep 1
+  elapsed=\$((elapsed + 1))
+done
+echo 'ERRO: clawlite nao entrou em RUNNING no supervisord.'
+supervisorctl -s ${PROOT_SUPERVISOR_SERVER} status || true
+tail -n 80 /root/.clawlite/logs/clawlite.err.log || true
+exit 1
 "
 
   echo "[4/4] Pronto."
@@ -324,19 +380,31 @@ else
   echo '  supervisord pid: STOPPED'
 fi
 if command -v supervisorctl >/dev/null 2>&1 && [ -f ${PROOT_SUPERVISOR_CONF} ]; then
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} status || true
+  status_out=\$(supervisorctl -s ${PROOT_SUPERVISOR_SERVER} status 2>/dev/null || true)
+  if echo \"\$status_out\" | grep -Eq 'no such file|refused connection'; then
+    status_out=''
+  fi
+  if [ -n \"\$status_out\" ]; then
+    echo \"\$status_out\"
+  else
+    if pgrep -f 'clawlite start --host' >/dev/null 2>&1; then
+      echo '  clawlite program: RUNNING (fallback pid check)'
+    else
+      echo '  clawlite program: STOPPED (fallback pid check)'
+    fi
+  fi
 fi
 "
 }
 
 cmd_autostart_remove() {
   require_proot
-  if distro_installed; then
-    run_in_proot "
+if distro_installed; then
+  run_in_proot "
 set -euo pipefail
 if command -v supervisorctl >/dev/null 2>&1 && [ -f ${PROOT_SUPERVISOR_CONF} ]; then
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} stop clawlite >/dev/null 2>&1 || true
-  supervisorctl -c ${PROOT_SUPERVISOR_CONF} shutdown >/dev/null 2>&1 || true
+  supervisorctl -s ${PROOT_SUPERVISOR_SERVER} stop clawlite >/dev/null 2>&1 || true
+  supervisorctl -s ${PROOT_SUPERVISOR_SERVER} shutdown >/dev/null 2>&1 || true
 fi
 "
   fi
