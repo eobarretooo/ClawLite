@@ -20,15 +20,36 @@ if ! command -v pkg >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1/6] Instalando dependências base do Termux..."
-pkg update -y >/dev/null
-pkg install -y proot-distro git curl >/dev/null
+is_distro_installed() {
+  proot-distro list 2>/dev/null | awk -v d="$1" '{
+    for (i = 1; i <= NF; i++) {
+      if ($i == d) {
+        found = 1
+      }
+    }
+  } END { exit(found ? 0 : 1) }'
+}
 
-if ! proot-distro list | grep -q "^${DISTRO}\$"; then
+echo "[1/6] Verificando dependências base do Termux..."
+pkg update -y >/dev/null
+TERMUX_PKGS=(git curl)
+if command -v proot-distro >/dev/null 2>&1; then
+  echo "  proot-distro já instalado. Pulando instalação do proot."
+else
+  TERMUX_PKGS=(proot-distro "${TERMUX_PKGS[@]}")
+fi
+pkg install -y "${TERMUX_PKGS[@]}" >/dev/null
+
+if ! command -v proot-distro >/dev/null 2>&1; then
+  echo "Erro: proot-distro não disponível após instalação."
+  exit 1
+fi
+
+if is_distro_installed "${DISTRO}" || [ -d "${ROOTFS_BASE}/${DISTRO}" ]; then
+  echo "[2/6] Distro '${DISTRO}' já instalada."
+else
   echo "[2/6] Instalando distro '${DISTRO}'..."
   proot-distro install "$DISTRO"
-else
-  echo "[2/6] Distro '${DISTRO}' já instalada."
 fi
 
 echo "[3/6] Preparando Ubuntu/proot..."
