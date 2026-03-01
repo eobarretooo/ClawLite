@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import logging
 import os
 import shlex
 import signal
@@ -15,6 +16,8 @@ from typing import Any, Iterator
 
 from clawlite.runtime.battery import effective_poll_seconds, get_battery_mode
 from clawlite.runtime.voice import send_telegram_audio_reply, synthesize_tts
+
+logger = logging.getLogger(__name__)
 
 
 class _AutoClosingConnection(sqlite3.Connection):
@@ -563,6 +566,62 @@ def _finish_task(task_id: int, ok: bool, result: str) -> None:
         )
 
 
+def _resolve_telegram_token(payload: dict[str, Any]) -> str:
+    channel_cfg = payload.get("channel_cfg")
+    if isinstance(channel_cfg, dict):
+        token = str(channel_cfg.get("token", "")).strip()
+        if token:
+            return token
+
+    try:
+        from clawlite.config.settings import load_config
+
+        cfg = load_config()
+        channels = cfg.get("channels", {}) if isinstance(cfg, dict) else {}
+        tg = channels.get("telegram", {}) if isinstance(channels, dict) else {}
+        if isinstance(tg, dict):
+            return str(tg.get("token", "")).strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def _resolve_telegram_thread_id(payload: dict[str, Any]) -> int | None:
+    raw = str(payload.get("thread_id") or payload.get("message_thread_id") or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def _deliver_task_result(payload: dict[str, Any], *, ok: bool, output: str) -> None:
+    channel = str(payload.get("channel", "")).strip().lower()
+    if channel != "telegram":
+        return
+
+    chat_id = str(payload.get("chat_id") or payload.get("chatId") or "").strip()
+    if not chat_id:
+        return
+    token = _resolve_telegram_token(payload)
+    if not token:
+        return
+
+    text = output.strip()
+    if not text:
+        text = "✅ Tarefa concluída." if ok else "⚠️ Tarefa falhou."
+    elif not ok:
+        text = f"⚠️ Falha na tarefa:\n{text}"
+
+    try:
+        from clawlite.channels.telegram_runtime import send_telegram_text_sync
+
+        send_telegram_text_sync(
+            token=token,
+            chat_id=chat_id,
+            text=text,
+            message_thread_id=_resolve_telegram_thread_id(payload),
+        )
+    except Exception as exc:
+        logger.warning("Falha ao enviar resultado de task para Telegram: %s", exc)
+
+
 def _render_command_args(template: str, payload: dict[str, Any]) -> list[str]:
     if not template or not template.strip():
         raise ValueError("template de comando vazio")
@@ -618,6 +677,7 @@ def worker_loop(worker_id: int) -> None:
             out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
             ok = proc.returncode == 0
 
+            delivered_audio = False
             if ok and payload.get("reply_in_audio") and payload.get("channel") == "telegram":
                 ch_cfg = payload.get("channel_cfg") or {}
                 audio_path = synthesize_tts(out.strip() or "Resposta concluída.", ch_cfg)
@@ -627,12 +687,19 @@ def worker_loop(worker_id: int) -> None:
                     audio_path=audio_path,
                     caption="Resposta em áudio",
                 )
+                delivered_audio = True
 
             _finish_task(task_id, ok, out.strip())
+            if not delivered_audio:
+                _deliver_task_result(payload, ok=ok, output=out)
         except subprocess.TimeoutExpired:
-            _finish_task(task_id, False, "worker error: timeout ao executar comando")
+            err = "worker error: timeout ao executar comando"
+            _finish_task(task_id, False, err)
+            _deliver_task_result(payload, ok=False, output=err)
         except Exception as exc:
-            _finish_task(task_id, False, f"worker error: {exc}")
+            err = f"worker error: {exc}"
+            _finish_task(task_id, False, err)
+            _deliver_task_result(payload, ok=False, output=err)
 
         if get_battery_mode().get("enabled", False):
             time.sleep(poll_sleep)

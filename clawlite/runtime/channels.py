@@ -8,6 +8,11 @@ TEMPLATES = {
             "telegram": {
                 "enabled": True,
                 "token": "<TELEGRAM_BOT_TOKEN>",
+                "chat_id": "<TELEGRAM_CHAT_ID>",
+                "mode": "polling",
+                "webhook_enabled": False,
+                "webhook_secret": "<TELEGRAM_WEBHOOK_SECRET>",
+                "webhook_path": "/api/webhooks/telegram",
                 "allowFrom": ["<TELEGRAM_USER_ID>"],
                 "stt_enabled": True,
                 "tts_enabled": False,

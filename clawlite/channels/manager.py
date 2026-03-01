@@ -99,9 +99,36 @@ class ChannelManager:
         allow_from = self._as_str_list(ch_data.get("allowFrom"))
         allow_channels = self._as_str_list(ch_data.get("allowChannels"))
         if channel_name == "telegram":
+            mode_raw = str(ch_data.get("mode") or "").strip().lower()
+            webhook_enabled = bool(ch_data.get("webhook_enabled", ch_data.get("webhookEnabled", False)))
+            mode = mode_raw if mode_raw in {"polling", "webhook"} else ("webhook" if webhook_enabled else "polling")
+            poll_interval_s = self._as_positive_float(
+                ch_data.get("poll_interval_s", ch_data.get("pollIntervalSec", 1.0)),
+                1.0,
+            )
+            poll_timeout_s = self._as_positive_int(
+                ch_data.get("poll_timeout_s", ch_data.get("pollTimeoutSec", 30)),
+                30,
+            )
+            reconnect_initial_s = self._as_positive_float(
+                ch_data.get("reconnect_initial_s", ch_data.get("reconnectInitialSec", 2.0)),
+                2.0,
+            )
+            reconnect_max_s = self._as_positive_float(
+                ch_data.get("reconnect_max_s", ch_data.get("reconnectMaxSec", 30.0)),
+                30.0,
+            )
             return {
                 "allowed_accounts": allow_from,
                 "pairing_enabled": pairing_enabled,
+                "mode": mode,
+                "webhook_secret": str(ch_data.get("webhook_secret") or ch_data.get("webhookSecret") or "").strip(),
+                "webhook_path": str(ch_data.get("webhook_path") or ch_data.get("webhookPath") or "/api/webhooks/telegram").strip()
+                or "/api/webhooks/telegram",
+                "poll_interval_s": poll_interval_s,
+                "poll_timeout_s": poll_timeout_s,
+                "reconnect_initial_s": reconnect_initial_s,
+                "reconnect_max_s": reconnect_max_s,
             }
         if channel_name == "discord":
             return {
@@ -413,6 +440,8 @@ class ChannelManager:
                     cred.get("cfg", ch_data),
                     pairing_enabled=pairing_enabled,
                 )
+                if normalized_channel == "telegram":
+                    channel_kwargs["account_id"] = account_name
                 channel = channel_cls(token=cred["token"], name=normalized_channel, **channel_kwargs)
                 channel.on_message(self._handle_message)
                 await channel.start()

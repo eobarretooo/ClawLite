@@ -130,6 +130,36 @@ class HeartbeatLoop:
         except Exception as exc:
             logger.warning("heartbeat: erro ao criar notificação — %s", exc)
 
+        self._send_telegram_proactive(response_clean)
+
+    def _send_telegram_proactive(self, message: str) -> None:
+        try:
+            from clawlite.channels.telegram_runtime import send_telegram_text_sync
+            from clawlite.config.settings import load_config
+        except Exception:
+            return
+
+        try:
+            cfg = load_config()
+            channels = cfg.get("channels", {}) if isinstance(cfg, dict) else {}
+            tg = channels.get("telegram", {}) if isinstance(channels, dict) else {}
+            if not isinstance(tg, dict):
+                return
+
+            token = str(tg.get("token", "")).strip()
+            chat_id = str(tg.get("chat_id") or tg.get("chatId") or "").strip()
+            if not token or not chat_id:
+                return
+
+            text = f"[heartbeat] {message}".strip()
+            send_telegram_text_sync(
+                token=token,
+                chat_id=chat_id,
+                text=text,
+            )
+        except Exception as exc:
+            logger.warning("heartbeat: falha ao enviar alerta Telegram — %s", exc)
+
     # ------------------------------------------------------------------
     # Controle do loop
     # ------------------------------------------------------------------

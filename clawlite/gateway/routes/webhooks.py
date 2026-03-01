@@ -17,6 +17,7 @@ from clawlite.channels.imessage import IMessageChannel
 from clawlite.channels.irc import IrcChannel
 from clawlite.channels.manager import manager
 from clawlite.channels.signal import SignalChannel
+from clawlite.channels.telegram import TelegramChannel
 from clawlite.channels.whatsapp import WhatsAppChannel
 from clawlite.config.settings import load_config
 
@@ -272,6 +273,13 @@ def _validate_googlechat_payload(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _validate_telegram_payload(payload: dict[str, Any]) -> str | None:
+    update_id = payload.get("update_id")
+    if not isinstance(update_id, int):
+        return "update_id ausente/inválido"
+    return None
+
+
 def _validate_irc_payload(payload: dict[str, Any]) -> str | None:
     text = str(payload.get("text") or payload.get("message") or "").strip()
     if not text:
@@ -364,6 +372,10 @@ def _resolve_googlechat_channel() -> GoogleChatChannel | None:
     return active[0]
 
 
+def _resolve_telegram_channels() -> list[TelegramChannel]:
+    return _resolve_channel_instances("telegram", TelegramChannel)
+
+
 def _resolve_irc_channel() -> IrcChannel | None:
     active = _resolve_channel_instances("irc", IrcChannel)
     if not active:
@@ -417,6 +429,100 @@ async def handle_whatsapp_webhook(request: Request) -> dict[str, str]:
 
     asyncio.create_task(wa_channel.process_webhook_payload(payload))
     return {"status": "ok"}
+
+
+@router.post("/telegram")
+async def handle_telegram_webhook(request: Request) -> JSONResponse:
+    channel = "telegram"
+    cfg = _channel_cfg(channel)
+    allowed, retry_after = _rate_limit_check(channel, request, cfg)
+    if not allowed:
+        return _error_response(
+            channel=channel,
+            code="rate_limited",
+            message="Limite de requisições excedido para o webhook",
+            status_code=429,
+            details={"retry_after_seconds": retry_after},
+        )
+
+    payload, parse_error, raw_body = await _read_json_body(request, channel, cfg)
+    if parse_error:
+        return parse_error
+    if payload is None:
+        return _error_response(
+            channel=channel,
+            code="invalid_payload",
+            message="Payload ausente",
+            status_code=400,
+        )
+
+    auth_error = _authenticate_request(request=request, channel=channel, cfg=cfg, raw_body=raw_body)
+    if auth_error:
+        return auth_error
+
+    secret_cfg = str(cfg.get("webhook_secret") or cfg.get("webhookSecret") or "").strip()
+    if secret_cfg:
+        provided = str(request.headers.get("x-telegram-bot-api-secret-token", "")).strip()
+        if not provided or not secrets.compare_digest(provided, secret_cfg):
+            return _error_response(
+                channel=channel,
+                code="unauthorized_webhook",
+                message="Secret do webhook Telegram inválido",
+                status_code=401,
+            )
+
+    sanitized_payload = _sanitize_payload(payload)
+    if not isinstance(sanitized_payload, dict):
+        return _error_response(
+            channel=channel,
+            code="invalid_payload",
+            message="Payload inválido após sanitização",
+            status_code=400,
+        )
+
+    validation_error = _validate_telegram_payload(sanitized_payload)
+    if validation_error:
+        return _error_response(
+            channel=channel,
+            code="invalid_payload",
+            message=validation_error,
+            status_code=400,
+        )
+
+    tg_channels = _resolve_telegram_channels()
+    if not tg_channels:
+        return _error_response(
+            channel=channel,
+            code="channel_unavailable",
+            message="Canal Telegram não está ativo",
+            status_code=503,
+        )
+
+    processed = 0
+    for tg in tg_channels:
+        if not tg.is_webhook_mode():
+            continue
+        try:
+            await tg.process_webhook_payload(sanitized_payload)
+            processed += 1
+        except Exception as exc:
+            logger.error("Falha no processamento do webhook Telegram: %s", exc)
+            return _error_response(
+                channel=channel,
+                code="processing_error",
+                message="Falha ao processar webhook",
+                status_code=500,
+            )
+
+    if processed == 0:
+        return _error_response(
+            channel=channel,
+            code="webhook_mode_disabled",
+            message="Canal Telegram ativo, mas não está em modo webhook",
+            status_code=409,
+        )
+
+    return JSONResponse({"ok": True, "channel": channel, "status": "ok", "processed": processed})
 
 
 @router.post("/googlechat")

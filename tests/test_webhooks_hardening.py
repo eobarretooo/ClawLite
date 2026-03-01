@@ -38,6 +38,18 @@ class _FakeIMessageChannel:
         self.payloads.append(payload)
 
 
+class _FakeTelegramChannel:
+    def __init__(self, webhook_mode: bool = True) -> None:
+        self.payloads: list[dict] = []
+        self._webhook_mode = webhook_mode
+
+    def is_webhook_mode(self) -> bool:
+        return self._webhook_mode
+
+    async def process_webhook_payload(self, payload: dict) -> None:
+        self.payloads.append(payload)
+
+
 def _boot(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     settings = importlib.import_module("clawlite.config.settings")
@@ -333,3 +345,84 @@ def test_imessage_webhook_sanitizes_and_rate_limits(monkeypatch, tmp_path):
     second = client.post("/api/webhooks/imessage", headers=headers, json=payload)
     assert second.status_code == 429
     assert second.json()["error"]["code"] == "rate_limited"
+
+
+def test_telegram_webhook_requires_secret_header(monkeypatch, tmp_path):
+    server, webhooks = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+
+    fake = _FakeTelegramChannel(webhook_mode=True)
+    webhooks._RATE_STATE.clear()
+    monkeypatch.setattr(webhooks, "_resolve_telegram_channels", lambda: [fake])
+    monkeypatch.setattr(
+        webhooks,
+        "load_config",
+        lambda: {
+            "channels": {
+                "telegram": {
+                    "webhook_secret": "tg-secret",
+                    "rate_limit_per_min": 20,
+                }
+            }
+        },
+    )
+
+    resp = client.post(
+        "/api/webhooks/telegram",
+        json={"update_id": 1, "message": {"text": "oi"}},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "unauthorized_webhook"
+
+
+def test_telegram_webhook_processes_payload(monkeypatch, tmp_path):
+    server, webhooks = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+
+    fake = _FakeTelegramChannel(webhook_mode=True)
+    webhooks._RATE_STATE.clear()
+    monkeypatch.setattr(webhooks, "_resolve_telegram_channels", lambda: [fake])
+    monkeypatch.setattr(
+        webhooks,
+        "load_config",
+        lambda: {
+            "channels": {
+                "telegram": {
+                    "webhook_secret": "tg-secret",
+                    "rate_limit_per_min": 20,
+                }
+            }
+        },
+    )
+
+    resp = client.post(
+        "/api/webhooks/telegram",
+        headers={"x-telegram-bot-api-secret-token": "tg-secret"},
+        json={"update_id": 7, "message": {"text": "oi\x00 bot"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert resp.json()["processed"] == 1
+    assert len(fake.payloads) == 1
+    assert fake.payloads[0]["message"]["text"] == "oi bot"
+
+
+def test_telegram_webhook_rejects_non_webhook_mode(monkeypatch, tmp_path):
+    server, webhooks = _boot(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+
+    fake = _FakeTelegramChannel(webhook_mode=False)
+    webhooks._RATE_STATE.clear()
+    monkeypatch.setattr(webhooks, "_resolve_telegram_channels", lambda: [fake])
+    monkeypatch.setattr(
+        webhooks,
+        "load_config",
+        lambda: {"channels": {"telegram": {"rate_limit_per_min": 20}}},
+    )
+
+    resp = client.post(
+        "/api/webhooks/telegram",
+        json={"update_id": 1, "message": {"text": "oi"}},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "webhook_mode_disabled"
