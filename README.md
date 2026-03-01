@@ -246,6 +246,8 @@ Componentes:
 - [Dashboard](docs/DASHBOARD.md)
 - [MCP](docs/MCP.md)
 - [Runbook](docs/RUNBOOK.md)
+- [Outbound Failure Recovery Runbook](docs/OUTBOUND_FAILURE_RECOVERY_RUNBOOK.md)
+- [Beta Release Checklist](docs/BETA_RELEASE_CHECKLIST.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Session Memory](docs/SESSION_MEMORY.md)
 

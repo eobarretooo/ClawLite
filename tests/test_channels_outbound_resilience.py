@@ -290,6 +290,37 @@ def test_irc_outbound_circuit_breaker_cooldown_and_recovery():
     assert metrics["sent_ok"] == 1
 
 
+def test_googlechat_outbound_circuit_breaker_cooldown_and_recovery():
+    channel = GoogleChatChannel(
+        token="",
+        outbound_webhook_url="https://example.test/chat",
+        send_timeout_s=0.1,
+        send_backoff_base_s=0.0,
+        send_circuit_failure_threshold=1,
+        send_circuit_cooldown_s=0.2,
+    )
+    failing = _GoogleChatErrorClient(RuntimeError("relay down"))
+    recovered = _GoogleChatOkClient()
+    channel._outbound_client = failing
+
+    async def _run() -> None:
+        await channel.send_message("gc_dm_spaces_1", "fail-1")
+        await channel.send_message("gc_dm_spaces_1", "fail-2")
+        channel._outbound_client = recovered
+        await asyncio.sleep(0.25)
+        await channel.send_message("gc_dm_spaces_1", "recover-1")
+
+    asyncio.run(_run())
+    assert failing.calls == 3
+    assert len(recovered.calls) == 1
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["circuit_open_count"] >= 1
+    assert metrics["circuit_blocked_count"] >= 1
+    assert metrics["circuit_half_open_count"] >= 1
+    assert metrics["circuit_state"] == "closed"
+    assert metrics["sent_ok"] == 1
+
+
 def test_signal_outbound_ok_and_idempotent(monkeypatch):
     channel = SignalChannel(
         token="",
@@ -398,6 +429,43 @@ def test_signal_outbound_fallback_unavailable(monkeypatch, caplog):
     assert metrics["send_fail_count"] == 1
 
 
+def test_signal_outbound_circuit_breaker_cooldown_and_recovery(monkeypatch):
+    channel = SignalChannel(
+        token="",
+        cli_path="signal-cli",
+        send_timeout_s=0.1,
+        send_backoff_base_s=0.0,
+        send_circuit_failure_threshold=1,
+        send_circuit_cooldown_s=0.2,
+    )
+    monkeypatch.setattr("clawlite.channels.signal.shutil.which", lambda _name: "/usr/bin/signal-cli")
+    state = {"fail": True, "calls": 0}
+
+    def _fake_run(cmd, **kwargs):
+        state["calls"] += 1
+        if state["fail"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="signal failed")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("clawlite.channels.signal.subprocess.run", _fake_run)
+
+    async def _run() -> None:
+        await channel.send_message("signal_dm_+15551234567", "fail-1")
+        await channel.send_message("signal_dm_+15551234567", "fail-2")
+        state["fail"] = False
+        await asyncio.sleep(0.25)
+        await channel.send_message("signal_dm_+15551234567", "recover-1")
+
+    asyncio.run(_run())
+    assert state["calls"] == 4
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["circuit_open_count"] >= 1
+    assert metrics["circuit_blocked_count"] >= 1
+    assert metrics["circuit_half_open_count"] >= 1
+    assert metrics["circuit_state"] == "closed"
+    assert metrics["sent_ok"] == 1
+
+
 def test_imessage_outbound_ok_and_idempotent(monkeypatch):
     channel = IMessageChannel(
         token="",
@@ -504,3 +572,40 @@ def test_imessage_outbound_fallback_unavailable(monkeypatch, caplog):
     assert metrics["sent_ok"] == 0
     assert metrics["fallback_count"] == 1
     assert metrics["send_fail_count"] == 1
+
+
+def test_imessage_outbound_circuit_breaker_cooldown_and_recovery(monkeypatch):
+    channel = IMessageChannel(
+        token="",
+        cli_path="imsg",
+        send_timeout_s=0.1,
+        send_backoff_base_s=0.0,
+        send_circuit_failure_threshold=1,
+        send_circuit_cooldown_s=0.2,
+    )
+    monkeypatch.setattr("clawlite.channels.imessage.shutil.which", lambda _name: "/usr/bin/imsg")
+    state = {"fail": True, "calls": 0}
+
+    def _fake_run(cmd, **kwargs):
+        state["calls"] += 1
+        if state["fail"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="imsg failed")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("clawlite.channels.imessage.subprocess.run", _fake_run)
+
+    async def _run() -> None:
+        await channel.send_message("imessage_dm_user_icloud_com", "fail-1")
+        await channel.send_message("imessage_dm_user_icloud_com", "fail-2")
+        state["fail"] = False
+        await asyncio.sleep(0.25)
+        await channel.send_message("imessage_dm_user_icloud_com", "recover-1")
+
+    asyncio.run(_run())
+    assert state["calls"] == 4
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["circuit_open_count"] >= 1
+    assert metrics["circuit_blocked_count"] >= 1
+    assert metrics["circuit_half_open_count"] >= 1
+    assert metrics["circuit_state"] == "closed"
+    assert metrics["sent_ok"] == 1

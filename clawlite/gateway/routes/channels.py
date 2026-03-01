@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from clawlite.channels.manager import manager
 from clawlite.config.settings import load_config, save_config
 from clawlite.gateway.utils import _check_bearer, _log
+from clawlite.runtime.outbound_policy import OUTBOUND_HEALTH_THRESHOLDS, evaluate_outbound_health
 
 router = APIRouter()
 
@@ -249,6 +250,7 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
         live_outbound = outbound_by_channel.get(channel_name, {})
         if isinstance(live_outbound, dict):
             outbound.update(live_outbound)
+        outbound_health = evaluate_outbound_health(outbound)
         instance_prefix = f"{channel_name}:"
         online_instances = sum(
             1
@@ -264,6 +266,8 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
             "stt_enabled": bool(ch_cfg.get("stt_enabled", False)),
             "tts_enabled": bool(ch_cfg.get("tts_enabled", False)),
             "outbound": outbound,
+            "outbound_health": outbound_health,
+            "outbound_thresholds": dict(OUTBOUND_HEALTH_THRESHOLDS),
         })
     return JSONResponse({"ok": True, "channels": result})
 

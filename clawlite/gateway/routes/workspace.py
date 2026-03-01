@@ -12,6 +12,7 @@ from clawlite.config import settings as app_settings
 from clawlite.config.settings import load_config
 from clawlite.gateway.state import LOG_RING, STARTED_AT, chat_connections, connections, log_connections
 from clawlite.gateway.utils import _check_bearer, _log
+from clawlite.runtime.outbound_policy import evaluate_outbound_health
 
 router = APIRouter()
 _WORKSPACE_ALLOWED = {"SOUL.md", "USER.md", "HEARTBEAT.md", "BOOTSTRAP.md"}
@@ -83,6 +84,20 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
                 outbound_totals[key] += int(row.get(key, 0) or 0)
             except (TypeError, ValueError):
                 pass
+    health_summary = {"ok": 0, "warning": 0, "error": 0}
+    health_by_channel: dict[str, dict[str, Any]] = {}
+    for channel_name, outbound in outbound_by_channel.items():
+        if not isinstance(outbound, dict):
+            continue
+        health = evaluate_outbound_health(outbound)
+        level = str(health.get("level", "ok"))
+        if level in health_summary:
+            health_summary[level] += 1
+        health_by_channel[channel_name] = {
+            "level": level,
+            "pass": bool(health.get("pass", True)),
+            "checks": health.get("checks", []),
+        }
 
     return JSONResponse(
         {
@@ -110,6 +125,10 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
                 "channels_reporting": len(outbound_by_channel),
                 "totals": outbound_totals,
                 "by_channel": outbound_by_channel,
+                "health": {
+                    "summary": health_summary,
+                    "by_channel": health_by_channel,
+                },
             },
         }
     )

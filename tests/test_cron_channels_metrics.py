@@ -220,6 +220,53 @@ def test_channels_status_exposes_live_outbound_metrics(monkeypatch, tmp_path):
         multiagent.DB_PATH = old_path
 
 
+def test_channels_status_exposes_outbound_health_thresholds(monkeypatch, tmp_path):
+    old_dir, old_path = _patch_db(tmp_path)
+    try:
+        server = _boot(monkeypatch, tmp_path)
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        from clawlite.config.settings import load_config, save_config
+
+        cfg = load_config()
+        cfg["channels"] = {
+            "googlechat": {"enabled": True, "serviceAccountFile": "/tmp/service-account.json"},
+        }
+        save_config(cfg)
+        monkeypatch.setattr(
+            server.channels.manager,
+            "outbound_metrics",
+            lambda channel_name=None: {
+                "googlechat": {
+                    "sent_ok": 1,
+                    "retry_count": 2,
+                    "timeout_count": 1,
+                    "fallback_count": 1,
+                    "send_fail_count": 1,
+                    "circuit_state": "open",
+                    "circuit_blocked_count": 6,
+                    "circuit_consecutive_failures": 6,
+                    "circuit_cooldown_remaining_s": 20.0,
+                    "last_attempt_latency_s": 16.1,
+                }
+            },
+        )
+
+        status = client.get("/api/channels/status", headers=headers)
+        assert status.status_code == 200
+        row = next(c for c in status.json()["channels"] if c["channel"] == "googlechat")
+        assert row["outbound_health"]["level"] == "error"
+        assert row["outbound_health"]["pass"] is False
+        assert row["outbound_thresholds"]["latency_warning_s"] == 5.0
+        assert row["outbound_thresholds"]["latency_error_s"] == 15.0
+        assert row["outbound_thresholds"]["circuit_blocked_error_count"] == 5
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path
+
+
 def test_config_apply_restart_and_debug(monkeypatch, tmp_path):
     old_dir, old_path = _patch_db(tmp_path)
     try:
@@ -445,9 +492,12 @@ def test_metrics(monkeypatch, tmp_path):
                     "instances_reporting": 1,
                     "circuit_open_count": 2,
                     "circuit_half_open_count": 1,
-                    "circuit_blocked_count": 5,
+                    "circuit_blocked_count": 6,
                     "circuit_instances_open": 1,
                     "circuit_instances_half_open": 0,
+                    "circuit_state": "open",
+                    "circuit_consecutive_failures": 6,
+                    "last_attempt_latency_s": 16.1,
                 }
             },
         )
@@ -470,8 +520,11 @@ def test_metrics(monkeypatch, tmp_path):
         assert data["channels_outbound"]["totals"]["send_fail_count"] == 2
         assert data["channels_outbound"]["totals"]["circuit_open_count"] == 2
         assert data["channels_outbound"]["totals"]["circuit_half_open_count"] == 1
-        assert data["channels_outbound"]["totals"]["circuit_blocked_count"] == 5
+        assert data["channels_outbound"]["totals"]["circuit_blocked_count"] == 6
         assert data["channels_outbound"]["totals"]["circuit_instances_open"] == 1
+        assert data["channels_outbound"]["health"]["summary"]["error"] == 1
+        assert data["channels_outbound"]["health"]["by_channel"]["irc"]["level"] == "error"
+        assert data["channels_outbound"]["health"]["by_channel"]["irc"]["pass"] is False
         assert data["uptime_seconds"] >= 0
     finally:
         multiagent.DB_DIR = old_dir
