@@ -15,6 +15,7 @@ from clawlite.channels.signal import SignalChannel
 from clawlite.channels.imessage import IMessageChannel
 from clawlite.config.settings import load_config
 from clawlite.core.agent import run_task_with_meta
+from clawlite.runtime.channel_sessions import ChannelSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class ChannelManager:
     def __init__(self) -> None:
         self.active_channels: dict[str, BaseChannel] = {}
         self.active_metadata: dict[str, dict[str, Any]] = {}
-        self._last_session_by_instance: dict[str, str] = {}
+        self.sessions = ChannelSessionManager()
 
     async def _handle_message(self, session_id: str, text: str) -> str:
         """
@@ -56,11 +57,14 @@ class ChannelManager:
             logger.error(f"Erro no processamento da mensagem do canal: {exc}")
             return "Ocorreu um erro interno ao processar a requisição."
 
-    def _build_message_handler(self, *, instance_key: str):
+    def _build_message_handler(self, *, instance_key: str, channel_name: str):
         async def _handler(session_id: str, text: str) -> str:
             sid = str(session_id or "").strip()
             if sid:
-                self._last_session_by_instance[instance_key] = sid
+                try:
+                    self.sessions.bind(instance_key=instance_key, channel=channel_name, session_id=sid)
+                except Exception:
+                    pass
             return await self._handle_message(session_id, text)
 
         return _handler
@@ -463,6 +467,7 @@ class ChannelManager:
         except Exception as exc:
             logger.error(f"Erro ao parar canal '{instance_key}': {exc}")
         finally:
+            self.sessions.drop_instance(instance_key)
             self.active_channels.pop(instance_key, None)
             self.active_metadata.pop(instance_key, None)
         return True
@@ -513,7 +518,9 @@ class ChannelManager:
                 if normalized_channel == "telegram":
                     channel_kwargs["account_id"] = account_name
                 channel = channel_cls(token=cred["token"], name=normalized_channel, **channel_kwargs)
-                channel.on_message(self._build_message_handler(instance_key=instance_key))
+                channel.on_message(
+                    self._build_message_handler(instance_key=instance_key, channel_name=normalized_channel)
+                )
                 await channel.start()
                 if not channel.running:
                     logger.error(
@@ -697,7 +704,7 @@ class ChannelManager:
         for instance_key, channel in list(self.active_channels.items()):
             meta = self.active_metadata.get(instance_key, {})
             ch_name = str(meta.get("channel", "")).strip().lower() or instance_key.split(":", 1)[0]
-            session_id = self._last_session_by_instance.get(instance_key, "")
+            session_id = self.sessions.last_session_id(instance_key)
             if not session_id:
                 ch_data = channels_cfg.get(ch_name, {}) if isinstance(channels_cfg.get(ch_name), dict) else {}
                 session_id = self._fallback_session_id(ch_name, ch_data)

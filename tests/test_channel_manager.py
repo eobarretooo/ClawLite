@@ -305,7 +305,7 @@ class ChannelManagerTests(unittest.TestCase):
             "telegram": {"channel": "telegram", "account": ""},
             "irc": {"channel": "irc", "account": ""},
         }
-        cm._last_session_by_instance = {"irc": "irc_group_#ops"}
+        cm.sessions.bind(instance_key="irc", channel="irc", session_id="irc_group_#ops")
 
         original_load_config = manager_mod.load_config
         manager_mod.load_config = lambda: {
