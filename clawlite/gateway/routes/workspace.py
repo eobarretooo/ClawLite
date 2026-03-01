@@ -69,6 +69,11 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
         "fallback_count": 0,
         "send_fail_count": 0,
         "dedupe_hits": 0,
+        "circuit_open_count": 0,
+        "circuit_half_open_count": 0,
+        "circuit_blocked_count": 0,
+        "circuit_instances_open": 0,
+        "circuit_instances_half_open": 0,
     }
     for row in outbound_by_channel.values():
         if not isinstance(row, dict):

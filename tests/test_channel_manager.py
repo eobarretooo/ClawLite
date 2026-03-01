@@ -85,6 +85,8 @@ class ChannelManagerTests(unittest.TestCase):
                     "requireMention": True,
                     "outboundWebhookUrl": "https://example.test/googlechat",
                     "sendTimeoutSec": 7.0,
+                    "sendCircuitFailureThreshold": 4,
+                    "sendCircuitCooldownSec": 19.0,
                 },
                 "irc": {
                     "enabled": True,
@@ -98,6 +100,8 @@ class ChannelManagerTests(unittest.TestCase):
                     "requireMention": True,
                     "relay_url": "http://127.0.0.1:8899/irc/send",
                     "sendTimeoutSec": 12.0,
+                    "sendCircuitFailureThreshold": 3,
+                    "sendCircuitCooldownSec": 17.0,
                 },
                 "signal": {
                     "enabled": True,
@@ -105,6 +109,8 @@ class ChannelManagerTests(unittest.TestCase):
                     "cliPath": "signal-cli",
                     "allowFrom": ["+15557654321"],
                     "sendTimeoutSec": 20.0,
+                    "sendCircuitFailureThreshold": 6,
+                    "sendCircuitCooldownSec": 31.0,
                 },
                 "imessage": {
                     "enabled": True,
@@ -112,6 +118,8 @@ class ChannelManagerTests(unittest.TestCase):
                     "service": "auto",
                     "allowFrom": ["chat_id:*"],
                     "sendTimeoutSec": 22.0,
+                    "sendCircuitFailureThreshold": 7,
+                    "sendCircuitCooldownSec": 37.0,
                 },
             }
         }
@@ -170,6 +178,8 @@ class ChannelManagerTests(unittest.TestCase):
                 self.assertEqual(googlechat.kwargs.get("require_mention"), True)
                 self.assertEqual(googlechat.kwargs.get("outbound_webhook_url"), "https://example.test/googlechat")
                 self.assertEqual(googlechat.kwargs.get("send_timeout_s"), 7.0)
+                self.assertEqual(googlechat.kwargs.get("send_circuit_failure_threshold"), 4)
+                self.assertEqual(googlechat.kwargs.get("send_circuit_cooldown_s"), 19.0)
 
                 irc = cm.active_channels["irc"]
                 self.assertEqual(irc.kwargs.get("host"), "irc.libera.chat")
@@ -177,18 +187,24 @@ class ChannelManagerTests(unittest.TestCase):
                 self.assertEqual(irc.kwargs.get("allowed_senders"), ["alice"])
                 self.assertEqual(irc.kwargs.get("allowed_channels"), ["#clawlite"])
                 self.assertEqual(irc.kwargs.get("send_timeout_s"), 12.0)
+                self.assertEqual(irc.kwargs.get("send_circuit_failure_threshold"), 3)
+                self.assertEqual(irc.kwargs.get("send_circuit_cooldown_s"), 17.0)
 
                 signal = cm.active_channels["signal"]
                 self.assertEqual(signal.kwargs.get("account"), "+15551234567")
                 self.assertEqual(signal.kwargs.get("cli_path"), "signal-cli")
                 self.assertEqual(signal.kwargs.get("allowed_numbers"), ["+15557654321"])
                 self.assertEqual(signal.kwargs.get("send_timeout_s"), 20.0)
+                self.assertEqual(signal.kwargs.get("send_circuit_failure_threshold"), 6)
+                self.assertEqual(signal.kwargs.get("send_circuit_cooldown_s"), 31.0)
 
                 imessage = cm.active_channels["imessage"]
                 self.assertEqual(imessage.kwargs.get("cli_path"), "imsg")
                 self.assertEqual(imessage.kwargs.get("service"), "auto")
                 self.assertEqual(imessage.kwargs.get("allowed_handles"), ["chat_id:*"])
                 self.assertEqual(imessage.kwargs.get("send_timeout_s"), 22.0)
+                self.assertEqual(imessage.kwargs.get("send_circuit_failure_threshold"), 7)
+                self.assertEqual(imessage.kwargs.get("send_circuit_cooldown_s"), 37.0)
 
                 started_channels = list(cm.active_channels.values())
                 await cm.stop_all()
@@ -215,6 +231,10 @@ class ChannelManagerTests(unittest.TestCase):
                     "fallback_count": 1,
                     "send_fail_count": 1,
                     "dedupe_hits": 2,
+                    "circuit_open_count": 1,
+                    "circuit_half_open_count": 0,
+                    "circuit_blocked_count": 2,
+                    "circuit_state": "open",
                     "last_success_at": "2026-03-01T11:11:11+00:00",
                 },
             ),
@@ -228,6 +248,10 @@ class ChannelManagerTests(unittest.TestCase):
                     "fallback_count": 1,
                     "send_fail_count": 1,
                     "dedupe_hits": 1,
+                    "circuit_open_count": 0,
+                    "circuit_half_open_count": 1,
+                    "circuit_blocked_count": 1,
+                    "circuit_state": "half_open",
                     "last_error": {"provider": "irc-relay-http", "code": "provider_timeout", "reason": "timeout", "attempts": 3, "at": "now"},
                 },
             ),
@@ -248,6 +272,12 @@ class ChannelManagerTests(unittest.TestCase):
         self.assertEqual(aggregated["irc"]["fallback_count"], 2)
         self.assertEqual(aggregated["irc"]["send_fail_count"], 2)
         self.assertEqual(aggregated["irc"]["dedupe_hits"], 3)
+        self.assertEqual(aggregated["irc"]["circuit_open_count"], 1)
+        self.assertEqual(aggregated["irc"]["circuit_half_open_count"], 1)
+        self.assertEqual(aggregated["irc"]["circuit_blocked_count"], 3)
+        self.assertEqual(aggregated["irc"]["circuit_instances_open"], 1)
+        self.assertEqual(aggregated["irc"]["circuit_instances_half_open"], 1)
+        self.assertEqual(aggregated["irc"]["circuit_state"], "open")
         self.assertIn("last_error", aggregated["irc"])
 
         instances = cm.describe_instances("irc")

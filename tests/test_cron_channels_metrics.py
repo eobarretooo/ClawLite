@@ -112,6 +112,8 @@ def test_channels_status(monkeypatch, tmp_path):
         assert tg["outbound"]["timeout_count"] == 0
         assert tg["outbound"]["fallback_count"] == 0
         assert tg["outbound"]["send_fail_count"] == 0
+        assert tg["outbound"]["circuit_state"] == "closed"
+        assert tg["outbound"]["circuit_blocked_count"] == 0
     finally:
         multiagent.DB_DIR = old_dir
         multiagent.DB_PATH = old_path
@@ -161,6 +163,7 @@ def test_channels_status_token_optional_channels(monkeypatch, tmp_path):
         assert rows["irc"]["outbound"]["retry_count"] == 0
         assert rows["signal"]["outbound"]["timeout_count"] == 0
         assert rows["imessage"]["outbound"]["fallback_count"] == 0
+        assert rows["signal"]["outbound"]["circuit_state"] == "closed"
     finally:
         multiagent.DB_DIR = old_dir
         multiagent.DB_PATH = old_path
@@ -193,6 +196,9 @@ def test_channels_status_exposes_live_outbound_metrics(monkeypatch, tmp_path):
                     "send_fail_count": 2,
                     "dedupe_hits": 4,
                     "instances_reporting": 1,
+                    "circuit_state": "open",
+                    "circuit_blocked_count": 5,
+                    "circuit_instances_open": 1,
                 }
             },
         )
@@ -206,6 +212,9 @@ def test_channels_status_exposes_live_outbound_metrics(monkeypatch, tmp_path):
         assert row["outbound"]["fallback_count"] == 2
         assert row["outbound"]["send_fail_count"] == 2
         assert row["outbound"]["instances_reporting"] == 1
+        assert row["outbound"]["circuit_state"] == "open"
+        assert row["outbound"]["circuit_blocked_count"] == 5
+        assert row["outbound"]["circuit_instances_open"] == 1
     finally:
         multiagent.DB_DIR = old_dir
         multiagent.DB_PATH = old_path
@@ -292,6 +301,8 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "botUser": "users/123",
                         "outboundWebhookUrl": "https://example.test/googlechat",
                         "sendTimeoutSec": 9.0,
+                        "sendCircuitFailureThreshold": 4,
+                        "sendCircuitCooldownSec": 18.0,
                         "requireMention": True,
                         "dm": {"policy": "pairing", "allowFrom": ["users/999"]},
                     },
@@ -303,6 +314,8 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "nick": "clawlite-bot",
                         "channels": ["#clawlite"],
                         "sendTimeoutSec": 11.0,
+                        "sendCircuitFailureThreshold": 3,
+                        "sendCircuitCooldownSec": 17.0,
                         "requireMention": True,
                     },
                     "signal": {
@@ -310,12 +323,16 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "account": "+15551234567",
                         "cliPath": "signal-cli",
                         "sendTimeoutSec": 17.0,
+                        "sendCircuitFailureThreshold": 6,
+                        "sendCircuitCooldownSec": 26.0,
                     },
                     "imessage": {
                         "enabled": True,
                         "cliPath": "imsg",
                         "service": "auto",
                         "sendTimeoutSec": 19.0,
+                        "sendCircuitFailureThreshold": 7,
+                        "sendCircuitCooldownSec": 35.0,
                     },
                 }
             },
@@ -328,12 +345,20 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
         assert saved.json()["channels"]["googlechat"]["serviceAccountFile"] == "/tmp/service-account.json"
         assert saved.json()["channels"]["googlechat"]["outboundWebhookUrl"] == "https://example.test/googlechat"
         assert saved.json()["channels"]["googlechat"]["sendTimeoutSec"] == 9.0
+        assert saved.json()["channels"]["googlechat"]["sendCircuitFailureThreshold"] == 4
+        assert saved.json()["channels"]["googlechat"]["sendCircuitCooldownSec"] == 18.0
         assert saved.json()["channels"]["irc"]["host"] == "irc.libera.chat"
         assert saved.json()["channels"]["irc"]["sendTimeoutSec"] == 11.0
+        assert saved.json()["channels"]["irc"]["sendCircuitFailureThreshold"] == 3
+        assert saved.json()["channels"]["irc"]["sendCircuitCooldownSec"] == 17.0
         assert saved.json()["channels"]["signal"]["account"] == "+15551234567"
         assert saved.json()["channels"]["signal"]["sendTimeoutSec"] == 17.0
+        assert saved.json()["channels"]["signal"]["sendCircuitFailureThreshold"] == 6
+        assert saved.json()["channels"]["signal"]["sendCircuitCooldownSec"] == 26.0
         assert saved.json()["channels"]["imessage"]["cliPath"] == "imsg"
         assert saved.json()["channels"]["imessage"]["sendTimeoutSec"] == 19.0
+        assert saved.json()["channels"]["imessage"]["sendCircuitFailureThreshold"] == 7
+        assert saved.json()["channels"]["imessage"]["sendCircuitCooldownSec"] == 35.0
 
         status = client.get("/api/channels/status", headers=headers)
         tg = next(c for c in status.json()["channels"] if c["channel"] == "telegram")
@@ -418,6 +443,11 @@ def test_metrics(monkeypatch, tmp_path):
                     "send_fail_count": 2,
                     "dedupe_hits": 4,
                     "instances_reporting": 1,
+                    "circuit_open_count": 2,
+                    "circuit_half_open_count": 1,
+                    "circuit_blocked_count": 5,
+                    "circuit_instances_open": 1,
+                    "circuit_instances_half_open": 0,
                 }
             },
         )
@@ -438,6 +468,10 @@ def test_metrics(monkeypatch, tmp_path):
         assert data["channels_outbound"]["totals"]["timeout_count"] == 1
         assert data["channels_outbound"]["totals"]["fallback_count"] == 2
         assert data["channels_outbound"]["totals"]["send_fail_count"] == 2
+        assert data["channels_outbound"]["totals"]["circuit_open_count"] == 2
+        assert data["channels_outbound"]["totals"]["circuit_half_open_count"] == 1
+        assert data["channels_outbound"]["totals"]["circuit_blocked_count"] == 5
+        assert data["channels_outbound"]["totals"]["circuit_instances_open"] == 1
         assert data["uptime_seconds"] >= 0
     finally:
         multiagent.DB_DIR = old_dir

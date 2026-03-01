@@ -49,6 +49,8 @@ class IrcChannel(BaseChannel):
         relay_url: str = "",
         send_timeout_s: float = 10.0,
         send_backoff_base_s: float = 0.25,
+        send_circuit_failure_threshold: int = 5,
+        send_circuit_cooldown_s: float = 30.0,
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -72,6 +74,8 @@ class IrcChannel(BaseChannel):
             timeout_s=self.send_timeout_s,
             max_attempts=3,
             base_backoff_s=send_backoff_base_s,
+            breaker_failure_threshold=send_circuit_failure_threshold,
+            breaker_cooldown_s=send_circuit_cooldown_s,
         )
 
     async def start(self) -> None:

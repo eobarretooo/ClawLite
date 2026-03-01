@@ -735,6 +735,8 @@
                 <div className="status-row"><span>Outbound timeouts</span><span className="status-value">{metrics?.channels_outbound?.totals?.timeout_count ?? 0}</span></div>
                 <div className="status-row"><span>Outbound fallbacks</span><span className="status-value">{metrics?.channels_outbound?.totals?.fallback_count ?? 0}</span></div>
                 <div className="status-row"><span>Outbound failures</span><span className="status-value status-err">{metrics?.channels_outbound?.totals?.send_fail_count ?? 0}</span></div>
+                <div className="status-row"><span>Circuit blocks</span><span className="status-value">{metrics?.channels_outbound?.totals?.circuit_blocked_count ?? 0}</span></div>
+                <div className="status-row"><span>Circuit open instances</span><span className="status-value status-err">{metrics?.channels_outbound?.totals?.circuit_instances_open ?? 0}</span></div>
               </div>
             </div>
 
@@ -1280,6 +1282,8 @@
                       <th>Timeouts</th>
                       <th>Fallbacks</th>
                       <th>Failures</th>
+                      <th>Circuit</th>
+                      <th>Blocked</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -1295,10 +1299,18 @@
                         <td>{row.outbound?.timeout_count ?? 0}</td>
                         <td>{row.outbound?.fallback_count ?? 0}</td>
                         <td>{row.outbound?.send_fail_count ?? 0}</td>
+                        <td>
+                          {row.outbound?.circuit_state === "open"
+                            ? <span className="badge err">open</span>
+                            : row.outbound?.circuit_state === "half_open"
+                              ? <span className="badge warn">half-open</span>
+                              : <span className="badge ok">closed</span>}
+                        </td>
+                        <td>{row.outbound?.circuit_blocked_count ?? 0}</td>
                         <td><button className="btn" onClick={() => reconnect(row.channel)}>Reconnect</button></td>
                       </tr>
                     ))}
-                    {channels.length === 0 && <tr><td colSpan="10" className="muted">No channels configured.</td></tr>}
+                    {channels.length === 0 && <tr><td colSpan="12" className="muted">No channels configured.</td></tr>}
                   </tbody>
                 </table>
               </div>

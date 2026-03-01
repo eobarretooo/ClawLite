@@ -74,6 +74,16 @@ class ChannelManager:
         return parsed
 
     @staticmethod
+    def _as_positive_int(value: Any, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return int(default)
+        if parsed <= 0:
+            return int(default)
+        return parsed
+
+    @staticmethod
     def _pairing_enabled_from_cfg(cfg: dict[str, Any]) -> bool:
         security = cfg.get("security", {}) if isinstance(cfg.get("security"), dict) else {}
         pairing = security.get("pairing", {}) if isinstance(security.get("pairing"), dict) else {}
@@ -127,6 +137,14 @@ class ChannelManager:
                 ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 8.0)),
                 8.0,
             )
+            send_circuit_failure_threshold = self._as_positive_int(
+                ch_data.get("send_circuit_failure_threshold", ch_data.get("sendCircuitFailureThreshold", 5)),
+                5,
+            )
+            send_circuit_cooldown_s = self._as_positive_float(
+                ch_data.get("send_circuit_cooldown_s", ch_data.get("sendCircuitCooldownSec", 30.0)),
+                30.0,
+            )
             outbound_webhook_url = str(
                 ch_data.get("outbound_webhook_url")
                 or ch_data.get("outboundWebhookUrl")
@@ -140,6 +158,8 @@ class ChannelManager:
                 "require_mention": require_mention,
                 "outbound_webhook_url": outbound_webhook_url,
                 "send_timeout_s": send_timeout_s,
+                "send_circuit_failure_threshold": send_circuit_failure_threshold,
+                "send_circuit_cooldown_s": send_circuit_cooldown_s,
                 "pairing_enabled": pairing_enabled,
             }
         if channel_name == "irc":
@@ -154,6 +174,14 @@ class ChannelManager:
                 ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 10.0)),
                 10.0,
             )
+            send_circuit_failure_threshold = self._as_positive_int(
+                ch_data.get("send_circuit_failure_threshold", ch_data.get("sendCircuitFailureThreshold", 5)),
+                5,
+            )
+            send_circuit_cooldown_s = self._as_positive_float(
+                ch_data.get("send_circuit_cooldown_s", ch_data.get("sendCircuitCooldownSec", 30.0)),
+                30.0,
+            )
             return {
                 "host": str(ch_data.get("host", "")).strip(),
                 "port": port,
@@ -165,6 +193,8 @@ class ChannelManager:
                 "require_mention": bool(ch_data.get("requireMention", True)),
                 "relay_url": str(ch_data.get("relay_url") or ch_data.get("relayUrl") or "").strip(),
                 "send_timeout_s": send_timeout_s,
+                "send_circuit_failure_threshold": send_circuit_failure_threshold,
+                "send_circuit_cooldown_s": send_circuit_cooldown_s,
                 "pairing_enabled": pairing_enabled,
             }
         if channel_name == "signal":
@@ -172,12 +202,22 @@ class ChannelManager:
                 ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 15.0)),
                 15.0,
             )
+            send_circuit_failure_threshold = self._as_positive_int(
+                ch_data.get("send_circuit_failure_threshold", ch_data.get("sendCircuitFailureThreshold", 5)),
+                5,
+            )
+            send_circuit_cooldown_s = self._as_positive_float(
+                ch_data.get("send_circuit_cooldown_s", ch_data.get("sendCircuitCooldownSec", 30.0)),
+                30.0,
+            )
             return {
                 "account": str(ch_data.get("account", "")).strip(),
                 "cli_path": str(ch_data.get("cli_path") or ch_data.get("cliPath") or "signal-cli").strip(),
                 "http_url": str(ch_data.get("http_url") or ch_data.get("httpUrl") or "").strip(),
                 "allowed_numbers": allow_from,
                 "send_timeout_s": send_timeout_s,
+                "send_circuit_failure_threshold": send_circuit_failure_threshold,
+                "send_circuit_cooldown_s": send_circuit_cooldown_s,
                 "pairing_enabled": pairing_enabled,
             }
         if channel_name == "imessage":
@@ -185,11 +225,21 @@ class ChannelManager:
                 ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 15.0)),
                 15.0,
             )
+            send_circuit_failure_threshold = self._as_positive_int(
+                ch_data.get("send_circuit_failure_threshold", ch_data.get("sendCircuitFailureThreshold", 5)),
+                5,
+            )
+            send_circuit_cooldown_s = self._as_positive_float(
+                ch_data.get("send_circuit_cooldown_s", ch_data.get("sendCircuitCooldownSec", 30.0)),
+                30.0,
+            )
             return {
                 "cli_path": str(ch_data.get("cli_path") or ch_data.get("cliPath") or "imsg").strip(),
                 "service": str(ch_data.get("service", "auto")).strip().lower(),
                 "allowed_handles": allow_from,
                 "send_timeout_s": send_timeout_s,
+                "send_circuit_failure_threshold": send_circuit_failure_threshold,
+                "send_circuit_cooldown_s": send_circuit_cooldown_s,
                 "pairing_enabled": pairing_enabled,
             }
         return {}
@@ -241,6 +291,15 @@ class ChannelManager:
             "fallback_count": 0,
             "send_fail_count": 0,
             "dedupe_hits": 0,
+            "circuit_open_count": 0,
+            "circuit_half_open_count": 0,
+            "circuit_blocked_count": 0,
+            "circuit_state": "closed",
+            "circuit_consecutive_failures": 0,
+            "circuit_failure_threshold": 5,
+            "circuit_cooldown_seconds": 30.0,
+            "circuit_cooldown_remaining_s": 0.0,
+            "circuit_open_until": None,
             "last_success_at": None,
         }
 
@@ -249,12 +308,37 @@ class ChannelManager:
         row = cls._default_outbound_metrics()
         if not isinstance(value, dict):
             return row
-        for key in ("sent_ok", "retry_count", "timeout_count", "fallback_count", "send_fail_count", "dedupe_hits"):
+        for key in (
+            "sent_ok",
+            "retry_count",
+            "timeout_count",
+            "fallback_count",
+            "send_fail_count",
+            "dedupe_hits",
+            "circuit_open_count",
+            "circuit_half_open_count",
+            "circuit_blocked_count",
+            "circuit_consecutive_failures",
+            "circuit_failure_threshold",
+        ):
             raw = value.get(key, row[key])
             try:
                 row[key] = max(0, int(raw))
             except (TypeError, ValueError):
                 row[key] = 0
+        for key in ("circuit_cooldown_seconds", "circuit_cooldown_remaining_s"):
+            raw = value.get(key, row[key])
+            try:
+                row[key] = max(0.0, float(raw))
+            except (TypeError, ValueError):
+                row[key] = 0.0
+        state = str(value.get("circuit_state", "closed")).strip().lower()
+        if state not in {"closed", "open", "half_open"}:
+            state = "closed"
+        row["circuit_state"] = state
+        circuit_open_until = value.get("circuit_open_until")
+        if isinstance(circuit_open_until, str) and circuit_open_until.strip():
+            row["circuit_open_until"] = circuit_open_until.strip()
         last_success_at = value.get("last_success_at")
         if isinstance(last_success_at, str) and last_success_at.strip():
             row["last_success_at"] = last_success_at.strip()
@@ -263,6 +347,9 @@ class ChannelManager:
             row["last_error"] = {
                 "provider": str(last_error.get("provider", "")).strip(),
                 "code": str(last_error.get("code", "")).strip(),
+                "severity": str(last_error.get("severity", "")).strip(),
+                "category": str(last_error.get("category", "")).strip(),
+                "policy_version": str(last_error.get("policy_version", "")).strip(),
                 "reason": str(last_error.get("reason", "")).strip(),
                 "attempts": int(last_error.get("attempts", 0) or 0),
                 "at": str(last_error.get("at", "")).strip(),
@@ -418,11 +505,57 @@ class ChannelManager:
             if aggregate is None:
                 aggregate = self._default_outbound_metrics()
                 aggregate["instances_reporting"] = 0
+                aggregate["circuit_instances_open"] = 0
+                aggregate["circuit_instances_half_open"] = 0
                 rows[ch_name] = aggregate
 
             aggregate["instances_reporting"] = int(aggregate.get("instances_reporting", 0)) + 1
-            for key in ("sent_ok", "retry_count", "timeout_count", "fallback_count", "send_fail_count", "dedupe_hits"):
+            for key in (
+                "sent_ok",
+                "retry_count",
+                "timeout_count",
+                "fallback_count",
+                "send_fail_count",
+                "dedupe_hits",
+                "circuit_open_count",
+                "circuit_half_open_count",
+                "circuit_blocked_count",
+            ):
                 aggregate[key] = int(aggregate.get(key, 0)) + int(snapshot.get(key, 0))
+
+            state = str(snapshot.get("circuit_state", "closed")).strip().lower()
+            if state == "open":
+                aggregate["circuit_instances_open"] = int(aggregate.get("circuit_instances_open", 0)) + 1
+            elif state == "half_open":
+                aggregate["circuit_instances_half_open"] = int(aggregate.get("circuit_instances_half_open", 0)) + 1
+
+            if state == "open":
+                aggregate["circuit_state"] = "open"
+            elif state == "half_open" and str(aggregate.get("circuit_state")) != "open":
+                aggregate["circuit_state"] = "half_open"
+
+            aggregate["circuit_consecutive_failures"] = max(
+                int(aggregate.get("circuit_consecutive_failures", 0) or 0),
+                int(snapshot.get("circuit_consecutive_failures", 0) or 0),
+            )
+            aggregate["circuit_failure_threshold"] = max(
+                int(aggregate.get("circuit_failure_threshold", 0) or 0),
+                int(snapshot.get("circuit_failure_threshold", 0) or 0),
+            )
+            aggregate["circuit_cooldown_seconds"] = max(
+                float(aggregate.get("circuit_cooldown_seconds", 0.0) or 0.0),
+                float(snapshot.get("circuit_cooldown_seconds", 0.0) or 0.0),
+            )
+
+            existing_remaining = float(aggregate.get("circuit_cooldown_remaining_s", 0.0) or 0.0)
+            incoming_remaining = float(snapshot.get("circuit_cooldown_remaining_s", 0.0) or 0.0)
+            if incoming_remaining > existing_remaining:
+                aggregate["circuit_cooldown_remaining_s"] = incoming_remaining
+
+            existing_open_until = str(aggregate.get("circuit_open_until") or "")
+            incoming_open_until = str(snapshot.get("circuit_open_until") or "")
+            if incoming_open_until and incoming_open_until > existing_open_until:
+                aggregate["circuit_open_until"] = incoming_open_until
 
             if snapshot.get("last_success_at"):
                 existing = str(aggregate.get("last_success_at") or "")

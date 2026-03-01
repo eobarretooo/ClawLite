@@ -125,6 +125,8 @@ DEFAULT_CONFIG = {
             "webhookPath": "/api/webhooks/googlechat",
             "outboundWebhookUrl": "",
             "sendTimeoutSec": 8.0,
+            "sendCircuitFailureThreshold": 5,
+            "sendCircuitCooldownSec": 30.0,
             "dm": {"policy": "pairing", "allowFrom": []},
         },
         "irc": {
@@ -140,6 +142,8 @@ DEFAULT_CONFIG = {
             "requireMention": True,
             "relay_url": "",
             "sendTimeoutSec": 10.0,
+            "sendCircuitFailureThreshold": 5,
+            "sendCircuitCooldownSec": 30.0,
         },
         "signal": {
             "enabled": False,
@@ -149,6 +153,8 @@ DEFAULT_CONFIG = {
             "httpUrl": "",
             "allowFrom": [],
             "sendTimeoutSec": 15.0,
+            "sendCircuitFailureThreshold": 5,
+            "sendCircuitCooldownSec": 30.0,
         },
         "imessage": {
             "enabled": False,
@@ -157,6 +163,8 @@ DEFAULT_CONFIG = {
             "service": "auto",
             "allowFrom": [],
             "sendTimeoutSec": 15.0,
+            "sendCircuitFailureThreshold": 5,
+            "sendCircuitCooldownSec": 30.0,
         },
         "teams": {"enabled": False, "token": "", "tenant": "", "accounts": []},
     },

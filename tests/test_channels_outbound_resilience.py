@@ -256,6 +256,38 @@ def test_irc_outbound_fallback_unavailable(caplog):
     assert metrics["sent_ok"] == 0
     assert metrics["fallback_count"] == 1
     assert metrics["send_fail_count"] == 1
+    assert metrics["last_error"]["severity"] == "error"
+
+
+def test_irc_outbound_circuit_breaker_cooldown_and_recovery():
+    channel = IrcChannel(
+        token="",
+        relay_url="https://example.test/irc",
+        send_timeout_s=0.1,
+        send_backoff_base_s=0.0,
+        send_circuit_failure_threshold=1,
+        send_circuit_cooldown_s=0.2,
+    )
+    failing = _IrcErrorClient(RuntimeError("relay down"))
+    recovered = _IrcOkClient()
+    channel._relay_client = failing
+
+    async def _run() -> None:
+        await channel.send_message("irc_dm_alice", "fail-1")
+        await channel.send_message("irc_dm_alice", "fail-2")
+        channel._relay_client = recovered
+        await asyncio.sleep(0.25)
+        await channel.send_message("irc_dm_alice", "recover-1")
+
+    asyncio.run(_run())
+    assert failing.calls == 3
+    assert len(recovered.calls) == 1
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["circuit_open_count"] >= 1
+    assert metrics["circuit_blocked_count"] >= 1
+    assert metrics["circuit_half_open_count"] >= 1
+    assert metrics["circuit_state"] == "closed"
+    assert metrics["sent_ok"] == 1
 
 
 def test_signal_outbound_ok_and_idempotent(monkeypatch):

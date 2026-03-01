@@ -53,6 +53,16 @@ def _normalize_timeout_seconds(value: Any, default: float) -> float:
     return float(parsed)
 
 
+def _normalize_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    if parsed <= 0:
+        return int(default)
+    return int(parsed)
+
+
 def _default_outbound_metrics() -> dict[str, Any]:
     return {
         "sent_ok": 0,
@@ -61,6 +71,17 @@ def _default_outbound_metrics() -> dict[str, Any]:
         "fallback_count": 0,
         "send_fail_count": 0,
         "dedupe_hits": 0,
+        "circuit_open_count": 0,
+        "circuit_half_open_count": 0,
+        "circuit_blocked_count": 0,
+        "circuit_state": "closed",
+        "circuit_instances_open": 0,
+        "circuit_instances_half_open": 0,
+        "circuit_failure_threshold": 5,
+        "circuit_cooldown_seconds": 30.0,
+        "circuit_consecutive_failures": 0,
+        "circuit_cooldown_remaining_s": 0.0,
+        "circuit_open_until": None,
         "instances_reporting": 0,
         "last_success_at": None,
     }
@@ -111,6 +132,14 @@ def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         clean["webhookPath"] = str(raw.get("webhookPath", "/api/webhooks/googlechat")).strip() or "/api/webhooks/googlechat"
         clean["outboundWebhookUrl"] = str(raw.get("outboundWebhookUrl") or raw.get("outbound_webhook_url") or "").strip()
         clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 8.0)), 8.0)
+        clean["sendCircuitFailureThreshold"] = _normalize_positive_int(
+            raw.get("sendCircuitFailureThreshold", raw.get("send_circuit_failure_threshold", 5)),
+            5,
+        )
+        clean["sendCircuitCooldownSec"] = _normalize_timeout_seconds(
+            raw.get("sendCircuitCooldownSec", raw.get("send_circuit_cooldown_s", 30.0)),
+            30.0,
+        )
         clean["requireMention"] = bool(raw.get("requireMention", True))
         dm_raw = raw.get("dm", {})
         if isinstance(dm_raw, dict):
@@ -130,16 +159,40 @@ def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         clean["channels"] = _normalize_allow_from(raw.get("channels", []))
         clean["relay_url"] = str(raw.get("relay_url") or raw.get("relayUrl") or "").strip()
         clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 10.0)), 10.0)
+        clean["sendCircuitFailureThreshold"] = _normalize_positive_int(
+            raw.get("sendCircuitFailureThreshold", raw.get("send_circuit_failure_threshold", 5)),
+            5,
+        )
+        clean["sendCircuitCooldownSec"] = _normalize_timeout_seconds(
+            raw.get("sendCircuitCooldownSec", raw.get("send_circuit_cooldown_s", 30.0)),
+            30.0,
+        )
         clean["requireMention"] = bool(raw.get("requireMention", True))
     elif channel == "signal":
         clean["account"] = str(raw.get("account", "")).strip()
         clean["cliPath"] = str(raw.get("cliPath") or raw.get("cli_path") or "signal-cli").strip()
         clean["httpUrl"] = str(raw.get("httpUrl") or raw.get("http_url") or "").strip()
         clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 15.0)), 15.0)
+        clean["sendCircuitFailureThreshold"] = _normalize_positive_int(
+            raw.get("sendCircuitFailureThreshold", raw.get("send_circuit_failure_threshold", 5)),
+            5,
+        )
+        clean["sendCircuitCooldownSec"] = _normalize_timeout_seconds(
+            raw.get("sendCircuitCooldownSec", raw.get("send_circuit_cooldown_s", 30.0)),
+            30.0,
+        )
     elif channel == "imessage":
         clean["cliPath"] = str(raw.get("cliPath") or raw.get("cli_path") or "imsg").strip()
         clean["service"] = str(raw.get("service", "auto")).strip().lower()
         clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 15.0)), 15.0)
+        clean["sendCircuitFailureThreshold"] = _normalize_positive_int(
+            raw.get("sendCircuitFailureThreshold", raw.get("send_circuit_failure_threshold", 5)),
+            5,
+        )
+        clean["sendCircuitCooldownSec"] = _normalize_timeout_seconds(
+            raw.get("sendCircuitCooldownSec", raw.get("send_circuit_cooldown_s", 30.0)),
+            30.0,
+        )
     elif channel == "teams":
         clean["tenant"] = str(raw.get("tenant", "")).strip()
 
