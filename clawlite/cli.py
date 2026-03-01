@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import argparse
 import atexit
 import builtins
@@ -6,6 +7,13 @@ import sys
 import time
 
 from clawlite.auth import PROVIDERS, auth_login, auth_logout, auth_status
+from clawlite.channels.service import (
+    describe_running_channels,
+    list_configured_channels,
+    reconnect_channel as reconnect_channel_runtime,
+    start_channel as start_channel_runtime,
+    stop_channel as stop_channel_runtime,
+)
 from clawlite.config.settings import load_config, save_config
 from clawlite.core.agent import run_task
 from clawlite.core.memory import add_note, search_notes
@@ -33,6 +41,7 @@ from clawlite.runtime.workspace import init_workspace
 from clawlite.runtime.channels import channel_template
 from clawlite.runtime.models import model_status, set_model_fallback
 from clawlite.runtime.battery import get_battery_mode, set_battery_mode
+from clawlite.providers.registry import current_provider_status, list_provider_statuses, set_active_provider
 from clawlite.runtime.multiagent import (
     bind_agent,
     create_agent,
@@ -78,6 +87,7 @@ from clawlite.skills.marketplace import (
     search_skills,
     update_skills,
 )
+from clawlite.skills.service import list_skill_statuses
 from clawlite.mcp import add_server, install_template, list_servers, remove_server, search_marketplace
 
 
@@ -258,6 +268,11 @@ def main() -> None:
     start.add_argument("--host", default=None)
     start.add_argument("--port", type=int, default=None)
 
+    agent = sub.add_parser("agent")
+    agent.add_argument("-m", "--message", default=None, help="Mensagem única (modo não interativo)")
+    agent.add_argument("--session-id", default="cli:interactive")
+    agent.add_argument("--plain", action="store_true", help="Desativa renderização markdown no chat")
+
     daemon = sub.add_parser("install-daemon")
     daemon.add_argument("--host", default="127.0.0.1")
     daemon.add_argument("--port", type=int, default=8787)
@@ -272,8 +287,26 @@ def main() -> None:
 
     ch = sub.add_parser("channels")
     ch_sub = ch.add_subparsers(dest="ccmd")
+    ch_sub.add_parser("list")
+    ch_status = ch_sub.add_parser("status")
+    ch_status.add_argument("--channel", default=None)
+    ch_start = ch_sub.add_parser("start")
+    ch_start.add_argument("name", choices=["telegram", "slack", "discord", "whatsapp", "googlechat", "irc", "signal", "imessage"])
+    ch_stop = ch_sub.add_parser("stop")
+    ch_stop.add_argument("name", choices=["telegram", "slack", "discord", "whatsapp", "googlechat", "irc", "signal", "imessage"])
+    ch_rec = ch_sub.add_parser("reconnect")
+    ch_rec.add_argument("name", choices=["telegram", "slack", "discord", "whatsapp", "googlechat", "irc", "signal", "imessage"])
     ch_t = ch_sub.add_parser("template")
     ch_t.add_argument("name", choices=["telegram", "telegram-multiagent", "slack", "discord", "whatsapp", "teams"])
+
+    providers = sub.add_parser("providers")
+    providers_sub = providers.add_subparsers(dest="pcmd2")
+    providers_sub.add_parser("list")
+    providers_sub.add_parser("status")
+    providers_sub.add_parser("current")
+    providers_use = providers_sub.add_parser("use")
+    providers_use.add_argument("provider")
+    providers_use.add_argument("--model", default=None)
 
     ag = sub.add_parser("agents")
     ag_sub = ag.add_subparsers(dest="agcmd")
@@ -377,6 +410,12 @@ def main() -> None:
 
     sk = sub.add_parser("skill")
     sk_sub = sk.add_subparsers(dest="scmd")
+
+    skills2 = sub.add_parser("skills")
+    skills2_sub = skills2.add_subparsers(dest="skcmd2")
+    skills2_list = skills2_sub.add_parser("list")
+    skills2_list.add_argument("--source", choices=["builtin", "workspace", "marketplace"], default=None)
+    skills2_list.add_argument("--all", action="store_true", help="Mostra skills indisponíveis também")
 
     sk_install = sk_sub.add_parser("install")
     sk_install.add_argument("slug")
@@ -516,6 +555,57 @@ def main() -> None:
     if args.cmd == "start":
         _run_gateway_cli(args.host, args.port)
         return
+    if args.cmd == "agent":
+        try:
+            from clawlite.cli.agent_chat import run_agent_interactive, run_agent_once
+
+            if args.message:
+                output = asyncio.run(run_agent_once(args.message, session_id=args.session_id))
+                print(output)
+                return
+            raise SystemExit(
+                asyncio.run(
+                    run_agent_interactive(
+                        session_id=args.session_id,
+                        render_markdown=(not bool(args.plain)),
+                    )
+                )
+            )
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'agent': {_exc_message(exc)}")
+    if args.cmd == "providers":
+        try:
+            if args.pcmd2 in {"list", "status"}:
+                current_provider, current_model = current_provider_status()
+                rows = list_provider_statuses()
+                for row in rows:
+                    marker = "★" if row.key == current_provider else " "
+                    token = "token:ok" if row.token_available else "token:missing"
+                    source = "auth" if row.configured_in_auth else ("env" if row.token_available else "-")
+                    print(
+                        f"{marker} {row.key:<18} {row.display:<24} "
+                        f"default={row.default_model:<28} {token:<13} source={source}"
+                    )
+                print(f"\ncurrent.model: {current_model}")
+                return
+            if args.pcmd2 == "current":
+                current_provider, current_model = current_provider_status()
+                print(f"provider: {current_provider}")
+                print(f"model: {current_model}")
+                return
+            if args.pcmd2 == "use":
+                resolved = set_active_provider(args.provider, model=args.model)
+                print(f"✅ Provider ativo atualizado: model={resolved}")
+                return
+            _fail("Subcomando obrigatório para 'providers'.")
+        except ValueError as exc:
+            _fail(f"Falha no comando 'providers': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'providers': {_exc_message(exc)}")
     if args.cmd == "update":
         try:
             from clawlite.runtime.self_update import check_for_updates, run_self_update
@@ -600,6 +690,31 @@ def main() -> None:
             raise
         except Exception as exc:
             _fail(f"Falha no comando 'auth': {_exc_message(exc)}")
+
+    if args.cmd == "skills":
+        try:
+            if args.skcmd2 == "list":
+                rows = list_skill_statuses()
+                shown = 0
+                for row in rows:
+                    if args.source and row.source != args.source:
+                        continue
+                    if (not args.all) and (not row.available):
+                        continue
+                    availability = "ok" if row.available else "missing-reqs"
+                    mode = "always" if row.always else "ondemand"
+                    exec_flag = "exec" if row.executable else "doc"
+                    print(f"- {row.name} [{row.source}] {mode}/{exec_flag} {availability}")
+                    print(f"  {row.description}")
+                    shown += 1
+                if shown == 0:
+                    print("ℹ️ Nenhuma skill encontrada para os filtros informados.")
+                return
+            _fail("Subcomando obrigatório para 'skills'.")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'skills': {_exc_message(exc)}")
 
     if args.cmd == "skill":
         try:
@@ -745,9 +860,66 @@ def main() -> None:
         print(f"✅ Workspace inicializado em: {path}")
         return
 
-    if args.cmd == "channels" and args.ccmd == "template":
-        print(channel_template(args.name))
-        return
+    if args.cmd == "channels":
+        try:
+            if args.ccmd == "template":
+                print(channel_template(args.name))
+                return
+            if args.ccmd == "list":
+                rows = list_configured_channels()
+                if not rows:
+                    print("(sem canais configurados)")
+                    return
+                for row in rows:
+                    print(
+                        f"- {row.name}: enabled={row.enabled} token={row.has_token} "
+                        f"accounts={row.accounts} running={row.running_instances}"
+                    )
+                return
+            if args.ccmd == "status":
+                rows = describe_running_channels(channel_name=args.channel)
+                if not rows:
+                    print("(sem instâncias de canal em execução)")
+                    return
+                for row in rows:
+                    print(
+                        f"- {row['instance_key']}: channel={row['channel']} "
+                        f"running={row['running']} account={row['account'] or '-'}"
+                    )
+                return
+            if args.ccmd == "start":
+                started = asyncio.run(start_channel_runtime(args.name))
+                if not started:
+                    print("ℹ️ Nenhuma instância iniciada (verifique enabled/token/config).")
+                    return
+                print("✅ Instâncias iniciadas:")
+                for key in started:
+                    print(f"- {key}")
+                return
+            if args.ccmd == "stop":
+                result = asyncio.run(stop_channel_runtime(args.name))
+                stopped = result.get("stopped", [])
+                if not stopped:
+                    print("ℹ️ Nenhuma instância ativa para parar.")
+                    return
+                print("✅ Instâncias paradas:")
+                for key in stopped:
+                    print(f"- {key}")
+                return
+            if args.ccmd == "reconnect":
+                result = asyncio.run(reconnect_channel_runtime(args.name))
+                print(f"channel: {result.get('channel')}")
+                print(f"enabled: {result.get('enabled')}")
+                print("stopped:", ", ".join(result.get("stopped", [])) or "-")
+                print("started:", ", ".join(result.get("started", [])) or "-")
+                return
+            _fail("Subcomando obrigatório para 'channels'.")
+        except ValueError as exc:
+            _fail(f"Falha no comando 'channels': {_exc_message(exc)}")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _fail(f"Falha no comando 'channels': {_exc_message(exc)}")
 
     if args.cmd == "model" and args.mocmd == "status":
         print(model_status())

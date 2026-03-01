@@ -670,6 +670,17 @@ class ChannelManager:
             "started": started,
         }
 
+    async def stop_channel(self, channel_name: str) -> dict[str, Any]:
+        normalized_channel = str(channel_name or "").strip().lower()
+        if not normalized_channel:
+            raise ValueError("channel é obrigatório")
+
+        stopped: list[str] = []
+        for instance_key in list(self._instance_keys_for_channel(normalized_channel)):
+            if await self._stop_instance(instance_key):
+                stopped.append(instance_key)
+        return {"channel": normalized_channel, "stopped": stopped}
+
     def describe_instances(self, channel_name: str | None = None) -> list[dict[str, Any]]:
         only_channel = str(channel_name or "").strip().lower()
         rows: list[dict[str, Any]] = []
