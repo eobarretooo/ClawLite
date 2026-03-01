@@ -38,8 +38,9 @@ fuser -k 8787/tcp  # Linux
 # ou
 kill $(lsof -ti:8787)  # macOS/Termux
 
-# Em Termux: usar nohup para manter em background
-nohup clawlite start --port 8787 > ~/.clawlite/logs/gateway.log 2>&1 &
+# Em Termux+proot: usar supervisord via clawlitex (sem systemd)
+clawlitex autostart install
+clawlitex autostart status
 ```
 
 **Validação:**

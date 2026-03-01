@@ -36,3 +36,16 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/metrics
 - `irc`
 - `signal`
 - `imessage`
+
+## Termux + proot (sem systemd)
+
+Para autonomia 24/7 no Termux, use `clawlitex` com `supervisord`:
+
+```bash
+clawlitex autostart install
+clawlitex autostart status
+```
+
+Referência completa:
+
+- `docs/TERMUX_PROOT_AUTOSTART.md`

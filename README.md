@@ -90,6 +90,21 @@ clawlitex update --check
 clawlitex configure
 ```
 
+Autonomia 24/7 no Termux+proot (sem `systemd`):
+
+```bash
+clawlitex autostart install
+clawlitex autostart status
+```
+
+Isso configura:
+- `supervisord` dentro do proot para manter `clawlite start` vivo (`autorestart`).
+- script de boot em `~/.termux/boot/clawlite-supervisord.sh` para religar após reboot.
+
+Pré-requisitos no Android:
+- app `Termux:Boot` instalado.
+- otimizações agressivas de bateria desativadas para o app Termux.
+
 ## Providers de IA (atualizado)
 
 O ClawLite suporta providers no padrão `provider/model`, incluindo:
@@ -227,6 +242,8 @@ Daemon (systemd user):
 clawlite install-daemon --host 127.0.0.1 --port 8787
 ```
 
+Termux + proot (sem `systemd`): use `clawlitex autostart install` com `supervisord`.
+
 Backup e restore:
 
 ```bash
@@ -256,6 +273,7 @@ Componentes:
 - [Dashboard](docs/DASHBOARD.md)
 - [MCP](docs/MCP.md)
 - [Runbook](docs/RUNBOOK.md)
+- [Termux 24/7 (supervisord)](docs/TERMUX_PROOT_AUTOSTART.md)
 - [Outbound Failure Recovery Runbook](docs/OUTBOUND_FAILURE_RECOVERY_RUNBOOK.md)
 - [Beta Release Checklist](docs/BETA_RELEASE_CHECKLIST.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

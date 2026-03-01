@@ -6,6 +6,10 @@ CLAWLITE_DIR="${CLAWLITEX_DIR:-/root/ClawLite}"
 SETUP_SCRIPT="${CLAWLITEX_SETUP_SCRIPT:-$HOME/.clawlite/setup_termux_proot.sh}"
 DEFAULT_HOST="${CLAWLITEX_HOST:-127.0.0.1}"
 DEFAULT_PORT="${CLAWLITEX_PORT:-8787}"
+TERMUX_BOOT_DIR="${HOME}/.termux/boot"
+TERMUX_BOOT_SCRIPT="${TERMUX_BOOT_DIR}/clawlite-supervisord.sh"
+PROOT_SUPERVISOR_CONF="${CLAWLITEX_SUPERVISOR_CONF:-/root/.clawlite/supervisord.conf}"
+PROOT_SUPERVISOR_START_SCRIPT="${CLAWLITEX_SUPERVISOR_START_SCRIPT:-/root/.clawlite/bin/clawlite-supervised-start.sh}"
 
 print_help() {
   cat <<EOF
@@ -15,6 +19,7 @@ Comandos:
   setup       Instala/atualiza o proot Ubuntu + ClawLite
   status      Mostra status da instalacao
   start       Inicia gateway no proot (padrao: --host ${DEFAULT_HOST} --port ${DEFAULT_PORT})
+  autostart   Configura supervisord 24/7 no proot + boot script no Termux
   shell       Abre shell Ubuntu no diretorio do ClawLite
   help        Mostra esta ajuda
 
@@ -28,6 +33,7 @@ Variaveis opcionais:
   CLAWLITEX_DISTRO (padrao: ubuntu)
   CLAWLITEX_DIR (padrao: /root/ClawLite)
   CLAWLITEX_SETUP_SCRIPT (padrao: ~/.clawlite/setup_termux_proot.sh)
+  CLAWLITEX_SUPERVISOR_CONF (padrao: /root/.clawlite/supervisord.conf)
 EOF
 }
 
@@ -181,6 +187,185 @@ cmd_shell() {
   proot-distro login "$DISTRO" -- /bin/bash -lc "cd $(qdir) && exec /bin/bash"
 }
 
+cmd_autostart_install() {
+  ensure_ready_for_clawlite
+
+  echo "[1/4] Configurando supervisor dentro do proot..."
+  run_in_proot "
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+if ! command -v supervisord >/dev/null 2>&1; then
+  apt-get update -y
+  apt-get install -y supervisor
+fi
+mkdir -p /root/.clawlite/bin /root/.clawlite/logs /root/.clawlite/run
+cat > ${PROOT_SUPERVISOR_START_SCRIPT} <<'EOS'
+#!/bin/bash
+set -euo pipefail
+cd ${CLAWLITE_DIR}
+exec clawlite start --host ${DEFAULT_HOST} --port ${DEFAULT_PORT}
+EOS
+chmod +x ${PROOT_SUPERVISOR_START_SCRIPT}
+cat > ${PROOT_SUPERVISOR_CONF} <<'EOS'
+[unix_http_server]
+file=/root/.clawlite/run/supervisor.sock
+chmod=0700
+
+[supervisord]
+logfile=/root/.clawlite/logs/supervisord.log
+pidfile=/root/.clawlite/run/supervisord.pid
+childlogdir=/root/.clawlite/logs
+daemonize=true
+minfds=1024
+minprocs=200
+
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[supervisorctl]
+serverurl=unix:///root/.clawlite/run/supervisor.sock
+
+[program:clawlite]
+command=${PROOT_SUPERVISOR_START_SCRIPT}
+directory=${CLAWLITE_DIR}
+autostart=true
+autorestart=true
+startsecs=5
+startretries=20
+stopasgroup=true
+killasgroup=true
+stdout_logfile=/root/.clawlite/logs/clawlite.out.log
+stderr_logfile=/root/.clawlite/logs/clawlite.err.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile_maxbytes=10MB
+stdout_logfile_backups=5
+stderr_logfile_backups=5
+environment=PYTHONUNBUFFERED=\"1\"
+EOS
+if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} reread >/dev/null 2>&1 || true
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} update >/dev/null 2>&1 || true
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} restart clawlite >/dev/null 2>&1 || true
+else
+  supervisord -c ${PROOT_SUPERVISOR_CONF}
+fi
+"
+
+  echo "[2/4] Criando script de boot no Termux..."
+  mkdir -p "${TERMUX_BOOT_DIR}"
+  cat > "${TERMUX_BOOT_SCRIPT}" <<EOF
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+if ! command -v proot-distro >/dev/null 2>&1; then
+  exit 0
+fi
+proot-distro login ${DISTRO} -- /bin/bash -lc '
+set -euo pipefail
+if [ ! -f ${PROOT_SUPERVISOR_CONF} ]; then
+  exit 0
+fi
+if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} start clawlite >/dev/null 2>&1 || true
+else
+  supervisord -c ${PROOT_SUPERVISOR_CONF}
+fi
+'
+EOF
+  chmod +x "${TERMUX_BOOT_SCRIPT}"
+
+  echo "[3/4] Validando status do supervisor..."
+  run_in_proot "
+set -euo pipefail
+supervisorctl -c ${PROOT_SUPERVISOR_CONF} status || true
+"
+
+  echo "[4/4] Pronto."
+  echo "Autostart configurado com supervisord."
+  echo "Boot script: ${TERMUX_BOOT_SCRIPT}"
+  echo
+  echo "Importante:"
+  echo "  1) Instale o app Termux:Boot no Android."
+  echo "  2) Desative otimizações agressivas de bateria para o Termux."
+  echo "  3) Reinicie o aparelho e rode: clawlitex autostart status"
+}
+
+cmd_autostart_status() {
+  require_proot
+  echo "Autostart (Termux):"
+  if [[ -f "${TERMUX_BOOT_SCRIPT}" ]]; then
+    echo "  boot script: OK (${TERMUX_BOOT_SCRIPT})"
+  else
+    echo "  boot script: FALTANDO (${TERMUX_BOOT_SCRIPT})"
+  fi
+
+  if ! distro_installed; then
+    echo
+    echo "proot (${DISTRO}): distro nao instalada"
+    return
+  fi
+
+  echo
+  echo "Autostart (proot ${DISTRO}):"
+  run_in_proot "
+set -euo pipefail
+if command -v supervisord >/dev/null 2>&1; then
+  echo '  supervisord bin: OK'
+else
+  echo '  supervisord bin: FALTANDO'
+fi
+if [ -f ${PROOT_SUPERVISOR_CONF} ]; then
+  echo '  supervisor conf: OK (${PROOT_SUPERVISOR_CONF})'
+else
+  echo '  supervisor conf: FALTANDO (${PROOT_SUPERVISOR_CONF})'
+fi
+if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
+  echo '  supervisord pid: RUNNING'
+else
+  echo '  supervisord pid: STOPPED'
+fi
+if command -v supervisorctl >/dev/null 2>&1 && [ -f ${PROOT_SUPERVISOR_CONF} ]; then
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} status || true
+fi
+"
+}
+
+cmd_autostart_remove() {
+  require_proot
+  if distro_installed; then
+    run_in_proot "
+set -euo pipefail
+if command -v supervisorctl >/dev/null 2>&1 && [ -f ${PROOT_SUPERVISOR_CONF} ]; then
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} stop clawlite >/dev/null 2>&1 || true
+  supervisorctl -c ${PROOT_SUPERVISOR_CONF} shutdown >/dev/null 2>&1 || true
+fi
+"
+  fi
+
+  rm -f "${TERMUX_BOOT_SCRIPT}"
+  echo "Autostart removido."
+  echo "Boot script apagado: ${TERMUX_BOOT_SCRIPT}"
+}
+
+cmd_autostart() {
+  local subcmd="${1:-status}"
+  shift || true
+  case "${subcmd}" in
+    install|enable)
+      cmd_autostart_install "$@"
+      ;;
+    status)
+      cmd_autostart_status "$@"
+      ;;
+    remove|disable)
+      cmd_autostart_remove "$@"
+      ;;
+    *)
+      echo "Uso: clawlitex autostart <install|status|remove>"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_passthrough() {
   ensure_ready_for_clawlite
   local extra
@@ -204,6 +389,9 @@ main() {
       ;;
     start|run)
       cmd_start "$@"
+      ;;
+    autostart)
+      cmd_autostart "$@"
       ;;
     shell|ubuntu)
       cmd_shell
