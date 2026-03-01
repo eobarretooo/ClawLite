@@ -39,6 +39,7 @@ class ChannelManager:
     def __init__(self) -> None:
         self.active_channels: dict[str, BaseChannel] = {}
         self.active_metadata: dict[str, dict[str, Any]] = {}
+        self._last_session_by_instance: dict[str, str] = {}
 
     async def _handle_message(self, session_id: str, text: str) -> str:
         """
@@ -54,6 +55,15 @@ class ChannelManager:
         except Exception as exc:
             logger.error(f"Erro no processamento da mensagem do canal: {exc}")
             return "Ocorreu um erro interno ao processar a requisição."
+
+    def _build_message_handler(self, *, instance_key: str):
+        async def _handler(session_id: str, text: str) -> str:
+            sid = str(session_id or "").strip()
+            if sid:
+                self._last_session_by_instance[instance_key] = sid
+            return await self._handle_message(session_id, text)
+
+        return _handler
 
     @staticmethod
     def _as_str_list(value: Any) -> list[str]:
@@ -310,6 +320,66 @@ class ChannelManager:
         return [key for key in self.active_channels.keys() if key == base or key.startswith(prefix)]
 
     @staticmethod
+    def _fallback_session_id(channel_name: str, ch_data: dict[str, Any]) -> str:
+        ch = str(channel_name or "").strip().lower()
+        if ch == "telegram":
+            chat_id = str(ch_data.get("chat_id") or ch_data.get("chatId") or "").strip()
+            thread_id = str(ch_data.get("thread_id") or ch_data.get("threadId") or "").strip()
+            if not chat_id:
+                return ""
+            return f"tg_{chat_id}:topic:{thread_id}" if thread_id else f"tg_{chat_id}"
+        if ch == "discord":
+            target = str(ch_data.get("channel_id") or ch_data.get("default_channel") or "").strip()
+            if not target:
+                channels = ch_data.get("allowChannels")
+                if isinstance(channels, list) and channels:
+                    target = str(channels[0]).strip()
+            return f"dc_{target}" if target else ""
+        if ch == "slack":
+            target = str(ch_data.get("channel_id") or ch_data.get("default_channel") or "").strip()
+            if not target:
+                channels = ch_data.get("allowChannels")
+                if isinstance(channels, list) and channels:
+                    target = str(channels[0]).strip()
+            return f"sl_{target}" if target else ""
+        if ch == "whatsapp":
+            target = str(ch_data.get("to") or ch_data.get("phone") or ch_data.get("chat_id") or "").strip()
+            if not target:
+                allow_from = ch_data.get("allowFrom")
+                if isinstance(allow_from, list) and allow_from:
+                    target = str(allow_from[0]).strip()
+            return f"wa_{target}" if target else ""
+        if ch == "googlechat":
+            target = str(ch_data.get("space") or ch_data.get("default_space") or "").strip()
+            if not target:
+                allow_channels = ch_data.get("allowChannels")
+                if isinstance(allow_channels, list) and allow_channels:
+                    target = str(allow_channels[0]).strip()
+            return f"gc_group_{target}" if target else ""
+        if ch == "irc":
+            target = str(ch_data.get("default_channel") or "").strip()
+            if not target:
+                channels = ch_data.get("channels")
+                if isinstance(channels, list) and channels:
+                    target = str(channels[0]).strip()
+            return f"irc_group_{target}" if target else ""
+        if ch == "signal":
+            target = str(ch_data.get("to") or "").strip()
+            if not target:
+                allow_from = ch_data.get("allowFrom")
+                if isinstance(allow_from, list) and allow_from:
+                    target = str(allow_from[0]).strip()
+            return f"signal_dm_{target}" if target else ""
+        if ch == "imessage":
+            target = str(ch_data.get("to") or "").strip()
+            if not target:
+                allow_from = ch_data.get("allowFrom")
+                if isinstance(allow_from, list) and allow_from:
+                    target = str(allow_from[0]).strip()
+            return f"imessage_dm_{target}" if target else ""
+        return ""
+
+    @staticmethod
     def _default_outbound_metrics() -> dict[str, Any]:
         return {
             "sent_ok": 0,
@@ -443,7 +513,7 @@ class ChannelManager:
                 if normalized_channel == "telegram":
                     channel_kwargs["account_id"] = account_name
                 channel = channel_cls(token=cred["token"], name=normalized_channel, **channel_kwargs)
-                channel.on_message(self._handle_message)
+                channel.on_message(self._build_message_handler(instance_key=instance_key))
                 await channel.start()
                 if not channel.running:
                     logger.error(
@@ -609,6 +679,47 @@ class ChannelManager:
         """Para todos os canais ativos."""
         for instance_key in list(self.active_channels.keys()):
             await self._stop_instance(instance_key)
+
+    async def broadcast_proactive(self, message: str, prefix: str = "[heartbeat]") -> dict[str, Any]:
+        """Envia mensagem proativa para todas as instâncias/canais ativos."""
+        text = str(message or "").strip()
+        if not text:
+            return {"delivered": 0, "failed": 0, "skipped": len(self.active_channels), "targets": []}
+
+        cfg = load_config()
+        channels_cfg = cfg.get("channels", {}) if isinstance(cfg.get("channels"), dict) else {}
+        payload = f"{prefix} {text}".strip() if prefix else text
+        delivered = 0
+        failed = 0
+        skipped = 0
+        targets: list[dict[str, str]] = []
+
+        for instance_key, channel in list(self.active_channels.items()):
+            meta = self.active_metadata.get(instance_key, {})
+            ch_name = str(meta.get("channel", "")).strip().lower() or instance_key.split(":", 1)[0]
+            session_id = self._last_session_by_instance.get(instance_key, "")
+            if not session_id:
+                ch_data = channels_cfg.get(ch_name, {}) if isinstance(channels_cfg.get(ch_name), dict) else {}
+                session_id = self._fallback_session_id(ch_name, ch_data)
+
+            if not session_id:
+                skipped += 1
+                continue
+
+            try:
+                await channel.send_message(session_id, payload)
+                delivered += 1
+                targets.append({"instance": instance_key, "session_id": session_id})
+            except Exception as exc:
+                failed += 1
+                logger.warning("Falha no envio proativo para %s (%s): %s", instance_key, session_id, exc)
+
+        return {
+            "delivered": delivered,
+            "failed": failed,
+            "skipped": skipped,
+            "targets": targets,
+        }
 
 # Global manager instance
 manager = ChannelManager()

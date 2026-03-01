@@ -36,6 +36,15 @@ class _FakeOutboundChannel(_FakeChannel):
         return dict(self._outbound)
 
 
+class _CapturingChannel(_FakeChannel):
+    def __init__(self, token: str, name: str, **kwargs: Any) -> None:
+        super().__init__(token, name, **kwargs)
+        self.sent: list[tuple[str, str]] = []
+
+    async def send_message(self, session_id: str, text: str) -> None:
+        self.sent.append((session_id, text))
+
+
 class ChannelManagerTests(unittest.TestCase):
     def test_start_all_uses_accounts_and_channel_specific_kwargs(self) -> None:
         from clawlite.channels import manager as manager_mod
@@ -284,6 +293,40 @@ class ChannelManagerTests(unittest.TestCase):
         self.assertEqual(len(instances), 2)
         self.assertIsNotNone(instances[0]["outbound"])
         self.assertIn("sent_ok", instances[0]["outbound"])
+
+    def test_broadcast_proactive_uses_recent_session_or_fallback(self) -> None:
+        from clawlite.channels import manager as manager_mod
+
+        cm = ChannelManager()
+        tg = _CapturingChannel(token="tok", name="telegram")
+        irc = _CapturingChannel(token="tok", name="irc")
+        cm.active_channels = {"telegram": tg, "irc": irc}
+        cm.active_metadata = {
+            "telegram": {"channel": "telegram", "account": ""},
+            "irc": {"channel": "irc", "account": ""},
+        }
+        cm._last_session_by_instance = {"irc": "irc_group_#ops"}
+
+        original_load_config = manager_mod.load_config
+        manager_mod.load_config = lambda: {
+            "channels": {
+                "telegram": {"chat_id": "12345"},
+                "irc": {"channels": ["#ops"]},
+            }
+        }
+        try:
+            async def _run():
+                out = await cm.broadcast_proactive("teste de heartbeat")
+                self.assertEqual(out["delivered"], 2)
+                self.assertEqual(out["failed"], 0)
+                self.assertEqual(out["skipped"], 0)
+                self.assertEqual(tg.sent[0][0], "tg_12345")
+                self.assertTrue(tg.sent[0][1].startswith("[heartbeat]"))
+                self.assertEqual(irc.sent[0][0], "irc_group_#ops")
+
+            asyncio.run(_run())
+        finally:
+            manager_mod.load_config = original_load_config
 
 
 if __name__ == "__main__":

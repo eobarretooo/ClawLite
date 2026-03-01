@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,15 @@ async def lifespan(app: FastAPI):
     hb_interval = int(gateway_cfg.get("heartbeat_interval_s", 1800))
     cron_poll_interval = float(gateway_cfg.get("cron_poll_interval_s", 5.0))
 
-    hb_loop = start_heartbeat_thread(interval_s=hb_interval)
+    loop = asyncio.get_running_loop()
+
+    def _heartbeat_proactive_dispatch(message: str) -> None:
+        async def _send() -> None:
+            await manager.broadcast_proactive(message, prefix="[heartbeat]")
+
+        loop.call_soon_threadsafe(asyncio.create_task, _send())
+
+    hb_loop = start_heartbeat_thread(interval_s=hb_interval, proactive_callback=_heartbeat_proactive_dispatch)
     cron_scheduler = start_cron_scheduler_thread(poll_interval_s=cron_poll_interval)
     app.state.heartbeat_loop = hb_loop
     app.state.cron_scheduler = cron_scheduler

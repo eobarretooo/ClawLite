@@ -158,6 +158,42 @@ def test_run_once_creates_notification_on_real_response():
         assert state["last_result"] == "Encontrei 2 emails urgentes."
 
 
+def test_run_once_decision_json_skip():
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "HEARTBEAT.md").write_text("- tarefa real", encoding="utf-8")
+        hb = _make_loop(tmp)
+        with patch(
+            "clawlite.core.agent.run_task_with_learning",
+            return_value='{"action":"skip","tasks":""}',
+        ) as mock_agent:
+            with patch("clawlite.runtime.notifications.create_notification") as mock_notif:
+                hb._run_once()
+                mock_notif.assert_not_called()
+        assert mock_agent.call_count == 1
+        state = json.loads((Path(tmp) / "memory" / "heartbeat-state.json").read_text(encoding="utf-8"))
+        assert state["last_result"] == "HEARTBEAT_SKIP"
+
+
+def test_run_once_decision_json_run_executes_and_dispatches_callback():
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "HEARTBEAT.md").write_text("- tarefa real", encoding="utf-8")
+        proactive: list[str] = []
+        hb = HeartbeatLoop(workspace_path=tmp, interval_s=DEFAULT_INTERVAL_S, proactive_callback=proactive.append)
+
+        with patch(
+            "clawlite.core.agent.run_task_with_learning",
+            side_effect=[
+                '{"action":"run","tasks":"resuma pendências de hoje"}',
+                "Resumo enviado para canais ativos.",
+            ],
+        ) as mock_agent:
+            with patch("clawlite.runtime.notifications.create_notification"):
+                hb._run_once()
+
+        assert mock_agent.call_count == 2
+        assert proactive == ["Resumo enviado para canais ativos."]
+
+
 def test_state_updated_after_run():
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, "HEARTBEAT.md").write_text("- verificar calendário", encoding="utf-8")

@@ -5,7 +5,8 @@ import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+import re
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class HeartbeatLoop:
         self,
         workspace_path: str | Path | None = None,
         interval_s: int = DEFAULT_INTERVAL_S,
+        proactive_callback: Callable[[str], None] | None = None,
     ) -> None:
         root = (
             Path(workspace_path).expanduser()
@@ -49,6 +51,7 @@ class HeartbeatLoop:
         self._state_file = root / "memory" / "heartbeat-state.json"
         self.interval_s = interval_s
         self._stop_event = threading.Event()
+        self._proactive_callback = proactive_callback
 
     # ------------------------------------------------------------------
     # Estado persistido
@@ -87,6 +90,53 @@ class HeartbeatLoop:
     # Ciclo único
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _extract_json(text: str) -> dict[str, Any] | None:
+        raw = str(text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.removeprefix("```json").removeprefix("```").strip()
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            pass
+        m = re.search(r"\{[\s\S]*\}", raw)
+        if not m:
+            return None
+        try:
+            data = json.loads(m.group(0))
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    def _decide_action(self, content: str) -> tuple[str, str, str]:
+        """Fase 1: decide skip/run com resposta estruturada."""
+        from clawlite.core.agent import run_task_with_learning
+
+        prompt = (
+            "Você é o planejador de heartbeat. Responda APENAS em JSON com este formato:\n"
+            '{"action":"skip|run","tasks":"resumo curto das tarefas quando action=run"}\n\n'
+            "Regras:\n"
+            "- use action=skip quando não houver trabalho acionável agora;\n"
+            "- use action=run apenas quando houver ação proativa imediata.\n\n"
+            f"[HEARTBEAT_MD]\n{content}"
+        )
+        decision_raw = run_task_with_learning(prompt, skill="heartbeat-decision", session_id="heartbeat")
+        payload = self._extract_json(decision_raw)
+        if payload:
+            action = str(payload.get("action", "skip")).strip().lower()
+            if action not in {"skip", "run"}:
+                action = "skip"
+            tasks = str(payload.get("tasks", "")).strip()
+            return action, tasks, decision_raw
+
+        # Compatibilidade com fluxo legado baseado em token.
+        if decision_raw.strip() == HEARTBEAT_OK:
+            return "skip", "", HEARTBEAT_OK
+        return "run", decision_raw.strip(), decision_raw
+
     def _run_once(self) -> None:
         if not self._heartbeat_file.exists():
             logger.debug("heartbeat: HEARTBEAT.md não encontrado, pulando ciclo")
@@ -99,13 +149,29 @@ class HeartbeatLoop:
 
         logger.info("heartbeat: disparando agente com conteúdo de HEARTBEAT.md")
         try:
-            from clawlite.core.agent import run_task_with_learning  # import tardio: evita circular
-            response = run_task_with_learning(content, skill="heartbeat")
+            action, tasks, decision_raw = self._decide_action(content)
         except Exception as exc:
             logger.warning("heartbeat: erro ao chamar agente — %s", exc)
             return
 
-        response_clean = response.strip()
+        if action == "skip":
+            response_clean = HEARTBEAT_OK if str(decision_raw).strip() == HEARTBEAT_OK else "HEARTBEAT_SKIP"
+            state = self._load_state()
+            runs_today = self._runs_today(state)
+            self._save_state(response_clean, runs_today)
+            logger.info("heartbeat: decisão=skip — silêncio")
+            return
+
+        try:
+            from clawlite.core.agent import run_task_with_learning  # import tardio: evita circular
+
+            execution_prompt = tasks.strip() or content
+            response = run_task_with_learning(execution_prompt, skill="heartbeat", session_id="heartbeat")
+        except Exception as exc:
+            logger.warning("heartbeat: erro na fase de execução — %s", exc)
+            return
+
+        response_clean = response.strip() or "HEARTBEAT_RUN_EMPTY"
         # trunca para o state (limite legível)
         last_result = response_clean if len(response_clean) <= 200 else response_clean[:197] + "..."
 
@@ -130,7 +196,17 @@ class HeartbeatLoop:
         except Exception as exc:
             logger.warning("heartbeat: erro ao criar notificação — %s", exc)
 
-        self._send_telegram_proactive(response_clean)
+        self._send_proactive(response_clean)
+
+    def _send_proactive(self, message: str) -> None:
+        callback = self._proactive_callback
+        if callback is not None:
+            try:
+                callback(message)
+                return
+            except Exception as exc:
+                logger.warning("heartbeat: falha no callback proativo — %s", exc)
+        self._send_telegram_proactive(message)
 
     def _send_telegram_proactive(self, message: str) -> None:
         try:
@@ -183,9 +259,14 @@ class HeartbeatLoop:
 def start_heartbeat_thread(
     workspace_path: str | Path | None = None,
     interval_s: int = DEFAULT_INTERVAL_S,
+    proactive_callback: Callable[[str], None] | None = None,
 ) -> HeartbeatLoop:
     """Inicia o HeartbeatLoop em thread daemon e retorna a instância para controle."""
-    hb = HeartbeatLoop(workspace_path=workspace_path, interval_s=interval_s)
+    hb = HeartbeatLoop(
+        workspace_path=workspace_path,
+        interval_s=interval_s,
+        proactive_callback=proactive_callback,
+    )
     t = threading.Thread(target=hb.start, name="clawlite-heartbeat", daemon=True)
     t.start()
     return hb
