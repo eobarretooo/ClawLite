@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from clawlite.runtime.workspace import init_workspace
+from clawlite.runtime.workspace import init_workspace, render_workspace_templates
 
 
 @dataclass
@@ -25,17 +25,7 @@ def _workspace_root(path: str | None = None) -> Path:
 
 def ensure_memory_layout(path: str | None = None) -> Path:
     root = _workspace_root(path)
-    templates = {
-        "AGENTS.md": "# AGENTS\n\nRegras operacionais do assistente.\n",
-        "SOUL.md": "# SOUL\n\nTom: direto, técnico, confiável.\n",
-        "USER.md": "# USER\n\nPreferências da pessoa usuária e contexto de trabalho.\n",
-        "IDENTITY.md": "# IDENTITY\n\nClawLite Assistant 🦊\n",
-        "TOOLS.md": "# TOOLS.md\n\nNotas do ambiente local.\n",
-        "HEARTBEAT.md": "# HEARTBEAT.md\n\nChecklist proativo periódico.\n",
-        "BOOT.md": "# BOOT.md\n\nChecklist pós-restart.\n",
-        "BOOTSTRAP.md": "# BOOTSTRAP.md - Hello, World\n\nPrimeira conversa para definir identidade.\n",
-        "MEMORY.md": "# MEMORY\n\nMemória de longo prazo (curada).\n",
-    }
+    templates = render_workspace_templates()
     for name, content in templates.items():
         p = root / name
         if not p.exists():

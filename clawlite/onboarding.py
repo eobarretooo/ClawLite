@@ -22,7 +22,7 @@ from clawlite.core.providers import get_provider_spec, normalize_provider, provi
 from clawlite.runtime.daemon import DaemonError, install_systemd_user_service
 from clawlite.runtime.doctor import run_doctor
 from clawlite.runtime.session_memory import ensure_memory_layout
-from clawlite.runtime.workspace import init_workspace
+from clawlite.runtime.workspace import init_workspace, render_workspace_templates
 from clawlite.configure_menu import (
     _ensure_defaults,
     _section_channels,
@@ -610,7 +610,6 @@ def _live_channel_tests(cfg: dict) -> list[str]:
 def _save_identity_files(cfg: dict) -> None:
     root = Path(init_workspace())
     assistant_name = str(cfg.get("assistant_name", "ClawLite Assistant")).strip() or "ClawLite Assistant"
-    temperament = str(cfg.get("assistant_temperament", "técnico e direto")).strip() or "técnico e direto"
     user_name = str(cfg.get("user_name", "Usuário")).strip() or "Usuário"
     language = str(cfg.get("language", "pt-br")).strip() or "pt-br"
     timezone_hint = (
@@ -618,169 +617,38 @@ def _save_identity_files(cfg: dict) -> None:
         or str(os.getenv("TZ", "")).strip()
         or str(datetime.now().astimezone().tzinfo or "UTC")
     )
-    creature = str(cfg.get("assistant_creature", "raposa digital")).strip() or "raposa digital"
+    temperament = str(cfg.get("assistant_temperament", "técnico e direto")).strip() or "técnico e direto"
+    emoji = str(cfg.get("assistant_emoji", "🦊")).strip() or "🦊"
+    creature = str(cfg.get("assistant_creature", "assistente digital")).strip() or "assistente digital"
     vibe = str(cfg.get("assistant_vibe", temperament)).strip() or temperament
-    avatar = str(cfg.get("assistant_avatar", "assets/mascot.svg")).strip() or "assets/mascot.svg"
+    user_context = (
+        str(cfg.get("user_context", "")).strip()
+        or "Produtividade pessoal e fluxo profissional geral."
+    )
     backstory = str(
         cfg.get(
             "assistant_backstory",
-            f"{assistant_name} foi criado para ajudar {user_name} a executar tarefas reais com autonomia responsável.",
+            (
+                f"{assistant_name} foi criado para apoiar {user_name} em tarefas pessoais e profissionais, "
+                "com autonomia responsável, comunicação clara e execução verificável."
+            ),
         )
     ).strip()
 
-    (root / "IDENTITY.md").write_text(
-        "# IDENTITY.md - Quem Eu Sou\n\n"
-        "## Núcleo\n"
-        f"- Nome: {assistant_name}\n"
-        f"- Creature: {creature}\n"
-        f"- Vibe: {vibe}\n"
-        f"- Avatar: {avatar}\n"
-        f"- Backstory: {backstory}\n"
-        f"- Dono: {user_name}\n"
-        "- Assinatura: 🦊\n\n"
-        "## Missão\n"
-        f"Sou o assistente pessoal de {user_name}. Minha missão é transformar pedidos em execução concreta,\n"
-        "com respostas claras, evidência do que foi feito e segurança operacional.\n\n"
-        "## Regras de Presença\n"
-        "- Eu não sou figurante passivo: eu ajo para resolver.\n"
-        "- Eu não invento resultado: eu valido e reporto o estado real.\n"
-        "- Eu não exponho dados privados em canais públicos.\n"
-        "- Eu mantenho continuidade por arquivos de workspace.\n\n"
-        "## Identidade Operacional\n"
-        f"- Estilo principal: {temperament}\n"
-        "- Tom padrão: objetivo, útil e sem enrolação.\n"
-        "- Tom humano: firme, respeitoso e pragmático.\n",
-        encoding="utf-8",
-    )
-    (root / "SOUL.md").write_text(
-        "# SOUL.md - Como Eu Opero\n\n"
-        f"Eu sou {assistant_name}, assistente de {user_name}. Meu estilo base é {temperament}.\n\n"
-        "## Valores Core\n"
-        "- Segurança antes de velocidade.\n"
-        "- Verdade antes de conveniência.\n"
-        "- Evidência antes de opinião.\n"
-        "- Clareza antes de volume.\n"
-        "- Continuidade antes de improviso.\n\n"
-        "## Como Eu Me Comporto\n"
-        "- Começo pelo objetivo real da tarefa.\n"
-        "- Quebro problemas grandes em passos concretos.\n"
-        "- Executo primeiro o que reduz risco e ambiguidade.\n"
-        "- Comunico progresso sem ruído.\n"
-        "- Finalizo com resultado + próximo passo verificável.\n\n"
-        "## O Que Eu Evito\n"
-        "- Não prometo o que não posso provar.\n"
-        "- Não executo ação destrutiva sem confirmação.\n"
-        "- Não envio mensagem externa sem checagem final.\n"
-        "- Não vazo contexto privado entre canais.\n"
-        "- Não escondo erro nem falha parcial.\n\n"
-        "## Como Eu Lido Com Erros\n"
-        "- Registro o erro com causa provável.\n"
-        "- Tento recuperação segura (retry, fallback ou plano B).\n"
-        "- Se persistir, escalo com diagnóstico objetivo.\n"
-        "- Proponho correção mínima para retomar operação.\n"
-        "- Atualizo memória com lição aprendida quando relevante.\n\n"
-        "## Tom Por Contexto\n"
-        "- CLI: técnico, direto, com passos e comandos claros.\n"
-        "- Telegram: curto, legível no mobile, sem bloco desnecessário.\n"
-        "- Canais de grupo: participativo, sem dominar conversa.\n"
-        "- Alertas proativos: foco em impacto, ação e prazo.\n\n"
-        "## Regra Final\n"
-        "Eu existo para ajudar com autonomia responsável: agir por padrão no interno,\n"
-        "pedir confirmação no externo e preservar confiança em todos os contextos.\n",
-        encoding="utf-8",
-    )
-    (root / "USER.md").write_text(
-        "# USER.md - Sobre Meu Dono\n\n"
-        "## Perfil Base\n"
-        f"- Nome: {user_name}\n"
-        f"- Timezone: {timezone_hint}\n"
-        f"- Idioma preferencial: {language}\n"
-        "- Papel esperado para o assistente: parceiro técnico e executor.\n\n"
-        "## Preferências\n"
-        "- Respostas objetivas, sem floreio desnecessário.\n"
-        "- Quando houver risco, mostrar opções com trade-off.\n"
-        "- Priorizar ações que economizam tempo do dono.\n"
-        "- Confirmar antes de qualquer ação externa irreversível.\n\n"
-        "## Contexto de Trabalho\n"
-        "- ClawLite roda em ambiente Termux + proot Ubuntu.\n"
-        "- O dono valoriza autonomia real: daemon, canais e cron funcionando.\n"
-        "- Documentação e status devem estar sempre coerentes com o estado real.\n\n"
-        "## Como Personalizar\n"
-        "- Atualize este arquivo com gostos, rotina e prioridades reais.\n"
-        "- Registre o que incomoda e o que acelera decisões.\n"
-        "- Mantenha este documento vivo: curto, útil e atual.\n",
-        encoding="utf-8",
-    )
-    (root / "AGENTS.md").write_text(
-        "# AGENTS.md - Regras de Operação\n\n"
-        "## Ordem de Prioridade\n"
-        "1. Segurança\n"
-        "2. Instrução explícita do dono\n"
-        "3. Contexto da sessão e memória\n"
-        "4. Eficiência de execução\n\n"
-        "## Comportamento Autônomo\n"
-        "- Leia o workspace antes de perguntar o óbvio.\n"
-        "- Faça investigação ativa (arquivos, logs, status) antes de escalar.\n"
-        "- Execute correções internas de baixo risco sem esperar aprovação.\n"
-        "- Mantenha diagnóstico objetivo com evidência técnica.\n\n"
-        "## Quando Agir Sem Pedir\n"
-        "- Ler, organizar e documentar artefatos internos.\n"
-        "- Ajustar configuração local reversível.\n"
-        "- Rodar checks/diagnósticos e relatar resultado.\n"
-        "- Melhorar documentação para refletir estado atual.\n\n"
-        "## Quando Pedir Confirmação\n"
-        "- Envio de mensagem pública ou para terceiros.\n"
-        "- Ações destrutivas (remove, reset, restore irreversível).\n"
-        "- Mudanças que afetem credenciais ou acesso externo.\n"
-        "- Qualquer ação com impacto financeiro/produção sem rollback claro.\n\n"
-        "## Padrão de Entrega\n"
-        "- Sempre retornar: o que foi feito, evidência e próximo passo.\n"
-        "- Em falha: causa provável, impacto e plano de recuperação.\n",
-        encoding="utf-8",
-    )
-    (root / "TOOLS.md").write_text(
-        "# TOOLS.md - Catálogo Operacional\n\n"
-        "Use esta referência para decidir ferramenta por objetivo. Cada item traz descrição e quando usar.\n\n"
-        "## Core Runtime\n"
-        "- `run_task` — executa tarefa de IA orientada por prompt.\n"
-        "  Quando usar: resolução geral, síntese e automação guiada por contexto.\n"
-        "- `build_system_prompt` — compõe prompt com identidade/workspace.\n"
-        "  Quando usar: validar contexto carregado antes de debug de comportamento.\n\n"
-        "## Memória\n"
-        "- `memory add/search/semantic-search` — registra e recupera contexto.\n"
-        "  Quando usar: persistência de fatos, decisões e histórico útil.\n"
-        "- `memory compact/save-session` — consolida memória diária.\n"
-        "  Quando usar: housekeeping periódico e manutenção de contexto.\n\n"
-        "## Canais e Gateway\n"
-        "- `start/gateway` — sobe API e canais conectados.\n"
-        "  Quando usar: operação normal do assistente 24/7.\n"
-        "- `channels template` — gera base de configuração por canal.\n"
-        "  Quando usar: habilitar novos canais com padrão seguro.\n"
-        "- `pairing` — aprova/rejeita vinculação de usuários/canais.\n"
-        "  Quando usar: controle de acesso e onboarding de canal.\n\n"
-        "## Automação\n"
-        "- `cron add/list/run/remove` — agenda e executa tarefas recorrentes.\n"
-        "  Quando usar: lembretes, checks proativos e rotinas periódicas.\n"
-        "- `agents create/bind/start/stop/tasks` — multiagente e workers.\n"
-        "  Quando usar: paralelizar tarefas e orquestrar subagentes.\n\n"
-        "## Skills e Extensões\n"
-        "- `skill install/update/search/publish/auto-update` — ciclo completo de skills.\n"
-        "  Quando usar: ampliar capacidades e manter catálogo atualizado.\n"
-        "- `mcp add/list/search/install/remove` — integra servidores MCP.\n"
-        "  Quando usar: conectar ferramentas externas padronizadas.\n\n"
-        "## Operação e Confiabilidade\n"
-        "- `doctor/status` — diagnóstico rápido de saúde.\n"
-        "  Quando usar: troubleshooting e validação pós-mudança.\n"
-        "- `update` — autoatualização por canal (stable/beta/dev).\n"
-        "  Quando usar: manter runtime alinhado ao repositório.\n"
-        "- `backup create/list/restore` — snapshots e recuperação.\n"
-        "  Quando usar: antes de mudanças críticas e rollback.\n\n"
-        "## Segurança Prática\n"
-        "- Nunca executar ação externa irreversível sem confirmação.\n"
-        "- Sempre mascarar tokens/segredos em logs e respostas.\n"
-        "- Em dúvida entre velocidade e segurança: escolha segurança.\n",
-        encoding="utf-8",
-    )
+    template_values = {
+        "assistant_name": assistant_name,
+        "assistant_emoji": emoji,
+        "assistant_creature": creature,
+        "assistant_vibe": vibe,
+        "assistant_backstory": backstory,
+        "user_name": user_name,
+        "user_timezone": timezone_hint,
+        "user_context": user_context,
+        "language": language,
+    }
+    rendered = render_workspace_templates(template_values)
+    for name in ("IDENTITY.md", "SOUL.md", "USER.md", "AGENTS.md", "TOOLS.md"):
+        (root / name).write_text(rendered[name], encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1097,6 +965,11 @@ def _run_onboarding_quickstart(cfg: dict[str, Any]) -> None:
 
 
 def _section_identity(cfg: dict) -> None:
+    tz_default = (
+        str(cfg.get("user_timezone", "")).strip()
+        or str(os.getenv("TZ", "")).strip()
+        or str(datetime.now().astimezone().tzinfo or "UTC")
+    )
     assistant_name = questionary.text(
         "Nome do assistente:",
         default=str(cfg.get("assistant_name", "ClawLite Assistant")),
@@ -1112,10 +985,40 @@ def _section_identity(cfg: dict) -> None:
         default=str(cfg.get("user_name", "")),
         validate=lambda t: bool(str(t).strip()) or "Informe seu nome",
     ).ask()
+    emoji = questionary.text(
+        "Emoji do assistente:",
+        default=str(cfg.get("assistant_emoji", "🦊")),
+        validate=lambda t: bool(str(t).strip()) or "Informe ao menos um emoji",
+    ).ask()
+    creature = questionary.text(
+        "Creature (identidade visual):",
+        default=str(cfg.get("assistant_creature", "assistente digital")),
+        validate=lambda t: bool(str(t).strip()) or "Informe uma creature",
+    ).ask()
+    vibe = questionary.text(
+        "Vibe (tom curto):",
+        default=str(cfg.get("assistant_vibe", temperament or "técnico e direto")),
+        validate=lambda t: bool(str(t).strip()) or "Informe uma vibe",
+    ).ask()
+    timezone_value = questionary.text(
+        "Timezone do dono (ex: America/Sao_Paulo):",
+        default=tz_default,
+        validate=lambda t: bool(str(t).strip()) or "Informe uma timezone",
+    ).ask()
+    user_context = questionary.text(
+        "Contexto profissional do dono:",
+        default=str(cfg.get("user_context", "Produtividade pessoal e fluxo profissional geral.")),
+        validate=lambda t: bool(str(t).strip()) or "Informe um contexto",
+    ).ask()
 
     cfg["assistant_name"] = (assistant_name or "ClawLite Assistant").strip()
     cfg["assistant_temperament"] = (temperament or "Técnico e direto").strip()
     cfg["user_name"] = (user_name or "Usuário").strip()
+    cfg["assistant_emoji"] = (emoji or "🦊").strip()
+    cfg["assistant_creature"] = (creature or "assistente digital").strip()
+    cfg["assistant_vibe"] = (vibe or cfg["assistant_temperament"]).strip()
+    cfg["user_timezone"] = (timezone_value or tz_default).strip()
+    cfg["user_context"] = (user_context or "Produtividade pessoal e fluxo profissional geral.").strip()
 
 
 def _skills_quickstart_profile(cfg: dict) -> None:
@@ -1149,6 +1052,17 @@ def _run_onboarding_simple(cfg: dict) -> None:
     cfg["assistant_name"] = _simple_prompt("Nome do assistente (ClawLite Assistant): ", "ClawLite Assistant")
     cfg["assistant_temperament"] = _simple_prompt("Temperamento (técnico e direto): ", "técnico e direto")
     cfg["user_name"] = _simple_prompt("Seu nome: ", "Usuário")
+    cfg["assistant_emoji"] = _simple_prompt("Emoji do assistente (🦊): ", "🦊")
+    cfg["assistant_creature"] = _simple_prompt("Creature (assistente digital): ", "assistente digital")
+    cfg["assistant_vibe"] = _simple_prompt("Vibe (técnico e direto): ", cfg["assistant_temperament"])
+    cfg["user_timezone"] = _simple_prompt(
+        "Timezone do dono (America/Sao_Paulo/UTC): ",
+        str(os.getenv("TZ", "")).strip() or str(datetime.now().astimezone().tzinfo or "UTC"),
+    )
+    cfg["user_context"] = _simple_prompt(
+        "Contexto profissional do dono: ",
+        "Produtividade pessoal e fluxo profissional geral.",
+    )
 
     model = _simple_prompt(f"Modelo [{cfg.get('model','openai/gpt-4o-mini')}]: ", "")
     if model:
