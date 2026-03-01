@@ -205,7 +205,10 @@ Para interagir com web, utilize as ferramentas de `browser_`:
 6. {"name": "browser_fill", "description": "Preenche um elemento com texto pelo seu claw-id", "arguments": {"cid": "string", "text": "string"}}
 7. {"name": "browser_read", "description": "Tira um novo snapshot da DOM atual mostrando IDs atualizados", "arguments": {}}
 8. {"name": "browser_press", "description": "Pressiona uma tecla especial (ex: Enter, Escape, Tab)", "arguments": {"key": "string"}}
-"""
+9. {"name": "spawn_subagent", "description": "Delegar tarefa longa para um subagente em background", "arguments": {"task": "string", "label": "string(opcional)"}}
+10. {"name": "subagents_list", "description": "Lista subagentes da sessão atual", "arguments": {"active_only": "boolean(opcional)"}}
+11. {"name": "subagents_kill", "description": "Cancela subagente por run_id ou todos da sessão", "arguments": {"run_id": "string(opcional)"}}
+	"""
     if not plugin_tools:
         return builtins
     lines = [builtins.strip(), "", "Ferramentas de plugins carregados:"]
@@ -267,6 +270,43 @@ def _execute_local_tool(
                 result = bm.get_snapshot()
             else:
                 result = f"Erro: ferramenta browser '{name}' nao mapeada."
+        elif name == "spawn_subagent":
+            from clawlite.runtime.subagents import get_subagent_runtime
+
+            task = str(args.get("task", "")).strip()
+            label = str(args.get("label", "")).strip()
+            if not task:
+                result = "Erro: argumento 'task' é obrigatório para spawn_subagent."
+            else:
+                run = get_subagent_runtime().spawn(
+                    session_id=(session_id or "default"),
+                    task=task,
+                    label=label,
+                )
+                result = json.dumps({"ok": True, "subagent": run}, ensure_ascii=False)
+        elif name == "subagents_list":
+            from clawlite.runtime.subagents import get_subagent_runtime
+
+            active_only = bool(args.get("active_only", False))
+            runs = get_subagent_runtime().list_runs(
+                session_id=(session_id or None),
+                only_active=active_only,
+            )
+            result = json.dumps({"ok": True, "runs": runs}, ensure_ascii=False)
+        elif name == "subagents_kill":
+            from clawlite.runtime.subagents import get_subagent_runtime
+
+            runtime = get_subagent_runtime()
+            run_id = str(args.get("run_id", "")).strip()
+            if run_id:
+                cancelled = runtime.cancel_run(run_id)
+                result = json.dumps({"ok": cancelled, "run_id": run_id}, ensure_ascii=False)
+            else:
+                cancelled_count = runtime.cancel_session(session_id or "")
+                result = json.dumps(
+                    {"ok": True, "cancelled": cancelled_count, "scope": "session"},
+                    ensure_ascii=False,
+                )
         else:
             if plugin_manager:
                 plugin_output = plugin_manager.try_execute_tool(name, args)
