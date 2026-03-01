@@ -131,6 +131,51 @@ def save_session_summary(summary: str, important: bool = True, path: str | None 
             fh.write(f"\n- {datetime.now(timezone.utc).strftime('%Y-%m-%d')}: {summary.strip()}\n")
 
 
+def auto_consolidate_session(
+    session_id: str,
+    *,
+    reason: str = "session-end",
+    path: str | None = None,
+) -> dict[str, Any]:
+    """Consolida memória ao término de sessão (ex.: comando /stop)."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {"ok": False, "reason": "missing-session-id"}
+
+    rows = read_recent_session_messages(sid, limit=30)
+    last_user = ""
+    last_assistant = ""
+    for row in rows:
+        role = str(row.get("role", "")).strip().lower()
+        text = str(row.get("text", "")).strip()
+        if not text:
+            continue
+        if role == "user":
+            last_user = text
+        elif role == "assistant":
+            last_assistant = text
+
+    if rows:
+        summary = (
+            f"Sessão {sid} encerrada ({reason}). "
+            f"Último pedido: {last_user[:220] or 'n/d'}. "
+            f"Última resposta: {last_assistant[:220] or 'n/d'}."
+        )
+    else:
+        summary = f"Sessão {sid} encerrada ({reason}). Sem histórico estruturado disponível."
+
+    save_session_summary(summary, important=True, path=path)
+    compact_result = compact_daily_memory(path=path)
+    return {
+        "ok": True,
+        "session_id": sid,
+        "reason": reason,
+        "messages": len(rows),
+        "summary": summary,
+        "compact": compact_result,
+    }
+
+
 def compact_daily_memory(max_daily_files: int = 21, path: str | None = None) -> dict[str, Any]:
     root = ensure_memory_layout(path)
     files = sorted((root / "memory").glob("*.md"))

@@ -23,6 +23,10 @@ def test_stop_cancels_inflight_session_task(monkeypatch) -> None:
                 return 0
 
         monkeypatch.setattr(sub_mod, "get_subagent_runtime", lambda: _FakeSubRuntime())
+        monkeypatch.setattr(
+            "clawlite.runtime.session_memory.auto_consolidate_session",
+            lambda session_id, reason="session-end", path=None: {"ok": True, "session_id": session_id, "reason": reason},
+        )
 
         handler = cm._build_message_handler(instance_key="irc", channel_name="irc")
         running = asyncio.create_task(handler("irc_group_#ops", "processar tarefa longa"))
@@ -46,6 +50,10 @@ def test_stop_without_active_tasks_returns_noop(monkeypatch) -> None:
                 return 0
 
         monkeypatch.setattr(sub_mod, "get_subagent_runtime", lambda: _FakeSubRuntime())
+        monkeypatch.setattr(
+            "clawlite.runtime.session_memory.auto_consolidate_session",
+            lambda session_id, reason="session-end", path=None: {"ok": True, "session_id": session_id, "reason": reason},
+        )
 
         handler = cm._build_message_handler(instance_key="signal", channel_name="signal")
         stop_reply = await handler("signal_dm_551199999", "/stop")

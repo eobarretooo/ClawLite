@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from clawlite.runtime.session_memory import (
+    auto_consolidate_session,
     append_daily_log,
     compact_daily_memory,
     ensure_memory_layout,
@@ -44,3 +45,28 @@ def test_startup_context_loads_core_files(tmp_path: Path):
     loaded = "\n".join(ctx["files_loaded"])
     assert "AGENTS.md" in loaded
     assert "MEMORY.md" in loaded
+
+
+def test_auto_consolidate_session_generates_summary(tmp_path: Path, monkeypatch):
+    root = ensure_memory_layout(str(tmp_path))
+
+    monkeypatch.setattr(
+        "clawlite.runtime.session_memory.read_recent_session_messages",
+        lambda session_id, limit=20: [
+            {"session_id": session_id, "role": "user", "text": "Me lembra de revisar o deploy."},
+            {"session_id": session_id, "role": "assistant", "text": "Claro, vou monitorar isso."},
+        ],
+    )
+
+    result = auto_consolidate_session("sessao-1", reason="stop-command", path=str(root))
+    assert result["ok"] is True
+    assert result["session_id"] == "sessao-1"
+    assert "Sessão sessao-1 encerrada" in result["summary"]
+
+    memory_text = (root / "MEMORY.md").read_text(encoding="utf-8")
+    assert "sessao-1" in memory_text
+
+
+def test_auto_consolidate_session_requires_id() -> None:
+    result = auto_consolidate_session("")
+    assert result["ok"] is False

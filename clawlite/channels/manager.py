@@ -100,6 +100,12 @@ class ChannelManager:
                         sub_cancelled = get_subagent_runtime().cancel_session(sid)
                     except Exception:
                         sub_cancelled = 0
+                    try:
+                        from clawlite.runtime.session_memory import auto_consolidate_session
+
+                        auto_consolidate_session(sid, reason="stop-command")
+                    except Exception:
+                        pass
                 total = cancelled + sub_cancelled
                 return f"⏹ Stopped {total} task(s)." if total > 0 else "No active task to stop."
 
@@ -508,12 +514,23 @@ class ChannelManager:
         channel = self.active_channels.get(instance_key)
         if channel is None:
             return False
+        session_row = self.sessions.get(instance_key)
         try:
             await channel.stop()
             logger.info(f"Canal '{instance_key}' desconectado.")
         except Exception as exc:
             logger.error(f"Erro ao parar canal '{instance_key}': {exc}")
         finally:
+            if session_row and session_row.session_id:
+                try:
+                    from clawlite.runtime.session_memory import auto_consolidate_session
+
+                    auto_consolidate_session(
+                        session_row.session_id,
+                        reason=f"channel-stop:{instance_key}",
+                    )
+                except Exception:
+                    pass
             self.sessions.drop_instance(instance_key)
             self.active_channels.pop(instance_key, None)
             self.active_metadata.pop(instance_key, None)
