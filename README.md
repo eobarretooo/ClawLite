@@ -36,6 +36,8 @@ Princípios:
 
 ## Instalação
 
+Linux:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
 ```
@@ -43,14 +45,14 @@ curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/mai
 Requisitos mínimos:
 
 - Python `3.10+`
-- Linux ou Termux
+- Linux
 - `git` e `curl`
 - Dependências Python em `requirements.txt` (instaladas automaticamente pelo `install.sh`)
 
-## Termux (recomendado: proot Ubuntu)
+## Termux (somente via proot Ubuntu)
 
-No Termux Android nativo, alguns binários/deps podem falhar por compatibilidade.
-Para uso estável, rode o ClawLite dentro de proot Ubuntu:
+No GitHub do ClawLite, o fluxo suportado para Termux é apenas via proot Ubuntu.
+Não use instalação nativa no Termux para o caminho oficial.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/setup_termux_proot.sh | bash

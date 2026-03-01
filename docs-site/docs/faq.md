@@ -2,7 +2,7 @@
 
 As 10 dúvidas mais comuns sobre ClawLite.
 
-1. **Funciona no Termux?** Sim, foco Linux/Termux-first.
+1. **Funciona no Termux?** Sim, no fluxo oficial via proot Ubuntu (`setup_termux_proot.sh` + `clawlitex`).
 2. **Preciso editar JSON?** Não no fluxo padrão (`onboarding`/`configure`).
 3. **Tem modo offline?** Sim, com fallback para Ollama.
 4. **Como vejo status do runtime?** `clawlite status`.
