@@ -50,7 +50,10 @@ Isso cria:
 - start script: `/root/.clawlite/bin/clawlite-supervised-start.sh`
 - boot script Termux: `~/.termux/boot/clawlite-supervisord.sh`
   - usa `proot` direto (sem `proot-distro login`) para evitar bloqueios no boot
-  - executa em background com `nohup` e log em `$PREFIX/tmp/clawlite-boot.log` (fallback: `~/.clawlite/logs/clawlite-boot.log`)
+  - usa ambiente host sanitizado (`env -i`) para evitar vazamento de `LD_PRELOAD`/`termux-exec` para o `proot`
+  - executa em background com `nohup` e log em `~/.clawlite/logs/clawlite-boot.log`
+  - usa lockfile em `~/.clawlite/run/boot-supervisord.lock` para evitar bootstrap duplicado
+  - aplica `termux-wake-lock` quando disponível
   - ignora execução quando detecta sessão `nested proot` (evita falso erro em testes dentro do próprio proot)
 
 3) Verifique status:

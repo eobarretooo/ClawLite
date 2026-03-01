@@ -100,6 +100,9 @@ clawlitex autostart status
 Isso configura:
 - `supervisord` dentro do proot para manter `clawlite start` vivo (`autorestart`).
 - script de boot em `~/.termux/boot/clawlite-supervisord.sh` para religar após reboot.
+  - usa `proot` direto com ambiente host sanitizado (`env -i`) para evitar conflito com `LD_PRELOAD`/`termux-exec`.
+  - grava logs em `~/.clawlite/logs/clawlite-boot.log` (sem dependência de `/tmp`).
+  - aplica `termux-wake-lock` quando disponível.
 
 Pré-requisitos no Android:
 - app `Termux:Boot` instalado.

@@ -301,28 +301,67 @@ PREFIX_PATH="\${PREFIX:-/data/data/com.termux/files/usr}"
 if [ -d "/data/data/com.termux/files/usr" ]; then
   PREFIX_PATH="/data/data/com.termux/files/usr"
 fi
+TERMUX_HOME_PATH="\${HOME:-/data/data/com.termux/files/home}"
+STATE_DIR="\${TERMUX_HOME_PATH}/.clawlite"
+LOG_DIR="\${STATE_DIR}/logs"
+RUN_DIR="\${STATE_DIR}/run"
+BOOT_LOG="\${LOG_DIR}/clawlite-boot.log"
+LOCK_FILE="\${RUN_DIR}/boot-supervisord.lock"
 PROOT_BIN="\${PREFIX_PATH}/bin/proot"
 ROOTFS_DIR="\${PREFIX_PATH}/var/lib/proot-distro/installed-rootfs/${DISTRO}"
-BOOT_LOG_DIR="\${PREFIX_PATH}/tmp"
-if [ ! -d "\${BOOT_LOG_DIR}" ]; then
-  BOOT_LOG_DIR="\${HOME:-/data/data/com.termux/files/home}/.clawlite/logs"
+
+mkdir -p "\${LOG_DIR}" "\${RUN_DIR}" >/dev/null 2>&1 || true
+exec >>"\${BOOT_LOG}" 2>&1
+echo "[\$(date '+%Y-%m-%d %H:%M:%S')] clawlite boot hook triggered"
+
+if [ -f "\${LOCK_FILE}" ]; then
+  OLD_PID=\$(cat "\${LOCK_FILE}" 2>/dev/null || true)
+  if [ -n "\${OLD_PID}" ] && kill -0 "\${OLD_PID}" 2>/dev/null; then
+    echo "boot hook already running (pid=\${OLD_PID}); exiting"
+    exit 0
+  fi
 fi
-mkdir -p "\${BOOT_LOG_DIR}" >/dev/null 2>&1 || true
-BOOT_LOG="\${BOOT_LOG_DIR}/clawlite-boot.log"
+echo "\$\$" > "\${LOCK_FILE}"
+trap 'rm -f "\${LOCK_FILE}" >/dev/null 2>&1 || true' EXIT
+
 TRACER_PID=\$(awk '/TracerPid:/ {print \$2}' /proc/\$\$/status 2>/dev/null || echo 0)
 
 if [ ! -x "\${PROOT_BIN}" ]; then
+  echo "proot binary nao encontrado: \${PROOT_BIN}"
   exit 0
 fi
 if [ ! -d "\${ROOTFS_DIR}" ]; then
+  echo "rootfs nao encontrado: \${ROOTFS_DIR}"
   exit 0
 fi
 if [ "\${TRACER_PID:-0}" != "0" ]; then
-  printf '%s\n' "nested-proot detectado (TracerPid=\${TRACER_PID}); boot direto ignorado." > "\${BOOT_LOG}"
+  echo "nested-proot detectado (TracerPid=\${TRACER_PID}); boot direto ignorado."
   exit 0
 fi
 
-nohup "\${PROOT_BIN}" \\
+if command -v termux-wake-lock >/dev/null 2>&1; then
+  termux-wake-lock >/dev/null 2>&1 || true
+fi
+
+# Evita conflito com termux-exec (LD_PRELOAD) e variaveis Android no host.
+unset LD_PRELOAD
+unset LD_LIBRARY_PATH
+unset CLASSPATH
+unset BOOTCLASSPATH
+unset ANDROID_ART_ROOT
+unset ANDROID_DATA
+unset ANDROID_I18N_ROOT
+unset ANDROID_ROOT
+unset DEX2OATBOOTCLASSPATH
+HOST_PATH="\${PREFIX_PATH}/bin:/system/bin:/system/xbin"
+
+nohup /usr/bin/env -i \\
+  HOME="\${TERMUX_HOME_PATH}" \\
+  PREFIX="\${PREFIX_PATH}" \\
+  PATH="\${HOST_PATH}" \\
+  TMPDIR="\${PREFIX_PATH}/tmp" \\
+  TERM=dumb \\
+  "\${PROOT_BIN}" \\
   --link2symlink -L --kill-on-exit \\
   --rootfs="\${ROOTFS_DIR}" \\
   --cwd=/root \\
@@ -345,12 +384,15 @@ nohup "\${PROOT_BIN}" \\
 if [ ! -f ${PROOT_SUPERVISOR_CONF} ]; then
   exit 0
 fi
-if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
+if command -v supervisorctl >/dev/null 2>&1 && supervisorctl -s ${PROOT_SUPERVISOR_SERVER} status >/dev/null 2>&1; then
   supervisorctl -s ${PROOT_SUPERVISOR_SERVER} start clawlite >/dev/null 2>&1 || true
 else
   supervisord -c ${PROOT_SUPERVISOR_CONF} >/dev/null 2>&1 || true
+  sleep 2
+  supervisorctl -s ${PROOT_SUPERVISOR_SERVER} start clawlite >/dev/null 2>&1 || true
 fi
-' > "\${BOOT_LOG}" 2>&1 &
+' &
+echo "clawlite boot hook dispatched"
 exit 0
 EOF
   chmod +x "${TERMUX_BOOT_SCRIPT}"
