@@ -55,6 +55,12 @@ MODEL_OPTIONS: dict[str, list[str]] = {
         "openai/gpt-4.1",
         "openai/gpt-4.1-mini",
     ],
+    "openai-codex": [
+        "openai-codex/gpt-5.3-codex",
+        "openai-codex/gpt-5.2-codex",
+        "openai-codex/gpt-5.1-codex",
+        "openai-codex/codex-mini-latest",
+    ],
     "anthropic": [
         "anthropic/claude-sonnet-4-6",
         "anthropic/claude-opus-4-6",

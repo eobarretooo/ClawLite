@@ -58,6 +58,11 @@ def test_get_token_from_cfg():
     assert _get_stored_token(cfg, "openai") == "sk-openai-abc"
 
 
+def test_get_token_from_openai_codex_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_CODEX_API_KEY", "sk-codex-test")
+    assert _get_stored_token({}, "openai-codex") == "sk-codex-test"
+
+
 def test_get_token_empty():
     assert _get_stored_token({}, "anthropic") == ""
 

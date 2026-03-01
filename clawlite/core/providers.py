@@ -23,6 +23,8 @@ class ProviderSpec:
 _ALIASES: dict[str, str] = {
     "google": "gemini",
     "google-gemini": "gemini",
+    "codex": "openai-codex",
+    "openai-codex-cli": "openai-codex",
     "z.ai": "zai",
     "z-ai": "zai",
 }
@@ -43,6 +45,19 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         api_style="openai",
         request_url="https://api.openai.com/v1/chat/completions",
         default_model="gpt-4o-mini",
+    ),
+    "openai-codex": ProviderSpec(
+        key="openai-codex",
+        display="OpenAI Codex",
+        auth_url="https://chatgpt.com/codex",
+        note=(
+            "Codex pode usar chave de API (OPENAI_CODEX_API_KEY/OPENAI_API_KEY) "
+            "ou token OAuth do Codex CLI (~/.codex/auth.json)."
+        ),
+        env_vars=("OPENAI_CODEX_API_KEY", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_CODEX_ACCESS_TOKEN"),
+        api_style="openai",
+        request_url="https://api.openai.com/v1/chat/completions",
+        default_model="gpt-5.3-codex",
     ),
     "anthropic": ProviderSpec(
         key="anthropic",
@@ -265,4 +280,3 @@ def resolve_provider_token(provider: str, fallback_token: str = "") -> str:
         if value:
             return value
     return str(fallback_token or "").strip()
-

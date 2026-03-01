@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import threading
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 
 from clawlite.config.settings import load_config, save_config
@@ -13,6 +15,7 @@ from clawlite.core.providers import get_provider_spec, normalize_provider
 
 _AUTH_PROVIDER_KEYS = (
     "openai",
+    "openai-codex",
     "anthropic",
     "gemini",
     "openrouter",
@@ -33,6 +36,30 @@ _AUTH_PROVIDER_KEYS = (
     "kilocode",
     "vllm",
 )
+
+
+def _resolve_codex_auth_path() -> Path:
+    codex_home = os.getenv("CODEX_HOME", "").strip()
+    if codex_home:
+        return Path(codex_home).expanduser() / "auth.json"
+    return Path.home() / ".codex" / "auth.json"
+
+
+def _read_codex_cli_access_token() -> str:
+    auth_path = _resolve_codex_auth_path()
+    if not auth_path.exists():
+        return ""
+    try:
+        raw = json.loads(auth_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    if not isinstance(raw, dict):
+        return ""
+    tokens = raw.get("tokens", {})
+    if not isinstance(tokens, dict):
+        return ""
+    access = str(tokens.get("access_token", "")).strip()
+    return access
 
 
 def _build_providers() -> dict[str, dict[str, Any]]:
@@ -141,6 +168,12 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
         print(f"Env vars aceitas: {', '.join(env_vars)}")
 
     token = non_interactive_token or ""
+    if not token and p == "openai-codex":
+        codex_access = _read_codex_cli_access_token()
+        if codex_access:
+            token = codex_access
+            print("Token OAuth do Codex CLI detectado e reutilizado de ~/.codex/auth.json")
+
     if not token:
         try:
             webbrowser.open(auth_url)
@@ -151,6 +184,10 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
             token = _try_local_callback(timeout_seconds=25)
 
     if not token:
+        env_key = f"CLAWLITE_{p.upper().replace('-', '_')}_TOKEN"
+        token = os.getenv(env_key, "").strip()
+    if not token:
+        # compat com nome antigo quando provider tem hífen
         token = os.getenv(f"CLAWLITE_{p.upper()}_TOKEN", "").strip()
 
     if not token:

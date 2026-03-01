@@ -58,6 +58,28 @@ class RemoteProviderTests(unittest.TestCase):
 
         self.assertEqual(out, "resposta-openai")
 
+    def test_provider_selection_openai_codex_uses_openai_chat_completions(self) -> None:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [{"message": {"content": "ok-codex"}}],
+        }
+
+        client = MagicMock()
+        client.post.return_value = response
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            out = run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "cfg-token")
+
+        self.assertEqual(out, "ok-codex")
+        args, kwargs = client.post.call_args
+        self.assertEqual(args[0], "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(kwargs["json"]["model"], "gpt-5.3-codex")
+
     def test_provider_selection_gemini_uses_openai_compat_url(self) -> None:
         response = MagicMock()
         response.raise_for_status.return_value = None

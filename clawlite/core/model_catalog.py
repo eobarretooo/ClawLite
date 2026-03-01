@@ -79,6 +79,30 @@ CATALOG: dict[str, ModelEntry] = {
         cost=ModelCost(input=0.0011, output=0.0044),
         capabilities=ModelCapabilities(reasoning=True, json_mode=True),
     ),
+    "openai-codex/gpt-5.3-codex": ModelEntry(
+        id="gpt-5.3-codex", provider="openai-codex", display_name="GPT-5.3 Codex",
+        context_window=400_000, max_output_tokens=128_000,
+        cost=ModelCost(input=0.0, output=0.0),
+        capabilities=ModelCapabilities(reasoning=True, json_mode=True),
+    ),
+    "openai-codex/gpt-5.2-codex": ModelEntry(
+        id="gpt-5.2-codex", provider="openai-codex", display_name="GPT-5.2 Codex",
+        context_window=400_000, max_output_tokens=128_000,
+        cost=ModelCost(input=0.0, output=0.0),
+        capabilities=ModelCapabilities(reasoning=True, json_mode=True),
+    ),
+    "openai-codex/gpt-5.1-codex": ModelEntry(
+        id="gpt-5.1-codex", provider="openai-codex", display_name="GPT-5.1 Codex",
+        context_window=400_000, max_output_tokens=128_000,
+        cost=ModelCost(input=0.0, output=0.0),
+        capabilities=ModelCapabilities(reasoning=True, json_mode=True),
+    ),
+    "openai-codex/codex-mini-latest": ModelEntry(
+        id="codex-mini-latest", provider="openai-codex", display_name="Codex Mini Latest",
+        context_window=128_000, max_output_tokens=32_768,
+        cost=ModelCost(input=0.0, output=0.0),
+        capabilities=ModelCapabilities(reasoning=True, json_mode=True),
+    ),
 
     # Anthropic
     "anthropic/claude-sonnet-4-6": ModelEntry(

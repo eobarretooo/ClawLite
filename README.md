@@ -51,7 +51,7 @@ Requisitos mínimos:
 
 O ClawLite suporta providers no padrão `provider/model`, incluindo:
 
-- `openai`, `anthropic`, `gemini`, `openrouter`, `groq`
+- `openai`, `openai-codex`, `anthropic`, `gemini`, `openrouter`, `groq`
 - `moonshot`, `mistral`, `xai`, `together`, `huggingface`
 - `nvidia`, `qianfan`, `venice`, `minimax`, `xiaomi`, `zai`
 - `litellm`, `vercel-ai-gateway`, `kilocode`, `vllm`, `ollama`
@@ -64,6 +64,10 @@ clawlite auth status
 ```
 
 No `clawlite configure`, ao selecionar o provider o link oficial de login/chave também é exibido.
+
+Codex:
+- `openai-codex/*` pode usar `OPENAI_CODEX_API_KEY` / `OPENAI_API_KEY`.
+- No `clawlite auth login openai-codex`, o ClawLite tenta reutilizar `~/.codex/auth.json` automaticamente quando disponível.
 
 ## Onboarding (fluxo estilo OpenClaw, adaptado ao ClawLite)
 
