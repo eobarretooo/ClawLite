@@ -15,16 +15,16 @@ from clawlite.gateway.utils import (
     _iso_now,
     _load_dashboard_settings,
     _log,
-    _read_jsonl,
 )
+from clawlite.session.manager import SessionStore
 
 
 def _dashboard_dir() -> Path:
     return Path(app_settings.CONFIG_DIR) / "dashboard"
 
 
-def _sessions_file() -> Path:
-    return _dashboard_dir() / "sessions.jsonl"
+def _session_store() -> SessionStore:
+    return SessionStore(_dashboard_dir() / "sessions.jsonl")
 
 
 def _telemetry_file() -> Path:
@@ -109,17 +109,14 @@ async def _handle_chat_message(session_id: str, text: str) -> dict[str, Any]:
     if not isinstance(hooks, dict):
         hooks = {}
 
-    sessions_path = _sessions_file()
-    sessions_path.parent.mkdir(parents=True, exist_ok=True)
-
     user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": clean_text}
-    _append_jsonl(sessions_path, user_msg)
+    _session_store().append(session_id=session_id, role="user", text=clean_text, ts=user_msg["ts"])
 
     reply, meta = await _run_agent_reply(session_id, clean_text, hooks)
     meta = _normalize_chat_meta(meta, requested_model)
 
     assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
-    _append_jsonl(sessions_path, assistant_msg)
+    _session_store().append(session_id=session_id, role="assistant", text=reply, ts=assistant_msg["ts"])
 
     effective_model = str(meta.get("model") or requested_model)
     telemetry_row = _record_telemetry(
@@ -161,11 +158,8 @@ async def _stream_chat_message(session_id: str, text: str):  # -> AsyncGenerator
     if not isinstance(hooks, dict):
         hooks = {}
 
-    sessions_path = _sessions_file()
-    sessions_path.parent.mkdir(parents=True, exist_ok=True)
-
     user_msg = {"ts": _iso_now(), "session_id": session_id, "role": "user", "text": clean_text}
-    _append_jsonl(sessions_path, user_msg)
+    _session_store().append(session_id=session_id, role="user", text=clean_text, ts=user_msg["ts"])
 
     prompt = _build_chat_prompt(clean_text, hooks)
 
@@ -212,7 +206,7 @@ async def _stream_chat_message(session_id: str, text: str):  # -> AsyncGenerator
     reply = _build_chat_reply(reply, hooks)
 
     assistant_msg = {"ts": _iso_now(), "session_id": session_id, "role": "assistant", "text": reply}
-    _append_jsonl(sessions_path, assistant_msg)
+    _session_store().append(session_id=session_id, role="assistant", text=reply, ts=assistant_msg["ts"])
 
     if not meta:
         meta = {"mode": "error", "reason": "stream_failed", "model": requested_model}
@@ -249,7 +243,7 @@ async def _stream_chat_message(session_id: str, text: str):  # -> AsyncGenerator
 
 def _collect_session_index(query: str = "") -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
-    for row in _read_jsonl(_sessions_file()):
+    for row in _session_store().iter_rows():
         sid = str(row.get("session_id", "")).strip()
         if not sid:
             continue
@@ -278,4 +272,4 @@ def _collect_session_index(query: str = "") -> list[dict[str, Any]]:
 
 
 def _session_messages(session_id: str) -> list[dict[str, Any]]:
-    return [r for r in _read_jsonl(_sessions_file()) if str(r.get("session_id", "")) == session_id]
+    return _session_store().recent(session_id, limit=10_000)

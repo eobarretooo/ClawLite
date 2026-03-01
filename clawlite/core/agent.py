@@ -599,7 +599,7 @@ def _run_task_with_timeout(prompt: str, timeout_s: float) -> tuple[str, dict[str
             )
 
 
-def run_task_with_meta(
+def _run_task_with_meta_impl(
     prompt: str,
     skill: str = "",
     session_id: str = "",
@@ -654,7 +654,7 @@ def run_task_with_meta(
     return last_output, last_meta
 
 
-async def run_task_with_meta_async(
+async def _run_task_with_meta_async_impl(
     prompt: str,
     skill: str = "",
     session_id: str = "",
@@ -662,7 +662,7 @@ async def run_task_with_meta_async(
 ) -> tuple[str, dict[str, Any]]:
     """Wrapper oficial async para o fluxo unificado de produção."""
     return await asyncio.to_thread(
-        run_task_with_meta,
+        _run_task_with_meta_impl,
         prompt,
         skill,
         session_id,
@@ -670,14 +670,14 @@ async def run_task_with_meta_async(
     )
 
 
-def run_task_stream_with_meta(
+def _run_task_stream_with_meta_impl(
     prompt: str,
     skill: str = "",
     session_id: str = "",
     workspace_path: str | None = None,
 ) -> tuple[Iterator[str], dict[str, Any]]:
     """API de stream compatível: executa fluxo unificado e retorna um único chunk."""
-    output, meta = run_task_with_meta(
+    output, meta = _run_task_with_meta_impl(
         prompt=prompt,
         skill=skill,
         session_id=session_id,
@@ -756,7 +756,7 @@ def run_task(prompt: str) -> str:
     return run_task_with_learning(prompt)
 
 
-def run_task_with_learning(
+def _run_task_with_learning_impl(
     prompt: str,
     skill: str = "",
     session_id: str = "",
@@ -919,7 +919,7 @@ def run_task_with_learning(
     return last_output
 
 
-async def run_task_with_learning_async(
+async def _run_task_with_learning_async_impl(
     prompt: str,
     skill: str = "",
     session_id: str = "",
@@ -927,7 +927,7 @@ async def run_task_with_learning_async(
 ) -> str:
     """Wrapper async do fluxo com aprendizado contínuo."""
     return await asyncio.to_thread(
-        run_task_with_learning,
+        _run_task_with_learning_impl,
         prompt,
         skill,
         session_id,
@@ -935,7 +935,7 @@ async def run_task_with_learning_async(
     )
 
 
-def run_task_stream_with_learning(
+def _run_task_stream_with_learning_impl(
     prompt: str,
     skill: str = "",
     session_id: str = "",
@@ -1094,3 +1094,99 @@ def run_task_stream_with_learning(
             )
             yield f"\n[Erro durante stream: {exc}]"
             return
+
+
+def run_task_with_meta(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    from clawlite.agent.loop import get_agent_loop
+
+    return get_agent_loop().run_with_meta(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
+
+
+async def run_task_with_meta_async(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    from clawlite.agent.loop import get_agent_loop
+
+    return await get_agent_loop().run_with_meta_async(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
+
+
+def run_task_stream_with_meta(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> tuple[Iterator[str], dict[str, Any]]:
+    from clawlite.agent.loop import get_agent_loop
+
+    return get_agent_loop().stream_with_meta(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
+
+
+def run_task_with_learning(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> str:
+    from clawlite.agent.loop import get_agent_loop
+
+    return get_agent_loop().run_with_learning(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
+
+
+async def run_task_with_learning_async(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> str:
+    from clawlite.agent.loop import get_agent_loop
+
+    return await get_agent_loop().run_with_learning_async(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
+
+
+def run_task_stream_with_learning(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> Iterator[str]:
+    from clawlite.agent.loop import get_agent_loop
+
+    return get_agent_loop().stream_with_learning(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )

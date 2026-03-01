@@ -19,6 +19,7 @@ from clawlite.core.agent import run_task_with_meta, run_task_with_meta_async
 from clawlite.runtime.channel_sessions import ChannelSessionManager
 from clawlite.runtime.message_bus import InboundEnvelope, MessageBus, OutboundEnvelope
 from clawlite.runtime.subagents import set_subagent_notifier
+from clawlite.session.manager import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class ChannelManager:
         self.active_channels: dict[str, BaseChannel] = {}
         self.active_metadata: dict[str, dict[str, Any]] = {}
         self.sessions = ChannelSessionManager()
+        self.session_store = SessionStore()
         self._bus = MessageBus(inbound_handler=self._process_inbound, outbound_handler=self._send_outbound)
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -95,11 +97,15 @@ class ChannelManager:
         """
         prompt = env.text.strip()
         try:
+            if prompt:
+                self.session_store.append(session_id=env.session_id, role="user", text=prompt)
             # Compat: se testes/integrações monkeypatcharem a função local, respeitamos.
             if run_task_with_meta is not _ORIGINAL_RUN_TASK_WITH_META:
                 output, _meta = await asyncio.to_thread(run_task_with_meta, prompt, "", env.session_id)
             else:
                 output, _meta = await run_task_with_meta_async(prompt, "", env.session_id)
+            if str(output or "").strip():
+                self.session_store.append(session_id=env.session_id, role="assistant", text=str(output))
             return output
         except Exception as exc:
             logger.error(f"Erro no processamento da mensagem do canal: {exc}")
