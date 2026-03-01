@@ -114,6 +114,20 @@ class OutboundResilience:
             error["reason"],
             error["fallback"],
         )
+        self._emit_dashboard_failure(error)
+
+    @staticmethod
+    def _emit_dashboard_failure(error: dict[str, Any]) -> None:
+        """
+        Espelha falhas outbound no LOG_RING do gateway para aparecer no dashboard.
+        É best-effort e não deve quebrar o fluxo de envio em caso de erro.
+        """
+        try:
+            from clawlite.gateway.utils import _log as gateway_log
+
+            gateway_log("channels.outbound.failed", level="error", data=dict(error))
+        except Exception:
+            return
 
     @staticmethod
     def _now_iso() -> str:

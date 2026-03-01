@@ -9,6 +9,7 @@ from clawlite.channels.googlechat import GoogleChatChannel
 from clawlite.channels.imessage import IMessageChannel
 from clawlite.channels.irc import IrcChannel
 from clawlite.channels.signal import SignalChannel
+from clawlite.gateway.state import LOG_RING
 
 
 class _Response:
@@ -166,6 +167,24 @@ def test_googlechat_outbound_fallback_unavailable(caplog):
     assert metrics["sent_ok"] == 0
     assert metrics["fallback_count"] == 1
     assert metrics["send_fail_count"] == 1
+
+
+def test_outbound_failure_is_mirrored_to_dashboard_log_ring(monkeypatch):
+    LOG_RING.clear()
+    channel = SignalChannel(token="", cli_path="missing-signal-cli")
+    monkeypatch.setattr("clawlite.channels.signal.shutil.which", lambda _name: None)
+
+    async def _run() -> None:
+        await channel.send_message("signal_dm_+15551234567", "no cli")
+
+    asyncio.run(_run())
+    matches = [
+        row for row in LOG_RING
+        if row.get("event") == "channels.outbound.failed"
+        and row.get("data", {}).get("code") == "channel_unavailable"
+    ]
+    assert matches
+    LOG_RING.clear()
 
 
 def test_irc_outbound_ok_and_idempotent():

@@ -72,9 +72,9 @@ Comando:
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8787/api/dashboard/logs?level=error&limit=50" \
-  | jq '.entries[] | select(.message|test("Outbound falhou")) | .message' | head -n 1
+  | jq '.logs[] | select((.event=="channels.outbound.failed") and (.data.code != null) and (.data.fallback != null)) | .data' | head -n 1
 ```
-Criterio PASS: existe ao menos uma linha com `code=` e `fallback=`.
+Criterio PASS: existe ao menos uma linha retornada com `code` e `fallback`.
 
 ## Resultado da release
 
