@@ -68,6 +68,7 @@ No `clawlite configure`, ao selecionar o provider o link oficial de login/chave 
 Codex:
 - `openai-codex/*` pode usar `OPENAI_CODEX_API_KEY` / `OPENAI_API_KEY`.
 - No `clawlite auth login openai-codex`, o ClawLite tenta reutilizar `~/.codex/auth.json` automaticamente quando disponível.
+- Se não houver token salvo, o ClawLite tenta iniciar o OAuth via `codex login` (gera/abre o link de autenticação) e importa o token no final.
 
 ## Onboarding (fluxo estilo OpenClaw, adaptado ao ClawLite)
 

@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
+import subprocess
+import sys
 import threading
 import urllib.parse
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -60,6 +64,27 @@ def _read_codex_cli_access_token() -> str:
         return ""
     access = str(tokens.get("access_token", "")).strip()
     return access
+
+
+def _can_prompt_user() -> bool:
+    return bool(getattr(sys.stdin, "isatty", lambda: False)() and getattr(sys.stdout, "isatty", lambda: False)())
+
+
+def _run_codex_cli_oauth_login() -> str:
+    if shutil.which("codex") is None:
+        return ""
+
+    for cmd in (["codex", "login"], ["codex", "auth", "login"]):
+        try:
+            proc = subprocess.run(cmd)
+        except OSError:
+            continue
+        if proc.returncode != 0:
+            continue
+        token = _read_codex_cli_access_token()
+        if token:
+            return token
+    return ""
 
 
 def _build_providers() -> dict[str, dict[str, Any]]:
@@ -173,15 +198,31 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
         if codex_access:
             token = codex_access
             print("Token OAuth do Codex CLI detectado e reutilizado de ~/.codex/auth.json")
+        elif _can_prompt_user():
+            if shutil.which("codex") is None:
+                print(
+                    "Codex CLI não encontrado no PATH. Instale o Codex CLI para fluxo OAuth automático "
+                    "ou informe uma API key manualmente."
+                )
+            else:
+                print("\nIniciando OAuth do Codex CLI (vai gerar/abrir link de login)...")
+                codex_access = _run_codex_cli_oauth_login()
+                if codex_access:
+                    token = codex_access
+                    print("OAuth concluído via Codex CLI e token importado com sucesso.")
+                else:
+                    print("Não foi possível importar token via Codex CLI nesta tentativa.")
+                    print("Você pode rodar `codex login` manualmente e tentar novamente.")
 
     if not token:
-        try:
-            webbrowser.open(auth_url)
-        except Exception:
-            pass
-        if supports_callback:
-            print("\nAguardando callback automático...\n")
-            token = _try_local_callback(timeout_seconds=25)
+        if p != "openai-codex":
+            try:
+                webbrowser.open(auth_url)
+            except Exception:
+                pass
+            if supports_callback:
+                print("\nAguardando callback automático...\n")
+                token = _try_local_callback(timeout_seconds=25)
 
     if not token:
         env_key = f"CLAWLITE_{p.upper().replace('-', '_')}_TOKEN"
@@ -191,14 +232,21 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
         token = os.getenv(f"CLAWLITE_{p.upper()}_TOKEN", "").strip()
 
     if not token:
-        token = input("Cole o token/chave do provedor: ").strip()
+        if p == "openai-codex":
+            hint = (
+                "Cole token/chave do provedor (ou pressione Enter após executar `codex login` para tentar importar): "
+            )
+            typed = input(hint).strip()
+            token = typed or _read_codex_cli_access_token()
+        else:
+            token = input("Cole o token/chave do provedor: ").strip()
 
     if not token:
         return False, "Token não informado."
 
     cfg["auth"]["providers"][p] = {
         "token": token,
-        "saved_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     save_config(cfg)
     return True, f"Login salvo para {meta['display']}"

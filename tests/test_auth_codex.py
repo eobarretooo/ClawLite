@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import clawlite.auth as auth
@@ -69,4 +69,45 @@ def test_auth_login_openai_codex_reuses_cli_token(monkeypatch, tmp_path: Path):
         .get("openai-codex", {})
         .get("token", "")
         == "codex-access-token-xyz"
+    )
+
+
+def test_run_codex_cli_oauth_login_uses_codex_binary(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(auth.shutil, "which", lambda _name: "/usr/bin/codex")
+    monkeypatch.setattr(auth.subprocess, "run", _fake_run)
+    monkeypatch.setattr(auth, "_read_codex_cli_access_token", lambda: "oauth-from-codex-cli")
+
+    token = auth._run_codex_cli_oauth_login()
+    assert token == "oauth-from-codex-cli"
+    assert calls and calls[0] == ["codex", "login"]
+
+
+def test_auth_login_openai_codex_runs_cli_oauth_when_needed(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(auth, "_read_codex_cli_access_token", lambda: "")
+    monkeypatch.setattr(auth, "_can_prompt_user", lambda: True)
+    monkeypatch.setattr(auth.shutil, "which", lambda _name: "/usr/bin/codex")
+    monkeypatch.setattr(auth, "_run_codex_cli_oauth_login", lambda: "oauth-token-imported")
+
+    old_dir, old_path = _patch_config_home(str(tmp_path))
+    try:
+        settings.save_config(settings.DEFAULT_CONFIG)
+        ok, _msg = auth.auth_login("openai-codex")
+        cfg = settings.load_config()
+    finally:
+        settings.CONFIG_DIR = old_dir
+        settings.CONFIG_PATH = old_path
+
+    assert ok is True
+    assert (
+        cfg.get("auth", {})
+        .get("providers", {})
+        .get("openai-codex", {})
+        .get("token", "")
+        == "oauth-token-imported"
     )
