@@ -297,21 +297,20 @@ fi
   mkdir -p "${TERMUX_BOOT_DIR}"
   cat > "${TERMUX_BOOT_SCRIPT}" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
-set -euo pipefail
 if ! command -v proot-distro >/dev/null 2>&1; then
   exit 0
 fi
-proot-distro login ${DISTRO} -- /bin/bash -lc '
-set -euo pipefail
+nohup proot-distro login ${DISTRO} -- /bin/bash -lc '
 if [ ! -f ${PROOT_SUPERVISOR_CONF} ]; then
   exit 0
 fi
 if [ -f /root/.clawlite/run/supervisord.pid ] && kill -0 \$(cat /root/.clawlite/run/supervisord.pid) 2>/dev/null; then
   supervisorctl -s ${PROOT_SUPERVISOR_SERVER} start clawlite >/dev/null 2>&1 || true
 else
-  supervisord -c ${PROOT_SUPERVISOR_CONF}
+  supervisord -c ${PROOT_SUPERVISOR_CONF} >/dev/null 2>&1 || true
 fi
-'
+' > /tmp/clawlite-boot.log 2>&1 &
+exit 0
 EOF
   chmod +x "${TERMUX_BOOT_SCRIPT}"
 
