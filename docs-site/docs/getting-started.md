@@ -11,13 +11,13 @@ O quickstart padrão é interativo (estilo OpenClaw). Setup manual é opcional.
 Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
 ```
 
 Termux (proot Ubuntu):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/setup_termux_proot.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/setup_termux_proot.sh | bash
 ```
 
 ## 2) Diagnóstico

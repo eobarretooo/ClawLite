@@ -34,6 +34,16 @@ Princípios:
 - Segurança pragmática: token no gateway, pareamento de remetentes e políticas configuráveis.
 - Operação contínua: daemon, backup/restore e checks de saúde.
 
+## Status atual (Março/2026)
+
+- Release estável: `v0.4.1`
+- Canal beta disponível via `clawlite update --channel beta`
+- Webhooks dos canais novos com hardening (validação, autenticação, sanitização e rate limit)
+- Outbound resiliente em `googlechat`, `irc`, `signal`, `imessage` com retry/timeout/circuit breaker
+- Runbook operacional e checklist binário de beta:
+  - `docs/OUTBOUND_FAILURE_RECOVERY_RUNBOOK.md`
+  - `docs/BETA_RELEASE_CHECKLIST.md`
+
 ## Instalação
 
 Linux:

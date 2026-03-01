@@ -5,7 +5,7 @@ Passo a passo para Linux e Termux (via proot Ubuntu).
 ## Linux (genérico)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
 ```
 
 ## Ubuntu/Debian
@@ -13,13 +13,13 @@ curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/i
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip curl git
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
 ```
 
 ## Termux (somente proot Ubuntu)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/setup_termux_proot.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/setup_termux_proot.sh | bash
 clawlitex status
 clawlitex onboarding
 clawlitex start

@@ -54,7 +54,7 @@ clawlite reddit exchange-code "SEU_CODE"
 
 ```bash
 clawlite reddit status
-clawlite reddit post-milestone --title "ClawLite v0.4.1" --text "..."
+clawlite reddit post-milestone --title "ClawLite vX.Y.Z" --text "..."
 clawlite reddit monitor-once
 ```
 

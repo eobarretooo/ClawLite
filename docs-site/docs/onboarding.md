@@ -16,13 +16,14 @@ clawlite onboarding
 ## Etapas do wizard (estado atual)
 
 1. Model/Auth
-2. Workspace
-3. Gateway
-4. Canais
-5. Daemon
-6. Health check
-7. Skills
-8. Review + Apply
+2. Teste de API key
+3. Workspace
+4. Gateway
+5. Canais
+6. Daemon
+7. Health check
+8. Skills
+9. Review + Apply
 
 ## Pós-onboarding recomendado
 

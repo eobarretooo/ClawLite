@@ -7,6 +7,7 @@ module.exports = {
     'comandos-cli',
     'skills-reference',
     'gateway-api',
+    'operations',
     'memoria',
     'multiagente',
     'faq',

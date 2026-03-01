@@ -5,7 +5,8 @@ slug: /
 
 <div className="hero-pro">
   <div className="hero-badges">
-    <img src="https://img.shields.io/badge/versão-0.4.1-7c3aed?style=for-the-badge" alt="versao"/>
+    <img src="https://img.shields.io/badge/stable-0.4.1-7c3aed?style=for-the-badge" alt="stable"/>
+    <img src="https://img.shields.io/badge/channel-beta_available-f59e0b?style=for-the-badge" alt="beta"/>
     <img src="https://img.shields.io/badge/licença-MIT-10b981?style=for-the-badge" alt="licenca"/>
     <img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge" alt="stars"/>
   </div>
@@ -34,5 +35,7 @@ slug: /
 - Learning analytics com `clawlite stats`
 - Reddit OAuth + postagem de milestones + monitor de menções
 - Bots operacionais com gateway WebSocket e skills modulares
+- Hardening de webhooks e outbound resiliente (retry, timeout, idempotência e circuit breaker)
+- Runbook de falha/recuperação outbound + checklist binário de release beta
 
 ➡️ Próxima página: [Início Rápido](/getting-started)
