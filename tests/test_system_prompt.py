@@ -19,3 +19,21 @@ def test_build_system_prompt_contains_sections(tmp_path: Path):
     assert "[SOUL]" in prompt
     assert "[AGENTS]" in prompt
     assert "[USER]" in prompt
+
+
+def test_build_system_prompt_includes_discovered_skills(tmp_path: Path):
+    (tmp_path / "skills" / "always-skill").mkdir(parents=True)
+    (tmp_path / "skills" / "always-skill" / "SKILL.md").write_text(
+        """---
+name: always-skill
+description: Skill de teste
+always: true
+---
+# Always Skill
+""",
+        encoding="utf-8",
+    )
+
+    prompt = build_system_prompt(str(tmp_path))
+    assert "[SKILLS]" in prompt
+    assert "always-skill" in prompt

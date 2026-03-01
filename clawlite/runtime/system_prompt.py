@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from clawlite.runtime.session_memory import ensure_memory_layout
+from clawlite.skills.discovery import build_skills_summary
 
 
 def _read(path: Path, max_chars: int = 2500) -> str:
@@ -42,5 +43,9 @@ def build_system_prompt(workspace_path: str | None = None) -> str:
         blocks.append("[AGENTS]\n" + agents)
     if user:
         blocks.append("[USER]\n" + user)
+
+    skills_summary = build_skills_summary(root)
+    if skills_summary:
+        blocks.append("[SKILLS]\n" + skills_summary[:2600])
 
     return "\n\n".join(blocks).strip()

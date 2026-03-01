@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from clawlite.skills.discovery import always_loaded_skills, discover_skill_docs
 from clawlite.skills.openclaw_compat import (
     OPENCLAW_COMPAT_DESCRIPTIONS,
     OPENCLAW_COMPAT_SKILLS,
@@ -91,3 +92,25 @@ SKILL_DESCRIPTIONS.update(OPENCLAW_COMPAT_DESCRIPTIONS)
 
 def describe_skill(name: str) -> str:
     return SKILL_DESCRIPTIONS.get(name, "Sem descrição cadastrada.")
+
+
+def discovered_skills(workspace_path: str | None = None) -> list[dict[str, object]]:
+    rows = []
+    for item in discover_skill_docs(workspace_path):
+        rows.append(
+            {
+                "name": item.name,
+                "path": item.path,
+                "source": item.source,
+                "always": item.always,
+                "available": item.available,
+                "requires_bins": item.requires_bins,
+                "requires_env": item.requires_env,
+                "description": item.description,
+            }
+        )
+    return rows
+
+
+def always_skill_names(workspace_path: str | None = None) -> list[str]:
+    return [row.name for row in always_loaded_skills(workspace_path)]
