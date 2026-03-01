@@ -29,12 +29,30 @@ Stack principal:
 ## Status atual
 
 - Autonomia: **16/20**
-- Testes: **259 passando** (`pytest -q`)
-- Linha de commits de referencia consolidada ate: **`7878b6f`**
+- Testes: **263 passando** (`pytest -q`)
+- Linha de commits de referencia consolidada ate: **`60ac488`**
 - Estado recente de daemon/autostart:
   - `supervisord` configurado em `/root/.clawlite/supervisord.conf`
   - boot script Termux em `/data/data/com.termux/files/home/.termux/boot/clawlite-supervisord.sh`
   - `clawlitex autostart status` mostrando `supervisord pid: RUNNING` com fallback de pid para status do programa
+  - boot script pronto para proot/supervisord; ainda pendente validacao final em reboot real do Android
+
+## Atualizacoes de hoje (2026-03-01)
+
+- Skills autoload executaveis implementadas e funcionando:
+  - novo `SKILL.md` com `command:` ou `script:` vira tool executavel sem editar `registry.py`
+  - fallback dinamico no dispatch MCP preservando compatibilidade com skills estaticas
+- Diretórios de skills alinhados:
+  - builtin: `repo/skills`
+  - runtime usuario: `~/.clawlite/workspace/skills`
+  - marketplace: `~/.clawlite/marketplace/skills`
+- Criacao automatica dos diretorios runtime de skills no discovery/workspace.
+- Exemplos de skill runtime criados:
+  - `~/.clawlite/workspace/skills/git-operations/SKILL.md` (`always: true`)
+  - `~/.clawlite/workspace/skills/code-analysis/SKILL.md` (`always: false`, `script: run.py`)
+- Testes adicionados para autoload dinamico e regressao:
+  - `tests/test_dynamic_skill_autoload.py`
+  - suite completa verde: `263 passed`
 
 ## Arquitetura do ClawLite
 
@@ -144,7 +162,8 @@ Docs e operacao:
    - `pytest -q`
 
 Sequencia recomendada apos retomada:
-- validar inbound Telegram real
-- resolver provider para heartbeat proativo
-- executar teste manual de restart Termux
-- executar teste manual de reboot Android
+- validar inbound Telegram real (recebe + responde sem sessao manual)
+- validar envio proativo (heartbeat) no canal conectado
+- executar teste manual de restart Termux (supervisord retomando canal)
+- executar teste manual de reboot Android (Termux:Boot + proot + supervisord)
+- fechar bloqueadores restantes para migrar de 16/20 para 20/20
