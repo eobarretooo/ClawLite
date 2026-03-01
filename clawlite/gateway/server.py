@@ -13,8 +13,28 @@ import contextlib
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     from clawlite.channels.manager import manager
+    from clawlite.core.heartbeat import start_heartbeat_thread
+    from clawlite.runtime.conversation_cron import start_cron_scheduler_thread
+
+    cfg = load_config()
+    gateway_cfg = cfg.get("gateway", {}) if isinstance(cfg.get("gateway"), dict) else {}
+    hb_interval = int(gateway_cfg.get("heartbeat_interval_s", 1800))
+    cron_poll_interval = float(gateway_cfg.get("cron_poll_interval_s", 5.0))
+
+    hb_loop = start_heartbeat_thread(interval_s=hb_interval)
+    cron_scheduler = start_cron_scheduler_thread(poll_interval_s=cron_poll_interval)
+    app.state.heartbeat_loop = hb_loop
+    app.state.cron_scheduler = cron_scheduler
     await manager.start_all()
     yield
+    try:
+        hb_loop.stop()
+    except Exception:
+        pass
+    try:
+        cron_scheduler.stop()
+    except Exception:
+        pass
     await manager.stop_all()
 
 # Main FastAPI App Setup
@@ -62,12 +82,6 @@ def run_gateway(host: str | None = None, port: int | None = None) -> None:
         )
 
     _log("gateway.started", data={"host": h, "port": p})
-
-    # Inicia heartbeat em thread daemon (para quando o processo encerra)
-    hb_interval = int(cfg.get("gateway", {}).get("heartbeat_interval_s", 1800))
-    from clawlite.core.heartbeat import start_heartbeat_thread
-
-    start_heartbeat_thread(interval_s=hb_interval)
 
     try:
         uvicorn.run(

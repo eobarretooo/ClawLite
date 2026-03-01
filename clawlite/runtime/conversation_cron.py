@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
 from clawlite.runtime import multiagent
 from clawlite.runtime.notifications import create_notification
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -260,6 +264,49 @@ def run_cron_jobs(job_id: int | None = None, run_all: bool = False) -> list[Cron
         results.append(CronRunResult(job_id=job.id, status=status, task_id=task_id, message=message))
 
     return results
+
+
+class ConversationCronScheduler:
+    """Scheduler em loop para disparo automático de jobs cron."""
+
+    def __init__(self, poll_interval_s: float = 5.0) -> None:
+        try:
+            interval = float(poll_interval_s)
+        except (TypeError, ValueError):
+            interval = 5.0
+        self.poll_interval_s = max(1.0, interval)
+        self._stop_event = threading.Event()
+        self._run_lock = threading.Lock()
+
+    def run_pending_once(self) -> list[CronRunResult]:
+        """Executa apenas jobs devidos; evita sobreposição de execução."""
+        if not self._run_lock.acquire(blocking=False):
+            return []
+        try:
+            return run_cron_jobs(run_all=False)
+        finally:
+            self._run_lock.release()
+
+    def start(self) -> None:
+        logger.info("cron-scheduler: iniciado (poll_interval_s=%.1f)", self.poll_interval_s)
+        while not self._stop_event.is_set():
+            try:
+                self.run_pending_once()
+            except Exception as exc:
+                logger.warning("cron-scheduler: erro no ciclo: %s", exc)
+            self._stop_event.wait(self.poll_interval_s)
+        logger.info("cron-scheduler: encerrado")
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+
+def start_cron_scheduler_thread(poll_interval_s: float = 5.0) -> ConversationCronScheduler:
+    """Inicia o scheduler cron em thread daemon."""
+    scheduler = ConversationCronScheduler(poll_interval_s=poll_interval_s)
+    thread = threading.Thread(target=scheduler.start, name="clawlite-cron-scheduler", daemon=True)
+    thread.start()
+    return scheduler
 
 
 def format_cron_jobs_table(rows: list[CronJobRow]) -> str:
