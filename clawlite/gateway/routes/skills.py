@@ -190,3 +190,8 @@ def api_dashboard_update(payload: dict[str, Any], authorization: str | None = He
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _log("skills.update", data={"dry_run": dry_run, "count": len(result.get("updated", []))})
     return JSONResponse({"ok": True, "dry_run": dry_run, "result": result})
+
+
+@router.post("/api/update/run")
+def api_update_run(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    return api_dashboard_update(payload, authorization=authorization)

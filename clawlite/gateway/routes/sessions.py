@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ from clawlite.config import settings as app_settings
 from clawlite.gateway.chat import _collect_session_index, _session_messages
 from clawlite.gateway.utils import (
     _check_bearer,
+    _iso_now,
+    _log,
     _parse_ts,
     _period_start,
     _read_jsonl,
@@ -22,6 +25,20 @@ router = APIRouter()
 
 def _telemetry_file() -> Path:
     return Path(app_settings.CONFIG_DIR) / "dashboard" / "telemetry.jsonl"
+
+
+def _sessions_file() -> Path:
+    return Path(app_settings.CONFIG_DIR) / "dashboard" / "sessions.jsonl"
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for row in rows:
+        if isinstance(row, dict):
+            lines.append(json.dumps(row, ensure_ascii=False))
+    text = ("\n".join(lines) + "\n") if lines else ""
+    path.write_text(text, encoding="utf-8")
 
 
 @router.get("/api/dashboard/sessions")
@@ -37,6 +54,152 @@ def api_dashboard_sessions(
 def api_dashboard_session_messages(session_id: str, authorization: str | None = Header(default=None)) -> JSONResponse:
     _check_bearer(authorization)
     return JSONResponse({"ok": True, "session_id": session_id, "messages": _session_messages(session_id)})
+
+
+@router.get("/api/sessions")
+def api_sessions_list(
+    authorization: str | None = Header(default=None),
+    q: str = Query(default=""),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    return JSONResponse({"ok": True, "sessions": _collect_session_index(q)})
+
+
+@router.get("/api/sessions/{session_id}/preview")
+def api_sessions_preview(
+    session_id: str,
+    authorization: str | None = Header(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    rows = _session_messages(session_id)
+    return JSONResponse(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "messages": rows[-limit:],
+            "count": len(rows),
+        }
+    )
+
+
+@router.patch("/api/sessions/{session_id}")
+def api_sessions_patch(
+    session_id: str,
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    rename_to = str(payload.get("rename_to") or payload.get("session_id") or "").strip()
+    if not rename_to:
+        raise HTTPException(status_code=400, detail="Campo 'rename_to' é obrigatório")
+    if rename_to == session_id:
+        return JSONResponse({"ok": True, "updated": 0, "telemetry_updated": 0, "session_id": session_id})
+
+    session_rows = _read_jsonl(_sessions_file())
+    updated = 0
+    for row in session_rows:
+        if str(row.get("session_id", "")) == session_id:
+            row["session_id"] = rename_to
+            row["ts_updated"] = _iso_now()
+            updated += 1
+    _write_jsonl(_sessions_file(), session_rows)
+
+    telemetry_rows = _read_jsonl(_telemetry_file())
+    telemetry_updated = 0
+    for row in telemetry_rows:
+        if str(row.get("session_id", "")) == session_id:
+            row["session_id"] = rename_to
+            telemetry_updated += 1
+    _write_jsonl(_telemetry_file(), telemetry_rows)
+
+    _log("sessions.patch", data={"from": session_id, "to": rename_to, "updated": updated})
+    return JSONResponse(
+        {
+            "ok": True,
+            "session_id": rename_to,
+            "updated": updated,
+            "telemetry_updated": telemetry_updated,
+        }
+    )
+
+
+@router.post("/api/sessions/{session_id}/reset")
+def api_sessions_reset(session_id: str, authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    session_rows = _read_jsonl(_sessions_file())
+    kept = [row for row in session_rows if str(row.get("session_id", "")) != session_id]
+    removed = len(session_rows) - len(kept)
+    _write_jsonl(_sessions_file(), kept)
+    _log("sessions.reset", data={"session_id": session_id, "removed": removed})
+    return JSONResponse({"ok": True, "session_id": session_id, "removed": removed})
+
+
+@router.delete("/api/sessions/{session_id}")
+def api_sessions_delete(session_id: str, authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    session_rows = _read_jsonl(_sessions_file())
+    kept_sessions = [row for row in session_rows if str(row.get("session_id", "")) != session_id]
+    removed_sessions = len(session_rows) - len(kept_sessions)
+    _write_jsonl(_sessions_file(), kept_sessions)
+
+    telemetry_rows = _read_jsonl(_telemetry_file())
+    kept_telemetry = [row for row in telemetry_rows if str(row.get("session_id", "")) != session_id]
+    removed_telemetry = len(telemetry_rows) - len(kept_telemetry)
+    _write_jsonl(_telemetry_file(), kept_telemetry)
+
+    _log(
+        "sessions.delete",
+        data={"session_id": session_id, "messages": removed_sessions, "telemetry": removed_telemetry},
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "messages_removed": removed_sessions,
+            "telemetry_removed": removed_telemetry,
+        }
+    )
+
+
+@router.post("/api/sessions/compact")
+def api_sessions_compact(
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    raw_limit = payload.get("max_messages", 40)
+    try:
+        max_messages = int(raw_limit)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Campo 'max_messages' deve ser inteiro") from None
+    if max_messages < 1 or max_messages > 2000:
+        raise HTTPException(status_code=400, detail="max_messages deve estar entre 1 e 2000")
+
+    rows = _read_jsonl(_sessions_file())
+    by_session: dict[str, list[int]] = {}
+    for idx, row in enumerate(rows):
+        sid = str(row.get("session_id", "")).strip()
+        if not sid:
+            continue
+        by_session.setdefault(sid, []).append(idx)
+
+    keep_indexes: set[int] = set()
+    for indexes in by_session.values():
+        keep_indexes.update(indexes[-max_messages:])
+
+    compacted_rows = [row for idx, row in enumerate(rows) if idx in keep_indexes]
+    removed = len(rows) - len(compacted_rows)
+    _write_jsonl(_sessions_file(), compacted_rows)
+    _log("sessions.compact", data={"removed": removed, "max_messages": max_messages})
+    return JSONResponse(
+        {
+            "ok": True,
+            "removed": removed,
+            "remaining": len(compacted_rows),
+            "max_messages": max_messages,
+        }
+    )
 
 
 @router.get("/api/dashboard/telemetry")

@@ -229,6 +229,53 @@ def api_models_catalog(
     return JSONResponse({"ok": True, "provider": provider or "all", "models": items})
 
 
+@router.get("/api/models/list")
+def api_models_list(
+    authorization: str | None = Header(default=None),
+    provider: str = Query(default=""),
+) -> JSONResponse:
+    _check_bearer(authorization)
+    rows = [f"{entry.provider}/{entry.id}" for entry in list_models(provider=provider)]
+    return JSONResponse({"ok": True, "provider": provider or "all", "models": rows})
+
+
+@router.get("/api/talk/config")
+def api_talk_config(authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    cfg = load_config()
+    talk = cfg.get("talk", {}) if isinstance(cfg.get("talk"), dict) else {}
+    return JSONResponse(
+        {
+            "ok": True,
+            "talk": {
+                "enabled": bool(talk.get("enabled", True)),
+                "phase": str(talk.get("phase", "idle")),
+                "mode": str(talk.get("mode", "chat")),
+            },
+        }
+    )
+
+
+@router.put("/api/talk/mode")
+def api_talk_mode(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> JSONResponse:
+    _check_bearer(authorization)
+    enabled = bool(payload.get("enabled", True))
+    phase = str(payload.get("phase", "")).strip() or ("listening" if enabled else "idle")
+    mode = str(payload.get("mode", "chat")).strip().lower() or "chat"
+    if mode not in {"chat", "voice", "agent"}:
+        raise HTTPException(status_code=400, detail="mode invalido: use chat|voice|agent")
+
+    cfg = load_config()
+    talk = cfg.get("talk", {}) if isinstance(cfg.get("talk"), dict) else {}
+    talk.update({"enabled": enabled, "phase": phase, "mode": mode, "updated_at": datetime.now(timezone.utc).isoformat()})
+    cfg["talk"] = talk
+    save_config(cfg)
+
+    event = {"enabled": enabled, "phase": phase, "mode": mode, "ts": int(datetime.now(timezone.utc).timestamp() * 1000)}
+    _log("talk.mode", data=event)
+    return JSONResponse({"ok": True, **event})
+
+
 @router.get("/api/security/rbac")
 def api_security_rbac(authorization: str | None = Header(default=None)) -> JSONResponse:
     _check_bearer(authorization)
