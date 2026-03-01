@@ -47,6 +47,28 @@ Requisitos mínimos:
 - `git` e `curl`
 - Dependências Python em `requirements.txt` (instaladas automaticamente pelo `install.sh`)
 
+## Termux (recomendado: proot Ubuntu)
+
+No Termux Android nativo, alguns binários/deps podem falhar por compatibilidade.
+Para uso estável, rode o ClawLite dentro de proot Ubuntu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/setup_termux_proot.sh | bash
+```
+
+Ou localmente no repositório:
+
+```bash
+bash scripts/setup_termux_proot.sh
+```
+
+Depois:
+
+```bash
+proot-distro login ubuntu -- /bin/bash -lc 'cd /root/ClawLite && clawlite onboarding'
+proot-distro login ubuntu -- /bin/bash -lc 'cd /root/ClawLite && clawlite start --host 127.0.0.1 --port 8787'
+```
+
 ## Providers de IA (atualizado)
 
 O ClawLite suporta providers no padrão `provider/model`, incluindo:
