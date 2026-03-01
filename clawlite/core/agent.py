@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -189,33 +190,121 @@ def _fire_hook(
 
 
 def _build_tools_prompt(plugin_tools: list[dict[str, Any]] | None = None) -> str:
-    builtins = """
-[Ferramentas Disponiveis]
-Voce possui acesso as seguintes ferramentas locais. Se precisar usa-las, responda APENAS com um bloco JSON neste formato (e nada mais):
-{"tool_call": {"name": "NOME_DA_FERRAMENTA", "arguments": {"arg1": "valor"}}}
+    base_tools: list[dict[str, Any]] = [
+        {
+            "name": "exec_cmd",
+            "description": "Executa um comando no terminal",
+            "arguments": {"command": "string"},
+        },
+        {
+            "name": "read_file",
+            "description": "Le um arquivo do disco",
+            "arguments": {"path": "string"},
+        },
+        {
+            "name": "write_file",
+            "description": "Escreve conteudo em um arquivo",
+            "arguments": {"path": "string", "content": "string"},
+        },
+        {
+            "name": "browser_goto",
+            "description": "Abre uma URL no navegador e retorna um snapshot (texto + IDs)",
+            "arguments": {"url": "string"},
+        },
+        {
+            "name": "browser_click",
+            "description": "Clica em um elemento pelo seu claw-id",
+            "arguments": {"cid": "string"},
+        },
+        {
+            "name": "browser_fill",
+            "description": "Preenche um elemento com texto pelo seu claw-id",
+            "arguments": {"cid": "string", "text": "string"},
+        },
+        {
+            "name": "browser_read",
+            "description": "Tira um novo snapshot da DOM atual mostrando IDs atualizados",
+            "arguments": {},
+        },
+        {
+            "name": "browser_press",
+            "description": "Pressiona uma tecla especial (ex: Enter, Escape, Tab)",
+            "arguments": {"key": "string"},
+        },
+        {
+            "name": "spawn_subagent",
+            "description": "Delega tarefa longa para um subagente em background",
+            "arguments": {"task": "string", "label": "string(opcional)"},
+        },
+        {
+            "name": "subagents_list",
+            "description": "Lista subagentes da sessao atual",
+            "arguments": {"active_only": "boolean(opcional)"},
+        },
+        {
+            "name": "subagents_kill",
+            "description": "Cancela subagente por run_id ou todos da sessao",
+            "arguments": {"run_id": "string(opcional)"},
+        },
+    ]
 
-Ferramentas:
-1. {"name": "exec_cmd", "description": "Executa um comando no terminal", "arguments": {"command": "string"}}
-2. {"name": "read_file", "description": "Le um arquivo do disco", "arguments": {"path": "string"}}
-3. {"name": "write_file", "description": "Escreve conteudo em um arquivo", "arguments": {"path": "string", "content": "string"}}
+    # Skills executaveis (registry + SKILL.md dinamico) viram tools automaticamente no prompt.
+    skill_tools: list[dict[str, Any]] = []
+    try:
+        from clawlite.mcp import mcp_tools_from_skills
 
-Para interagir com web, utilize as ferramentas de `browser_`:
-4. {"name": "browser_goto", "description": "Abre uma URL no navegador e retorna um snapshot (texto + IDs)", "arguments": {"url": "string"}}
-5. {"name": "browser_click", "description": "Clica em um elemento pelo seu claw-id", "arguments": {"cid": "string"}}
-6. {"name": "browser_fill", "description": "Preenche um elemento com texto pelo seu claw-id", "arguments": {"cid": "string", "text": "string"}}
-7. {"name": "browser_read", "description": "Tira um novo snapshot da DOM atual mostrando IDs atualizados", "arguments": {}}
-8. {"name": "browser_press", "description": "Pressiona uma tecla especial (ex: Enter, Escape, Tab)", "arguments": {"key": "string"}}
-9. {"name": "spawn_subagent", "description": "Delegar tarefa longa para um subagente em background", "arguments": {"task": "string", "label": "string(opcional)"}}
-10. {"name": "subagents_list", "description": "Lista subagentes da sessão atual", "arguments": {"active_only": "boolean(opcional)"}}
-11. {"name": "subagents_kill", "description": "Cancela subagente por run_id ou todos da sessão", "arguments": {"run_id": "string(opcional)"}}
-12. {"name": "skill.cron", "description": "Cria/lista/remove/executa lembretes e tarefas agendadas", "arguments": {"command": "string"}}
-13. {"name": "skill.web-search", "description": "Busca na web com snippets", "arguments": {"command": "string"}}
-14. {"name": "skill.web-fetch", "description": "Extrai conteúdo legível de URL", "arguments": {"command": "string"}}
-	"""
+        for item in mcp_tools_from_skills()[:60]:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name.startswith("skill."):
+                continue
+            skill_tools.append(
+                {
+                    "name": name,
+                    "description": str(item.get("description", "")).strip(),
+                    "arguments": {"command": "string"},
+                }
+            )
+    except Exception:
+        # Mantem o fallback minimo mesmo se o catalogo dinamico falhar.
+        skill_tools = [
+            {"name": "skill.cron", "description": "Agenda tarefas e lembretes", "arguments": {"command": "string"}},
+            {
+                "name": "skill.web-search",
+                "description": "Busca na web com snippets",
+                "arguments": {"command": "string"},
+            },
+            {
+                "name": "skill.web-fetch",
+                "description": "Extrai conteudo legivel de URL",
+                "arguments": {"command": "string"},
+            },
+        ]
+
+    lines = [
+        "[Ferramentas Disponiveis]",
+        "Voce possui acesso as ferramentas abaixo.",
+        'Se precisar usa-las, responda APENAS com JSON: {"tool_call":{"name":"...","arguments":{...}}}',
+        "",
+        "Ferramentas locais:",
+    ]
+
+    idx = 1
+    for item in base_tools:
+        lines.append(f"{idx}. {json.dumps(item, ensure_ascii=False)}")
+        idx += 1
+
+    lines.append("")
+    lines.append("Skills executaveis:")
+    for item in skill_tools:
+        lines.append(f"{idx}. {json.dumps(item, ensure_ascii=False)}")
+        idx += 1
+
     if not plugin_tools:
-        return builtins
-    lines = [builtins.strip(), "", "Ferramentas de plugins carregados:"]
-    idx = 15
+        return "\n".join(lines) + "\n"
+
+    lines.extend(["", "Ferramentas de plugins carregados:"])
     for item in plugin_tools:
         name = str(item.get("name", "")).strip()
         if not name:
@@ -565,6 +654,22 @@ def run_task_with_meta(
     return last_output, last_meta
 
 
+async def run_task_with_meta_async(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Wrapper oficial async para o fluxo unificado de produção."""
+    return await asyncio.to_thread(
+        run_task_with_meta,
+        prompt,
+        skill,
+        session_id,
+        workspace_path,
+    )
+
+
 def run_task_stream_with_meta(
     prompt: str,
     skill: str = "",
@@ -812,6 +917,22 @@ def run_task_with_learning(
     if last_meta.get("mode") == "offline-fallback":
         return f"[offline:{last_meta.get('reason')} -> {last_meta.get('model')}]\n{last_output}"
     return last_output
+
+
+async def run_task_with_learning_async(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> str:
+    """Wrapper async do fluxo com aprendizado contínuo."""
+    return await asyncio.to_thread(
+        run_task_with_learning,
+        prompt,
+        skill,
+        session_id,
+        workspace_path,
+    )
 
 
 def run_task_stream_with_learning(

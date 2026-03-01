@@ -56,12 +56,9 @@ def _build_chat_reply(raw_output: str, hooks: dict[str, Any]) -> str:
 async def _run_agent_reply(session_id: str, text: str, hooks: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     prompt = _build_chat_prompt(text, hooks)
 
-    from clawlite.core.agent import run_task_with_meta
+    from clawlite.core.agent import run_task_with_meta_async
 
-    try:
-        output, meta = await asyncio.to_thread(run_task_with_meta, prompt, "", session_id)
-    except TypeError:
-        output, meta = await asyncio.to_thread(run_task_with_meta, prompt)
+    output, meta = await run_task_with_meta_async(prompt, "", session_id)
     return _build_chat_reply(output, hooks), meta
 
 

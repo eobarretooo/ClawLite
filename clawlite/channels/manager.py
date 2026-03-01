@@ -15,7 +15,7 @@ from clawlite.channels.irc import IrcChannel
 from clawlite.channels.signal import SignalChannel
 from clawlite.channels.imessage import IMessageChannel
 from clawlite.config.settings import load_config
-from clawlite.core.agent import run_task_with_meta
+from clawlite.core.agent import run_task_with_meta, run_task_with_meta_async
 from clawlite.runtime.channel_sessions import ChannelSessionManager
 from clawlite.runtime.message_bus import InboundEnvelope, MessageBus, OutboundEnvelope
 from clawlite.runtime.subagents import set_subagent_notifier
@@ -23,6 +23,7 @@ from clawlite.runtime.subagents import set_subagent_notifier
 logger = logging.getLogger(__name__)
 
 TOKEN_OPTIONAL_CHANNELS = {"googlechat", "irc", "signal", "imessage"}
+_ORIGINAL_RUN_TASK_WITH_META = run_task_with_meta
 
 # Registry of available channel classes
 CHANNEL_CLASSES: dict[str, type[BaseChannel]] = {
@@ -92,10 +93,13 @@ class ChannelManager:
         Callback central para processar mensagens recebidas de qualquer canal.
         Roteia diretamente para o core LLM.
         """
-        # O run_task_with_meta é síncrono, então rodamos em uma thread
         prompt = env.text.strip()
         try:
-            output, meta = await asyncio.to_thread(run_task_with_meta, prompt, "", env.session_id)
+            # Compat: se testes/integrações monkeypatcharem a função local, respeitamos.
+            if run_task_with_meta is not _ORIGINAL_RUN_TASK_WITH_META:
+                output, _meta = await asyncio.to_thread(run_task_with_meta, prompt, "", env.session_id)
+            else:
+                output, _meta = await run_task_with_meta_async(prompt, "", env.session_id)
             return output
         except Exception as exc:
             logger.error(f"Erro no processamento da mensagem do canal: {exc}")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import contextmanager
 import logging
 import sqlite3
@@ -307,6 +309,49 @@ def start_cron_scheduler_thread(poll_interval_s: float = 5.0) -> ConversationCro
     thread = threading.Thread(target=scheduler.start, name="clawlite-cron-scheduler", daemon=True)
     thread.start()
     return scheduler
+
+
+class AsyncConversationCronScheduler:
+    """Versão assíncrona do scheduler cron para runtime principal."""
+
+    def __init__(self, poll_interval_s: float = 5.0) -> None:
+        try:
+            interval = float(poll_interval_s)
+        except (TypeError, ValueError):
+            interval = 5.0
+        self.poll_interval_s = max(1.0, interval)
+        self._stop_event = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def run_pending_once(self) -> list[CronRunResult]:
+        return await asyncio.to_thread(run_cron_jobs, run_all=False)
+
+    async def _run_loop(self) -> None:
+        logger.info("cron-scheduler(async): iniciado (poll_interval_s=%.1f)", self.poll_interval_s)
+        while not self._stop_event.is_set():
+            try:
+                await self.run_pending_once()
+            except Exception as exc:
+                logger.warning("cron-scheduler(async): erro no ciclo: %s", exc)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval_s)
+            except asyncio.TimeoutError:
+                pass
+        logger.info("cron-scheduler(async): encerrado")
+
+    async def start(self) -> None:
+        if self._task and not self._task.done():
+            return
+        self._stop_event.clear()
+        self._task = asyncio.create_task(self._run_loop(), name="clawlite-cron-scheduler-async")
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+        task = self._task
+        self._task = None
+        if task is not None:
+            with contextlib.suppress(Exception):
+                await task
 
 
 def format_cron_jobs_table(rows: list[CronJobRow]) -> str:

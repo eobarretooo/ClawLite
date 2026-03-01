@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,38 +12,12 @@ import contextlib
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    from clawlite.channels.manager import manager
-    from clawlite.core.heartbeat import start_heartbeat_thread
-    from clawlite.runtime.conversation_cron import start_cron_scheduler_thread
+    from clawlite.runtime.autonomy import runtime as autonomy_runtime
 
-    cfg = load_config()
-    gateway_cfg = cfg.get("gateway", {}) if isinstance(cfg.get("gateway"), dict) else {}
-    hb_interval = int(gateway_cfg.get("heartbeat_interval_s", 1800))
-    cron_poll_interval = float(gateway_cfg.get("cron_poll_interval_s", 5.0))
-
-    loop = asyncio.get_running_loop()
-
-    def _heartbeat_proactive_dispatch(message: str) -> None:
-        async def _send() -> None:
-            await manager.broadcast_proactive(message, prefix="[heartbeat]")
-
-        loop.call_soon_threadsafe(asyncio.create_task, _send())
-
-    hb_loop = start_heartbeat_thread(interval_s=hb_interval, proactive_callback=_heartbeat_proactive_dispatch)
-    cron_scheduler = start_cron_scheduler_thread(poll_interval_s=cron_poll_interval)
-    app.state.heartbeat_loop = hb_loop
-    app.state.cron_scheduler = cron_scheduler
-    await manager.start_all()
+    await autonomy_runtime.start()
+    app.state.autonomy_runtime = autonomy_runtime
     yield
-    try:
-        hb_loop.stop()
-    except Exception:
-        pass
-    try:
-        cron_scheduler.stop()
-    except Exception:
-        pass
-    await manager.stop_all()
+    await autonomy_runtime.stop()
 
 # Main FastAPI App Setup
 app = FastAPI(title="ClawLite Gateway", version="0.3.0", lifespan=lifespan)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -254,6 +255,54 @@ class HeartbeatLoop:
     def stop(self) -> None:
         """Sinaliza o loop para parar na próxima oportunidade."""
         self._stop_event.set()
+
+
+class AsyncHeartbeatLoop:
+    """Wrapper assíncrono para rodar heartbeat no loop principal do gateway."""
+
+    def __init__(
+        self,
+        workspace_path: str | Path | None = None,
+        interval_s: int = DEFAULT_INTERVAL_S,
+        proactive_callback: Callable[[str], None] | None = None,
+    ) -> None:
+        self._sync = HeartbeatLoop(
+            workspace_path=workspace_path,
+            interval_s=interval_s,
+            proactive_callback=proactive_callback,
+        )
+        self.interval_s = max(1, int(interval_s))
+        self._stop_event = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def _run_loop(self) -> None:
+        logger.info("heartbeat(async): loop iniciado (interval=%ds)", self.interval_s)
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.to_thread(self._sync._run_once)
+            except Exception as exc:
+                logger.warning("heartbeat(async): exceção em ciclo — %s", exc)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_s)
+            except asyncio.TimeoutError:
+                pass
+        logger.info("heartbeat(async): loop encerrado")
+
+    async def start(self) -> None:
+        if self._task and not self._task.done():
+            return
+        self._stop_event.clear()
+        self._task = asyncio.create_task(self._run_loop(), name="clawlite-heartbeat-async")
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+        task = self._task
+        self._task = None
+        if task is not None:
+            try:
+                await task
+            except Exception:
+                pass
 
 
 def start_heartbeat_thread(
