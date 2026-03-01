@@ -597,7 +597,7 @@ def _prepare_context(
     base_system = build_system_prompt(workspace_path)
     prefix = build_preference_prefix()
     startup_ctx = startup_context_text(workspace_path)
-    bootstrap_mgr = BootstrapManager()
+    bootstrap_mgr = BootstrapManager(workspace_path)
     bootstrap_txt = bootstrap_mgr.get_prompt() if bootstrap_mgr.should_run() else ""
 
     keyword_hits = semantic_search_memory(prompt, max_results=3, path=workspace_path)
@@ -747,7 +747,7 @@ def run_task_with_learning(
 
         if not is_error:
             compact_daily_memory()
-            BootstrapManager().complete()
+            BootstrapManager(workspace_path).complete()
             _safe_vector_store(
                 text=f"user: {prompt}\nassistant: {output}",
                 session_id=session_id,
@@ -920,7 +920,7 @@ def run_task_stream_with_learning(
                 continue
 
             compact_daily_memory()
-            BootstrapManager().complete()
+            BootstrapManager(workspace_path).complete()
             _safe_vector_store(
                 text=f"user: {prompt}\nassistant: {output_text}",
                 session_id=session_id,

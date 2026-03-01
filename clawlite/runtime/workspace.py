@@ -9,6 +9,8 @@ from typing import Any
 from clawlite.config import settings as app_settings
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
+BOOTSTRAP_TEMPLATE_NAME = "BOOTSTRAP.md"
+BOOTSTRAP_COMPLETED_MARKER = ".bootstrap_completed"
 
 RAW_TEMPLATES = {
     "IDENTITY.md": """# IDENTITY.md - Quem Eu Sou
@@ -220,6 +222,10 @@ def _workspace_root() -> Path:
     return Path(app_settings.CONFIG_DIR) / "workspace"
 
 
+def is_bootstrap_completed(root: Path) -> bool:
+    return (root / BOOTSTRAP_COMPLETED_MARKER).exists()
+
+
 def _default_timezone() -> str:
     env_tz = os.getenv("TZ", "").strip()
     if env_tz:
@@ -271,7 +277,13 @@ def init_workspace(path: str | None = None) -> str:
     (root / "skills").mkdir(parents=True, exist_ok=True)
 
     templates = render_workspace_templates()
+    bootstrap_done = is_bootstrap_completed(root)
+    if bootstrap_done:
+        (root / BOOTSTRAP_TEMPLATE_NAME).unlink(missing_ok=True)
+
     for name, content in templates.items():
+        if name == BOOTSTRAP_TEMPLATE_NAME and bootstrap_done:
+            continue
         p = root / name
         if not p.exists():
             p.write_text(content, encoding="utf-8")

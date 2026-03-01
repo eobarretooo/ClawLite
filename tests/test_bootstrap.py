@@ -41,6 +41,7 @@ def test_complete_deletes_file():
         mgr = BootstrapManager(tmp)
         assert mgr.should_run() is True
         mgr.complete()
+        assert mgr.is_completed() is True
         assert not f.exists()
         # segunda chamada não levanta exceção
         mgr.complete()
@@ -50,6 +51,16 @@ def test_complete_noop_when_file_missing():
     with tempfile.TemporaryDirectory() as tmp:
         mgr = BootstrapManager(tmp)
         mgr.complete()  # não deve levantar exceção
+        assert mgr.is_completed() is True
+
+
+def test_should_not_run_when_completed_marker_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace = Path(tmp)
+        workspace.joinpath("BOOTSTRAP.md").write_text("conteúdo", encoding="utf-8")
+        workspace.joinpath(".bootstrap_completed").write_text("done", encoding="utf-8")
+        mgr = BootstrapManager(workspace)
+        assert mgr.should_run() is False
 
 
 def test_full_cycle():

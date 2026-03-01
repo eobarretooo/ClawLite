@@ -7,7 +7,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from clawlite.runtime.workspace import init_workspace, render_workspace_templates
+from clawlite.runtime.workspace import (
+    BOOTSTRAP_COMPLETED_MARKER,
+    BOOTSTRAP_TEMPLATE_NAME,
+    init_workspace,
+    is_bootstrap_completed,
+    render_workspace_templates,
+)
 
 
 @dataclass
@@ -26,7 +32,12 @@ def _workspace_root(path: str | None = None) -> Path:
 def ensure_memory_layout(path: str | None = None) -> Path:
     root = _workspace_root(path)
     templates = render_workspace_templates()
+    bootstrap_done = is_bootstrap_completed(root)
+    if bootstrap_done:
+        (root / BOOTSTRAP_TEMPLATE_NAME).unlink(missing_ok=True)
     for name, content in templates.items():
+        if name == BOOTSTRAP_TEMPLATE_NAME and bootstrap_done:
+            continue
         p = root / name
         if not p.exists():
             p.write_text(content, encoding="utf-8")
@@ -63,11 +74,12 @@ def startup_context(path: str | None = None) -> dict[str, Any]:
         root / "TOOLS.md",
         root / "HEARTBEAT.md",
         root / "BOOT.md",
-        root / "BOOTSTRAP.md",
         root / "MEMORY.md",
         _daily_file(root, now),
         _daily_file(root, yesterday),
     ]
+    if not is_bootstrap_completed(root):
+        files.append(root / BOOTSTRAP_TEMPLATE_NAME)
 
     loaded: dict[str, str] = {}
     for f in files:
@@ -194,12 +206,13 @@ def compact_daily_memory(max_daily_files: int = 21, path: str | None = None) -> 
 
 def bootstrap_prompt_once(path: str | None = None) -> str:
     root = ensure_memory_layout(path)
-    boot = root / "BOOTSTRAP.md"
-    seen = root / ".bootstrap_seen"
-    if not boot.exists() or seen.exists():
+    boot = root / BOOTSTRAP_TEMPLATE_NAME
+    marker = root / BOOTSTRAP_COMPLETED_MARKER
+    if not boot.exists() or marker.exists():
         return ""
     text = boot.read_text(encoding="utf-8")[:3000]
-    seen.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+    marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+    boot.unlink(missing_ok=True)
     return text
 
 

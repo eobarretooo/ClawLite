@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from clawlite.core.bootstrap import BootstrapManager
 from clawlite.runtime.session_memory import (
     auto_consolidate_session,
     append_daily_log,
@@ -70,3 +71,17 @@ def test_auto_consolidate_session_generates_summary(tmp_path: Path, monkeypatch)
 def test_auto_consolidate_session_requires_id() -> None:
     result = auto_consolidate_session("")
     assert result["ok"] is False
+
+
+def test_memory_layout_does_not_recreate_bootstrap_after_completion(tmp_path: Path) -> None:
+    root = ensure_memory_layout(str(tmp_path))
+    bootstrap = root / "BOOTSTRAP.md"
+    assert bootstrap.exists()
+
+    mgr = BootstrapManager(root)
+    mgr.complete()
+    assert mgr.is_completed() is True
+    assert not bootstrap.exists()
+
+    ensure_memory_layout(str(root))
+    assert not bootstrap.exists()
