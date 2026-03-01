@@ -6,12 +6,6 @@ CLAWLITE_DIR="${CLAWLITEX_DIR:-/root/ClawLite}"
 SETUP_SCRIPT="${CLAWLITEX_SETUP_SCRIPT:-$HOME/.clawlite/setup_termux_proot.sh}"
 DEFAULT_HOST="${CLAWLITEX_HOST:-127.0.0.1}"
 DEFAULT_PORT="${CLAWLITEX_PORT:-8787}"
-TERMUX_HOME="${CLAWLITEX_TERMUX_HOME:-$HOME}"
-if [[ -d "/data/data/com.termux/files/home" ]]; then
-  TERMUX_HOME="/data/data/com.termux/files/home"
-fi
-TERMUX_BOOT_DIR="${TERMUX_HOME}/.termux/boot"
-TERMUX_BOOT_SCRIPT="${TERMUX_BOOT_DIR}/clawlite-supervisord.sh"
 PROOT_SUPERVISOR_CONF="${CLAWLITEX_SUPERVISOR_CONF:-/root/.clawlite/supervisord.conf}"
 PROOT_SUPERVISOR_START_SCRIPT="${CLAWLITEX_SUPERVISOR_START_SCRIPT:-/root/.clawlite/bin/clawlite-supervised-start.sh}"
 PROOT_SUPERVISORCTL_CONF="${CLAWLITEX_SUPERVISORCTL_CONF:-/root/.clawlite/supervisorctl.conf}"
@@ -30,7 +24,7 @@ Comandos:
   setup       Instala/atualiza o proot Ubuntu + ClawLite
   status      Mostra status da instalacao
   start       Inicia gateway no proot (padrao: --host ${DEFAULT_HOST} --port ${DEFAULT_PORT})
-  autostart   Configura supervisord 24/7 no proot + boot script no Termux
+  autostart   Configura supervisord 24/7 no proot
   shell       Abre shell Ubuntu no diretorio do ClawLite
   help        Mostra esta ajuda
 
@@ -225,7 +219,7 @@ cmd_shell() {
 cmd_autostart_install() {
   ensure_ready_for_clawlite
 
-  echo "[1/4] Configurando supervisor dentro do proot..."
+  echo "[1/2] Configurando supervisor dentro do proot..."
   run_in_proot "
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -293,111 +287,7 @@ else
 fi
 "
 
-  echo "[2/4] Criando script de boot no Termux..."
-  mkdir -p "${TERMUX_BOOT_DIR}"
-  cat > "${TERMUX_BOOT_SCRIPT}" <<EOF
-#!/data/data/com.termux/files/usr/bin/bash
-PREFIX_PATH="\${PREFIX:-/data/data/com.termux/files/usr}"
-if [ -d "/data/data/com.termux/files/usr" ]; then
-  PREFIX_PATH="/data/data/com.termux/files/usr"
-fi
-TERMUX_HOME_PATH="\${HOME:-/data/data/com.termux/files/home}"
-STATE_DIR="\${TERMUX_HOME_PATH}/.clawlite"
-LOG_DIR="\${STATE_DIR}/logs"
-RUN_DIR="\${STATE_DIR}/run"
-BOOT_LOG="\${LOG_DIR}/clawlite-boot.log"
-LOCK_FILE="\${RUN_DIR}/boot-supervisord.lock"
-PROOT_BIN="\${PREFIX_PATH}/bin/proot"
-ROOTFS_DIR="\${PREFIX_PATH}/var/lib/proot-distro/installed-rootfs/${DISTRO}"
-
-mkdir -p "\${LOG_DIR}" "\${RUN_DIR}" >/dev/null 2>&1 || true
-exec >>"\${BOOT_LOG}" 2>&1
-echo "[\$(date '+%Y-%m-%d %H:%M:%S')] clawlite boot hook triggered"
-
-if [ -f "\${LOCK_FILE}" ]; then
-  OLD_PID=\$(cat "\${LOCK_FILE}" 2>/dev/null || true)
-  if [ -n "\${OLD_PID}" ] && kill -0 "\${OLD_PID}" 2>/dev/null; then
-    echo "boot hook already running (pid=\${OLD_PID}); exiting"
-    exit 0
-  fi
-fi
-echo "\$\$" > "\${LOCK_FILE}"
-trap 'rm -f "\${LOCK_FILE}" >/dev/null 2>&1 || true' EXIT
-
-TRACER_PID=\$(awk '/TracerPid:/ {print \$2}' /proc/\$\$/status 2>/dev/null || echo 0)
-
-if [ ! -x "\${PROOT_BIN}" ]; then
-  echo "proot binary nao encontrado: \${PROOT_BIN}"
-  exit 0
-fi
-if [ ! -d "\${ROOTFS_DIR}" ]; then
-  echo "rootfs nao encontrado: \${ROOTFS_DIR}"
-  exit 0
-fi
-if [ "\${TRACER_PID:-0}" != "0" ]; then
-  echo "nested-proot detectado (TracerPid=\${TRACER_PID}); boot direto ignorado."
-  exit 0
-fi
-
-if command -v termux-wake-lock >/dev/null 2>&1; then
-  termux-wake-lock >/dev/null 2>&1 || true
-fi
-
-# Evita conflito com termux-exec (LD_PRELOAD) e variaveis Android no host.
-unset LD_PRELOAD
-unset LD_LIBRARY_PATH
-unset CLASSPATH
-unset BOOTCLASSPATH
-unset ANDROID_ART_ROOT
-unset ANDROID_DATA
-unset ANDROID_I18N_ROOT
-unset ANDROID_ROOT
-unset DEX2OATBOOTCLASSPATH
-HOST_PATH="\${PREFIX_PATH}/bin:/system/bin:/system/xbin"
-
-nohup /usr/bin/env -i \\
-  HOME="\${TERMUX_HOME_PATH}" \\
-  PREFIX="\${PREFIX_PATH}" \\
-  PATH="\${HOST_PATH}" \\
-  TMPDIR="\${PREFIX_PATH}/tmp" \\
-  TERM=dumb \\
-  "\${PROOT_BIN}" \\
-  --link2symlink -L --kill-on-exit \\
-  --rootfs="\${ROOTFS_DIR}" \\
-  --cwd=/root \\
-  --bind=/dev \\
-  --bind=/dev/urandom:/dev/random \\
-  --bind=/proc \\
-  --bind=/proc/self/fd:/dev/fd \\
-  --bind=/proc/self/fd/0:/dev/stdin \\
-  --bind=/proc/self/fd/1:/dev/stdout \\
-  --bind=/proc/self/fd/2:/dev/stderr \\
-  --bind=/sys \\
-  --bind="\${ROOTFS_DIR}/tmp:/dev/shm" \\
-  /usr/bin/env -i \\
-  HOME=/root \\
-  USER=root \\
-  LANG=C.UTF-8 \\
-  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
-  TERM=xterm-256color \\
-  /bin/bash -lc '
-if [ ! -f ${PROOT_SUPERVISOR_CONF} ]; then
-  exit 0
-fi
-if command -v supervisorctl >/dev/null 2>&1 && supervisorctl -s ${PROOT_SUPERVISOR_SERVER} status >/dev/null 2>&1; then
-  supervisorctl -s ${PROOT_SUPERVISOR_SERVER} start clawlite >/dev/null 2>&1 || true
-else
-  supervisord -c ${PROOT_SUPERVISOR_CONF} >/dev/null 2>&1 || true
-  sleep 2
-  supervisorctl -s ${PROOT_SUPERVISOR_SERVER} start clawlite >/dev/null 2>&1 || true
-fi
-' &
-echo "clawlite boot hook dispatched"
-exit 0
-EOF
-  chmod +x "${TERMUX_BOOT_SCRIPT}"
-
-  echo "[3/4] Validando status do supervisor..."
+  echo "[2/2] Validando status do supervisor..."
   run_in_proot "
 set -euo pipefail
 timeout_s=45
@@ -417,24 +307,18 @@ tail -n 80 /root/.clawlite/logs/clawlite.err.log || true
 exit 1
 "
 
-  echo "[4/4] Pronto."
+  echo "Pronto."
   echo "Autostart configurado com supervisord."
-  echo "Boot script: ${TERMUX_BOOT_SCRIPT}"
   echo
-  echo "Importante:"
-  echo "  1) Instale o app Termux:Boot no Android."
-  echo "  2) Desative otimizações agressivas de bateria para o Termux."
-  echo "  3) Reinicie o aparelho e rode: clawlitex autostart status"
+  echo "Boot automático requer app Android (planejado para futuro)."
+  echo "Para iniciar: abra o Termux e rode clawlitex start"
 }
 
 cmd_autostart_status() {
   require_proot
   echo "Autostart (Termux):"
-  if [[ -f "${TERMUX_BOOT_SCRIPT}" ]]; then
-    echo "  boot script: OK (${TERMUX_BOOT_SCRIPT})"
-  else
-    echo "  boot script: FALTANDO (${TERMUX_BOOT_SCRIPT})"
-  fi
+  echo "  boot automático: PENDENTE (requer app Android futuro)"
+  echo "  iniciar manual: clawlitex start"
 
   if ! distro_installed; then
     echo
@@ -491,9 +375,8 @@ fi
 "
   fi
 
-  rm -f "${TERMUX_BOOT_SCRIPT}"
   echo "Autostart removido."
-  echo "Boot script apagado: ${TERMUX_BOOT_SCRIPT}"
+  echo "Supervisor parado no proot (quando aplicável)."
 }
 
 cmd_autostart() {

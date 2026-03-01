@@ -28,14 +28,15 @@ Stack principal:
 
 ## Status atual
 
-- Autonomia: **16/20** (boot/reboot pendente de teste manual)
+- Autonomia: **19/20** (boot automático pendente — futuro app Android)
 - Testes: **264 passando** (`pytest -q`)
 - Linha de commits de referencia consolidada ate: **`b0f23d5`**
 - Estado recente de daemon/autostart:
   - `supervisord` configurado em `/root/.clawlite/supervisord.conf`
-  - boot script Termux em `/data/data/com.termux/files/home/.termux/boot/clawlite-supervisord.sh`
-  - `clawlitex autostart status` mostrando `supervisord pid: RUNNING` com fallback de pid para status do programa
-  - boot script pronto para proot/supervisord; ainda pendente validacao final em reboot real do Android
+  - fluxo de boot script (`~/.termux/boot/clawlite-supervisord.sh`) removido
+  - `clawlitex autostart` agora configura apenas o `supervisord` no proot
+  - inicializacao atual do gateway: manual (`clawlitex start` no Termux)
+  - boot automático permanece pendente de app Android dedicado (futuro)
 
 ## Atualizacoes de hoje (2026-03-01)
 
@@ -58,6 +59,9 @@ Stack principal:
   - `tests/test_dynamic_skill_autoload.py`
   - `tests/test_onboarding_rich_templates.py`
   - suite completa verde: `264 passed`
+- Autostart/boot no Termux:
+  - geracao de `~/.termux/boot/clawlite-supervisord.sh` removida do `clawlitex`
+  - docs atualizadas para fluxo manual de start no Termux
 
 ## Arquitetura do ClawLite
 
@@ -136,24 +140,15 @@ Docs e operacao:
 10. `7878b6f` - `feat(subagents-delivery)`  
     Resultado de subagente publicado de volta no canal de origem.
 
-## Bloqueadores restantes para 20/20
+## Bloqueador restante para 20/20
 
-1. **Fallback Gemini 429 (quota)**  
-   Heartbeat proativo fica bloqueado quando o provider retorna `429`.
-
-2. **Validacao inbound Telegram (E2E real)**  
-   Precisa confirmar recepcao de mensagem do usuario e resposta ponta-a-ponta no canal.
-
-3. **Sobrevivencia a restart manual do Termux**  
-   Necessita validacao operacional manual no dispositivo.
-
-4. **Sobrevivencia a reboot do Android**  
-   Necessita teste real apos reboot com Termux:Boot.
+1. **Boot automático Android**  
+   Pendente de app Android dedicado para iniciar o gateway sem abrir o Termux.
 
 ## Proximos passos (ordem)
 
-1. Testar boot Android e fechar autonomia 20/20.
-2. Internacionalizacao (pt-BR -> English).
+1. Internacionalizacao (pt-BR -> English).
+2. App Android para boot automático e fechamento de 20/20.
 3. Auto-desenvolvimento controlado.
 4. Integracao com ClawWork.
 
@@ -167,8 +162,7 @@ Docs e operacao:
    - `pytest -q`
 
 Sequencia recomendada apos retomada:
-- validar inbound Telegram real (recebe + responde sem sessao manual)
-- validar envio proativo (heartbeat) no canal conectado
-- executar teste manual de restart Termux (supervisord retomando canal)
-- executar teste manual de reboot Android (Termux:Boot + proot + supervisord)
-- fechar bloqueadores restantes para migrar de 16/20 para 20/20
+- iniciar internacionalizacao (pt-BR -> English)
+- especificar app Android de boot automático (escopo, permissões, lifecycle)
+- validar ciclo 24/7 com `supervisord` + start manual no Termux
+- fechar bloqueador restante para migrar de 19/20 para 20/20

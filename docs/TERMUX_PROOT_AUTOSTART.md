@@ -1,10 +1,11 @@
 # Termux + proot: autonomia 24/7 sem systemd
 
-No Termux com Ubuntu proot não existe `systemd` no modelo clássico.  
-Para autonomia real do ClawLite, o caminho recomendado é:
+No Termux com Ubuntu proot não existe `systemd` no modelo clássico.
+Para autonomia real do ClawLite, o caminho recomendado hoje é `supervisord`
+dentro do proot (mantém o gateway vivo com `autorestart`).
 
-1. `supervisord` dentro do proot (mantém o gateway vivo com `autorestart`)
-2. `Termux:Boot` no Android (religa o supervisor após reboot)
+Boot automático requer app Android (planejado para futuro).
+Para iniciar: abra o Termux e rode `clawlitex start`.
 
 ---
 
@@ -19,7 +20,6 @@ pkg install -y proot-distro termux-api
 
 No Android:
 
-- app **Termux:Boot** instalado
 - otimizações agressivas de bateria desativadas para o Termux
 
 No proot:
@@ -48,13 +48,6 @@ Isso cria:
 - config: `/root/.clawlite/supervisord.conf`
 - config do cliente: `/root/.clawlite/supervisorctl.conf`
 - start script: `/root/.clawlite/bin/clawlite-supervised-start.sh`
-- boot script Termux: `~/.termux/boot/clawlite-supervisord.sh`
-  - usa `proot` direto (sem `proot-distro login`) para evitar bloqueios no boot
-  - usa ambiente host sanitizado (`env -i`) para evitar vazamento de `LD_PRELOAD`/`termux-exec` para o `proot`
-  - executa em background com `nohup` e log em `~/.clawlite/logs/clawlite-boot.log`
-  - usa lockfile em `~/.clawlite/run/boot-supervisord.lock` para evitar bootstrap duplicado
-  - aplica `termux-wake-lock` quando disponível
-  - ignora execução quando detecta sessão `nested proot` (evita falso erro em testes dentro do próprio proot)
 
 3) Verifique status:
 
@@ -62,14 +55,10 @@ Isso cria:
 clawlitex autostart status
 ```
 
-4) Teste de sobrevivência:
-
-- reinicie o aparelho
-- abra Termux e rode:
+4) Inicialização manual do gateway:
 
 ```bash
-clawlitex autostart status
-clawlitex status
+clawlitex start
 ```
 
 ---
@@ -100,7 +89,6 @@ clawlitex autostart remove
 Isso:
 
 - para/shutdown do `supervisord` no proot
-- remove `~/.termux/boot/clawlite-supervisord.sh`
 
 ---
 
@@ -113,4 +101,4 @@ Isso:
 - [ ] pelo menos 1 canal sempre conectado (`/api/channels/status`)
 - [ ] execução de ferramentas habilitada (`security.allow_shell_exec=true`)
 - [ ] subagentes ativos (`clawlite agents list`)
-- [ ] após reboot do Android, gateway volta sem intervenção manual
+- [ ] boot automático Android (planejado para futuro app dedicado)
