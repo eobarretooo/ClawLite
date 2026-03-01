@@ -11,7 +11,7 @@ def test_stop_cancels_inflight_session_task(monkeypatch) -> None:
         cm = ChannelManager()
         started = asyncio.Event()
 
-        async def fake_handle(session_id: str, text: str) -> str:
+        async def fake_handle(session_id: str, text: str, channel: str = "") -> str:
             started.set()
             await asyncio.sleep(5)
             return "done"

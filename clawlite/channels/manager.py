@@ -17,6 +17,7 @@ from clawlite.channels.imessage import IMessageChannel
 from clawlite.config.settings import load_config
 from clawlite.core.agent import run_task_with_meta
 from clawlite.runtime.channel_sessions import ChannelSessionManager
+from clawlite.runtime.message_bus import InboundEnvelope, MessageBus, OutboundEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +43,42 @@ class ChannelManager:
         self.active_channels: dict[str, BaseChannel] = {}
         self.active_metadata: dict[str, dict[str, Any]] = {}
         self.sessions = ChannelSessionManager()
+        self._bus = MessageBus(inbound_handler=self._process_inbound, outbound_handler=self._send_outbound)
 
-    async def _handle_message(self, session_id: str, text: str) -> str:
+    async def _process_inbound(self, env: InboundEnvelope) -> str:
         """
         Callback central para processar mensagens recebidas de qualquer canal.
         Roteia diretamente para o core LLM.
         """
         # O run_task_with_meta é síncrono, então rodamos em uma thread
-        prompt = text.strip()
+        prompt = env.text.strip()
         try:
             output, meta = await asyncio.to_thread(run_task_with_meta, prompt)
             return output
         except Exception as exc:
             logger.error(f"Erro no processamento da mensagem do canal: {exc}")
             return "Ocorreu um erro interno ao processar a requisição."
+
+    async def _send_outbound(self, env: OutboundEnvelope) -> None:
+        instance_key = env.instance_key
+        if instance_key:
+            channel = self.active_channels.get(instance_key)
+            if channel is not None:
+                await channel.send_message(env.session_id, env.text)
+                return
+
+        for key, channel in self.active_channels.items():
+            meta = self.active_metadata.get(key, {})
+            ch_name = str(meta.get("channel", "")).strip().lower() or key.split(":", 1)[0]
+            if ch_name != env.channel:
+                continue
+            await channel.send_message(env.session_id, env.text)
+            return
+
+        raise RuntimeError(f"canal outbound indisponível: {env.channel}")
+
+    async def _handle_message(self, session_id: str, text: str, channel: str = "") -> str:
+        return await self._bus.request_reply(channel=channel, session_id=session_id, text=text)
 
     def _build_message_handler(self, *, instance_key: str, channel_name: str):
         async def _handler(session_id: str, text: str) -> str:
@@ -80,7 +103,7 @@ class ChannelManager:
                 total = cancelled + sub_cancelled
                 return f"⏹ Stopped {total} task(s)." if total > 0 else "No active task to stop."
 
-            task = asyncio.create_task(self._handle_message(session_id, text))
+            task = asyncio.create_task(self._handle_message(session_id, text, channel_name))
             if sid:
                 self.sessions.register_task(sid, task)
             try:
@@ -699,6 +722,7 @@ class ChannelManager:
 
     async def start_all(self) -> None:
         """Inicia todos os canais configurados e habilitados."""
+        await self._bus.start()
         cfg = load_config()
         channels_cfg = cfg.get("channels", {})
         if not isinstance(channels_cfg, dict):
@@ -710,6 +734,7 @@ class ChannelManager:
         """Para todos os canais ativos."""
         for instance_key in list(self.active_channels.keys()):
             await self._stop_instance(instance_key)
+        await self._bus.stop()
 
     async def broadcast_proactive(self, message: str, prefix: str = "[heartbeat]") -> dict[str, Any]:
         """Envia mensagem proativa para todas as instâncias/canais ativos."""
