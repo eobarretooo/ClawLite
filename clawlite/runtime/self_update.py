@@ -15,7 +15,7 @@ import clawlite
 from clawlite.config.settings import CONFIG_DIR, load_config
 
 REPO_URL = "https://github.com/eobarretooo/ClawLite.git"
-REMOTE_PYPROJECT_URL = "https://raw.githubusercontent.com/eobarretooo/ClawLite/main/pyproject.toml"
+REMOTE_PYPROJECT_URL = "https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/pyproject.toml"
 RELEASES_LATEST_URL = "https://api.github.com/repos/eobarretooo/ClawLite/releases/latest"
 RELEASES_LIST_URL = "https://api.github.com/repos/eobarretooo/ClawLite/releases?per_page=30"
 DEFAULT_CHECK_INTERVAL_SECONDS = 6 * 60 * 60
@@ -393,7 +393,20 @@ def run_self_update(*, channel: str | None = None) -> tuple[bool, str]:
         if not ok:
             return False, f"Falha ao atualizar repositorio local: {err}"
 
-        ok, err = _run([python_bin, "-m", "pip", "install", "--upgrade", "--no-deps", "-e", str(repo_root)])
+        ok, err = _run(
+            [
+                python_bin,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--force-reinstall",
+                "--no-cache-dir",
+                "--no-deps",
+                "-e",
+                str(repo_root),
+            ]
+        )
         if not ok:
             return False, f"Repositorio atualizado, mas falhou no pip install -e: {err}"
 
@@ -420,7 +433,19 @@ def run_self_update(*, channel: str | None = None) -> tuple[bool, str]:
     elif target and target.ref == "main":
         install_spec = f"git+{REPO_URL}@main"
 
-    ok, err = _run([python_bin, "-m", "pip", "install", "--upgrade", "--no-deps", install_spec])
+    ok, err = _run(
+        [
+            python_bin,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "--no-cache-dir",
+            "--no-deps",
+            install_spec,
+        ]
+    )
     if not ok:
         return False, f"Falha no self-update via pip/git: {err}"
 
