@@ -64,6 +64,16 @@ class ChannelManager:
         return []
 
     @staticmethod
+    def _as_positive_float(value: Any, default: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        if parsed <= 0:
+            return float(default)
+        return parsed
+
+    @staticmethod
     def _pairing_enabled_from_cfg(cfg: dict[str, Any]) -> bool:
         security = cfg.get("security", {}) if isinstance(cfg.get("security"), dict) else {}
         pairing = security.get("pairing", {}) if isinstance(security.get("pairing"), dict) else {}
@@ -113,11 +123,23 @@ class ChannelManager:
             dm_allow = self._as_str_list(dm_cfg.get("allowFrom")) if isinstance(dm_cfg, dict) else []
             bot_user = str(ch_data.get("botUser") or ch_data.get("bot_user") or "").strip()
             require_mention = bool(ch_data.get("requireMention", True))
+            send_timeout_s = self._as_positive_float(
+                ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 8.0)),
+                8.0,
+            )
+            outbound_webhook_url = str(
+                ch_data.get("outbound_webhook_url")
+                or ch_data.get("outboundWebhookUrl")
+                or ch_data.get("webhookUrl")
+                or ""
+            ).strip()
             return {
                 "allowed_users": dm_allow or allow_from,
                 "allowed_spaces": allow_channels,
                 "bot_user": bot_user,
                 "require_mention": require_mention,
+                "outbound_webhook_url": outbound_webhook_url,
+                "send_timeout_s": send_timeout_s,
                 "pairing_enabled": pairing_enabled,
             }
         if channel_name == "irc":
@@ -128,6 +150,10 @@ class ChannelManager:
                 port = int(raw_port)
             except (TypeError, ValueError):
                 port = 6697
+            send_timeout_s = self._as_positive_float(
+                ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 10.0)),
+                10.0,
+            )
             return {
                 "host": str(ch_data.get("host", "")).strip(),
                 "port": port,
@@ -138,21 +164,32 @@ class ChannelManager:
                 "allowed_channels": allow_channels or configured_channels,
                 "require_mention": bool(ch_data.get("requireMention", True)),
                 "relay_url": str(ch_data.get("relay_url") or ch_data.get("relayUrl") or "").strip(),
+                "send_timeout_s": send_timeout_s,
                 "pairing_enabled": pairing_enabled,
             }
         if channel_name == "signal":
+            send_timeout_s = self._as_positive_float(
+                ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 15.0)),
+                15.0,
+            )
             return {
                 "account": str(ch_data.get("account", "")).strip(),
                 "cli_path": str(ch_data.get("cli_path") or ch_data.get("cliPath") or "signal-cli").strip(),
                 "http_url": str(ch_data.get("http_url") or ch_data.get("httpUrl") or "").strip(),
                 "allowed_numbers": allow_from,
+                "send_timeout_s": send_timeout_s,
                 "pairing_enabled": pairing_enabled,
             }
         if channel_name == "imessage":
+            send_timeout_s = self._as_positive_float(
+                ch_data.get("send_timeout_s", ch_data.get("sendTimeoutSec", 15.0)),
+                15.0,
+            )
             return {
                 "cli_path": str(ch_data.get("cli_path") or ch_data.get("cliPath") or "imsg").strip(),
                 "service": str(ch_data.get("service", "auto")).strip().lower(),
                 "allowed_handles": allow_from,
+                "send_timeout_s": send_timeout_s,
                 "pairing_enabled": pairing_enabled,
             }
         return {}

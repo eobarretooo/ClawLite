@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from clawlite.channels.base import BaseChannel
+from clawlite.channels.outbound_resilience import OutboundResilience
 from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
 
 try:
@@ -46,6 +47,8 @@ class IrcChannel(BaseChannel):
         allowed_channels: list[str] | None = None,
         require_mention: bool = True,
         relay_url: str = "",
+        send_timeout_s: float = 10.0,
+        send_backoff_base_s: float = 0.25,
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -61,12 +64,19 @@ class IrcChannel(BaseChannel):
         self.require_mention = bool(require_mention)
         self.relay_url = str(relay_url).strip()
         self.pairing_enabled = bool(pairing_enabled)
+        self.send_timeout_s = max(0.1, float(send_timeout_s))
         self._relay_client: httpx.AsyncClient | None = None
         self._session_targets: dict[str, str] = {}
+        self._outbound = OutboundResilience(
+            "irc",
+            timeout_s=self.send_timeout_s,
+            max_attempts=3,
+            base_backoff_s=send_backoff_base_s,
+        )
 
     async def start(self) -> None:
         if self.relay_url and HAS_HTTPX:
-            self._relay_client = httpx.AsyncClient(timeout=15.0)
+            self._relay_client = httpx.AsyncClient()
         self.running = True
         logger.info("Canal IRC iniciado em modo bridge.")
 
@@ -98,16 +108,48 @@ class IrcChannel(BaseChannel):
     async def _send_to_target(self, target: str, text: str) -> None:
         if not target:
             return
-        if self._relay_client and self.relay_url:
-            try:
-                await self._relay_client.post(
-                    self.relay_url,
-                    json={"target": target, "text": str(text)},
-                )
-                return
-            except Exception as exc:
-                logger.error(f"Falha ao enviar para relay IRC: {exc}")
-        logger.info("IRC outbound sem relay configurado; target=%s text=%s", target, str(text)[:120])
+        if not self.relay_url:
+            self._outbound.unavailable(
+                logger=logger,
+                provider="irc-relay-http",
+                target=target,
+                text=text,
+                reason="relay_url não configurada",
+                fallback="mensagem não entregue (sem relay)",
+            )
+            return
+        if not HAS_HTTPX:
+            self._outbound.unavailable(
+                logger=logger,
+                provider="irc-relay-http",
+                target=target,
+                text=text,
+                reason="dependência httpx indisponível",
+                fallback="mensagem não entregue (sem relay)",
+            )
+            return
+        if self._relay_client is None:
+            self._relay_client = httpx.AsyncClient()
+
+        idem_key = self._outbound.make_idempotency_key(target, text)
+
+        async def _post() -> None:
+            response = await self._relay_client.post(
+                self.relay_url,
+                json={"target": target, "text": str(text), "idempotency_key": idem_key},
+                headers={"X-Idempotency-Key": idem_key},
+            )
+            response.raise_for_status()
+
+        await self._outbound.deliver(
+            logger=logger,
+            provider="irc-relay-http",
+            target=target,
+            text=text,
+            operation=_post,
+            fallback="mensagem não entregue ao relay IRC",
+            idempotency_key=idem_key,
+        )
 
     async def process_webhook_payload(self, payload: dict[str, Any]) -> None:
         if not self.running:
@@ -156,4 +198,3 @@ class IrcChannel(BaseChannel):
         if not target and session_id.startswith("irc_group_"):
             target = session_id[len("irc_group_") :]
         await self._send_to_target(target, text)
-

@@ -74,6 +74,8 @@ class ChannelManagerTests(unittest.TestCase):
                     "allowFrom": ["users/999"],
                     "allowChannels": ["spaces/AAA"],
                     "requireMention": True,
+                    "outboundWebhookUrl": "https://example.test/googlechat",
+                    "sendTimeoutSec": 7.0,
                 },
                 "irc": {
                     "enabled": True,
@@ -86,18 +88,21 @@ class ChannelManagerTests(unittest.TestCase):
                     "allowChannels": ["#clawlite"],
                     "requireMention": True,
                     "relay_url": "http://127.0.0.1:8899/irc/send",
+                    "sendTimeoutSec": 12.0,
                 },
                 "signal": {
                     "enabled": True,
                     "account": "+15551234567",
                     "cliPath": "signal-cli",
                     "allowFrom": ["+15557654321"],
+                    "sendTimeoutSec": 20.0,
                 },
                 "imessage": {
                     "enabled": True,
                     "cliPath": "imsg",
                     "service": "auto",
                     "allowFrom": ["chat_id:*"],
+                    "sendTimeoutSec": 22.0,
                 },
             }
         }
@@ -154,22 +159,27 @@ class ChannelManagerTests(unittest.TestCase):
                 self.assertEqual(googlechat.kwargs.get("allowed_spaces"), ["spaces/AAA"])
                 self.assertEqual(googlechat.kwargs.get("bot_user"), "users/123")
                 self.assertEqual(googlechat.kwargs.get("require_mention"), True)
+                self.assertEqual(googlechat.kwargs.get("outbound_webhook_url"), "https://example.test/googlechat")
+                self.assertEqual(googlechat.kwargs.get("send_timeout_s"), 7.0)
 
                 irc = cm.active_channels["irc"]
                 self.assertEqual(irc.kwargs.get("host"), "irc.libera.chat")
                 self.assertEqual(irc.kwargs.get("nick"), "clawlite-bot")
                 self.assertEqual(irc.kwargs.get("allowed_senders"), ["alice"])
                 self.assertEqual(irc.kwargs.get("allowed_channels"), ["#clawlite"])
+                self.assertEqual(irc.kwargs.get("send_timeout_s"), 12.0)
 
                 signal = cm.active_channels["signal"]
                 self.assertEqual(signal.kwargs.get("account"), "+15551234567")
                 self.assertEqual(signal.kwargs.get("cli_path"), "signal-cli")
                 self.assertEqual(signal.kwargs.get("allowed_numbers"), ["+15557654321"])
+                self.assertEqual(signal.kwargs.get("send_timeout_s"), 20.0)
 
                 imessage = cm.active_channels["imessage"]
                 self.assertEqual(imessage.kwargs.get("cli_path"), "imsg")
                 self.assertEqual(imessage.kwargs.get("service"), "auto")
                 self.assertEqual(imessage.kwargs.get("allowed_handles"), ["chat_id:*"])
+                self.assertEqual(imessage.kwargs.get("send_timeout_s"), 22.0)
 
                 started_channels = list(cm.active_channels.values())
                 await cm.stop_all()

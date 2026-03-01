@@ -123,6 +123,8 @@ DEFAULT_CONFIG = {
             "allowChannels": [],
             "serviceAccountFile": "",
             "webhookPath": "/api/webhooks/googlechat",
+            "outboundWebhookUrl": "",
+            "sendTimeoutSec": 8.0,
             "dm": {"policy": "pairing", "allowFrom": []},
         },
         "irc": {
@@ -137,6 +139,7 @@ DEFAULT_CONFIG = {
             "allowChannels": [],
             "requireMention": True,
             "relay_url": "",
+            "sendTimeoutSec": 10.0,
         },
         "signal": {
             "enabled": False,
@@ -145,6 +148,7 @@ DEFAULT_CONFIG = {
             "cliPath": "signal-cli",
             "httpUrl": "",
             "allowFrom": [],
+            "sendTimeoutSec": 15.0,
         },
         "imessage": {
             "enabled": False,
@@ -152,6 +156,7 @@ DEFAULT_CONFIG = {
             "cliPath": "imsg",
             "service": "auto",
             "allowFrom": [],
+            "sendTimeoutSec": 15.0,
         },
         "teams": {"enabled": False, "token": "", "tenant": "", "accounts": []},
     },

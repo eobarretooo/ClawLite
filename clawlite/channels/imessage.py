@@ -8,6 +8,7 @@ import subprocess
 from typing import Any
 
 from clawlite.channels.base import BaseChannel
+from clawlite.channels.outbound_resilience import OutboundResilience
 from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,8 @@ class IMessageChannel(BaseChannel):
         cli_path: str = "imsg",
         service: str = "auto",
         allowed_handles: list[str] | None = None,
+        send_timeout_s: float = 15.0,
+        send_backoff_base_s: float = 0.25,
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -43,7 +46,14 @@ class IMessageChannel(BaseChannel):
         self.service = str(service).strip().lower() or "auto"
         self.allowed_handles = allowed_handles or []
         self.pairing_enabled = bool(pairing_enabled)
+        self.send_timeout_s = max(0.1, float(send_timeout_s))
         self._session_targets: dict[str, str] = {}
+        self._outbound = OutboundResilience(
+            "imessage",
+            timeout_s=self.send_timeout_s,
+            max_attempts=3,
+            base_backoff_s=send_backoff_base_s,
+        )
 
     async def start(self) -> None:
         if shutil.which(self.cli_path) is None:
@@ -71,22 +81,43 @@ class IMessageChannel(BaseChannel):
         if not target:
             return
         if shutil.which(self.cli_path) is None:
-            logger.warning("iMessage outbound ignorado: binário '%s' não encontrado.", self.cli_path)
+            self._outbound.unavailable(
+                logger=logger,
+                provider="imessage-cli",
+                target=target,
+                text=text,
+                reason=f"binário '{self.cli_path}' não encontrado",
+                fallback="mensagem não entregue no iMessage",
+            )
             return
 
         cmd = [self.cli_path, "send", str(target), str(text)]
         if self.service in {"imessage", "sms", "auto"}:
             cmd.extend(["--service", self.service])
 
-        def _run() -> None:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        idem_key = self._outbound.make_idempotency_key(target, text)
 
-        try:
-            await asyncio.to_thread(_run)
-        except subprocess.CalledProcessError as exc:
-            logger.error("Falha imsg send: %s", (exc.stderr or exc.stdout or str(exc)).strip())
-        except Exception as exc:
-            logger.error(f"Falha inesperada no envio iMessage: {exc}")
+        async def _run() -> None:
+            def _call() -> None:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.send_timeout_s,
+                )
+
+            await asyncio.to_thread(_call)
+
+        await self._outbound.deliver(
+            logger=logger,
+            provider="imessage-cli",
+            target=target,
+            text=text,
+            operation=_run,
+            fallback="mensagem não entregue no iMessage",
+            idempotency_key=idem_key,
+        )
 
     async def process_webhook_payload(self, payload: dict[str, Any]) -> None:
         if not self.running or not self._on_message_callback:
@@ -128,4 +159,3 @@ class IMessageChannel(BaseChannel):
         if not target and session_id.startswith("imessage_group_"):
             target = session_id[len("imessage_group_") :]
         await self._send_via_cli(target, text)
-

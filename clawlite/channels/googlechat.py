@@ -4,7 +4,15 @@ import logging
 from typing import Any
 
 from clawlite.channels.base import BaseChannel
+from clawlite.channels.outbound_resilience import OutboundResilience
 from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
+
+try:
+    import httpx
+
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +34,9 @@ class GoogleChatChannel(BaseChannel):
         allowed_spaces: list[str] | None = None,
         require_mention: bool = True,
         bot_user: str = "",
+        outbound_webhook_url: str = "",
+        send_timeout_s: float = 8.0,
+        send_backoff_base_s: float = 0.25,
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -35,13 +46,26 @@ class GoogleChatChannel(BaseChannel):
         self.allowed_spaces = allowed_spaces or []
         self.require_mention = bool(require_mention)
         self.bot_user = str(bot_user).strip().lower()
+        self.outbound_webhook_url = str(outbound_webhook_url).strip()
         self.pairing_enabled = bool(pairing_enabled)
+        self._outbound_client: httpx.AsyncClient | None = None
+        self._outbound = OutboundResilience(
+            "googlechat",
+            timeout_s=send_timeout_s,
+            max_attempts=3,
+            base_backoff_s=send_backoff_base_s,
+        )
 
     async def start(self) -> None:
+        if self.outbound_webhook_url and HAS_HTTPX:
+            self._outbound_client = httpx.AsyncClient()
         self.running = True
         logger.info("Canal Google Chat iniciado (modo webhook).")
 
     async def stop(self) -> None:
+        if self._outbound_client:
+            await self._outbound_client.aclose()
+            self._outbound_client = None
         self.running = False
         logger.info("Canal Google Chat encerrado.")
 
@@ -134,10 +158,45 @@ class GoogleChatChannel(BaseChannel):
         return {"text": str(reply)}
 
     async def send_message(self, session_id: str, text: str) -> None:
-        # Google Chat neste modo responde diretamente no webhook.
-        logger.warning(
-            "GoogleChatChannel.send_message não possui envio proativo neste modo webhook. "
-            "session=%s",
-            session_id,
-        )
+        if not self.outbound_webhook_url:
+            self._outbound.unavailable(
+                logger=logger,
+                provider="googlechat-webhook",
+                target=session_id,
+                text=text,
+                reason="outboundWebhookUrl não configurada",
+                fallback="resposta apenas via webhook inbound",
+            )
+            return
+        if not HAS_HTTPX:
+            self._outbound.unavailable(
+                logger=logger,
+                provider="googlechat-webhook",
+                target=session_id,
+                text=text,
+                reason="dependência httpx indisponível",
+                fallback="resposta apenas via webhook inbound",
+            )
+            return
+        if self._outbound_client is None:
+            self._outbound_client = httpx.AsyncClient()
 
+        idem_key = self._outbound.make_idempotency_key(session_id, text)
+
+        async def _post() -> None:
+            response = await self._outbound_client.post(
+                self.outbound_webhook_url,
+                json={"text": str(text)},
+                headers={"X-Idempotency-Key": idem_key},
+            )
+            response.raise_for_status()
+
+        await self._outbound.deliver(
+            logger=logger,
+            provider="googlechat-webhook",
+            target=session_id,
+            text=text,
+            operation=_post,
+            fallback="mensagem não entregue por indisponibilidade do webhook",
+            idempotency_key=idem_key,
+        )

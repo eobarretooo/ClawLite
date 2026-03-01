@@ -8,7 +8,15 @@ import subprocess
 from typing import Any
 
 from clawlite.channels.base import BaseChannel
+from clawlite.channels.outbound_resilience import OutboundResilience
 from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
+
+try:
+    import httpx
+
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +48,8 @@ class SignalChannel(BaseChannel):
         cli_path: str = "signal-cli",
         http_url: str = "",
         allowed_numbers: list[str] | None = None,
+        send_timeout_s: float = 15.0,
+        send_backoff_base_s: float = 0.25,
         pairing_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -50,10 +60,20 @@ class SignalChannel(BaseChannel):
         self.http_url = str(http_url).strip()
         self.allowed_numbers = allowed_numbers or []
         self.pairing_enabled = bool(pairing_enabled)
+        self.send_timeout_s = max(0.1, float(send_timeout_s))
         self._session_targets: dict[str, str] = {}
+        self._http_client: httpx.AsyncClient | None = None
+        self._outbound = OutboundResilience(
+            "signal",
+            timeout_s=self.send_timeout_s,
+            max_attempts=3,
+            base_backoff_s=send_backoff_base_s,
+        )
 
     async def start(self) -> None:
         if self.http_url:
+            if HAS_HTTPX:
+                self._http_client = httpx.AsyncClient()
             logger.info("Canal Signal iniciado em modo daemon externo: %s", self.http_url)
             self.running = True
             return
@@ -67,6 +87,9 @@ class SignalChannel(BaseChannel):
         logger.info("Canal Signal iniciado.")
 
     async def stop(self) -> None:
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
         self.running = False
         logger.info("Canal Signal encerrado.")
 
@@ -106,11 +129,65 @@ class SignalChannel(BaseChannel):
         ).strip()
         return text, sender, group_id
 
+    async def _send_via_http_relay(self, target: str, text: str) -> bool:
+        if not self.http_url:
+            return False
+        if not HAS_HTTPX:
+            self._outbound.unavailable(
+                logger=logger,
+                provider="signal-http-relay",
+                target=target,
+                text=text,
+                reason="dependência httpx indisponível",
+                fallback="tentando fallback para signal-cli",
+            )
+            return False
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient()
+
+        idem_key = self._outbound.make_idempotency_key(target, text)
+
+        async def _post() -> None:
+            response = await self._http_client.post(
+                self.http_url,
+                json={
+                    "target": target,
+                    "text": str(text),
+                    "account": self.account,
+                    "idempotency_key": idem_key,
+                },
+                headers={"X-Idempotency-Key": idem_key},
+            )
+            response.raise_for_status()
+
+        result = await self._outbound.deliver(
+            logger=logger,
+            provider="signal-http-relay",
+            target=target,
+            text=text,
+            operation=_post,
+            fallback="tentando fallback para signal-cli",
+            idempotency_key=idem_key,
+        )
+        return bool(result.ok)
+
     async def _send_via_cli(self, target: str, text: str) -> None:
-        if shutil.which(self.cli_path) is None:
-            logger.warning("Signal outbound ignorado: binário '%s' não encontrado.", self.cli_path)
-            return
         if not target:
+            return
+
+        relay_sent = await self._send_via_http_relay(target, text)
+        if relay_sent:
+            return
+
+        if shutil.which(self.cli_path) is None:
+            self._outbound.unavailable(
+                logger=logger,
+                provider="signal-cli",
+                target=target,
+                text=text,
+                reason=f"binário '{self.cli_path}' não encontrado",
+                fallback="mensagem não entregue no Signal",
+            )
             return
 
         is_group = target.startswith("signal:group:")
@@ -125,15 +202,29 @@ class SignalChannel(BaseChannel):
         else:
             cmd.append(clean_target)
 
-        def _run() -> None:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        idem_key = self._outbound.make_idempotency_key(target, text)
 
-        try:
-            await asyncio.to_thread(_run)
-        except subprocess.CalledProcessError as exc:
-            logger.error("Falha signal-cli send: %s", (exc.stderr or exc.stdout or str(exc)).strip())
-        except Exception as exc:
-            logger.error(f"Falha inesperada no envio Signal: {exc}")
+        async def _run() -> None:
+            def _call() -> None:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.send_timeout_s,
+                )
+
+            await asyncio.to_thread(_call)
+
+        await self._outbound.deliver(
+            logger=logger,
+            provider="signal-cli",
+            target=target,
+            text=text,
+            operation=_run,
+            fallback="mensagem não entregue no Signal",
+            idempotency_key=idem_key,
+        )
 
     async def process_webhook_payload(self, payload: dict[str, Any]) -> None:
         if not self.running or not self._on_message_callback:
@@ -175,4 +266,3 @@ class SignalChannel(BaseChannel):
         if not target and session_id.startswith("signal_group_"):
             target = session_id[len("signal_group_") :]
         await self._send_via_cli(target, text)
-
