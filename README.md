@@ -177,6 +177,23 @@ Dashboard local:
 
 - `http://127.0.0.1:8787`
 
+## Dashboard web (status atual)
+
+O dashboard web do ClawLite está em modo completo (estilo Control UI), com abas funcionais:
+
+- `Overview`: status do gateway, uptime, conexões, métricas de runtime e heartbeat.
+- `Chat`: chat em tempo real via WebSocket (`/ws/chat`) com metadados de execução.
+- `Sessions`: busca/inspeção de sessões e reuso da sessão no chat.
+- `Telemetry`: eventos, tokens, custo estimado, timeline e ranking por sessão.
+- `Channels`: status de canais, instâncias, reconnect e fluxo de pairing (approve/reject).
+- `Cron`: criação/listagem/remoção de jobs recorrentes.
+- `Config`: edição de model/hooks/channels com validação (`dry_run`) e apply.
+- `Workspace`: editor de `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`.
+- `Skills`: install/enable/disable/remove + update (dry-run/apply) e leitura do hub.
+- `Agents`: criação de agentes, bindings e inspeção do estado atual.
+- `Logs`: stream em tempo real com filtros (`level`, `event`, `q`).
+- `Security`: RBAC, políticas de tool (`allow/review/deny`) e trilha de auditoria.
+
 ## Segurança
 
 O ClawLite conecta canais reais (Telegram/Discord/Slack/WhatsApp/Teams). Trate mensagens de entrada como input não confiável.
