@@ -49,7 +49,7 @@ Princípios:
 Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
 Requisitos mínimos:
@@ -65,7 +65,7 @@ No GitHub do ClawLite, o fluxo suportado para Termux é apenas via proot Ubuntu.
 Não use instalação nativa no Termux para o caminho oficial.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/setup_termux_proot.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/setup_termux_proot.sh | bash
 ```
 
 Ou localmente no repositório:

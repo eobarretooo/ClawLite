@@ -21,13 +21,25 @@ if ! command -v pkg >/dev/null 2>&1; then
 fi
 
 is_distro_installed() {
-  proot-distro list 2>/dev/null | awk -v d="$1" '{
-    for (i = 1; i <= NF; i++) {
-      if ($i == d) {
-        found = 1
-      }
-    }
-  } END { exit(found ? 0 : 1) }'
+  local distro="$1"
+  if [ -z "$distro" ]; then
+    return 1
+  fi
+
+  if proot-distro list-installed >/dev/null 2>&1; then
+    if proot-distro list-installed 2>/dev/null | awk '{print $1}' | grep -Fxq "$distro"; then
+      return 0
+    fi
+  fi
+
+  if [ -d "${ROOTFS_BASE}/${distro}" ]; then
+    return 0
+  fi
+
+  if proot-distro login "$distro" -- /bin/true >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 echo "[1/6] Verificando dependências base do Termux..."
@@ -45,7 +57,7 @@ if ! command -v proot-distro >/dev/null 2>&1; then
   exit 1
 fi
 
-if is_distro_installed "${DISTRO}" || [ -d "${ROOTFS_BASE}/${DISTRO}" ]; then
+if is_distro_installed "${DISTRO}"; then
   echo "[2/6] Distro '${DISTRO}' já instalada."
 else
   echo "[2/6] Instalando distro '${DISTRO}'..."
