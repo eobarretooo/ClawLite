@@ -730,6 +730,11 @@
                 <div className="status-row"><span>Log ring entries</span><span className="status-value">{metrics?.log_ring?.total ?? 0}</span></div>
                 <div className="status-row"><span>Log errors</span><span className="status-value status-err">{metrics?.log_ring?.errors ?? 0}</span></div>
                 <div className="status-row"><span>Log warnings</span><span className="status-value" style={{ color: "var(--warn)" }}>{metrics?.log_ring?.warnings ?? 0}</span></div>
+                <div className="status-row"><span>Outbound sent OK</span><span className="status-value">{metrics?.channels_outbound?.totals?.sent_ok ?? 0}</span></div>
+                <div className="status-row"><span>Outbound retries</span><span className="status-value">{metrics?.channels_outbound?.totals?.retry_count ?? 0}</span></div>
+                <div className="status-row"><span>Outbound timeouts</span><span className="status-value">{metrics?.channels_outbound?.totals?.timeout_count ?? 0}</span></div>
+                <div className="status-row"><span>Outbound fallbacks</span><span className="status-value">{metrics?.channels_outbound?.totals?.fallback_count ?? 0}</span></div>
+                <div className="status-row"><span>Outbound failures</span><span className="status-value status-err">{metrics?.channels_outbound?.totals?.send_fail_count ?? 0}</span></div>
               </div>
             </div>
 
@@ -1270,6 +1275,11 @@
                       <th>Enabled</th>
                       <th>Configured</th>
                       <th>Instances</th>
+                      <th>Sent OK</th>
+                      <th>Retries</th>
+                      <th>Timeouts</th>
+                      <th>Fallbacks</th>
+                      <th>Failures</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -1280,10 +1290,15 @@
                         <td>{row.enabled ? <span className="badge ok">yes</span> : <span className="badge err">no</span>}</td>
                         <td>{row.configured ? <span className="badge ok">yes</span> : <span className="badge warn">partial</span>}</td>
                         <td>{row.instances_online ?? 0}</td>
+                        <td>{row.outbound?.sent_ok ?? 0}</td>
+                        <td>{row.outbound?.retry_count ?? 0}</td>
+                        <td>{row.outbound?.timeout_count ?? 0}</td>
+                        <td>{row.outbound?.fallback_count ?? 0}</td>
+                        <td>{row.outbound?.send_fail_count ?? 0}</td>
                         <td><button className="btn" onClick={() => reconnect(row.channel)}>Reconnect</button></td>
                       </tr>
                     ))}
-                    {channels.length === 0 && <tr><td colSpan="5" className="muted">No channels configured.</td></tr>}
+                    {channels.length === 0 && <tr><td colSpan="10" className="muted">No channels configured.</td></tr>}
                   </tbody>
                 </table>
               </div>

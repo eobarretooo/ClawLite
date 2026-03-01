@@ -94,6 +94,13 @@ def test_googlechat_outbound_ok_and_idempotent():
     assert len(fake.calls) == 1
     assert fake.calls[0][1]["text"] == "hello"
     assert "X-Idempotency-Key" in fake.calls[0][2]
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 1
+    assert metrics["dedupe_hits"] == 1
+    assert metrics["retry_count"] == 0
+    assert metrics["timeout_count"] == 0
+    assert metrics["fallback_count"] == 0
+    assert metrics["send_fail_count"] == 0
 
 
 def test_googlechat_outbound_retry_exhausted(caplog):
@@ -113,6 +120,12 @@ def test_googlechat_outbound_retry_exhausted(caplog):
     asyncio.run(_run())
     assert fake.calls == 3
     assert "code=provider_send_failed" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["timeout_count"] == 0
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_googlechat_outbound_timeout(caplog):
@@ -132,6 +145,12 @@ def test_googlechat_outbound_timeout(caplog):
     asyncio.run(_run())
     assert fake.calls == 3
     assert "code=provider_timeout" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["timeout_count"] == 3
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_googlechat_outbound_fallback_unavailable(caplog):
@@ -143,6 +162,10 @@ def test_googlechat_outbound_fallback_unavailable(caplog):
 
     asyncio.run(_run())
     assert "code=channel_unavailable" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_irc_outbound_ok_and_idempotent():
@@ -164,6 +187,11 @@ def test_irc_outbound_ok_and_idempotent():
     assert fake.calls[0][1]["target"] == "alice"
     assert fake.calls[0][1]["text"] == "pong"
     assert fake.calls[0][1]["idempotency_key"]
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 1
+    assert metrics["dedupe_hits"] == 1
+    assert metrics["retry_count"] == 0
+    assert metrics["send_fail_count"] == 0
 
 
 def test_irc_outbound_retry_exhausted(caplog):
@@ -183,6 +211,11 @@ def test_irc_outbound_retry_exhausted(caplog):
     asyncio.run(_run())
     assert fake.calls == 3
     assert "code=provider_send_failed" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_irc_outbound_timeout(caplog):
@@ -202,6 +235,12 @@ def test_irc_outbound_timeout(caplog):
     asyncio.run(_run())
     assert fake.calls == 3
     assert "code=provider_timeout" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["timeout_count"] == 3
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_irc_outbound_fallback_unavailable(caplog):
@@ -213,6 +252,10 @@ def test_irc_outbound_fallback_unavailable(caplog):
 
     asyncio.run(_run())
     assert "code=channel_unavailable" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_signal_outbound_ok_and_idempotent(monkeypatch):
@@ -238,6 +281,11 @@ def test_signal_outbound_ok_and_idempotent(monkeypatch):
     asyncio.run(_run())
     assert len(calls) == 1
     assert calls[0][-1] == "+15551234567"
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 1
+    assert metrics["dedupe_hits"] == 1
+    assert metrics["retry_count"] == 0
+    assert metrics["send_fail_count"] == 0
 
 
 def test_signal_outbound_retry_exhausted(monkeypatch, caplog):
@@ -263,6 +311,11 @@ def test_signal_outbound_retry_exhausted(monkeypatch, caplog):
     asyncio.run(_run())
     assert calls["count"] == 3
     assert "code=provider_send_failed" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_signal_outbound_timeout(monkeypatch, caplog):
@@ -289,6 +342,12 @@ def test_signal_outbound_timeout(monkeypatch, caplog):
     asyncio.run(_run())
     assert calls["count"] == 3
     assert "code=provider_timeout" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["timeout_count"] == 3
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_signal_outbound_fallback_unavailable(monkeypatch, caplog):
@@ -301,6 +360,10 @@ def test_signal_outbound_fallback_unavailable(monkeypatch, caplog):
 
     asyncio.run(_run())
     assert "code=channel_unavailable" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_imessage_outbound_ok_and_idempotent(monkeypatch):
@@ -326,6 +389,11 @@ def test_imessage_outbound_ok_and_idempotent(monkeypatch):
     asyncio.run(_run())
     assert len(calls) == 1
     assert calls[0][0] == "imsg"
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 1
+    assert metrics["dedupe_hits"] == 1
+    assert metrics["retry_count"] == 0
+    assert metrics["send_fail_count"] == 0
 
 
 def test_imessage_outbound_retry_exhausted(monkeypatch, caplog):
@@ -351,6 +419,11 @@ def test_imessage_outbound_retry_exhausted(monkeypatch, caplog):
     asyncio.run(_run())
     assert calls["count"] == 3
     assert "code=provider_send_failed" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_imessage_outbound_timeout(monkeypatch, caplog):
@@ -377,6 +450,12 @@ def test_imessage_outbound_timeout(monkeypatch, caplog):
     asyncio.run(_run())
     assert calls["count"] == 3
     assert "code=provider_timeout" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["retry_count"] == 2
+    assert metrics["timeout_count"] == 3
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1
 
 
 def test_imessage_outbound_fallback_unavailable(monkeypatch, caplog):
@@ -389,3 +468,7 @@ def test_imessage_outbound_fallback_unavailable(monkeypatch, caplog):
 
     asyncio.run(_run())
     assert "code=channel_unavailable" in caplog.text
+    metrics = channel.outbound_metrics_snapshot()
+    assert metrics["sent_ok"] == 0
+    assert metrics["fallback_count"] == 1
+    assert metrics["send_fail_count"] == 1

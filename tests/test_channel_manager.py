@@ -27,6 +27,15 @@ class _FakeChannel(BaseChannel):
         return None
 
 
+class _FakeOutboundChannel(_FakeChannel):
+    def __init__(self, token: str, name: str, outbound: dict[str, Any], **kwargs: Any) -> None:
+        super().__init__(token, name, **kwargs)
+        self._outbound = dict(outbound)
+
+    def outbound_metrics_snapshot(self) -> dict[str, Any]:
+        return dict(self._outbound)
+
+
 class ChannelManagerTests(unittest.TestCase):
     def test_start_all_uses_accounts_and_channel_specific_kwargs(self) -> None:
         from clawlite.channels import manager as manager_mod
@@ -192,6 +201,59 @@ class ChannelManagerTests(unittest.TestCase):
             manager_mod.CHANNEL_CLASSES.clear()
             manager_mod.CHANNEL_CLASSES.update(original_classes)
             manager_mod.load_config = original_load_config
+
+    def test_outbound_metrics_aggregation_and_instance_snapshot(self) -> None:
+        cm = ChannelManager()
+        cm.active_channels = {
+            "irc": _FakeOutboundChannel(
+                token="",
+                name="irc",
+                outbound={
+                    "sent_ok": 4,
+                    "retry_count": 1,
+                    "timeout_count": 0,
+                    "fallback_count": 1,
+                    "send_fail_count": 1,
+                    "dedupe_hits": 2,
+                    "last_success_at": "2026-03-01T11:11:11+00:00",
+                },
+            ),
+            "irc:ops": _FakeOutboundChannel(
+                token="",
+                name="irc",
+                outbound={
+                    "sent_ok": 3,
+                    "retry_count": 2,
+                    "timeout_count": 1,
+                    "fallback_count": 1,
+                    "send_fail_count": 1,
+                    "dedupe_hits": 1,
+                    "last_error": {"provider": "irc-relay-http", "code": "provider_timeout", "reason": "timeout", "attempts": 3, "at": "now"},
+                },
+            ),
+            "telegram": _FakeChannel(token="tok", name="telegram"),
+        }
+        cm.active_metadata = {
+            "irc": {"channel": "irc", "account": ""},
+            "irc:ops": {"channel": "irc", "account": "ops"},
+            "telegram": {"channel": "telegram", "account": ""},
+        }
+
+        aggregated = cm.outbound_metrics()
+        self.assertIn("irc", aggregated)
+        self.assertEqual(aggregated["irc"]["instances_reporting"], 2)
+        self.assertEqual(aggregated["irc"]["sent_ok"], 7)
+        self.assertEqual(aggregated["irc"]["retry_count"], 3)
+        self.assertEqual(aggregated["irc"]["timeout_count"], 1)
+        self.assertEqual(aggregated["irc"]["fallback_count"], 2)
+        self.assertEqual(aggregated["irc"]["send_fail_count"], 2)
+        self.assertEqual(aggregated["irc"]["dedupe_hits"], 3)
+        self.assertIn("last_error", aggregated["irc"])
+
+        instances = cm.describe_instances("irc")
+        self.assertEqual(len(instances), 2)
+        self.assertIsNotNone(instances[0]["outbound"])
+        self.assertIn("sent_ok", instances[0]["outbound"])
 
 
 if __name__ == "__main__":

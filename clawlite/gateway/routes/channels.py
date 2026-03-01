@@ -43,6 +43,29 @@ def _normalize_allow_from(value: Any) -> list[str]:
     return []
 
 
+def _normalize_timeout_seconds(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if parsed <= 0:
+        return float(default)
+    return float(parsed)
+
+
+def _default_outbound_metrics() -> dict[str, Any]:
+    return {
+        "sent_ok": 0,
+        "retry_count": 0,
+        "timeout_count": 0,
+        "fallback_count": 0,
+        "send_fail_count": 0,
+        "dedupe_hits": 0,
+        "instances_reporting": 0,
+        "last_success_at": None,
+    }
+
+
 def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {
         "enabled": bool(raw.get("enabled", False)),
@@ -86,6 +109,8 @@ def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
             clean["serviceAccountRef"] = raw.get("serviceAccountRef")
         clean["botUser"] = str(raw.get("botUser", "")).strip()
         clean["webhookPath"] = str(raw.get("webhookPath", "/api/webhooks/googlechat")).strip() or "/api/webhooks/googlechat"
+        clean["outboundWebhookUrl"] = str(raw.get("outboundWebhookUrl") or raw.get("outbound_webhook_url") or "").strip()
+        clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 8.0)), 8.0)
         clean["requireMention"] = bool(raw.get("requireMention", True))
         dm_raw = raw.get("dm", {})
         if isinstance(dm_raw, dict):
@@ -104,14 +129,17 @@ def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         clean["nick"] = str(raw.get("nick", "clawlite-bot")).strip() or "clawlite-bot"
         clean["channels"] = _normalize_allow_from(raw.get("channels", []))
         clean["relay_url"] = str(raw.get("relay_url") or raw.get("relayUrl") or "").strip()
+        clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 10.0)), 10.0)
         clean["requireMention"] = bool(raw.get("requireMention", True))
     elif channel == "signal":
         clean["account"] = str(raw.get("account", "")).strip()
         clean["cliPath"] = str(raw.get("cliPath") or raw.get("cli_path") or "signal-cli").strip()
         clean["httpUrl"] = str(raw.get("httpUrl") or raw.get("http_url") or "").strip()
+        clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 15.0)), 15.0)
     elif channel == "imessage":
         clean["cliPath"] = str(raw.get("cliPath") or raw.get("cli_path") or "imsg").strip()
         clean["service"] = str(raw.get("service", "auto")).strip().lower()
+        clean["sendTimeoutSec"] = _normalize_timeout_seconds(raw.get("sendTimeoutSec", raw.get("send_timeout_s", 15.0)), 15.0)
     elif channel == "teams":
         clean["tenant"] = str(raw.get("tenant", "")).strip()
 
@@ -155,6 +183,7 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
     _check_bearer(authorization)
     cfg = load_config()
     channels_cfg = cfg.get("channels", {})
+    outbound_by_channel = manager.outbound_metrics()
     result: list[dict[str, Any]] = []
     for name, ch_cfg in channels_cfg.items():
         if not isinstance(ch_cfg, dict):
@@ -163,6 +192,10 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
         channel_name = str(name).strip().lower()
         account_count = len(_normalize_accounts(ch_cfg.get("accounts", [])))
         has_token = _channel_configured(channel_name, ch_cfg, account_count)
+        outbound = dict(_default_outbound_metrics())
+        live_outbound = outbound_by_channel.get(channel_name, {})
+        if isinstance(live_outbound, dict):
+            outbound.update(live_outbound)
         instance_prefix = f"{channel_name}:"
         online_instances = sum(
             1
@@ -177,6 +210,7 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
             "accounts_configured": account_count,
             "stt_enabled": bool(ch_cfg.get("stt_enabled", False)),
             "tts_enabled": bool(ch_cfg.get("tts_enabled", False)),
+            "outbound": outbound,
         })
     return JSONResponse({"ok": True, "channels": result})
 

@@ -106,6 +106,12 @@ def test_channels_status(monkeypatch, tmp_path):
         assert tg["enabled"] is True
         assert tg["configured"] is True
         assert tg["stt_enabled"] is True
+        assert "outbound" in tg
+        assert tg["outbound"]["sent_ok"] == 0
+        assert tg["outbound"]["retry_count"] == 0
+        assert tg["outbound"]["timeout_count"] == 0
+        assert tg["outbound"]["fallback_count"] == 0
+        assert tg["outbound"]["send_fail_count"] == 0
     finally:
         multiagent.DB_DIR = old_dir
         multiagent.DB_PATH = old_path
@@ -151,6 +157,55 @@ def test_channels_status_token_optional_channels(monkeypatch, tmp_path):
         assert rows["irc"]["configured"] is True
         assert rows["signal"]["configured"] is True
         assert rows["imessage"]["configured"] is True
+        assert rows["googlechat"]["outbound"]["sent_ok"] == 0
+        assert rows["irc"]["outbound"]["retry_count"] == 0
+        assert rows["signal"]["outbound"]["timeout_count"] == 0
+        assert rows["imessage"]["outbound"]["fallback_count"] == 0
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path
+
+
+def test_channels_status_exposes_live_outbound_metrics(monkeypatch, tmp_path):
+    old_dir, old_path = _patch_db(tmp_path)
+    try:
+        server = _boot(monkeypatch, tmp_path)
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        from clawlite.config.settings import load_config, save_config
+
+        cfg = load_config()
+        cfg["channels"] = {
+            "irc": {"enabled": True, "host": "irc.libera.chat", "nick": "clawlite-bot"},
+        }
+        save_config(cfg)
+        monkeypatch.setattr(
+            server.channels.manager,
+            "outbound_metrics",
+            lambda channel_name=None: {
+                "irc": {
+                    "sent_ok": 7,
+                    "retry_count": 3,
+                    "timeout_count": 1,
+                    "fallback_count": 2,
+                    "send_fail_count": 2,
+                    "dedupe_hits": 4,
+                    "instances_reporting": 1,
+                }
+            },
+        )
+
+        status = client.get("/api/channels/status", headers=headers)
+        assert status.status_code == 200
+        row = next(c for c in status.json()["channels"] if c["channel"] == "irc")
+        assert row["outbound"]["sent_ok"] == 7
+        assert row["outbound"]["retry_count"] == 3
+        assert row["outbound"]["timeout_count"] == 1
+        assert row["outbound"]["fallback_count"] == 2
+        assert row["outbound"]["send_fail_count"] == 2
+        assert row["outbound"]["instances_reporting"] == 1
     finally:
         multiagent.DB_DIR = old_dir
         multiagent.DB_PATH = old_path
@@ -235,6 +290,8 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "enabled": True,
                         "serviceAccountFile": "/tmp/service-account.json",
                         "botUser": "users/123",
+                        "outboundWebhookUrl": "https://example.test/googlechat",
+                        "sendTimeoutSec": 9.0,
                         "requireMention": True,
                         "dm": {"policy": "pairing", "allowFrom": ["users/999"]},
                     },
@@ -245,17 +302,20 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "tls": True,
                         "nick": "clawlite-bot",
                         "channels": ["#clawlite"],
+                        "sendTimeoutSec": 11.0,
                         "requireMention": True,
                     },
                     "signal": {
                         "enabled": True,
                         "account": "+15551234567",
                         "cliPath": "signal-cli",
+                        "sendTimeoutSec": 17.0,
                     },
                     "imessage": {
                         "enabled": True,
                         "cliPath": "imsg",
                         "service": "auto",
+                        "sendTimeoutSec": 19.0,
                     },
                 }
             },
@@ -266,9 +326,14 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
         assert saved.json()["channels"]["slack"]["accounts"][0]["account"] == "dev"
         assert saved.json()["channels"]["slack"]["accounts"][0]["app_token"] == "xapp-dev"
         assert saved.json()["channels"]["googlechat"]["serviceAccountFile"] == "/tmp/service-account.json"
+        assert saved.json()["channels"]["googlechat"]["outboundWebhookUrl"] == "https://example.test/googlechat"
+        assert saved.json()["channels"]["googlechat"]["sendTimeoutSec"] == 9.0
         assert saved.json()["channels"]["irc"]["host"] == "irc.libera.chat"
+        assert saved.json()["channels"]["irc"]["sendTimeoutSec"] == 11.0
         assert saved.json()["channels"]["signal"]["account"] == "+15551234567"
+        assert saved.json()["channels"]["signal"]["sendTimeoutSec"] == 17.0
         assert saved.json()["channels"]["imessage"]["cliPath"] == "imsg"
+        assert saved.json()["channels"]["imessage"]["sendTimeoutSec"] == 19.0
 
         status = client.get("/api/channels/status", headers=headers)
         tg = next(c for c in status.json()["channels"] if c["channel"] == "telegram")
@@ -276,6 +341,8 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
         sl = next(c for c in status.json()["channels"] if c["channel"] == "slack")
         assert sl["configured"] is True
         assert "accounts_configured" in sl
+        assert "outbound" in sl
+        assert sl["outbound"]["sent_ok"] == 0
         assert next(c for c in status.json()["channels"] if c["channel"] == "googlechat")["configured"] is True
         assert next(c for c in status.json()["channels"] if c["channel"] == "irc")["configured"] is True
         assert next(c for c in status.json()["channels"] if c["channel"] == "signal")["configured"] is True
@@ -339,6 +406,21 @@ def test_metrics(monkeypatch, tmp_path):
         client = TestClient(server.app)
         token = server._token()
         headers = {"Authorization": f"Bearer {token}"}
+        monkeypatch.setattr(
+            server.channels.manager,
+            "outbound_metrics",
+            lambda channel_name=None: {
+                "irc": {
+                    "sent_ok": 7,
+                    "retry_count": 3,
+                    "timeout_count": 1,
+                    "fallback_count": 2,
+                    "send_fail_count": 2,
+                    "dedupe_hits": 4,
+                    "instances_reporting": 1,
+                }
+            },
+        )
 
         r = client.get("/api/metrics", headers=headers)
         assert r.status_code == 200
@@ -349,6 +431,13 @@ def test_metrics(monkeypatch, tmp_path):
         assert "tasks" in data
         assert "log_ring" in data
         assert "websocket_connections" in data
+        assert "channels_outbound" in data
+        assert data["channels_outbound"]["channels_reporting"] == 1
+        assert data["channels_outbound"]["totals"]["sent_ok"] == 7
+        assert data["channels_outbound"]["totals"]["retry_count"] == 3
+        assert data["channels_outbound"]["totals"]["timeout_count"] == 1
+        assert data["channels_outbound"]["totals"]["fallback_count"] == 2
+        assert data["channels_outbound"]["totals"]["send_fail_count"] == 2
         assert data["uptime_seconds"] >= 0
     finally:
         multiagent.DB_DIR = old_dir

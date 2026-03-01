@@ -232,6 +232,43 @@ class ChannelManager:
         prefix = f"{base}:"
         return [key for key in self.active_channels.keys() if key == base or key.startswith(prefix)]
 
+    @staticmethod
+    def _default_outbound_metrics() -> dict[str, Any]:
+        return {
+            "sent_ok": 0,
+            "retry_count": 0,
+            "timeout_count": 0,
+            "fallback_count": 0,
+            "send_fail_count": 0,
+            "dedupe_hits": 0,
+            "last_success_at": None,
+        }
+
+    @classmethod
+    def _normalize_outbound_metrics(cls, value: Any) -> dict[str, Any]:
+        row = cls._default_outbound_metrics()
+        if not isinstance(value, dict):
+            return row
+        for key in ("sent_ok", "retry_count", "timeout_count", "fallback_count", "send_fail_count", "dedupe_hits"):
+            raw = value.get(key, row[key])
+            try:
+                row[key] = max(0, int(raw))
+            except (TypeError, ValueError):
+                row[key] = 0
+        last_success_at = value.get("last_success_at")
+        if isinstance(last_success_at, str) and last_success_at.strip():
+            row["last_success_at"] = last_success_at.strip()
+        last_error = value.get("last_error")
+        if isinstance(last_error, dict):
+            row["last_error"] = {
+                "provider": str(last_error.get("provider", "")).strip(),
+                "code": str(last_error.get("code", "")).strip(),
+                "reason": str(last_error.get("reason", "")).strip(),
+                "attempts": int(last_error.get("attempts", 0) or 0),
+                "at": str(last_error.get("at", "")).strip(),
+            }
+        return row
+
     async def _stop_instance(self, instance_key: str) -> bool:
         channel = self.active_channels.get(instance_key)
         if channel is None:
@@ -338,15 +375,63 @@ class ChannelManager:
             ch_name = str(meta.get("channel", "") or instance_key.split(":", 1)[0]).strip().lower()
             if only_channel and ch_name != only_channel:
                 continue
+            outbound_metrics: dict[str, Any] | None = None
+            snapshot_fn = getattr(channel, "outbound_metrics_snapshot", None)
+            if callable(snapshot_fn):
+                try:
+                    outbound_metrics = self._normalize_outbound_metrics(snapshot_fn())
+                except Exception as exc:
+                    logger.warning("Falha ao coletar métricas outbound de '%s': %s", instance_key, exc)
             rows.append(
                 {
                     "instance_key": instance_key,
                     "channel": ch_name,
                     "account": str(meta.get("account", "")).strip(),
                     "running": bool(getattr(channel, "running", False)),
+                    "outbound": outbound_metrics,
                 }
             )
         rows.sort(key=lambda row: row["instance_key"])
+        return rows
+
+    def outbound_metrics(self, channel_name: str | None = None) -> dict[str, dict[str, Any]]:
+        only_channel = str(channel_name or "").strip().lower()
+        rows: dict[str, dict[str, Any]] = {}
+
+        for instance_key, channel in self.active_channels.items():
+            meta = self.active_metadata.get(instance_key, {})
+            ch_name = str(meta.get("channel", "") or instance_key.split(":", 1)[0]).strip().lower()
+            if not ch_name:
+                continue
+            if only_channel and ch_name != only_channel:
+                continue
+            snapshot_fn = getattr(channel, "outbound_metrics_snapshot", None)
+            if not callable(snapshot_fn):
+                continue
+            try:
+                snapshot = self._normalize_outbound_metrics(snapshot_fn())
+            except Exception as exc:
+                logger.warning("Falha ao coletar métricas outbound de '%s': %s", instance_key, exc)
+                continue
+
+            aggregate = rows.get(ch_name)
+            if aggregate is None:
+                aggregate = self._default_outbound_metrics()
+                aggregate["instances_reporting"] = 0
+                rows[ch_name] = aggregate
+
+            aggregate["instances_reporting"] = int(aggregate.get("instances_reporting", 0)) + 1
+            for key in ("sent_ok", "retry_count", "timeout_count", "fallback_count", "send_fail_count", "dedupe_hits"):
+                aggregate[key] = int(aggregate.get(key, 0)) + int(snapshot.get(key, 0))
+
+            if snapshot.get("last_success_at"):
+                existing = str(aggregate.get("last_success_at") or "")
+                incoming = str(snapshot.get("last_success_at") or "")
+                if incoming and incoming > existing:
+                    aggregate["last_success_at"] = incoming
+            if snapshot.get("last_error"):
+                aggregate["last_error"] = snapshot["last_error"]
+
         return rows
 
     async def start_all(self) -> None:

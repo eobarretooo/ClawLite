@@ -200,3 +200,6 @@ class GoogleChatChannel(BaseChannel):
             fallback="mensagem não entregue por indisponibilidade do webhook",
             idempotency_key=idem_key,
         )
+
+    def outbound_metrics_snapshot(self) -> dict[str, Any]:
+        return self._outbound.metrics_snapshot()

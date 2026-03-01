@@ -266,3 +266,6 @@ class SignalChannel(BaseChannel):
         if not target and session_id.startswith("signal_group_"):
             target = session_id[len("signal_group_") :]
         await self._send_via_cli(target, text)
+
+    def outbound_metrics_snapshot(self) -> dict[str, Any]:
+        return self._outbound.metrics_snapshot()

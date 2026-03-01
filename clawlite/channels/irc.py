@@ -198,3 +198,6 @@ class IrcChannel(BaseChannel):
         if not target and session_id.startswith("irc_group_"):
             target = session_id[len("irc_group_") :]
         await self._send_to_target(target, text)
+
+    def outbound_metrics_snapshot(self) -> dict[str, Any]:
+        return self._outbound.metrics_snapshot()

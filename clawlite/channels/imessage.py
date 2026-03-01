@@ -159,3 +159,6 @@ class IMessageChannel(BaseChannel):
         if not target and session_id.startswith("imessage_group_"):
             target = session_id[len("imessage_group_") :]
         await self._send_via_cli(target, text)
+
+    def outbound_metrics_snapshot(self) -> dict[str, Any]:
+        return self._outbound.metrics_snapshot()

@@ -38,6 +38,7 @@ async def api_learning_stats(
 @router.get("/api/metrics")
 def api_metrics(authorization: str | None = Header(default=None)) -> JSONResponse:
     _check_bearer(authorization)
+    from clawlite.channels.manager import manager as channel_manager
     from clawlite.runtime import multiagent
     from contextlib import closing
     import sqlite3 as _sqlite3
@@ -60,6 +61,23 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
     total_logs = len(LOG_RING)
     error_logs = sum(1 for e in LOG_RING if e.get("level") == "error")
     warn_logs = sum(1 for e in LOG_RING if e.get("level") == "warn")
+    outbound_by_channel = channel_manager.outbound_metrics()
+    outbound_totals = {
+        "sent_ok": 0,
+        "retry_count": 0,
+        "timeout_count": 0,
+        "fallback_count": 0,
+        "send_fail_count": 0,
+        "dedupe_hits": 0,
+    }
+    for row in outbound_by_channel.values():
+        if not isinstance(row, dict):
+            continue
+        for key in outbound_totals.keys():
+            try:
+                outbound_totals[key] += int(row.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                pass
 
     return JSONResponse(
         {
@@ -82,6 +100,11 @@ def api_metrics(authorization: str | None = Header(default=None)) -> JSONRespons
                 "ws": len(connections),
                 "chat": len(chat_connections),
                 "logs": len(log_connections),
+            },
+            "channels_outbound": {
+                "channels_reporting": len(outbound_by_channel),
+                "totals": outbound_totals,
+                "by_channel": outbound_by_channel,
             },
         }
     )

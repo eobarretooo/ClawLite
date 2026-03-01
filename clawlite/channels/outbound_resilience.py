@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -40,6 +41,16 @@ class OutboundResilience:
         self.dedupe_max_entries = max(32, int(dedupe_max_entries))
         self._sleep_fn = sleep_fn
         self._recent_sent: dict[str, float] = {}
+        self._metrics: dict[str, int] = {
+            "sent_ok": 0,
+            "retry_count": 0,
+            "timeout_count": 0,
+            "fallback_count": 0,
+            "send_fail_count": 0,
+            "dedupe_hits": 0,
+        }
+        self._last_error: dict[str, Any] | None = None
+        self._last_success_at: str | None = None
 
     def make_idempotency_key(self, target: str, text: str) -> str:
         raw = f"{self.channel}\n{str(target)}\n{str(text)}".encode("utf-8", errors="ignore")
@@ -88,6 +99,36 @@ class OutboundResilience:
             error["fallback"],
         )
 
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _inc(self, metric: str, value: int = 1) -> None:
+        self._metrics[metric] = int(self._metrics.get(metric, 0)) + int(value)
+
+    def _record_error(self, error: dict[str, Any]) -> None:
+        self._last_error = {
+            "provider": str(error.get("provider", "")),
+            "code": str(error.get("code", "")),
+            "reason": str(error.get("reason", "")),
+            "attempts": int(error.get("attempts", 0)),
+            "at": self._now_iso(),
+        }
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        row = {
+            "sent_ok": int(self._metrics.get("sent_ok", 0)),
+            "retry_count": int(self._metrics.get("retry_count", 0)),
+            "timeout_count": int(self._metrics.get("timeout_count", 0)),
+            "fallback_count": int(self._metrics.get("fallback_count", 0)),
+            "send_fail_count": int(self._metrics.get("send_fail_count", 0)),
+            "dedupe_hits": int(self._metrics.get("dedupe_hits", 0)),
+            "last_success_at": self._last_success_at,
+        }
+        if self._last_error:
+            row["last_error"] = dict(self._last_error)
+        return row
+
     def unavailable(
         self,
         *,
@@ -107,6 +148,9 @@ class OutboundResilience:
             fallback=fallback,
             idempotency_key=key,
         )
+        self._inc("send_fail_count")
+        self._inc("fallback_count")
+        self._record_error(error)
         self._log_failure(logger, error)
         return OutboundSendResult(ok=False, attempts=0, idempotency_key=key, error=error)
 
@@ -126,6 +170,7 @@ class OutboundResilience:
         self._prune_recent(now_ts)
         if key in self._recent_sent:
             logger.info("Outbound deduplicado channel=%s provider=%s key=%s", self.channel, provider, key)
+            self._inc("dedupe_hits")
             return OutboundSendResult(ok=True, attempts=0, idempotency_key=key)
 
         last_error: dict[str, Any] | None = None
@@ -133,8 +178,11 @@ class OutboundResilience:
             try:
                 await asyncio.wait_for(operation(), timeout=self.timeout_s)
                 self._recent_sent[key] = time.monotonic()
+                self._inc("sent_ok")
+                self._last_success_at = self._now_iso()
                 return OutboundSendResult(ok=True, attempts=attempt, idempotency_key=key)
             except asyncio.TimeoutError:
+                self._inc("timeout_count")
                 last_error = self._build_error(
                     provider=provider,
                     code="provider_timeout",
@@ -154,6 +202,7 @@ class OutboundResilience:
                 )
 
             if attempt < self.max_attempts:
+                self._inc("retry_count")
                 delay = self.base_backoff_s * (2 ** (attempt - 1))
                 if delay > 0:
                     await self._sleep_fn(delay)
@@ -167,6 +216,9 @@ class OutboundResilience:
                 fallback=fallback,
                 idempotency_key=key,
             )
+        self._inc("send_fail_count")
+        self._inc("fallback_count")
+        self._record_error(last_error)
         self._log_failure(logger, last_error)
         return OutboundSendResult(
             ok=False,
