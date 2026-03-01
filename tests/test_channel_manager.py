@@ -67,6 +67,38 @@ class ChannelManagerTests(unittest.TestCase):
                     "enabled": False,
                     "token": "tg-disabled",
                 },
+                "googlechat": {
+                    "enabled": True,
+                    "serviceAccountFile": "/tmp/service-account.json",
+                    "botUser": "users/123",
+                    "allowFrom": ["users/999"],
+                    "allowChannels": ["spaces/AAA"],
+                    "requireMention": True,
+                },
+                "irc": {
+                    "enabled": True,
+                    "host": "irc.libera.chat",
+                    "port": 6697,
+                    "tls": True,
+                    "nick": "clawlite-bot",
+                    "channels": ["#clawlite"],
+                    "allowFrom": ["alice"],
+                    "allowChannels": ["#clawlite"],
+                    "requireMention": True,
+                    "relay_url": "http://127.0.0.1:8899/irc/send",
+                },
+                "signal": {
+                    "enabled": True,
+                    "account": "+15551234567",
+                    "cliPath": "signal-cli",
+                    "allowFrom": ["+15557654321"],
+                },
+                "imessage": {
+                    "enabled": True,
+                    "cliPath": "imsg",
+                    "service": "auto",
+                    "allowFrom": ["chat_id:*"],
+                },
             }
         }
 
@@ -76,6 +108,10 @@ class ChannelManagerTests(unittest.TestCase):
             manager_mod.CHANNEL_CLASSES["slack"] = _FakeChannel
             manager_mod.CHANNEL_CLASSES["whatsapp"] = _FakeChannel
             manager_mod.CHANNEL_CLASSES["telegram"] = _FakeChannel
+            manager_mod.CHANNEL_CLASSES["googlechat"] = _FakeChannel
+            manager_mod.CHANNEL_CLASSES["irc"] = _FakeChannel
+            manager_mod.CHANNEL_CLASSES["signal"] = _FakeChannel
+            manager_mod.CHANNEL_CLASSES["imessage"] = _FakeChannel
             manager_mod.load_config = lambda: cfg
 
             cm = ChannelManager()
@@ -87,6 +123,10 @@ class ChannelManagerTests(unittest.TestCase):
                 self.assertIn("slack:workspace-dev", cm.active_channels)
                 self.assertIn("whatsapp", cm.active_channels)
                 self.assertIn("whatsapp:wa-2", cm.active_channels)
+                self.assertIn("googlechat", cm.active_channels)
+                self.assertIn("irc", cm.active_channels)
+                self.assertIn("signal", cm.active_channels)
+                self.assertIn("imessage", cm.active_channels)
                 self.assertNotIn("telegram", cm.active_channels)
 
                 slack_main = cm.active_channels["slack"]
@@ -108,6 +148,28 @@ class ChannelManagerTests(unittest.TestCase):
                 wa_second = cm.active_channels["whatsapp:wa-2"]
                 self.assertEqual(wa_second.kwargs.get("phone_number_id"), "2222")
                 self.assertEqual(wa_second.kwargs.get("allowed_numbers"), ["+5511888888888"])
+
+                googlechat = cm.active_channels["googlechat"]
+                self.assertEqual(googlechat.kwargs.get("allowed_users"), ["users/999"])
+                self.assertEqual(googlechat.kwargs.get("allowed_spaces"), ["spaces/AAA"])
+                self.assertEqual(googlechat.kwargs.get("bot_user"), "users/123")
+                self.assertEqual(googlechat.kwargs.get("require_mention"), True)
+
+                irc = cm.active_channels["irc"]
+                self.assertEqual(irc.kwargs.get("host"), "irc.libera.chat")
+                self.assertEqual(irc.kwargs.get("nick"), "clawlite-bot")
+                self.assertEqual(irc.kwargs.get("allowed_senders"), ["alice"])
+                self.assertEqual(irc.kwargs.get("allowed_channels"), ["#clawlite"])
+
+                signal = cm.active_channels["signal"]
+                self.assertEqual(signal.kwargs.get("account"), "+15551234567")
+                self.assertEqual(signal.kwargs.get("cli_path"), "signal-cli")
+                self.assertEqual(signal.kwargs.get("allowed_numbers"), ["+15557654321"])
+
+                imessage = cm.active_channels["imessage"]
+                self.assertEqual(imessage.kwargs.get("cli_path"), "imsg")
+                self.assertEqual(imessage.kwargs.get("service"), "auto")
+                self.assertEqual(imessage.kwargs.get("allowed_handles"), ["chat_id:*"])
 
                 started_channels = list(cm.active_channels.values())
                 await cm.stop_all()

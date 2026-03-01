@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from clawlite.channels.base import BaseChannel
+from clawlite.runtime.pairing import is_sender_allowed, issue_pairing_code
+
+logger = logging.getLogger(__name__)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+class GoogleChatChannel(BaseChannel):
+    """
+    Canal Google Chat baseado em webhook HTTP.
+    O reply principal é síncrono no retorno do webhook.
+    """
+
+    def __init__(
+        self,
+        token: str = "",
+        allowed_users: list[str] | None = None,
+        allowed_spaces: list[str] | None = None,
+        require_mention: bool = True,
+        bot_user: str = "",
+        pairing_enabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        kwargs.pop("name", None)
+        super().__init__("googlechat", token, **kwargs)
+        self.allowed_users = allowed_users or []
+        self.allowed_spaces = allowed_spaces or []
+        self.require_mention = bool(require_mention)
+        self.bot_user = str(bot_user).strip().lower()
+        self.pairing_enabled = bool(pairing_enabled)
+
+    async def start(self) -> None:
+        self.running = True
+        logger.info("Canal Google Chat iniciado (modo webhook).")
+
+    async def stop(self) -> None:
+        self.running = False
+        logger.info("Canal Google Chat encerrado.")
+
+    def _sender_candidates(self, sender: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        for key in ("name", "displayName", "email"):
+            value = str(sender.get(key, "")).strip()
+            if value:
+                values.append(value)
+        return values
+
+    def _pairing_text(self, sender_id: str) -> str:
+        req = issue_pairing_code("googlechat", str(sender_id), display=str(sender_id))
+        return (
+            "⛔ Acesso pendente de aprovação.\n"
+            f"Código: {req['code']}\n"
+            f"Aprove com: clawlite pairing approve googlechat {req['code']}"
+        )
+
+    def _extract_message_payload(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        message = _as_dict(payload.get("message"))
+        if not message:
+            message = payload
+        sender = _as_dict(message.get("sender"))
+        space = _as_dict(message.get("space"))
+        if not space:
+            space = _as_dict(payload.get("space"))
+        return message, sender, space
+
+    def _message_text(self, message: dict[str, Any]) -> str:
+        argument_text = str(message.get("argumentText", "")).strip()
+        if argument_text:
+            return argument_text
+        return str(message.get("text", "")).strip()
+
+    def _mentions_bot(self, raw_text: str) -> bool:
+        text = str(raw_text or "").lower()
+        if self.bot_user and self.bot_user in text:
+            return True
+        if "@clawlite" in text or "@openclaw" in text:
+            return True
+        return False
+
+    async def process_webhook_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.running:
+            return {}
+        if not self._on_message_callback:
+            return {}
+
+        event_type = str(payload.get("type", "")).strip().upper()
+        if event_type and event_type not in {"MESSAGE", "ADDED_TO_SPACE"}:
+            return {}
+        if event_type == "ADDED_TO_SPACE":
+            return {"text": "👋 ClawLite conectado. Mencione o bot para começar."}
+
+        message, sender, space = self._extract_message_payload(payload)
+        text = self._message_text(message)
+        if not text:
+            return {}
+
+        sender_candidates = self._sender_candidates(sender)
+        sender_id = sender_candidates[0] if sender_candidates else "unknown"
+
+        space_name = str(space.get("name", "")).strip()
+        space_type = str(space.get("type", "")).strip().upper()
+        is_dm = space_type == "DM"
+
+        if self.allowed_spaces and space_name and space_name not in self.allowed_spaces:
+            return {}
+
+        if not is_sender_allowed("googlechat", sender_candidates, self.allowed_users):
+            if self.pairing_enabled and is_dm:
+                return {"text": self._pairing_text(sender_id)}
+            return {}
+
+        if not is_dm and self.require_mention and not str(message.get("argumentText", "")).strip():
+            if not self._mentions_bot(str(message.get("text", ""))):
+                return {}
+
+        session_scope = "dm" if is_dm else "group"
+        session_id = f"gc_{session_scope}_{space_name or 'unknown'}"
+
+        try:
+            reply = await self._on_message_callback(session_id, text)
+        except Exception as exc:
+            logger.error(f"Erro processando mensagem Google Chat: {exc}")
+            return {"text": "⚠️ Erro interno ao processar a mensagem."}
+        if not reply:
+            return {}
+        return {"text": str(reply)}
+
+    async def send_message(self, session_id: str, text: str) -> None:
+        # Google Chat neste modo responde diretamente no webhook.
+        logger.warning(
+            "GoogleChatChannel.send_message não possui envio proativo neste modo webhook. "
+            "session=%s",
+            session_id,
+        )
+

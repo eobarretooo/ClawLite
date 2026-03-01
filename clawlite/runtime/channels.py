@@ -73,6 +73,54 @@ TEMPLATES = {
             }
         }
     },
+    "googlechat": {
+        "channels": {
+            "googlechat": {
+                "enabled": True,
+                "serviceAccountFile": "/path/to/service-account.json",
+                "botUser": "users/1234567890",
+                "requireMention": True,
+                "allowFrom": ["users/1234567890"],
+                "allowChannels": ["spaces/AAAA"],
+                "dm": {"policy": "pairing", "allowFrom": ["users/1234567890"]},
+            }
+        }
+    },
+    "irc": {
+        "channels": {
+            "irc": {
+                "enabled": True,
+                "host": "irc.libera.chat",
+                "port": 6697,
+                "tls": True,
+                "nick": "clawlite-bot",
+                "channels": ["#clawlite"],
+                "requireMention": True,
+                "allowFrom": ["*"],
+                "relay_url": "http://127.0.0.1:8899/irc/send"
+            }
+        }
+    },
+    "signal": {
+        "channels": {
+            "signal": {
+                "enabled": True,
+                "account": "+15551234567",
+                "cliPath": "signal-cli",
+                "allowFrom": ["+15557654321"]
+            }
+        }
+    },
+    "imessage": {
+        "channels": {
+            "imessage": {
+                "enabled": True,
+                "cliPath": "imsg",
+                "service": "auto",
+                "allowFrom": ["chat_id:*"]
+            }
+        }
+    },
     "teams": {
         "channels": {
             "teams": {

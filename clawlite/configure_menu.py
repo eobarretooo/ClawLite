@@ -147,7 +147,7 @@ MODEL_OPTIONS: dict[str, list[str]] = {
     ],
 }
 
-CHANNEL_NAMES = ["telegram", "whatsapp", "discord", "slack", "teams"]
+CHANNEL_NAMES = ["telegram", "whatsapp", "discord", "slack", "googlechat", "irc", "signal", "imessage", "teams"]
 
 # ──────────────────────────────────────────────
 # Helpers visuais
@@ -210,24 +210,47 @@ def _status_model(cfg: dict) -> str:
         return f"[{C_GREEN}]{m}[/{C_GREEN}]"
     return f"[{C_RED}]não configurado[/{C_RED}]"
 
+
+def _channel_is_configured(name: str, row: dict[str, Any]) -> bool:
+    token = str(row.get("token", "")).strip()
+    account_rows = row.get("accounts", [])
+    account_count = len(account_rows) if isinstance(account_rows, list) else 0
+    if name in {"telegram", "whatsapp", "discord", "teams"}:
+        return bool(token or account_count > 0)
+    if name == "slack":
+        app_token = str(row.get("app_token", "")).strip()
+        return bool((token or account_count > 0) and app_token)
+    if name == "googlechat":
+        service_file = str(row.get("serviceAccountFile", "")).strip()
+        service_inline = str(row.get("serviceAccount", "")).strip()
+        service_ref = row.get("serviceAccountRef")
+        return bool(service_file or service_inline or service_ref)
+    if name == "irc":
+        host = str(row.get("host", "")).strip()
+        nick = str(row.get("nick", "")).strip()
+        return bool(host and nick)
+    if name == "signal":
+        account = str(row.get("account", "")).strip()
+        http_url = str(row.get("httpUrl", "") or row.get("http_url", "")).strip()
+        return bool(account or http_url)
+    if name == "imessage":
+        cli_path = str(row.get("cliPath", "") or row.get("cli_path", "")).strip()
+        return bool(cli_path)
+    return bool(token or account_count > 0)
+
+
 def _status_channels(cfg: dict) -> str:
     ch = cfg.get("channels", {})
     active = [n for n in CHANNEL_NAMES if ch.get(n, {}).get("enabled")]
-    missing_token: list[str] = []
+    incomplete: list[str] = []
     for name in active:
         row = ch.get(name, {}) if isinstance(ch.get(name), dict) else {}
-        token = str(row.get("token", "")).strip()
-        if not token:
-            missing_token.append(name)
-            continue
-        if name == "slack":
-            app_token = str(row.get("app_token", "")).strip()
-            if not app_token:
-                missing_token.append(name)
+        if not _channel_is_configured(name, row):
+            incomplete.append(name)
     if not active:
         return f"[{C_GRAY}]nenhum ativo[/{C_GRAY}]"
     label = " · ".join(active)
-    if missing_token:
+    if incomplete:
         return f"[{C_YELLOW}]{label} ⚠️ credenciais incompletas[/{C_YELLOW}]"
     return f"[{C_GREEN}]{label}[/{C_GREEN}]"
 
@@ -399,6 +422,45 @@ def _ensure_defaults(cfg: dict[str, Any]) -> None:
                       "tts_default_reply": False},
         "discord":   {"enabled": False, "token": "", "guild_id": "", "accounts": [], "allowFrom": [], "allowChannels": []},
         "slack":     {"enabled": False, "token": "", "workspace": "", "app_token": "", "accounts": [], "allowFrom": [], "allowChannels": []},
+        "googlechat": {
+            "enabled": False,
+            "token": "",
+            "botUser": "",
+            "requireMention": True,
+            "allowFrom": [],
+            "allowChannels": [],
+            "serviceAccountFile": "",
+            "webhookPath": "/api/webhooks/googlechat",
+            "dm": {"policy": "pairing", "allowFrom": []},
+        },
+        "irc": {
+            "enabled": False,
+            "token": "",
+            "host": "",
+            "port": 6697,
+            "tls": True,
+            "nick": "clawlite-bot",
+            "channels": [],
+            "allowFrom": [],
+            "allowChannels": [],
+            "requireMention": True,
+            "relay_url": "",
+        },
+        "signal": {
+            "enabled": False,
+            "token": "",
+            "account": "",
+            "cliPath": "signal-cli",
+            "httpUrl": "",
+            "allowFrom": [],
+        },
+        "imessage": {
+            "enabled": False,
+            "token": "",
+            "cliPath": "imsg",
+            "service": "auto",
+            "allowFrom": [],
+        },
         "teams":     {"enabled": False, "token": "", "tenant": "", "accounts": []},
     }.items():
         cfg["channels"].setdefault(ch_name, defaults)
@@ -479,14 +541,9 @@ def _section_model(cfg: dict[str, Any]) -> None:
 def _channel_status_row(name: str, ch_cfg: dict) -> tuple[str, str]:
     if not ch_cfg.get("enabled"):
         return (name, f"[{C_GRAY}]desativado[/{C_GRAY}]")
-    token = str(ch_cfg.get("token", "")).strip()
-    if not token:
-        return (name, f"[{C_YELLOW}]ativo · ⚠️  sem token[/{C_YELLOW}]")
-    if name == "slack":
-        app_token = str(ch_cfg.get("app_token", "")).strip()
-        if not app_token:
-            return (name, f"[{C_YELLOW}]ativo · ⚠️  sem app token (xapp)[/{C_YELLOW}]")
-    return (name, f"[{C_GREEN}]ativo · token configurado[/{C_GREEN}]")
+    if not _channel_is_configured(name, ch_cfg):
+        return (name, f"[{C_YELLOW}]ativo · ⚠️  configuração incompleta[/{C_YELLOW}]")
+    return (name, f"[{C_GREEN}]ativo · configurado[/{C_GREEN}]")
 
 
 def _edit_telegram(ch: dict) -> None:
@@ -704,6 +761,161 @@ def _edit_slack(ch: dict) -> None:
         ch["accounts"] = parsed_accounts
 
 
+def _edit_googlechat(ch: dict) -> None:
+    _section_header("Google Chat", "🗨️")
+    _show_table("Config atual", [
+        ("Ativado", str(ch.get("enabled", False))),
+        ("Service Account File", str(ch.get("serviceAccountFile", "")) or "—"),
+        ("Bot User", str(ch.get("botUser", "")) or "—"),
+        ("Require Mention", str(ch.get("requireMention", True))),
+    ])
+    console.print()
+
+    ch["enabled"] = questionary.confirm("Ativar Google Chat?", default=ch.get("enabled", False)).ask()
+    if not ch["enabled"]:
+        return
+
+    ch["serviceAccountFile"] = questionary.text(
+        "Caminho do service-account.json (ou deixe vazio para usar env/secret):",
+        default=ch.get("serviceAccountFile", ""),
+    ).ask()
+    ch["botUser"] = questionary.text(
+        "Bot user (ex: users/123456789) — opcional:",
+        default=ch.get("botUser", ""),
+    ).ask()
+    ch["requireMention"] = questionary.confirm(
+        "Exigir menção em spaces?",
+        default=ch.get("requireMention", True),
+    ).ask()
+
+    allow_from_raw = questionary.text(
+        "DM allowFrom (IDs/emails, vírgula — opcional):",
+        default=", ".join(ch.get("allowFrom", [])),
+    ).ask() or ""
+    ch["allowFrom"] = [v.strip() for v in allow_from_raw.split(",") if v.strip()]
+
+    allow_channels_raw = questionary.text(
+        "Spaces permitidos (spaces/..., vírgula — opcional):",
+        default=", ".join(ch.get("allowChannels", [])),
+    ).ask() or ""
+    ch["allowChannels"] = [v.strip() for v in allow_channels_raw.split(",") if v.strip()]
+
+
+def _edit_irc(ch: dict) -> None:
+    _section_header("IRC", "🌐")
+    _show_table("Config atual", [
+        ("Ativado", str(ch.get("enabled", False))),
+        ("Host", str(ch.get("host", "")) or "—"),
+        ("Port", str(ch.get("port", 6697))),
+        ("Nick", str(ch.get("nick", "")) or "—"),
+    ])
+    console.print()
+
+    ch["enabled"] = questionary.confirm("Ativar IRC?", default=ch.get("enabled", False)).ask()
+    if not ch["enabled"]:
+        return
+
+    ch["host"] = questionary.text(
+        "Host IRC (ex: irc.libera.chat):",
+        default=ch.get("host", ""),
+        validate=_validate_required("Host IRC"),
+    ).ask()
+    ch["port"] = int(
+        questionary.text(
+            "Porta IRC:",
+            default=str(ch.get("port", 6697)),
+            validate=_validate_port,
+        ).ask()
+        or 6697
+    )
+    ch["tls"] = questionary.confirm("Usar TLS?", default=bool(ch.get("tls", True))).ask()
+    ch["nick"] = questionary.text(
+        "Nick do bot:",
+        default=ch.get("nick", "clawlite-bot"),
+        validate=_validate_required("Nick"),
+    ).ask()
+    channels_raw = questionary.text(
+        "Canais (ex: #ai,#bot):",
+        default=", ".join(ch.get("channels", [])),
+    ).ask() or ""
+    ch["channels"] = [v.strip() for v in channels_raw.split(",") if v.strip()]
+    ch["requireMention"] = questionary.confirm(
+        "Exigir menção em canais?",
+        default=bool(ch.get("requireMention", True)),
+    ).ask()
+    ch["relay_url"] = questionary.text(
+        "Relay URL outbound (opcional):",
+        default=ch.get("relay_url", ""),
+    ).ask()
+    allow_from_raw = questionary.text(
+        "AllowFrom (nicks/ids, vírgula — opcional):",
+        default=", ".join(ch.get("allowFrom", [])),
+    ).ask() or ""
+    ch["allowFrom"] = [v.strip() for v in allow_from_raw.split(",") if v.strip()]
+
+
+def _edit_signal(ch: dict) -> None:
+    _section_header("Signal", "🔐")
+    _show_table("Config atual", [
+        ("Ativado", str(ch.get("enabled", False))),
+        ("Account", str(ch.get("account", "")) or "—"),
+        ("CLI Path", str(ch.get("cliPath", "signal-cli"))),
+        ("HTTP URL", str(ch.get("httpUrl", "")) or "—"),
+    ])
+    console.print()
+
+    ch["enabled"] = questionary.confirm("Ativar Signal?", default=ch.get("enabled", False)).ask()
+    if not ch["enabled"]:
+        return
+
+    ch["account"] = questionary.text(
+        "Conta Signal (E.164, ex: +15551234567) — opcional se usar httpUrl:",
+        default=ch.get("account", ""),
+    ).ask()
+    ch["cliPath"] = questionary.text(
+        "Caminho do signal-cli:",
+        default=ch.get("cliPath", "signal-cli"),
+    ).ask()
+    ch["httpUrl"] = questionary.text(
+        "HTTP URL do daemon signal-cli (opcional):",
+        default=ch.get("httpUrl", ""),
+    ).ask()
+    allow_from_raw = questionary.text(
+        "AllowFrom (números/uuid, vírgula — opcional):",
+        default=", ".join(ch.get("allowFrom", [])),
+    ).ask() or ""
+    ch["allowFrom"] = [v.strip() for v in allow_from_raw.split(",") if v.strip()]
+
+
+def _edit_imessage(ch: dict) -> None:
+    _section_header("iMessage (legacy)", "💭")
+    _show_table("Config atual", [
+        ("Ativado", str(ch.get("enabled", False))),
+        ("CLI Path", str(ch.get("cliPath", "imsg"))),
+        ("Service", str(ch.get("service", "auto"))),
+    ])
+    console.print()
+
+    ch["enabled"] = questionary.confirm("Ativar iMessage?", default=ch.get("enabled", False)).ask()
+    if not ch["enabled"]:
+        return
+
+    ch["cliPath"] = questionary.text(
+        "Caminho do imsg:",
+        default=ch.get("cliPath", "imsg"),
+    ).ask()
+    ch["service"] = questionary.select(
+        "Serviço de envio padrão:",
+        choices=["auto", "imessage", "sms"],
+        default=ch.get("service", "auto"),
+    ).ask()
+    allow_from_raw = questionary.text(
+        "AllowFrom (handles/chat_id, vírgula — opcional):",
+        default=", ".join(ch.get("allowFrom", [])),
+    ).ask() or ""
+    ch["allowFrom"] = [v.strip() for v in allow_from_raw.split(",") if v.strip()]
+
+
 def _edit_teams(ch: dict) -> None:
     _section_header("Microsoft Teams", "🏢")
     _show_table("Config atual", [
@@ -744,6 +956,10 @@ _CHANNEL_EDITORS = {
     "whatsapp": _edit_whatsapp,
     "discord":  _edit_discord,
     "slack":    _edit_slack,
+    "googlechat": _edit_googlechat,
+    "irc": _edit_irc,
+    "signal": _edit_signal,
+    "imessage": _edit_imessage,
     "teams":    _edit_teams,
 }
 

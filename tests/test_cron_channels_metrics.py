@@ -111,6 +111,51 @@ def test_channels_status(monkeypatch, tmp_path):
         multiagent.DB_PATH = old_path
 
 
+def test_channels_status_token_optional_channels(monkeypatch, tmp_path):
+    old_dir, old_path = _patch_db(tmp_path)
+    try:
+        server = _boot(monkeypatch, tmp_path)
+        client = TestClient(server.app)
+        token = server._token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        from clawlite.config.settings import load_config, save_config
+
+        cfg = load_config()
+        cfg["channels"] = {
+            "googlechat": {
+                "enabled": True,
+                "serviceAccountFile": "/tmp/service-account.json",
+            },
+            "irc": {
+                "enabled": True,
+                "host": "irc.libera.chat",
+                "nick": "clawlite-bot",
+            },
+            "signal": {
+                "enabled": True,
+                "account": "+15551234567",
+            },
+            "imessage": {
+                "enabled": True,
+                "cliPath": "imsg",
+            },
+        }
+        save_config(cfg)
+
+        status = client.get("/api/channels/status", headers=headers)
+        assert status.status_code == 200
+        rows = {row["channel"]: row for row in status.json()["channels"]}
+
+        assert rows["googlechat"]["configured"] is True
+        assert rows["irc"]["configured"] is True
+        assert rows["signal"]["configured"] is True
+        assert rows["imessage"]["configured"] is True
+    finally:
+        multiagent.DB_DIR = old_dir
+        multiagent.DB_PATH = old_path
+
+
 def test_config_apply_restart_and_debug(monkeypatch, tmp_path):
     old_dir, old_path = _patch_db(tmp_path)
     try:
@@ -186,6 +231,32 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
                         "allowFrom": ["C-main"],
                         "accounts": [{"account": "dev", "token": "xoxb-dev", "app_token": "xapp-dev"}],
                     },
+                    "googlechat": {
+                        "enabled": True,
+                        "serviceAccountFile": "/tmp/service-account.json",
+                        "botUser": "users/123",
+                        "requireMention": True,
+                        "dm": {"policy": "pairing", "allowFrom": ["users/999"]},
+                    },
+                    "irc": {
+                        "enabled": True,
+                        "host": "irc.libera.chat",
+                        "port": 6697,
+                        "tls": True,
+                        "nick": "clawlite-bot",
+                        "channels": ["#clawlite"],
+                        "requireMention": True,
+                    },
+                    "signal": {
+                        "enabled": True,
+                        "account": "+15551234567",
+                        "cliPath": "signal-cli",
+                    },
+                    "imessage": {
+                        "enabled": True,
+                        "cliPath": "imsg",
+                        "service": "auto",
+                    },
                 }
             },
         )
@@ -194,6 +265,10 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
         assert saved.json()["channels"]["slack"]["app_token"] == "xapp-main"
         assert saved.json()["channels"]["slack"]["accounts"][0]["account"] == "dev"
         assert saved.json()["channels"]["slack"]["accounts"][0]["app_token"] == "xapp-dev"
+        assert saved.json()["channels"]["googlechat"]["serviceAccountFile"] == "/tmp/service-account.json"
+        assert saved.json()["channels"]["irc"]["host"] == "irc.libera.chat"
+        assert saved.json()["channels"]["signal"]["account"] == "+15551234567"
+        assert saved.json()["channels"]["imessage"]["cliPath"] == "imsg"
 
         status = client.get("/api/channels/status", headers=headers)
         tg = next(c for c in status.json()["channels"] if c["channel"] == "telegram")
@@ -201,6 +276,10 @@ def test_channels_config_and_update_endpoint(monkeypatch, tmp_path):
         sl = next(c for c in status.json()["channels"] if c["channel"] == "slack")
         assert sl["configured"] is True
         assert "accounts_configured" in sl
+        assert next(c for c in status.json()["channels"] if c["channel"] == "googlechat")["configured"] is True
+        assert next(c for c in status.json()["channels"] if c["channel"] == "irc")["configured"] is True
+        assert next(c for c in status.json()["channels"] if c["channel"] == "signal")["configured"] is True
+        assert next(c for c in status.json()["channels"] if c["channel"] == "imessage")["configured"] is True
 
         # evita rede no teste do update
         monkeypatch.setattr(server, "update_skills", lambda **kwargs: {"updated": [], "skipped": [], "blocked": [], "missing": []})

@@ -9,10 +9,16 @@ from clawlite.channels.telegram import TelegramChannel
 from clawlite.channels.discord import DiscordChannel
 from clawlite.channels.slack import SlackChannel
 from clawlite.channels.whatsapp import WhatsAppChannel
+from clawlite.channels.googlechat import GoogleChatChannel
+from clawlite.channels.irc import IrcChannel
+from clawlite.channels.signal import SignalChannel
+from clawlite.channels.imessage import IMessageChannel
 from clawlite.config.settings import load_config
 from clawlite.core.agent import run_task_with_meta
 
 logger = logging.getLogger(__name__)
+
+TOKEN_OPTIONAL_CHANNELS = {"googlechat", "irc", "signal", "imessage"}
 
 # Registry of available channel classes
 CHANNEL_CLASSES: dict[str, type[BaseChannel]] = {
@@ -20,6 +26,10 @@ CHANNEL_CLASSES: dict[str, type[BaseChannel]] = {
     "discord": DiscordChannel,
     "slack": SlackChannel,
     "whatsapp": WhatsAppChannel,
+    "googlechat": GoogleChatChannel,
+    "irc": IrcChannel,
+    "signal": SignalChannel,
+    "imessage": IMessageChannel,
 }
 
 
@@ -98,16 +108,69 @@ class ChannelManager:
                 "allowed_numbers": allow_from,
                 "pairing_enabled": pairing_enabled,
             }
+        if channel_name == "googlechat":
+            dm_cfg = ch_data.get("dm", {})
+            dm_allow = self._as_str_list(dm_cfg.get("allowFrom")) if isinstance(dm_cfg, dict) else []
+            bot_user = str(ch_data.get("botUser") or ch_data.get("bot_user") or "").strip()
+            require_mention = bool(ch_data.get("requireMention", True))
+            return {
+                "allowed_users": dm_allow or allow_from,
+                "allowed_spaces": allow_channels,
+                "bot_user": bot_user,
+                "require_mention": require_mention,
+                "pairing_enabled": pairing_enabled,
+            }
+        if channel_name == "irc":
+            group_allow = self._as_str_list(ch_data.get("groupAllowFrom"))
+            configured_channels = self._as_str_list(ch_data.get("channels"))
+            raw_port = ch_data.get("port", 6697)
+            try:
+                port = int(raw_port)
+            except (TypeError, ValueError):
+                port = 6697
+            return {
+                "host": str(ch_data.get("host", "")).strip(),
+                "port": port,
+                "tls": bool(ch_data.get("tls", True)),
+                "nick": str(ch_data.get("nick", "clawlite-bot")).strip() or "clawlite-bot",
+                "channels": configured_channels,
+                "allowed_senders": group_allow or allow_from,
+                "allowed_channels": allow_channels or configured_channels,
+                "require_mention": bool(ch_data.get("requireMention", True)),
+                "relay_url": str(ch_data.get("relay_url") or ch_data.get("relayUrl") or "").strip(),
+                "pairing_enabled": pairing_enabled,
+            }
+        if channel_name == "signal":
+            return {
+                "account": str(ch_data.get("account", "")).strip(),
+                "cli_path": str(ch_data.get("cli_path") or ch_data.get("cliPath") or "signal-cli").strip(),
+                "http_url": str(ch_data.get("http_url") or ch_data.get("httpUrl") or "").strip(),
+                "allowed_numbers": allow_from,
+                "pairing_enabled": pairing_enabled,
+            }
+        if channel_name == "imessage":
+            return {
+                "cli_path": str(ch_data.get("cli_path") or ch_data.get("cliPath") or "imsg").strip(),
+                "service": str(ch_data.get("service", "auto")).strip().lower(),
+                "allowed_handles": allow_from,
+                "pairing_enabled": pairing_enabled,
+            }
         return {}
 
     @staticmethod
-    def _credentials_list(ch_data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _credentials_list(channel_name: str, ch_data: dict[str, Any]) -> list[dict[str, Any]]:
         credentials: list[dict[str, Any]] = []
         primary_token = str(ch_data.get("token", "")).strip()
         if primary_token:
             credentials.append({
                 "name": str(ch_data.get("account", "")).strip(),
                 "token": primary_token,
+                "cfg": dict(ch_data),
+            })
+        elif channel_name in TOKEN_OPTIONAL_CHANNELS:
+            credentials.append({
+                "name": str(ch_data.get("account", "")).strip(),
+                "token": "",
                 "cfg": dict(ch_data),
             })
 
@@ -117,7 +180,7 @@ class ChannelManager:
                 if not isinstance(entry, dict):
                     continue
                 token = str(entry.get("token", "")).strip()
-                if not token:
+                if not token and channel_name not in TOKEN_OPTIONAL_CHANNELS:
                     continue
                 account_name = str(entry.get("account") or entry.get("name") or f"account-{index}").strip()
                 merged_cfg = dict(ch_data)
@@ -169,10 +232,10 @@ class ChannelManager:
             logger.warning(f"Tipo de canal não suportado: {normalized_channel}")
             return []
 
-        credentials = self._credentials_list(ch_data)
+        credentials = self._credentials_list(normalized_channel, ch_data)
         if not credentials:
             logger.warning(
-                f"Canal '{normalized_channel}' está habilitado, mas sem token configurado (token/accounts)."
+                f"Canal '{normalized_channel}' está habilitado, mas sem credenciais/configuração mínima."
             )
             return []
 

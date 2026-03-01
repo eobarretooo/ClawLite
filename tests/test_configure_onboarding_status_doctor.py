@@ -33,6 +33,10 @@ def test_ensure_defaults_contains_required_sections():
     assert "language" in cfg
     assert "whatsapp" in cfg["channels"]
     assert "slack" in cfg["channels"]
+    assert "googlechat" in cfg["channels"]
+    assert "irc" in cfg["channels"]
+    assert "signal" in cfg["channels"]
+    assert "imessage" in cfg["channels"]
     assert "teams" in cfg["channels"]
 
 

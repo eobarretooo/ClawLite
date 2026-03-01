@@ -78,10 +78,76 @@ def _sanitize_channel(name: str, raw: dict[str, Any]) -> dict[str, Any]:
     elif channel == "whatsapp":
         clean["phone"] = str(raw.get("phone", "")).strip()
         clean["phone_number_id"] = str(raw.get("phone_number_id", "")).strip()
+    elif channel == "googlechat":
+        clean["serviceAccountFile"] = str(raw.get("serviceAccountFile", "")).strip()
+        if "serviceAccount" in raw:
+            clean["serviceAccount"] = raw.get("serviceAccount")
+        if "serviceAccountRef" in raw:
+            clean["serviceAccountRef"] = raw.get("serviceAccountRef")
+        clean["botUser"] = str(raw.get("botUser", "")).strip()
+        clean["webhookPath"] = str(raw.get("webhookPath", "/api/webhooks/googlechat")).strip() or "/api/webhooks/googlechat"
+        clean["requireMention"] = bool(raw.get("requireMention", True))
+        dm_raw = raw.get("dm", {})
+        if isinstance(dm_raw, dict):
+            clean["dm"] = {
+                "policy": str(dm_raw.get("policy", "pairing")).strip() or "pairing",
+                "allowFrom": _normalize_allow_from(dm_raw.get("allowFrom", [])),
+            }
+    elif channel == "irc":
+        clean["host"] = str(raw.get("host", "")).strip()
+        raw_port = raw.get("port", 6697)
+        try:
+            clean["port"] = int(raw_port)
+        except (TypeError, ValueError):
+            clean["port"] = 6697
+        clean["tls"] = bool(raw.get("tls", True))
+        clean["nick"] = str(raw.get("nick", "clawlite-bot")).strip() or "clawlite-bot"
+        clean["channels"] = _normalize_allow_from(raw.get("channels", []))
+        clean["relay_url"] = str(raw.get("relay_url") or raw.get("relayUrl") or "").strip()
+        clean["requireMention"] = bool(raw.get("requireMention", True))
+    elif channel == "signal":
+        clean["account"] = str(raw.get("account", "")).strip()
+        clean["cliPath"] = str(raw.get("cliPath") or raw.get("cli_path") or "signal-cli").strip()
+        clean["httpUrl"] = str(raw.get("httpUrl") or raw.get("http_url") or "").strip()
+    elif channel == "imessage":
+        clean["cliPath"] = str(raw.get("cliPath") or raw.get("cli_path") or "imsg").strip()
+        clean["service"] = str(raw.get("service", "auto")).strip().lower()
     elif channel == "teams":
         clean["tenant"] = str(raw.get("tenant", "")).strip()
 
     return clean
+
+
+def _channel_configured(channel_name: str, ch_cfg: dict[str, Any], account_count: int) -> bool:
+    base_token = str(ch_cfg.get("token", "")).strip()
+    if channel_name in {"telegram", "whatsapp", "discord", "teams"}:
+        return bool(base_token or account_count > 0)
+    if channel_name == "slack":
+        account_rows = _normalize_accounts(ch_cfg.get("accounts", []))
+        has_account_app_token = any(str(row.get("app_token", "")).strip() for row in account_rows)
+        return bool(
+            (base_token or account_count > 0)
+            and (
+                str(ch_cfg.get("app_token") or ch_cfg.get("socket_mode_token") or "").strip()
+                or has_account_app_token
+            )
+        )
+    if channel_name == "googlechat":
+        return bool(
+            str(ch_cfg.get("serviceAccountFile", "")).strip()
+            or ch_cfg.get("serviceAccount")
+            or ch_cfg.get("serviceAccountRef")
+        )
+    if channel_name == "irc":
+        return bool(str(ch_cfg.get("host", "")).strip() and str(ch_cfg.get("nick", "")).strip())
+    if channel_name == "signal":
+        return bool(
+            str(ch_cfg.get("account", "")).strip()
+            or str(ch_cfg.get("httpUrl", "") or ch_cfg.get("http_url", "")).strip()
+        )
+    if channel_name == "imessage":
+        return bool(str(ch_cfg.get("cliPath", "")).strip() or str(ch_cfg.get("cli_path", "")).strip())
+    return bool(base_token or account_count > 0)
 
 
 @router.get("/api/channels/status")
@@ -95,16 +161,8 @@ def api_channels_status(authorization: str | None = Header(default=None)) -> JSO
             continue
         enabled = bool(ch_cfg.get("enabled", False))
         channel_name = str(name).strip().lower()
-        base_token = str(ch_cfg.get("token", "")).strip()
         account_count = len(_normalize_accounts(ch_cfg.get("accounts", [])))
-        has_token = bool(base_token or account_count > 0)
-        if channel_name == "slack":
-            account_rows = _normalize_accounts(ch_cfg.get("accounts", []))
-            has_account_app_token = any(str(row.get("app_token", "")).strip() for row in account_rows)
-            has_token = has_token and bool(
-                str(ch_cfg.get("app_token") or ch_cfg.get("socket_mode_token") or "").strip()
-                or has_account_app_token
-            )
+        has_token = _channel_configured(channel_name, ch_cfg, account_count)
         instance_prefix = f"{channel_name}:"
         online_instances = sum(
             1
