@@ -208,11 +208,14 @@ Para interagir com web, utilize as ferramentas de `browser_`:
 9. {"name": "spawn_subagent", "description": "Delegar tarefa longa para um subagente em background", "arguments": {"task": "string", "label": "string(opcional)"}}
 10. {"name": "subagents_list", "description": "Lista subagentes da sessão atual", "arguments": {"active_only": "boolean(opcional)"}}
 11. {"name": "subagents_kill", "description": "Cancela subagente por run_id ou todos da sessão", "arguments": {"run_id": "string(opcional)"}}
+12. {"name": "skill.cron", "description": "Cria/lista/remove/executa lembretes e tarefas agendadas", "arguments": {"command": "string"}}
+13. {"name": "skill.web-search", "description": "Busca na web com snippets", "arguments": {"command": "string"}}
+14. {"name": "skill.web-fetch", "description": "Extrai conteúdo legível de URL", "arguments": {"command": "string"}}
 	"""
     if not plugin_tools:
         return builtins
     lines = [builtins.strip(), "", "Ferramentas de plugins carregados:"]
-    idx = 9
+    idx = 15
     for item in plugin_tools:
         name = str(item.get("name", "")).strip()
         if not name:
@@ -307,6 +310,26 @@ def _execute_local_tool(
                     {"ok": True, "cancelled": cancelled_count, "scope": "session"},
                     ensure_ascii=False,
                 )
+        elif name == "cron":
+            from clawlite.mcp import dispatch_skill_tool
+
+            payload = {
+                "command": str(args.get("command") or args.get("prompt") or "").strip(),
+            }
+            raw = dispatch_skill_tool("skill.cron", payload)
+            content = raw.get("content", []) if isinstance(raw, dict) else []
+            parts = [str(item.get("text", "")).strip() for item in content if isinstance(item, dict)]
+            result = "\n".join([p for p in parts if p]).strip() or json.dumps(raw, ensure_ascii=False)
+        elif name.startswith("skill."):
+            from clawlite.mcp import dispatch_skill_tool
+
+            payload = dict(args)
+            if "command" not in payload and "prompt" in payload:
+                payload["command"] = payload.get("prompt")
+            raw = dispatch_skill_tool(name, payload)
+            content = raw.get("content", []) if isinstance(raw, dict) else []
+            parts = [str(item.get("text", "")).strip() for item in content if isinstance(item, dict)]
+            result = "\n".join([p for p in parts if p]).strip() or json.dumps(raw, ensure_ascii=False)
         else:
             if plugin_manager:
                 plugin_output = plugin_manager.try_execute_tool(name, args)
@@ -331,26 +354,7 @@ def _execute_local_tool(
     return result
 
 
-def _run_task_with_timeout(prompt: str, timeout_s: float) -> tuple[str, dict[str, Any]]:
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        fut = executor.submit(run_task_with_meta, prompt)
-        try:
-            return fut.result(timeout=timeout_s)
-        except FutureTimeout:
-            return (
-                f"Timeout: execucao excedeu {timeout_s:.0f}s",
-                {
-                    "mode": "error",
-                    "reason": "attempt-timeout",
-                    "model": "n/a",
-                    "error": f"timeout>{timeout_s}s",
-                    "error_type": "timeout",
-                },
-            )
-
-
-def run_task_with_meta(prompt: str, skill: str = "", session_id: str = "") -> tuple[str, dict[str, Any]]:
-    del skill, session_id
+def _run_model_with_meta(prompt: str) -> tuple[str, dict[str, Any]]:
     requested_model = str(load_config().get("model", "openai/gpt-4o-mini"))
 
     if prompt.lower().startswith("resuma o diretorio"):
@@ -409,15 +413,10 @@ def run_task_with_meta(prompt: str, skill: str = "", session_id: str = "") -> tu
             dedupe_window_seconds=300,
             metadata=meta,
         )
-    meta = _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
-    return output, meta
+    return output, _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
 
 
-def run_task_stream_with_meta(prompt: str, skill: str = "", session_id: str = "") -> tuple[Iterator[str], dict[str, Any]]:
-    """
-    Versao em formato streaming (generator) do core agent.
-    """
-    del skill, session_id
+def _run_model_stream_with_meta(prompt: str) -> tuple[Iterator[str], dict[str, Any]]:
     requested_model = str(load_config().get("model", "openai/gpt-4o-mini"))
 
     if prompt.lower().startswith("resuma o diretorio"):
@@ -493,20 +492,115 @@ def run_task_stream_with_meta(prompt: str, skill: str = "", session_id: str = ""
     return out_stream, _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
 
 
+def _run_task_with_timeout(prompt: str, timeout_s: float) -> tuple[str, dict[str, Any]]:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        fut = executor.submit(_run_model_with_meta, prompt)
+        try:
+            return fut.result(timeout=timeout_s)
+        except FutureTimeout:
+            return (
+                f"Timeout: execucao excedeu {timeout_s:.0f}s",
+                {
+                    "mode": "error",
+                    "reason": "attempt-timeout",
+                    "model": "n/a",
+                    "error": f"timeout>{timeout_s}s",
+                    "error_type": "timeout",
+                },
+            )
+
+
+def run_task_with_meta(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    requested_model = str(load_config().get("model", "openai/gpt-4o-mini"))
+    identity = _default_identity()
+    plugin_manager = _get_plugin_manager()
+
+    enriched_prompt, _, context_meta = _prepare_context(
+        prompt=prompt,
+        session_id=session_id,
+        model_key=requested_model,
+        plugin_manager=plugin_manager,
+        workspace_path=workspace_path,
+    )
+
+    current_prompt = enriched_prompt
+    last_output = ""
+    last_meta: dict[str, Any] = {}
+    tool_steps = 0
+
+    while tool_steps <= MAX_TOOL_STEPS:
+        output, meta = _run_model_with_meta(current_prompt)
+        meta.update(context_meta)
+        meta["tool_steps"] = tool_steps
+
+        if meta.get("mode") == "error":
+            return output, meta
+
+        tool_call = _maybe_tool_call(output)
+        if tool_call is None or tool_steps >= MAX_TOOL_STEPS:
+            return output, meta
+
+        tool_name = str(tool_call.get("name", "")).strip()
+        tool_args = tool_call.get("arguments", {}) if isinstance(tool_call.get("arguments"), dict) else {}
+        tool_res = _execute_local_tool(
+            tool_name,
+            tool_args,
+            identity=identity,
+            plugin_manager=plugin_manager,
+            session_id=session_id,
+        )
+        tool_steps += 1
+        current_prompt = (
+            f"{current_prompt}\n\n[Sua resposta anterior]\n{output}\n\n"
+            f"[Resultado da Ferramenta]\n{tool_res}"
+        )
+        last_output = output
+        last_meta = meta
+
+    return last_output, last_meta
+
+
+def run_task_stream_with_meta(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> tuple[Iterator[str], dict[str, Any]]:
+    """API de stream compatível: executa fluxo unificado e retorna um único chunk."""
+    output, meta = run_task_with_meta(
+        prompt=prompt,
+        skill=skill,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
+
+    def _single_chunk() -> Iterator[str]:
+        if output:
+            yield output
+
+    return _single_chunk(), meta
+
+
 def _prepare_context(
     *,
     prompt: str,
     session_id: str,
     model_key: str,
     plugin_manager: PluginManager,
+    workspace_path: str | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
-    base_system = build_system_prompt()
+    base_system = build_system_prompt(workspace_path)
     prefix = build_preference_prefix()
-    startup_ctx = startup_context_text()
+    startup_ctx = startup_context_text(workspace_path)
     bootstrap_mgr = BootstrapManager()
     bootstrap_txt = bootstrap_mgr.get_prompt() if bootstrap_mgr.should_run() else ""
 
-    keyword_hits = semantic_search_memory(prompt, max_results=3)
+    keyword_hits = semantic_search_memory(prompt, max_results=3, path=workspace_path)
     keyword_snippets = [f"- {h.snippet}" for h in keyword_hits if h.snippet]
     vector_snippets = [f"- {s}" for s in _safe_vector_search(prompt, max_results=3)]
 
@@ -557,7 +651,12 @@ def run_task(prompt: str) -> str:
     return run_task_with_learning(prompt)
 
 
-def run_task_with_learning(prompt: str, skill: str = "", session_id: str = "") -> str:
+def run_task_with_learning(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> str:
     """Executa task com aprendizado continuo: preferencias, memoria, plugins e retry."""
     cfg = app_settings.load_config()
     requested_model = str(cfg.get("model", "openai/gpt-4o-mini"))
@@ -584,6 +683,7 @@ def run_task_with_learning(prompt: str, skill: str = "", session_id: str = "") -
         session_id=session_id,
         model_key=requested_model,
         plugin_manager=plugin_manager,
+        workspace_path=workspace_path,
     )
 
     append_daily_log(f"Task iniciada (skill={skill or 'n/a'}): {prompt[:220]}", category="task-start")
@@ -714,7 +814,12 @@ def run_task_with_learning(prompt: str, skill: str = "", session_id: str = "") -
     return last_output
 
 
-def run_task_stream_with_learning(prompt: str, skill: str = "", session_id: str = "") -> Iterator[str]:
+def run_task_stream_with_learning(
+    prompt: str,
+    skill: str = "",
+    session_id: str = "",
+    workspace_path: str | None = None,
+) -> Iterator[str]:
     """Executa task e faz yield de chunks. Ideal para websockets/dashboard."""
     cfg = app_settings.load_config()
     requested_model = str(cfg.get("model", "openai/gpt-4o-mini"))
@@ -741,6 +846,7 @@ def run_task_stream_with_learning(prompt: str, skill: str = "", session_id: str 
         session_id=session_id,
         model_key=requested_model,
         plugin_manager=plugin_manager,
+        workspace_path=workspace_path,
     )
 
     append_daily_log(f"Task stream iniciada (skill={skill or 'n/a'}): {prompt[:220]}", category="task-start")
@@ -750,7 +856,7 @@ def run_task_stream_with_learning(prompt: str, skill: str = "", session_id: str 
 
     while tool_steps <= MAX_TOOL_STEPS:
         t0 = time.time()
-        out_stream, meta = run_task_stream_with_meta(current_prompt)
+        out_stream, meta = _run_model_stream_with_meta(current_prompt)
         meta = _normalize_meta(meta, prompt=current_prompt, output="", requested_model=requested_model)
         meta.update(context_meta)
         meta["tool_steps"] = tool_steps

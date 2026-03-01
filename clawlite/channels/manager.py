@@ -95,7 +95,7 @@ class ChannelManager:
         # O run_task_with_meta é síncrono, então rodamos em uma thread
         prompt = env.text.strip()
         try:
-            output, meta = await asyncio.to_thread(run_task_with_meta, prompt)
+            output, meta = await asyncio.to_thread(run_task_with_meta, prompt, "", env.session_id)
             return output
         except Exception as exc:
             logger.error(f"Erro no processamento da mensagem do canal: {exc}")
