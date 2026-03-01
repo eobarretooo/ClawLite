@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from clawlite.runtime import multiagent
 from clawlite.runtime.conversation_cron import add_cron_job, list_cron_jobs, remove_cron_job, run_cron_jobs
@@ -125,6 +126,27 @@ class ConversationCronTests(unittest.TestCase):
 
             results = run_cron_jobs(run_all=True)
             self.assertEqual(results[0].status, "executed")
+
+    def test_run_job_without_worker_uses_inline_fallback(self) -> None:
+        add_cron_job(
+            channel="telegram",
+            chat_id="123",
+            thread_id="",
+            label="general",
+            name="inline-fallback",
+            text="status agora",
+            interval_seconds=30,
+        )
+
+        with patch(
+            "clawlite.runtime.conversation_cron._run_inline_telegram_fallback",
+            return_value=(True, "inline telegram delivery ok"),
+        ):
+            results = run_cron_jobs(run_all=True)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status, "executed")
+        self.assertIn("inline", results[0].message)
 
 
 if __name__ == "__main__":

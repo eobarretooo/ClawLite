@@ -198,6 +198,81 @@ def _select_runnable_jobs(job_id: int | None, run_all: bool, now_ts: float) -> l
     return [_row_to_job(r) for r in rows]
 
 
+def _session_id_for_job(job: CronJobRow) -> str:
+    channel = str(job.channel or "").strip().lower()
+    if channel == "telegram":
+        if job.thread_id:
+            return f"tg_{job.chat_id}:topic:{job.thread_id}"
+        return f"tg_{job.chat_id}"
+    if channel == "slack":
+        return f"sl_{job.chat_id}"
+    if channel == "discord":
+        return f"dc_{job.chat_id}"
+    if channel == "whatsapp":
+        return f"wa_{job.chat_id}"
+    if channel == "googlechat":
+        return f"gc_group_{job.chat_id}"
+    if channel == "irc":
+        return f"irc_group_{job.chat_id}"
+    if channel == "signal":
+        return f"signal_dm_{job.chat_id}"
+    if channel == "imessage":
+        return f"imessage_dm_{job.chat_id}"
+    return f"{channel}_{job.chat_id}"
+
+
+def _run_inline_telegram_fallback(job: CronJobRow) -> tuple[bool, str]:
+    try:
+        from clawlite.channels.telegram_runtime import send_telegram_text_sync
+        from clawlite.config.settings import load_config
+        from clawlite.core.agent import run_task_with_meta
+    except Exception as exc:
+        return False, f"fallback unavailable: {exc}"
+
+    cfg = load_config()
+    channels = cfg.get("channels", {}) if isinstance(cfg, dict) else {}
+    tg_cfg = channels.get("telegram", {}) if isinstance(channels, dict) else {}
+    if not isinstance(tg_cfg, dict):
+        return False, "fallback telegram config invalid"
+
+    token = str(tg_cfg.get("token", "")).strip()
+    if not token:
+        return False, "fallback telegram token missing"
+
+    session_id = _session_id_for_job(job)
+    try:
+        output, _meta = run_task_with_meta(
+            job.text,
+            skill="cron-inline",
+            session_id=session_id,
+        )
+    except Exception as exc:
+        return False, f"fallback model failed: {exc}"
+
+    reply = str(output or "").strip() or "Lembrete executado."
+    message_thread_id = int(job.thread_id) if str(job.thread_id).isdigit() else None
+    try:
+        send_telegram_text_sync(
+            token=token,
+            chat_id=job.chat_id,
+            text=reply,
+            message_thread_id=message_thread_id,
+        )
+    except Exception as exc:
+        return False, f"fallback telegram send failed: {exc}"
+    return True, "inline telegram delivery ok"
+
+
+def _try_inline_fallback(job: CronJobRow, err: Exception) -> tuple[bool, str]:
+    """Fallback de autonomia quando não existe worker para o canal."""
+    text = str(err or "")
+    if "Nenhum worker ativo" not in text:
+        return False, text
+    if str(job.channel or "").strip().lower() == "telegram":
+        return _run_inline_telegram_fallback(job)
+    return False, text
+
+
 def run_cron_jobs(job_id: int | None = None, run_all: bool = False) -> list[CronRunResult]:
     init_cron_db()
     now_ts = _now()
@@ -233,9 +308,15 @@ def run_cron_jobs(job_id: int | None = None, run_all: bool = False) -> list[Cron
                 task_id = multiagent.enqueue_task(job.channel, job.chat_id, job.thread_id, job.label, payload)
                 last_result = f"task:{task_id}"
         except Exception as exc:
-            status = "failed"
-            message = str(exc)
-            last_result = f"error:{message}"
+            fallback_ok, fallback_msg = _try_inline_fallback(job, exc)
+            if fallback_ok:
+                status = "executed"
+                message = fallback_msg
+                last_result = f"inline:{fallback_msg}"
+            else:
+                status = "failed"
+                message = fallback_msg or str(exc)
+                last_result = f"error:{message}"
 
         next_run = now_ts + int(job.interval_seconds)
         with _conn() as c:
