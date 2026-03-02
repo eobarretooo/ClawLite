@@ -5,15 +5,15 @@ slug: /
 
 <div className="hero-pro">
   <div className="hero-badges">
-    <img src="https://img.shields.io/badge/stable-0.4.1-7c3aed?style=for-the-badge" alt="stable"/>
-    <img src="https://img.shields.io/badge/channel-beta_available-f59e0b?style=for-the-badge" alt="beta"/>
+    <img src="https://img.shields.io/badge/runtime-active-0ea5e9?style=for-the-badge" alt="runtime"/>
+    <img src="https://img.shields.io/badge/status-in_development-f59e0b?style=for-the-badge" alt="status"/>
     <img src="https://img.shields.io/badge/licença-MIT-10b981?style=for-the-badge" alt="licenca"/>
     <img src="https://img.shields.io/github/stars/eobarretooo/ClawLite?style=for-the-badge" alt="stars"/>
   </div>
 
   <h1>ClawLite</h1>
-  <p className="hero-tagline">O assistente de IA mais poderoso para Linux e Termux.</p>
-  <p className="hero-sub">Automação, gateway, memória local e skills modulares em um runtime portátil.</p>
+  <p className="hero-tagline">Assistente pessoal autônomo em Python.</p>
+  <p className="hero-sub">Engine + tools + gateway + scheduler + skills em uma arquitetura modular.</p>
 
   <div className="hero-cta">
     <a className="button button--primary button--lg" href="/ClawLite/getting-started">Começar em 1 minuto</a>
@@ -27,15 +27,12 @@ slug: /
 
 > Site oficial: https://clawlite-site.vercel.app
 
-## O que há no estado atual
+## Estado atual
 
-- Configure estilo OpenClaw + onboarding wizard guiado
-- Operação local com `doctor`, `status` e `start`
-- Catálogo de 79 skills/aliases no runtime (37 nativas + 42 compat OpenClaw)
-- Learning analytics com `clawlite stats`
-- Reddit OAuth + postagem de milestones + monitor de menções
-- Bots operacionais com gateway WebSocket e skills modulares
-- Hardening de webhooks e outbound resiliente (retry, timeout, idempotência e circuit breaker)
-- Runbook de falha/recuperação outbound + checklist binário de release beta
+- Runtime novo ativo: `core`, `tools`, `bus`, `channels`, `gateway`, `scheduler`, `providers`, `session`, `workspace`, `skills`, `cli`
+- Prompt construído com arquivos de workspace e memória persistente
+- Gateway HTTP/WebSocket com endpoints de chat e cron
+- Skills por `SKILL.md` com discovery automático e execução por `command/script`
+- Roadmap focado em autonomia operacional contínua
 
 ➡️ Próxima página: [Início Rápido](/getting-started)

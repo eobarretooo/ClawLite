@@ -2,7 +2,7 @@
 
 const config = {
   title: 'ClawLite',
-  tagline: 'O assistente de IA mais poderoso para Linux e Termux',
+  tagline: 'Assistente pessoal autônomo em Python',
   favicon: 'img/logo.svg',
 
   url: 'https://eobarretooo.github.io',
@@ -55,11 +55,10 @@ const config = {
       title: 'ClawLite',
       items: [
         {to: '/getting-started', label: 'Início Rápido', position: 'left'},
-        {to: '/instalacao', label: 'Instalação', position: 'left'},
         {to: '/comandos-cli', label: 'CLI', position: 'left'},
+        {to: '/configuration', label: 'Configuração', position: 'left'},
         {to: '/skills-reference', label: 'Skills', position: 'left'},
         {to: '/gateway-api', label: 'Gateway', position: 'left'},
-        {to: '/faq', label: 'FAQ', position: 'left'},
         {type: 'localeDropdown', position: 'right'},
         {href: 'https://github.com/eobarretooo/ClawLite', label: 'GitHub', position: 'right'},
       ],
@@ -71,7 +70,7 @@ const config = {
           title: 'Documentação',
           items: [
             {label: 'Começando em 1 minuto', to: '/getting-started'},
-            {label: 'Hub API', to: '/hub-api'},
+            {label: 'Configuração', to: '/configuration'},
             {label: 'Gateway API', to: '/gateway-api'},
           ],
         },

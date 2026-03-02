@@ -1,47 +1,38 @@
 # 🖥️ Comandos CLI
 
-Referência objetiva dos comandos principais do ClawLite.
+Referência dos comandos suportados no runtime atual.
 
-## Operação
+## Núcleo
 
 ```bash
-clawlite doctor
-clawlite status
-clawlite start --port 8787
+clawlite start --host 127.0.0.1 --port 8787
 clawlite run "resuma o diretório"
-clawlite agent
-clawlite agent -m "quem você é?"
-```
-
-## Configuração
-
-```bash
-clawlite onboarding
-clawlite configure
-clawlite auth status
-clawlite providers list
-clawlite providers use gemini --model gemini-2.5-flash
-clawlite providers current
+clawlite onboard
 ```
 
 ## Skills
 
 ```bash
+clawlite skills list
 clawlite skills list --all
-clawlite skill search github
-clawlite skill install github
-clawlite skill publish ./skills/minha-skill --version 0.1.0 --category Desenvolvimento --status stable
+clawlite skills show cron
 ```
 
-## Runtime
+## Cron
 
 ```bash
-clawlite channels list
-clawlite channels status
-clawlite channels reconnect telegram
-clawlite cron list
-clawlite stats --period week
-clawlite memory semantic-search "preferências"
+clawlite cron add --session-id cli:ops --expression "every 120" --prompt "status"
+clawlite cron list --session-id cli:ops
+clawlite cron remove --job-id <id>
 ```
 
-➡️ Próxima página: [Skills](/skills-reference)
+## Variáveis de ambiente mais usadas
+
+```bash
+export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
+export CLAWLITE_LITELLM_API_KEY="<chave>"
+export CLAWLITE_GATEWAY_HOST="127.0.0.1"
+export CLAWLITE_GATEWAY_PORT="8787"
+```
+
+➡️ Próxima página: [Configuração](/configuration)

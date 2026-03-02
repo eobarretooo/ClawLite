@@ -1,12 +1,14 @@
 # ClawLite
 
-Assistente pessoal autônomo em Python, com arquitetura modular própria.
+Assistente pessoal autônomo em Python, com arquitetura modular própria e foco em execução real.
 
-## Status atual
+## O que já está no runtime atual
 
-- Runtime legado removido
-- Arquitetura nova ativa (core/tools/bus/channels/gateway/scheduler/providers/session/config/workspace/skills/cli)
-- Testes atuais: `31 passed` (`tests_next`)
+- Engine único para chat/canais com prompt de workspace + memória + skills
+- Gateway FastAPI (`/health`, `/v1/chat`, `/v1/cron/*`, `/v1/ws`)
+- Scheduler com cron e heartbeat
+- Sistema de skills por `SKILL.md` com autoload e execução por `command/script`
+- Estrutura preparada para múltiplos canais e subagentes
 
 ## Instalação
 
@@ -14,34 +16,22 @@ Assistente pessoal autônomo em Python, com arquitetura modular própria.
 curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-Ou em desenvolvimento local:
+Desenvolvimento local:
 
 ```bash
 pip install -e .
 ```
 
-## Uso rápido
-
-1. Onboarding do workspace:
+## Quickstart
 
 ```bash
 clawlite onboard
-```
-
-2. Definir provider/modelo:
-
-```bash
 export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
 export CLAWLITE_LITELLM_API_KEY="<sua-chave>"
-```
-
-3. Iniciar gateway:
-
-```bash
 clawlite start --host 127.0.0.1 --port 8787
 ```
 
-4. Testar chat:
+Teste rápido:
 
 ```bash
 curl -sS http://127.0.0.1:8787/v1/chat \
@@ -49,7 +39,7 @@ curl -sS http://127.0.0.1:8787/v1/chat \
   -d '{"session_id":"cli:demo","text":"quem voce e?"}'
 ```
 
-## CLI disponível
+## CLI principal
 
 ```bash
 clawlite start
@@ -57,11 +47,10 @@ clawlite run "resuma este projeto"
 clawlite onboard
 clawlite skills list
 clawlite skills show cron
-clawlite cron add --session-id cli:ops --expression "every 120" --prompt "check"
+clawlite cron add --session-id cli:ops --expression "every 120" --prompt "status"
 clawlite cron list --session-id cli:ops
+clawlite cron remove --job-id <id>
 ```
-
-Skills com `command/script` também podem ser executadas pelo agente via tool `run_skill`.
 
 ## Documentação
 
@@ -73,7 +62,7 @@ Skills com `command/script` também podem ser executadas pelo agente via tool `r
 - [Skills](docs/SKILLS.md)
 - [Operations](docs/OPERATIONS.md)
 
-## Estrutura do pacote
+## Estrutura
 
 ```text
 clawlite/
@@ -94,7 +83,7 @@ clawlite/
 
 ## Referências
 
-ClawLite é uma implementação própria, mas o projeto foi fortemente inspirado por ideias de arquitetura e operação observadas em projetos open source como OpenClaw e nanobot. Obrigado aos mantenedores por publicarem essas bases de referência.
+ClawLite é implementação própria. Agradecimento aos projetos open source **OpenClaw** e **nanobot**, usados como referência de arquitetura e operação para inspirar decisões de design.
 
 ## Licença
 

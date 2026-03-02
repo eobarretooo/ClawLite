@@ -1,52 +1,36 @@
 # Gateway API
 
-## Subir gateway
+Base URL padrão: `http://127.0.0.1:8787`
+
+## Iniciar
 
 ```bash
-clawlite gateway --host 0.0.0.0 --port 8787
+clawlite start --host 127.0.0.1 --port 8787
 ```
 
-## Endpoints
+## Endpoints principais
 
 - `GET /health`
-- `GET /dashboard`
-- `GET /api/status` (Bearer token)
-- `GET /api/metrics` (Bearer token)
-- `GET /api/dashboard/bootstrap` (Bearer token)
-- `GET /api/dashboard/skills` (Bearer token)
-- `POST /api/dashboard/skills/install|enable|disable|remove` (Bearer token)
-- `GET /api/dashboard/telemetry` (Bearer token)
-- `GET /api/dashboard/logs` (Bearer token)
-- `GET /api/channels/status` (Bearer token)
-- `GET /api/channels/instances` (Bearer token)
-- `POST /api/channels/reconnect` (Bearer token)
-- `PUT /api/channels/config` (Bearer token)
-- `GET /api/hub/manifest`
-- `GET /api/hub/skills/{slug}`
-- `POST /api/hub/publish` (Bearer token)
-- `WS /ws?token=<token>`
-- `WS /ws/chat?token=<token>`
-- `WS /ws/logs?token=<token>&level=&event=&q=`
+- `POST /v1/chat`
+- `POST /v1/cron/add`
+- `GET /v1/cron/list?session_id=...`
+- `DELETE /v1/cron/{job_id}`
+- `WS /v1/ws`
 
-## Auth
+## Exemplo de chat
 
-Use token do gateway no header:
-
-```text
-Authorization: Bearer <token>
+```bash
+curl -sS http://127.0.0.1:8787/v1/chat \
+  -H 'content-type: application/json' \
+  -d '{"session_id":"cli:api","text":"resuma o estado do projeto"}'
 ```
 
-## Observabilidade outbound (canais novos)
+## Exemplo de cron
 
-`/api/channels/status` e `/api/metrics` incluem agregados de confiabilidade para
-`googlechat`, `irc`, `signal` e `imessage`:
+```bash
+curl -sS http://127.0.0.1:8787/v1/cron/add \
+  -H 'content-type: application/json' \
+  -d '{"session_id":"cli:ops","expression":"every 300","prompt":"status rapido"}'
+```
 
-- retry/timeout/fallback
-- dedupe/idempotência
-- circuit breaker (estado, bloqueios, cooldown)
-- health checks com thresholds concretos
-
-Para operação em produção:
-
-- Runbook: `docs/OUTBOUND_FAILURE_RECOVERY_RUNBOOK.md`
-- Checklist beta: `docs/BETA_RELEASE_CHECKLIST.md`
+➡️ Próxima página: [Operações](/operations)

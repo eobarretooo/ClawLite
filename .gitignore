@@ -44,9 +44,9 @@ node_modules/
 tmp/
 
 # Local session artifacts (do not track at repository root)
-IDENTITY.md
-SOUL.md
-USER.md
-MEMORY.md
+/IDENTITY.md
+/SOUL.md
+/USER.md
+/MEMORY.md
 CLAWLITE_PROJECT_SUMMARY.md
 SYNC_REPORT.md

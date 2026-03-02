@@ -1,51 +1,31 @@
 # Operação e Release
 
-Guia objetivo para operação diária, incidentes outbound e critérios de release.
+Guia objetivo para operação diária do runtime atual.
 
-## Runbooks oficiais
-
-- `docs/RUNBOOK.md` — incidentes gerais do gateway/canais/runtime.
-- `docs/OUTBOUND_FAILURE_RECOVERY_RUNBOOK.md` — falha/recuperação outbound dos canais novos.
-
-## Checklist de beta (passa/falha)
-
-Use sempre o checklist binário antes de criar tag beta:
-
-- `docs/BETA_RELEASE_CHECKLIST.md`
-
-Critério: qualquer item em FAIL bloqueia a release.
-
-## Verificações mínimas
+## Smoke local
 
 ```bash
-pytest -q tests/test_channels_outbound_resilience.py tests/test_cron_channels_metrics.py tests/test_outbound_policy.py
-pytest -q tests/test_webhooks_hardening.py
+clawlite --help
+clawlite run "ok"
+curl -sS http://127.0.0.1:8787/health | python -m json.tool
 ```
 
-Runtime:
+## Testes
 
 ```bash
-TOKEN=$(python -c "from clawlite.gateway.server import _token; print(_token())")
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/channels/status
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/metrics
+pytest -q
 ```
 
-## Canais cobertos no hardening/outbound resiliente
-
-- `googlechat`
-- `irc`
-- `signal`
-- `imessage`
-
-## Termux + proot (sem systemd)
-
-Para autonomia 24/7 no Termux, use `clawlitex` com `supervisord`:
+## Cron operacional
 
 ```bash
-clawlitex autostart install
-clawlitex autostart status
+clawlite cron add --session-id cli:ops --expression "every 300" --prompt "status rapido"
+clawlite cron list --session-id cli:ops
 ```
 
-Referência completa:
+## Release checklist mínimo
 
-- `docs/TERMUX_PROOT_AUTOSTART.md`
+- `pytest -q` passando
+- CLI principal validada
+- API `/health` e `/v1/chat` validada
+- Documentação atualizada com os comandos reais

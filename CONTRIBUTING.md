@@ -1,34 +1,35 @@
 # Contribuindo para o ClawLite
 
-Obrigado por contribuir com o ClawLite.
+Obrigado por contribuir.
 
-## Objetivo do projeto
+## Princípios do projeto
 
-O ClawLite é um assistente pessoal local-first. Mudanças devem preservar:
-
-- operação estável em Linux e Termux;
-- segurança padrão para uso pessoal;
-- onboarding/configure simples para quem não é especialista.
+- Arquitetura simples e auditável
+- Comportamento previsível no runtime
+- Documentação alinhada com o código real
+- Segurança por padrão para uso pessoal
 
 ## Fluxo recomendado
 
-1. Abra uma issue com problema ou proposta.
+1. Abra issue (bug/proposta) antes de mudança grande.
 2. Crie branch focada (`feat/...`, `fix/...`, `docs/...`).
-3. Faça mudanças pequenas e com escopo claro.
-4. Adicione ou ajuste testes quando alterar comportamento.
-5. Rode a suíte local (`pytest -q`).
-6. Abra PR com contexto técnico e validação executada.
+3. Faça mudanças pequenas por módulo.
+4. Atualize testes quando houver mudança de comportamento.
+5. Rode validação local:
+   - `pytest -q`
+   - smoke dos comandos alterados (`clawlite --help`, `clawlite start`, `clawlite run`)
+6. Abra PR com contexto, risco e evidência de teste.
 
 ## Padrões de qualidade
 
-- Não quebre comandos centrais: `doctor`, `onboarding`, `configure`, `start`.
-- Mantenha compatibilidade com configurações existentes.
-- Não adicione segredos no repositório.
-- Atualize documentação quando mudar UX/CLI/configuração.
+- Não quebrar comandos base: `start`, `run`, `onboard`, `cron`, `skills`.
+- Não introduzir regressão de API em `/v1/chat` e `/v1/cron/*` sem migração documentada.
+- Nunca versionar segredo/token/chave privada.
+- Sempre atualizar docs se CLI/API/fluxo operacional mudar.
 
-## PR checklist
+## Checklist de PR
 
-- [ ] Escopo claro e justificativa técnica.
-- [ ] Testes relevantes executados.
-- [ ] Docs e exemplos atualizados.
-- [ ] Sem credenciais ou dados sensíveis no diff.
+- [ ] Escopo e objetivo claros
+- [ ] Testes executados e informados
+- [ ] Docs atualizadas
+- [ ] Sem credenciais no diff

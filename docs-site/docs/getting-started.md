@@ -1,42 +1,38 @@
 # ⚡ Início Rápido
 
-Rode o ClawLite em 5 minutos com fluxo guiado.
+Fluxo mínimo para subir o ClawLite localmente.
 
-:::tip
-O quickstart padrão é interativo (estilo OpenClaw). Setup manual é opcional.
-:::
-
-## 1) Instalar
-
-Linux:
+## 1) Instalação
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install.sh | bash
 ```
 
-Termux (proot Ubuntu):
+## 2) Gerar workspace inicial
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/refs/heads/main/scripts/setup_termux_proot.sh | bash
+clawlite onboard
 ```
 
-## 2) Diagnóstico
+## 3) Configurar provider
 
 ```bash
-clawlite doctor
+export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
+export CLAWLITE_LITELLM_API_KEY="<sua-chave>"
 ```
 
-## 3) Onboarding guiado
+## 4) Iniciar gateway
 
 ```bash
-clawlite onboarding
+clawlite start --host 127.0.0.1 --port 8787
 ```
 
-## 4) Status + start
+## 5) Testar chat
 
 ```bash
-clawlite status
-clawlite start --host 0.0.0.0 --port 8787
+curl -sS http://127.0.0.1:8787/v1/chat \
+  -H 'content-type: application/json' \
+  -d '{"session_id":"cli:quickstart","text":"quem voce e?"}'
 ```
 
-➡️ Próxima página: [Instalação](/instalacao)
+➡️ Próxima página: [Comandos CLI](/comandos-cli)

@@ -1,118 +1,42 @@
 # Guia de configuração
 
-## Arquivo de config
+## Arquivo principal
 
 O arquivo principal fica em `~/.clawlite/config.json`.
 
 Exemplo completo:
-
 - `docs/config.example.json`
 
-## UX atual de configuração
-
-### 1) Onboarding wizard guiado
+## Campos centrais
 
 ```bash
-clawlite onboarding
+workspace_path
+state_path
+provider.model
+provider.litellm_base_url
+provider.litellm_api_key
+gateway.host
+gateway.port
+gateway.token
+scheduler.heartbeat_interval_seconds
+scheduler.timezone
+channels.<canal>
 ```
 
-Fluxo por etapas com barra de progresso, salvamento automático e resumo final.
-
-### 2) Configure estilo OpenClaw
+## Fluxo recomendado
 
 ```bash
-clawlite configure
+clawlite onboard
+clawlite start --host 127.0.0.1 --port 8787
 ```
 
-Menu seccional com autosave: **Model, Channels, Skills, Hooks, Gateway, Web Tools, Language, Security** + preview JSON final.
+## Variáveis de ambiente
 
-## Operação local
+- `CLAWLITE_MODEL`
+- `CLAWLITE_WORKSPACE`
+- `CLAWLITE_LITELLM_BASE_URL`
+- `CLAWLITE_LITELLM_API_KEY`
+- `CLAWLITE_GATEWAY_HOST`
+- `CLAWLITE_GATEWAY_PORT`
 
-### Doctor / Status / Start
-
-```bash
-clawlite doctor
-clawlite status
-clawlite start --port 8787
-```
-
-- `doctor`: valida ambiente, dependências e config mínima.
-- `status`: mostra estado de gateway/workers/cron/reddit.
-- `start`: sobe o gateway HTTP/WebSocket (atalho para `clawlite gateway`).
-
-## Learning stats (telemetria local)
-
-```bash
-clawlite stats --period all
-clawlite stats --period month --skill github
-```
-
-Métricas: total de tasks, taxa de sucesso, tempo médio, tokens, streak, top skills e preferências aprendidas.
-
-## Reddit (web tool + automação)
-
-```bash
-clawlite reddit status
-clawlite reddit auth-url
-clawlite reddit exchange-code "SEU_CODE"
-clawlite reddit post-milestone --title "ClawLite vX.Y.Z" --text "..."
-clawlite reddit monitor-once
-```
-
-Guia detalhado: `docs/REDDIT_INTEGRATION.md`
-
-## Blocos avançados de runtime
-
-### 1) Offline automático com Ollama
-
-```json
-"offline_mode": {
-  "enabled": true,
-  "auto_fallback_to_ollama": true,
-  "connectivity_timeout_sec": 1.5
-},
-"model_fallback": ["openrouter/auto", "ollama/llama3.1:8b"],
-"ollama": {
-  "model": "llama3.1:8b"
-}
-```
-
-### 2) Cron por conversa
-
-```bash
-clawlite cron list
-clawlite cron add --channel telegram --chat-id 123 --label general --name heartbeat --text "ping" --every-seconds 300
-clawlite cron run
-clawlite cron remove 1
-```
-
-### 3) Notificações (prioridade + dedupe)
-
-```json
-"notifications": {
-  "enabled": true,
-  "dedupe_window_seconds": 300
-}
-```
-
-Prioridades usadas no runtime:
-
-- `high`: falhas (provedor/cron)
-- `normal`: fallback offline
-- `low`: sucesso de cron enfileirado
-
-### 4) Modo bateria com throttling
-
-```json
-"battery_mode": {
-  "enabled": false,
-  "throttle_seconds": 6.0
-}
-```
-
-CLI:
-
-```bash
-clawlite battery status
-clawlite battery set --enabled true --throttle-seconds 8
-```
+➡️ Próxima página: [Skills](/skills-reference)

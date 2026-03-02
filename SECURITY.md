@@ -1,54 +1,43 @@
 # Security Policy
 
-Este documento define como reportar vulnerabilidades e o baseline de segurança do ClawLite.
+Este documento define como reportar vulnerabilidades no ClawLite e o baseline mínimo de operação segura.
 
-## Como reportar vulnerabilidades
+## Reporte de vulnerabilidade
 
-Não abra issue pública com detalhes exploráveis.
+Não publique detalhes exploráveis em issue pública.
 
-Use GitHub Security Advisories do repositório:
-
+Use:
 - https://github.com/eobarretooo/ClawLite/security/advisories/new
 
-Inclua no reporte:
+Inclua:
+- descrição técnica
+- impacto prático
+- passos de reprodução
+- commit/versão afetada
+- evidências (logs, payloads, stacktrace)
 
-- descrição da falha;
-- impacto esperado;
-- passos para reproduzir;
-- versão/commit afetado;
-- evidências (logs, payloads, traces);
-- proposta de mitigação (se houver).
+## Escopo coberto
 
-## Escopo
+- CLI (`start`, `run`, `onboard`, `cron`, `skills`)
+- Gateway (`/health`, `/v1/chat`, `/v1/cron/*`, `/v1/ws`)
+- Providers e integração com APIs externas
+- Tools locais (exec/files/web/cron/message/spawn/mcp)
+- Canais e componentes de scheduler
 
-Coberto por esta política:
+## Modelo de ameaça
 
-- CLI e onboarding/configure;
-- Gateway (HTTP/WS) e dashboard;
-- runtime (multiagente, memória, cron, backup/restore, pairing);
-- skills oficiais deste repositório.
+- Entrada de usuário/canal é não confiável.
+- Tools com execução local são privilegiadas.
+- Chaves de provider são segredos críticos.
 
-## Modelo de confiança
+## Hardening recomendado
 
-O ClawLite assume uso como assistente pessoal (um operador confiável).
-
-Entradas vindas de canais são consideradas não confiáveis.
-
-Para reduzir risco:
-
-- mantenha token obrigatório no gateway;
-- aprove novos remetentes via pairing;
-- exponha o gateway publicamente apenas com controles adicionais;
-- revise permissões de tools e canais periodicamente.
-
-## Hardening mínimo
-
-1. `security.require_gateway_token=true`
-2. `security.redact_tokens_in_logs=true`
-3. Pairing habilitado para canais de DM
-4. Backups frequentes de `~/.clawlite/`
-5. `clawlite doctor` após mudanças de infra/config
+1. Definir token no gateway e proteger acesso de rede.
+2. Rodar com usuário sem privilégios administrativos.
+3. Restringir permissões de arquivo em `~/.clawlite/` (`700` ou `600` quando aplicável).
+4. Revisar skills com `command/script` antes de habilitar em produção.
+5. Aplicar rotação de chaves de provider periodicamente.
 
 ## Disclosure responsável
 
-Após correção e validação, a divulgação pública deve ocorrer com patch disponível e orientação objetiva de atualização.
+Depois da correção, publique patch + orientação clara de atualização.
