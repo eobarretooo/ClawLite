@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 from typing import Any, Callable
 
+from clawlite.agent.loop import AgentRequest, get_agent_loop
+
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_OK = "HEARTBEAT_OK"
@@ -22,6 +24,18 @@ def _is_effectively_empty(content: str) -> bool:
         if stripped and not stripped.startswith("#"):
             return False
     return True
+
+
+def _agent_learning(prompt: str, *, skill: str, session_id: str) -> str:
+    response = get_agent_loop().process_request_sync(
+        AgentRequest(
+            prompt=prompt,
+            skill=skill,
+            session_id=session_id,
+            learning=True,
+        )
+    )
+    return response.text
 
 
 class HeartbeatLoop:
@@ -114,8 +128,6 @@ class HeartbeatLoop:
 
     def _decide_action(self, content: str) -> tuple[str, str, str]:
         """Fase 1: decide skip/run com resposta estruturada."""
-        from clawlite.core.agent import run_task_with_learning
-
         prompt = (
             "Você é o planejador de heartbeat. Responda APENAS em JSON com este formato:\n"
             '{"action":"skip|run","tasks":"resumo curto das tarefas quando action=run"}\n\n'
@@ -124,7 +136,7 @@ class HeartbeatLoop:
             "- use action=run apenas quando houver ação proativa imediata.\n\n"
             f"[HEARTBEAT_MD]\n{content}"
         )
-        decision_raw = run_task_with_learning(prompt, skill="heartbeat-decision", session_id="heartbeat")
+        decision_raw = _agent_learning(prompt, skill="heartbeat-decision", session_id="heartbeat")
         payload = self._extract_json(decision_raw)
         if payload:
             action = str(payload.get("action", "skip")).strip().lower()
@@ -164,10 +176,8 @@ class HeartbeatLoop:
             return
 
         try:
-            from clawlite.core.agent import run_task_with_learning  # import tardio: evita circular
-
             execution_prompt = tasks.strip() or content
-            response = run_task_with_learning(execution_prompt, skill="heartbeat", session_id="heartbeat")
+            response = _agent_learning(execution_prompt, skill="heartbeat", session_id="heartbeat")
         except Exception as exc:
             logger.warning("heartbeat: erro na fase de execução — %s", exc)
             return

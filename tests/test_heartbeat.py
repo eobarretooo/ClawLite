@@ -96,7 +96,7 @@ def test_runs_today_resets_new_day():
 def test_run_once_skips_when_no_file():
     with tempfile.TemporaryDirectory() as tmp:
         hb = _make_loop(tmp)
-        with patch("clawlite.core.agent.run_task_with_learning") as mock_agent:
+        with patch("clawlite.core.heartbeat._agent_learning") as mock_agent:
             hb._run_once()
             mock_agent.assert_not_called()
 
@@ -105,7 +105,7 @@ def test_run_once_skips_when_empty():
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, "HEARTBEAT.md").write_text("# só comentário\n", encoding="utf-8")
         hb = _make_loop(tmp)
-        with patch("clawlite.core.agent.run_task_with_learning") as mock_agent:
+        with patch("clawlite.core.heartbeat._agent_learning") as mock_agent:
             hb._run_once()
             mock_agent.assert_not_called()
 
@@ -120,7 +120,7 @@ def test_run_once_calls_agent_with_content():
             pass
 
         # chamada real com agente mockado
-        with patch("clawlite.core.agent.run_task_with_learning", return_value=HEARTBEAT_OK) as mock_agent:
+        with patch("clawlite.core.heartbeat._agent_learning", return_value=HEARTBEAT_OK) as mock_agent:
             hb._run_once()
             mock_agent.assert_called_once()
             call_args = mock_agent.call_args[0][0]
@@ -131,7 +131,7 @@ def test_run_once_silence_on_heartbeat_ok():
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, "HEARTBEAT.md").write_text("- tarefa real", encoding="utf-8")
         hb = _make_loop(tmp)
-        with patch("clawlite.core.agent.run_task_with_learning", return_value="HEARTBEAT_OK"):
+        with patch("clawlite.core.heartbeat._agent_learning", return_value="HEARTBEAT_OK"):
             with patch("clawlite.runtime.notifications.create_notification") as mock_notif:
                 hb._run_once()
                 mock_notif.assert_not_called()
@@ -141,7 +141,7 @@ def test_run_once_creates_notification_on_real_response():
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, "HEARTBEAT.md").write_text("- tarefa real", encoding="utf-8")
         hb = _make_loop(tmp)
-        with patch("clawlite.core.agent.run_task_with_learning", return_value="Encontrei 2 emails urgentes."):
+        with patch("clawlite.core.heartbeat._agent_learning", return_value="Encontrei 2 emails urgentes."):
             with patch("clawlite.runtime.notifications.create_notification") as mock_notif:
                 # patch também o multiagent DB usado pelo create_notification
                 with patch("clawlite.runtime.notifications.init_notifications_db"):
@@ -163,7 +163,7 @@ def test_run_once_decision_json_skip():
         Path(tmp, "HEARTBEAT.md").write_text("- tarefa real", encoding="utf-8")
         hb = _make_loop(tmp)
         with patch(
-            "clawlite.core.agent.run_task_with_learning",
+            "clawlite.core.heartbeat._agent_learning",
             return_value='{"action":"skip","tasks":""}',
         ) as mock_agent:
             with patch("clawlite.runtime.notifications.create_notification") as mock_notif:
@@ -181,7 +181,7 @@ def test_run_once_decision_json_run_executes_and_dispatches_callback():
         hb = HeartbeatLoop(workspace_path=tmp, interval_s=DEFAULT_INTERVAL_S, proactive_callback=proactive.append)
 
         with patch(
-            "clawlite.core.agent.run_task_with_learning",
+            "clawlite.core.heartbeat._agent_learning",
             side_effect=[
                 '{"action":"run","tasks":"resuma pendências de hoje"}',
                 "Resumo enviado para canais ativos.",
@@ -198,7 +198,7 @@ def test_state_updated_after_run():
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, "HEARTBEAT.md").write_text("- verificar calendário", encoding="utf-8")
         hb = _make_loop(tmp)
-        with patch("clawlite.core.agent.run_task_with_learning", return_value=HEARTBEAT_OK):
+        with patch("clawlite.core.heartbeat._agent_learning", return_value=HEARTBEAT_OK):
             hb._run_once()
 
         state_file = Path(tmp) / "memory" / "heartbeat-state.json"

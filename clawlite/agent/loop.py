@@ -5,6 +5,21 @@ from dataclasses import dataclass
 from typing import Any, Iterator
 
 
+@dataclass(frozen=True)
+class AgentRequest:
+    prompt: str
+    session_id: str = ""
+    skill: str = ""
+    workspace_path: str | None = None
+    learning: bool = False
+
+
+@dataclass(frozen=True)
+class AgentResponse:
+    text: str
+    meta: dict[str, Any]
+
+
 @dataclass
 class AgentLoop:
     """Loop único do agente para todos os entrypoints do runtime."""
@@ -132,6 +147,44 @@ class AgentLoop:
         )
         return output
 
+    def process_request_sync(self, request: AgentRequest) -> AgentResponse:
+        req = request
+        if req.learning:
+            text = self.run_with_learning(
+                prompt=req.prompt,
+                session_id=req.session_id,
+                skill=req.skill,
+                workspace_path=req.workspace_path,
+            )
+            return AgentResponse(text=text, meta={"mode": "learning", "reason": "agent-loop"})
+
+        text, meta = self.run_with_meta(
+            prompt=req.prompt,
+            session_id=req.session_id,
+            skill=req.skill,
+            workspace_path=req.workspace_path,
+        )
+        return AgentResponse(text=text, meta=meta)
+
+    async def process_request(self, request: AgentRequest) -> AgentResponse:
+        req = request
+        if req.learning:
+            text = await self.run_with_learning_async(
+                prompt=req.prompt,
+                session_id=req.session_id,
+                skill=req.skill,
+                workspace_path=req.workspace_path,
+            )
+            return AgentResponse(text=text, meta={"mode": "learning", "reason": "agent-loop"})
+
+        text, meta = await self.run_with_meta_async(
+            prompt=req.prompt,
+            session_id=req.session_id,
+            skill=req.skill,
+            workspace_path=req.workspace_path,
+        )
+        return AgentResponse(text=text, meta=meta)
+
 
 _LOOP: AgentLoop | None = None
 _LOCK = asyncio.Lock()
@@ -150,4 +203,3 @@ def get_agent_loop() -> AgentLoop:
     if _LOOP is None:
         _LOOP = AgentLoop()
     return _LOOP
-

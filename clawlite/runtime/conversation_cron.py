@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
+from clawlite.agent.loop import AgentRequest, get_agent_loop
 from clawlite.runtime import multiagent
 from clawlite.runtime.notifications import create_notification
 
@@ -225,7 +226,6 @@ def _run_inline_telegram_fallback(job: CronJobRow) -> tuple[bool, str]:
     try:
         from clawlite.channels.telegram_runtime import send_telegram_text_sync
         from clawlite.config.settings import load_config
-        from clawlite.core.agent import run_task_with_meta
     except Exception as exc:
         return False, f"fallback unavailable: {exc}"
 
@@ -241,11 +241,15 @@ def _run_inline_telegram_fallback(job: CronJobRow) -> tuple[bool, str]:
 
     session_id = _session_id_for_job(job)
     try:
-        output, _meta = run_task_with_meta(
-            job.text,
-            skill="cron-inline",
-            session_id=session_id,
+        response = get_agent_loop().process_request_sync(
+            AgentRequest(
+                prompt=job.text,
+                skill="cron-inline",
+                session_id=session_id,
+                learning=False,
+            )
         )
+        output = response.text
     except Exception as exc:
         return False, f"fallback model failed: {exc}"
 

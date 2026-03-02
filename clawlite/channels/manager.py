@@ -15,7 +15,8 @@ from clawlite.channels.irc import IrcChannel
 from clawlite.channels.signal import SignalChannel
 from clawlite.channels.imessage import IMessageChannel
 from clawlite.config.settings import load_config
-from clawlite.core.agent import run_task_with_meta, run_task_with_meta_async
+from clawlite.agent.loop import AgentRequest, get_agent_loop
+from clawlite.core.agent import run_task_with_meta
 from clawlite.runtime.channel_sessions import ChannelSessionManager
 from clawlite.runtime.message_bus import InboundEnvelope, MessageBus, OutboundEnvelope
 from clawlite.runtime.subagents import set_subagent_notifier
@@ -103,7 +104,14 @@ class ChannelManager:
             if run_task_with_meta is not _ORIGINAL_RUN_TASK_WITH_META:
                 output, _meta = await asyncio.to_thread(run_task_with_meta, prompt, "", env.session_id)
             else:
-                output, _meta = await run_task_with_meta_async(prompt, "", env.session_id)
+                response = await get_agent_loop().process_request(
+                    AgentRequest(
+                        prompt=prompt,
+                        session_id=env.session_id,
+                        learning=False,
+                    )
+                )
+                output, _meta = response.text, response.meta
             if str(output or "").strip():
                 self.session_store.append(session_id=env.session_id, role="assistant", text=str(output))
             return output
