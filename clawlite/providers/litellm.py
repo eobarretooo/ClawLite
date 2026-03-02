@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
 
 import httpx
 
-from clawlite.providers.base import LLMProvider, LLMResult
+from clawlite.providers.base import LLMProvider, LLMResult, ToolCall
 
 
 class LiteLLMProvider(LLMProvider):
@@ -44,6 +45,56 @@ class LiteLLMProvider(LLMProvider):
         except ValueError:
             value = 60.0
         return max(0.0, value)
+
+    @staticmethod
+    def _extract_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+            return "\n".join(parts).strip()
+        return str(content or "").strip()
+
+    @staticmethod
+    def _parse_arguments(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return {}
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                return {"raw": text}
+            return payload if isinstance(payload, dict) else {"value": payload}
+        return {}
+
+    @classmethod
+    def _parse_tool_calls(cls, message: dict[str, Any]) -> list[ToolCall]:
+        rows = message.get("tool_calls")
+        if not isinstance(rows, list):
+            return []
+
+        parsed: list[ToolCall] = []
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            fn = row.get("function")
+            fn_payload = fn if isinstance(fn, dict) else {}
+            name = str(fn_payload.get("name") or row.get("name") or "").strip()
+            if not name:
+                continue
+            call_id = str(row.get("id") or f"call_{idx}")
+            arguments = cls._parse_arguments(fn_payload.get("arguments", row.get("arguments", {})))
+            parsed.append(ToolCall(id=call_id, name=name, arguments=arguments))
+        return parsed
 
     async def complete(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
         if not self.openai_compatible:
@@ -101,8 +152,9 @@ class LiteLLMProvider(LLMProvider):
                     response.raise_for_status()
                     data = response.json()
                 message = data.get("choices", [{}])[0].get("message", {})
-                text = str(message.get("content", "")).strip()
-                return LLMResult(text=text, model=self.model, tool_calls=[], metadata={"provider": "litellm"})
+                text = self._extract_text(message.get("content", ""))
+                tool_calls = self._parse_tool_calls(message)
+                return LLMResult(text=text, model=self.model, tool_calls=tool_calls, metadata={"provider": "litellm"})
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else None
                 if status == 429 and attempt < attempts:

@@ -72,3 +72,41 @@ def test_litellm_provider_http_error_keeps_provider_message(monkeypatch) -> None
             raise AssertionError("expected provider error")
 
     asyncio.run(_scenario())
+
+
+def test_litellm_provider_parses_tool_calls(monkeypatch) -> None:
+    async def _scenario() -> None:
+        provider = LiteLLMProvider(base_url="https://api.example/v1", api_key="k", model="gpt-test")
+        monkeypatch.setenv("CLAWLITE_PROVIDER_429_MAX_ATTEMPTS", "1")
+
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {
+                                    "name": "cron",
+                                    "arguments": "{\"action\":\"add\",\"expression\":\"every 60\",\"prompt\":\"ping\"}",
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+
+        post_mock = AsyncMock(side_effect=[_FakeResponse(200, payload)])
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            out = await provider.complete(messages=[{"role": "user", "content": "agende"}], tools=[])
+
+        assert len(out.tool_calls) == 1
+        call = out.tool_calls[0]
+        assert call.id == "call_123"
+        assert call.name == "cron"
+        assert call.arguments == {"action": "add", "expression": "every 60", "prompt": "ping"}
+
+    asyncio.run(_scenario())
