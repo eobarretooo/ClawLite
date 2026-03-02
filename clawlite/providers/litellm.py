@@ -10,10 +10,21 @@ from clawlite.providers.base import LLMProvider, LLMResult
 
 
 class LiteLLMProvider(LLMProvider):
-    def __init__(self, *, base_url: str, api_key: str, model: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        provider_name: str = "litellm",
+        openai_compatible: bool = True,
+        timeout: float = 30.0,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.provider_name = provider_name
+        self.openai_compatible = openai_compatible
         self.timeout = timeout
 
     @staticmethod
@@ -35,10 +46,21 @@ class LiteLLMProvider(LLMProvider):
         return max(0.0, value)
 
     async def complete(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+        if not self.openai_compatible:
+            raise RuntimeError(
+                f"provider_config_error:provider '{self.provider_name}' is not OpenAI-compatible in ClawLite. "
+                "Use an OpenAI-compatible gateway/base_url."
+            )
+
+        if not self.api_key.strip():
+            raise RuntimeError(f"provider_auth_error:missing_api_key:{self.provider_name}")
+
+        if not self.base_url.strip():
+            raise RuntimeError(f"provider_config_error:missing_base_url:{self.provider_name}")
+
         url = f"{self.base_url}/chat/completions"
         headers = {"content-type": "application/json"}
-        if self.api_key:
-            headers["authorization"] = f"Bearer {self.api_key}"
+        headers["authorization"] = f"Bearer {self.api_key}"
 
         payload: dict[str, Any] = {
             "model": self.model,

@@ -188,6 +188,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     def _provider_error_payload(exc: RuntimeError) -> tuple[int, str]:
         message = str(exc)
+        if message.startswith("provider_auth_error:missing_api_key:"):
+            provider = message.rsplit(":", 1)[-1]
+            return (
+                400,
+                f"Chave de API ausente para o provedor '{provider}'. Defina CLAWLITE_LITELLM_API_KEY ou a chave especifica do provedor.",
+            )
+        if message.startswith("provider_config_error:missing_base_url:"):
+            provider = message.rsplit(":", 1)[-1]
+            return (
+                400,
+                f"Base URL ausente para o provedor '{provider}'. Configure CLAWLITE_LITELLM_BASE_URL.",
+            )
+        if message.startswith("provider_config_error:"):
+            return (400, "Configuracao invalida do provedor. Revise modelo, base URL e chave de API.")
         if message.startswith("provider_http_error:401"):
             return (
                 502,
@@ -200,6 +214,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             return (502, f"Falha no provedor remoto (HTTP {code}).")
         if message.startswith("provider_network_error:"):
             return (503, "Provedor remoto indisponivel no momento (erro de rede).")
+        if message.startswith("codex_http_error:401"):
+            return (502, "Falha de autenticacao no Codex (401). Refaça login OAuth do provedor Codex.")
+        if message.startswith("codex_http_error:429") or message == "codex_429_exhausted":
+            return (429, "Limite de requisicoes no Codex. Tente novamente em instantes.")
+        if message.startswith("codex_http_error:"):
+            code = message.split(":", 1)[1]
+            return (502, f"Falha no Codex (HTTP {code}).")
+        if message.startswith("codex_network_error:"):
+            return (503, "Codex indisponivel no momento (erro de rede).")
         return (500, "Falha interna ao processar a solicitacao.")
 
     @app.get("/health")
