@@ -1,91 +1,255 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
-from clawlite.config.settings import load_config
-from clawlite.gateway.routes import admin, agents, channels, cron, mcp, pairing, sessions, skills, websockets, workspace, webhooks
-from clawlite.gateway.utils import _log
+from clawlite.bus.queue import MessageQueue
+from clawlite.channels.manager import ChannelManager
+from clawlite.config.loader import load_config
+from clawlite.config.schema import AppConfig
+from clawlite.core.engine import AgentEngine
+from clawlite.core.memory import MemoryStore
+from clawlite.core.prompt import PromptBuilder
+from clawlite.core.skills import SkillsLoader
+from clawlite.providers import build_provider
+from clawlite.scheduler.cron import CronService
+from clawlite.scheduler.heartbeat import HeartbeatService
+from clawlite.session.store import SessionStore
+from clawlite.tools.cron import CronTool
+from clawlite.tools.exec import ExecTool
+from clawlite.tools.files import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from clawlite.tools.mcp import MCPTool
+from clawlite.tools.message import MessageTool
+from clawlite.tools.registry import ToolRegistry
+from clawlite.tools.spawn import SpawnTool
+from clawlite.tools.web import WebFetchTool, WebSearchTool
+from clawlite.workspace.loader import WorkspaceLoader
 
-import contextlib
 
-@contextlib.asynccontextmanager
-async def lifespan(app: FastAPI):
-    from clawlite.runtime.autonomy import runtime as autonomy_runtime
+class ChatRequest(BaseModel):
+    session_id: str
+    text: str
 
-    await autonomy_runtime.start()
-    app.state.autonomy_runtime = autonomy_runtime
-    yield
-    await autonomy_runtime.stop()
 
-# Main FastAPI App Setup
-app = FastAPI(title="ClawLite Gateway", version="0.3.0", lifespan=lifespan)
+class ChatResponse(BaseModel):
+    text: str
+    model: str
 
-# Setup CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-# Include all modular routers
-app.include_router(admin.router)
-app.include_router(agents.router)
-app.include_router(channels.router)
-app.include_router(cron.router)
-app.include_router(mcp.router)
-app.include_router(pairing.router)
-app.include_router(sessions.router)
-app.include_router(skills.router)
-app.include_router(websockets.router)
-app.include_router(workspace.router)
-app.include_router(webhooks.router)
+class CronAddRequest(BaseModel):
+    session_id: str
+    expression: str
+    prompt: str
+    name: str = ""
+
+
+@dataclass(slots=True)
+class RuntimeContainer:
+    config: AppConfig
+    bus: MessageQueue
+    engine: AgentEngine
+    channels: ChannelManager
+    cron: CronService
+    heartbeat: HeartbeatService
+    workspace: WorkspaceLoader
+
+
+class _CronAPI:
+    def __init__(self, service: CronService) -> None:
+        self.service = service
+
+    async def add_job(self, *, session_id: str, expression: str, prompt: str) -> str:
+        return await self.service.add_job(session_id=session_id, expression=expression, prompt=prompt)
+
+    def list_jobs(self, *, session_id: str) -> list[dict[str, Any]]:
+        return self.service.list_jobs(session_id=session_id)
+
+
+class _MessageAPI:
+    def __init__(self, manager: ChannelManager) -> None:
+        self.manager = manager
+
+    async def send(self, *, channel: str, target: str, text: str) -> str:
+        return await self.manager.send(channel=channel, target=target, text=text)
+
+
+def _provider_config(config: AppConfig) -> dict[str, Any]:
+    return {
+        "model": config.provider.model,
+        "providers": {
+            "litellm": {
+                "base_url": config.provider.litellm_base_url,
+                "api_key": config.provider.litellm_api_key,
+            }
+        },
+    }
+
+
+def build_runtime(config: AppConfig) -> RuntimeContainer:
+    workspace = WorkspaceLoader(workspace_path=config.workspace_path)
+    workspace.bootstrap()
+
+    provider = build_provider(_provider_config(config))
+    cron = CronService(store_path=Path(config.state_path) / "cron_jobs.json")
+    heartbeat = HeartbeatService(interval_seconds=config.scheduler.heartbeat_interval_seconds)
+
+    tools = ToolRegistry()
+    tools.register(ExecTool())
+    tools.register(ReadFileTool())
+    tools.register(WriteFileTool())
+    tools.register(EditFileTool())
+    tools.register(ListDirTool())
+    tools.register(WebFetchTool())
+    tools.register(WebSearchTool())
+    tools.register(CronTool(_CronAPI(cron)))
+    tools.register(MCPTool())
+
+    sessions = SessionStore(root=Path(config.state_path) / "sessions")
+    memory = MemoryStore(db_path=Path(config.state_path) / "memory.jsonl")
+    prompt = PromptBuilder(workspace_path=config.workspace_path)
+    skills = SkillsLoader()
+
+    engine = AgentEngine(
+        provider=provider,
+        tools=tools,
+        sessions=sessions,
+        memory=memory,
+        prompt_builder=prompt,
+        skills_loader=skills,
+    )
+
+    async def _subagent_runner(session_id: str, task: str) -> str:
+        result = await engine.run(session_id=session_id, user_text=task)
+        return result.text
+
+    tools.register(SpawnTool(engine.subagents, _subagent_runner))
+
+    bus = MessageQueue()
+    channels = ChannelManager(bus=bus, engine=engine)
+    tools.register(MessageTool(_MessageAPI(channels)))
+
+    return RuntimeContainer(
+        config=config,
+        bus=bus,
+        engine=engine,
+        channels=channels,
+        cron=cron,
+        heartbeat=heartbeat,
+        workspace=workspace,
+    )
+
+
+async def _route_cron_job(runtime: RuntimeContainer, job) -> str | None:
+    result = await runtime.engine.run(session_id=job.session_id, user_text=job.payload.prompt)
+    channel = job.payload.channel.strip() or job.session_id.split(":", 1)[0]
+    target = job.payload.target.strip() or job.session_id.split(":", 1)[-1]
+    if channel and target:
+        try:
+            await runtime.channels.send(channel=channel, target=target, text=result.text)
+        except Exception:
+            return "cron_send_skipped"
+    return result.text
+
+
+async def _run_heartbeat(runtime: RuntimeContainer) -> str | None:
+    heartbeat_prompt = "heartbeat: check pending tasks and send proactive updates when needed"
+    session_id = "heartbeat:system"
+    result = await runtime.engine.run(session_id=session_id, user_text=heartbeat_prompt)
+    return result.text
+
+
+def create_app(config: AppConfig | None = None) -> FastAPI:
+    cfg = config or load_config()
+    runtime = build_runtime(cfg)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        await runtime.channels.start(cfg.to_dict())
+        await runtime.cron.start(lambda job: _route_cron_job(runtime, job))
+        await runtime.heartbeat.start(lambda: _run_heartbeat(runtime))
+        try:
+            yield
+        finally:
+            await runtime.heartbeat.stop()
+            await runtime.cron.stop()
+            await runtime.channels.stop()
+
+    app = FastAPI(title="ClawLite Gateway", version="1.0.0", lifespan=lifespan)
+    app.state.runtime = runtime
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {
+            "ok": True,
+            "channels": runtime.channels.status(),
+            "queue": runtime.bus.stats(),
+        }
+
+    @app.post("/v1/chat", response_model=ChatResponse)
+    async def chat(req: ChatRequest) -> ChatResponse:
+        if not req.session_id.strip() or not req.text.strip():
+            raise HTTPException(status_code=400, detail="session_id and text are required")
+        out = await runtime.engine.run(session_id=req.session_id, user_text=req.text)
+        return ChatResponse(text=out.text, model=out.model)
+
+    @app.post("/v1/cron/add")
+    async def cron_add(req: CronAddRequest) -> dict[str, str]:
+        job_id = await runtime.cron.add_job(
+            session_id=req.session_id,
+            expression=req.expression,
+            prompt=req.prompt,
+            name=req.name,
+        )
+        return {"id": job_id}
+
+    @app.get("/v1/cron/list")
+    async def cron_list(session_id: str) -> dict[str, Any]:
+        return {"jobs": runtime.cron.list_jobs(session_id=session_id)}
+
+    @app.delete("/v1/cron/{job_id}")
+    async def cron_remove(job_id: str) -> dict[str, bool]:
+        return {"ok": runtime.cron.remove_job(job_id)}
+
+    @app.websocket("/v1/ws")
+    async def ws_chat(socket: WebSocket) -> None:
+        await socket.accept()
+        try:
+            while True:
+                payload = await socket.receive_json()
+                session_id = str(payload.get("session_id", "")).strip()
+                text = str(payload.get("text", "")).strip()
+                if not session_id or not text:
+                    await socket.send_json({"error": "session_id and text are required"})
+                    continue
+                out = await runtime.engine.run(session_id=session_id, user_text=text)
+                await socket.send_json({"text": out.text, "model": out.model})
+        except WebSocketDisconnect:
+            return
+
+    return app
 
 
 def run_gateway(host: str | None = None, port: int | None = None) -> None:
-    """Run the ClawLite gateway server."""
     cfg = load_config()
-    h_raw = host if host is not None else cfg.get("gateway", {}).get("host", "0.0.0.0")
-    h = str(h_raw).strip() or "0.0.0.0"
-
-    p_raw = port if port is not None else cfg.get("gateway", {}).get("port", 8787)
-    try:
-        p = int(p_raw)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            "Configuração inválida do gateway: 'port' deve ser inteiro entre 1 e 65535."
-        ) from exc
-    if p < 1 or p > 65535:
-        raise RuntimeError(
-            f"Configuração inválida do gateway: porta {p} fora do intervalo 1..65535."
-        )
-
-    _log("gateway.started", data={"host": h, "port": p})
-
-    try:
-        uvicorn.run(
-            app,
-            host=h,
-            port=p,
-            access_log=False,
-            log_level="warning",
-        )
-    except OSError as exc:
-        raise RuntimeError(
-            f"Falha ao iniciar gateway em {h}:{p}. Verifique porta em uso/permissão. Detalhe: {exc}"
-        ) from exc
+    app = create_app(cfg)
+    uvicorn.run(
+        app,
+        host=host or cfg.gateway.host,
+        port=port or int(cfg.gateway.port),
+        access_log=False,
+        log_level="warning",
+    )
 
 
-# Exports para compatibilidade com a suite de testes existente
-from clawlite.gateway.utils import _token, _log
-from clawlite.gateway import state
-from clawlite.core.agent import run_task_with_meta
-from clawlite.skills.marketplace import update_skills
+app = create_app()
 
-LOG_RING = state.LOG_RING
-connections = state.connections
-chat_connections = state.chat_connections
-log_connections = state.log_connections
+
+if __name__ == "__main__":
+    run_gateway()

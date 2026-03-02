@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -39,14 +39,19 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AppConfig:
+        def _pick(klass: type, payload: dict[str, Any]) -> dict[str, Any]:
+            allowed = {item.name for item in fields(klass)}
+            return {key: value for key, value in payload.items() if key in allowed}
+
         raw = dict(data or {})
-        provider = ProviderConfig(**dict(raw.get("provider") or {}))
-        gateway = GatewayConfig(**dict(raw.get("gateway") or {}))
-        scheduler = SchedulerConfig(**dict(raw.get("scheduler") or {}))
+        defaults = cls()
+        provider = ProviderConfig(**_pick(ProviderConfig, dict(raw.get("provider") or {})))
+        gateway = GatewayConfig(**_pick(GatewayConfig, dict(raw.get("gateway") or {})))
+        scheduler = SchedulerConfig(**_pick(SchedulerConfig, dict(raw.get("scheduler") or {})))
         channels = raw.get("channels")
         return cls(
-            workspace_path=str(raw.get("workspace_path") or cls.workspace_path),
-            state_path=str(raw.get("state_path") or cls.state_path),
+            workspace_path=str(raw.get("workspace_path") or defaults.workspace_path),
+            state_path=str(raw.get("state_path") or defaults.state_path),
             provider=provider,
             gateway=gateway,
             scheduler=scheduler,

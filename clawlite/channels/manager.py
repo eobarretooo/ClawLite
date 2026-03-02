@@ -114,6 +114,12 @@ class ChannelManager:
             await channel.stop()
         self._channels.clear()
 
+    async def send(self, *, channel: str, target: str, text: str, metadata: dict[str, Any] | None = None) -> str:
+        instance = self._channels.get(channel)
+        if instance is None:
+            raise KeyError(f"channel_not_available:{channel}")
+        return await instance.send(target=target, text=text, metadata=metadata or {})
+
     def status(self) -> dict[str, dict[str, Any]]:
         return {
             name: {
