@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd 2>/dev/null || true)"
+ROOT_DIR=""
+if [[ -n "${BASH_SOURCE[0]-}" && -f "${BASH_SOURCE[0]}" ]]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd 2>/dev/null || true)"
+elif [[ -f "${0}" ]]; then
+  ROOT_DIR="$(cd "$(dirname "${0}")/.." && pwd 2>/dev/null || true)"
+fi
 VENV_DIR="${HOME}/.clawlite/venv"
 BIN_DIR="${HOME}/.local/bin"
 REPO_URL="https://github.com/eobarretooo/ClawLite.git"
