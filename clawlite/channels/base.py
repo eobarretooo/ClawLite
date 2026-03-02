@@ -1,37 +1,74 @@
 from __future__ import annotations
 
-import abc
-from typing import Any, Callable, Coroutine
+import asyncio
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
+
+InboundHandler = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
 
 
-class BaseChannel(abc.ABC):
-    """
-    Interface abstrata base para todos os canais de comunicação do ClawLite.
-    Garante que qualquer integração (Telegram, Discord, Slack, etc.) 
-    siga o mesmo contrato operacional.
-    """
+@dataclass(slots=True)
+class ChannelHealth:
+    running: bool
+    last_error: str
 
-    def __init__(self, name: str, token: str, **kwargs: Any) -> None:
+
+class BaseChannel(ABC):
+    def __init__(self, *, name: str, config: dict[str, Any], on_message: InboundHandler | None = None) -> None:
         self.name = name
-        self.token = token
-        self.running = False
-        self._on_message_callback: Callable[[str, str], Coroutine[Any, Any, None]] | None = None
+        self.config = config
+        self.on_message = on_message
+        self._running = False
+        self._last_error = ""
 
-    def on_message(self, callback: Callable[[str, str], Coroutine[Any, Any, None]]) -> None:
-        """Registra o callback que processará as mensagens recebidas."""
-        self._on_message_callback = callback
+    @property
+    def running(self) -> bool:
+        return self._running
 
-    @abc.abstractmethod
+    def health(self) -> ChannelHealth:
+        return ChannelHealth(running=self._running, last_error=self._last_error)
+
+    async def emit(self, *, session_id: str, user_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
+        if self.on_message is None:
+            return
+        await self.on_message(session_id, user_id, text, metadata or {})
+
+    @abstractmethod
     async def start(self) -> None:
-        """Inicia a conexão com o provedor do canal."""
-        pass
+        raise NotImplementedError
 
-    @abc.abstractmethod
+    @abstractmethod
     async def stop(self) -> None:
-        """Encerra a conexão com o provedor do canal de forma gracefully."""
-        pass
+        raise NotImplementedError
 
-    @abc.abstractmethod
-    async def send_message(self, session_id: str, text: str) -> None:
-        """Envia uma mensagem de volta para o usuário no canal."""
-        pass
+    @abstractmethod
+    async def send(self, *, target: str, text: str, metadata: dict[str, Any] | None = None) -> str:
+        raise NotImplementedError
+
+
+class PassiveChannel(BaseChannel):
+    """Base channel for integrations not implemented yet in v2."""
+
+    async def start(self) -> None:
+        self._running = True
+
+    async def stop(self) -> None:
+        self._running = False
+
+    async def send(self, *, target: str, text: str, metadata: dict[str, Any] | None = None) -> str:
+        if not self._running:
+            return f"{self.name}:not_running"
+        return f"{self.name}:queued:{target}:{len(text)}"
+
+
+async def cancel_task(task: asyncio.Task[Any] | None) -> None:
+    if task is None:
+        return
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return
