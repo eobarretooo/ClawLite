@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import uuid
 from dataclasses import asdict, dataclass
@@ -82,26 +81,30 @@ class MemoryStore:
             return records[-limit:][::-1]
 
         corpus_tokens = [self._tokens(item.text) for item in records]
+        qset = set(q_tokens)
 
+        bm25_scores: list[float]
         if BM25Okapi is None:
-            # Fallback lexical score if rank_bm25 is missing.
-            scored = []
-            qset = set(q_tokens)
-            for idx, toks in enumerate(corpus_tokens):
-                overlap = len(qset.intersection(toks))
-                scored.append((float(overlap), idx))
+            bm25_scores = [0.0 for _ in records]
         else:
             bm25 = BM25Okapi(corpus_tokens)
             scores = bm25.get_scores(q_tokens)
-            scored = [(float(scores[idx]), idx) for idx in range(len(records))]
+            bm25_scores = [float(scores[idx]) for idx in range(len(records))]
 
-        scored.sort(key=lambda item: item[0], reverse=True)
+        # Primary key: lexical overlap with query terms.
+        # Secondary key: BM25 score for ordering among matching records.
+        scored: list[tuple[int, float, int]] = []
+        for idx, toks in enumerate(corpus_tokens):
+            overlap = len(qset.intersection(toks))
+            scored.append((overlap, bm25_scores[idx], idx))
+
+        scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
 
         picked: list[MemoryRecord] = []
-        for score, idx in scored:
+        for overlap, bm25_score, idx in scored:
             if len(picked) >= limit:
                 break
-            if math.isclose(score, 0.0):
+            if overlap <= 0 and bm25_score <= 0.0:
                 continue
             picked.append(records[idx])
 
