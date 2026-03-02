@@ -18,17 +18,19 @@ class ExecTool(Tool):
         workspace_path: str | Path | None = None,
         restrict_to_workspace: bool = False,
         path_append: str = "",
+        timeout_seconds: int = 60,
     ) -> None:
         self.workspace_path = (Path(workspace_path).expanduser().resolve() if workspace_path else Path.cwd().resolve())
         self.restrict_to_workspace = bool(restrict_to_workspace)
         self.path_append = str(path_append or "")
+        self.timeout_seconds = max(1, int(timeout_seconds))
 
     def args_schema(self) -> dict:
         return {
             "type": "object",
             "properties": {
                 "command": {"type": "string"},
-                "timeout": {"type": "number", "default": 30},
+                "timeout": {"type": "number", "default": self.timeout_seconds},
             },
             "required": ["command"],
         }
@@ -55,7 +57,7 @@ class ExecTool(Tool):
         if not command:
             raise ValueError("command is required")
 
-        timeout = float(arguments.get("timeout", 30) or 30)
+        timeout = float(arguments.get("timeout", self.timeout_seconds) or self.timeout_seconds)
         argv = shlex.split(command)
         guard_error = self._workspace_guard(argv)
         if guard_error:

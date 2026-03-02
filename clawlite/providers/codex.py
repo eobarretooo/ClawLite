@@ -35,7 +35,14 @@ class CodexProvider(LLMProvider):
             value = 60.0
         return max(0.0, value)
 
-    async def complete(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMResult:
         headers = {"content-type": "application/json"}
         if self.access_token:
             headers["authorization"] = f"Bearer {self.access_token}"
@@ -43,6 +50,10 @@ class CodexProvider(LLMProvider):
             headers["openai-organization"] = self.account_id
 
         payload: dict[str, Any] = {"model": self.model, "messages": messages}
+        if max_tokens is not None:
+            payload["max_tokens"] = max(1, int(max_tokens))
+        if temperature is not None:
+            payload["temperature"] = float(temperature)
         if tools:
             payload["tools"] = [{"type": "function", "function": row} for row in tools]
             payload["tool_choice"] = "auto"

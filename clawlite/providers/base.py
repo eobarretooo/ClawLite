@@ -22,5 +22,12 @@ class LLMResult:
 
 class LLMProvider(ABC):
     @abstractmethod
-    async def complete(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMResult:
         raise NotImplementedError

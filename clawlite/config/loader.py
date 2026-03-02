@@ -47,6 +47,7 @@ def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
         model = os.getenv("CLAWLITE_MODEL", "").strip()
         if model:
             out["provider"] = {"model": model}
+            out.setdefault("agents", {}).setdefault("defaults", {})["model"] = model
     workspace = os.getenv("CLAWLITE_WORKSPACE", "").strip()
     if workspace:
         out["workspace_path"] = workspace

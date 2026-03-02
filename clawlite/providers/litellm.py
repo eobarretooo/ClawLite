@@ -184,7 +184,14 @@ class LiteLLMProvider(LLMProvider):
             )
         return rows
 
-    async def _complete_anthropic(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+    async def _complete_anthropic(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMResult:
         if not self.api_key.strip():
             raise RuntimeError("provider_auth_error:missing_api_key:anthropic")
 
@@ -194,9 +201,11 @@ class LiteLLMProvider(LLMProvider):
         system_text, anthropic_messages = self._anthropic_messages(messages)
         payload: dict[str, Any] = {
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": max(1, int(max_tokens)) if max_tokens is not None else 4096,
             "messages": anthropic_messages,
         }
+        if temperature is not None:
+            payload["temperature"] = float(temperature)
         if system_text:
             payload["system"] = system_text
         anth_tools = self._anthropic_tools(tools)
@@ -261,9 +270,21 @@ class LiteLLMProvider(LLMProvider):
 
         raise RuntimeError("provider_429_exhausted")
 
-    async def complete(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+    async def complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMResult:
         if not self.openai_compatible and self.provider_name == "anthropic":
-            return await self._complete_anthropic(messages=messages, tools=tools)
+            return await self._complete_anthropic(
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
 
         if not self.openai_compatible:
             raise RuntimeError(
@@ -286,6 +307,10 @@ class LiteLLMProvider(LLMProvider):
             "model": self.model,
             "messages": messages,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max(1, int(max_tokens))
+        if temperature is not None:
+            payload["temperature"] = float(temperature)
         if tools:
             payload["tools"] = [{"type": "function", "function": row} for row in tools]
             payload["tool_choice"] = "auto"

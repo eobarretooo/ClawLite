@@ -86,13 +86,14 @@ class _MessageAPI:
 
 
 def _provider_config(config: AppConfig) -> dict[str, Any]:
-    provider_name = detect_provider_name(config.provider.model)
+    active_model = str(config.agents.defaults.model or config.provider.model).strip() or config.provider.model
+    provider_name = detect_provider_name(active_model)
     selected = getattr(config.providers, provider_name, None)
     selected_api_key = selected.api_key if selected is not None else ""
     selected_api_base = selected.api_base if selected is not None else ""
 
     return {
-        "model": config.provider.model,
+        "model": active_model,
         "providers": {
             "litellm": {
                 "base_url": selected_api_base or config.provider.litellm_base_url,
@@ -140,7 +141,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
 
     provider = build_provider(_provider_config(config))
     cron = CronService(store_path=Path(config.state_path) / "cron_jobs.json")
-    heartbeat = HeartbeatService(interval_seconds=config.scheduler.heartbeat_interval_seconds)
+    heartbeat = HeartbeatService(interval_seconds=config.gateway.heartbeat.interval_s)
 
     tools = ToolRegistry()
     tools.register(
@@ -148,6 +149,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
             workspace_path=workspace_path,
             restrict_to_workspace=config.tools.restrict_to_workspace,
             path_append=config.tools.exec.path_append,
+            timeout_seconds=config.tools.exec.timeout,
         )
     )
     tools.register(ReadFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
@@ -172,6 +174,9 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         memory=memory,
         prompt_builder=prompt,
         skills_loader=skills,
+        max_iterations=config.agents.defaults.max_tool_iterations,
+        max_tokens=config.agents.defaults.max_tokens,
+        temperature=config.agents.defaults.temperature,
     )
 
     async def _subagent_runner(session_id: str, task: str) -> str:
@@ -229,13 +234,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         logger.info("gateway startup begin host={} port={}", cfg.gateway.host, cfg.gateway.port)
         await runtime.channels.start(cfg.to_dict())
         await runtime.cron.start(lambda job: _route_cron_job(runtime, job))
-        await runtime.heartbeat.start(lambda: _run_heartbeat(runtime))
+        if cfg.gateway.heartbeat.enabled:
+            await runtime.heartbeat.start(lambda: _run_heartbeat(runtime))
         logger.info("gateway startup complete")
         try:
             yield
         finally:
             logger.info("gateway shutdown begin")
-            await runtime.heartbeat.stop()
+            if cfg.gateway.heartbeat.enabled:
+                await runtime.heartbeat.stop()
             await runtime.cron.stop()
             await runtime.channels.stop()
             logger.info("gateway shutdown complete")

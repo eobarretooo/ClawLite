@@ -51,6 +51,17 @@ class FakeProviderWithMessageCapture:
         return ProviderResult(text="done", tool_calls=[], model="fake/model")
 
 
+class FakeProviderWithSamplingCapture:
+    def __init__(self) -> None:
+        self.last_max_tokens: int | None = None
+        self.last_temperature: float | None = None
+
+    async def complete(self, *, messages, tools, max_tokens=None, temperature=None):
+        self.last_max_tokens = max_tokens
+        self.last_temperature = temperature
+        return ProviderResult(text="ok", tool_calls=[], model="fake/model")
+
+
 def test_engine_runs_tool_roundtrip() -> None:
     async def _scenario() -> None:
         engine = AgentEngine(
@@ -79,5 +90,17 @@ def test_engine_uses_tool_message_protocol_and_processes_all_calls() -> None:
         assert len(tool_messages) == 2
         assert {row.get("name") for row in tool_messages} == {"echo"}
         assert all(str(row.get("content", "")).startswith("echo:") for row in tool_messages)
+
+    asyncio.run(_scenario())
+
+
+def test_engine_passes_max_tokens_and_temperature_when_supported() -> None:
+    async def _scenario() -> None:
+        provider = FakeProviderWithSamplingCapture()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), max_tokens=2048, temperature=0.25)
+        out = await engine.run(session_id="cli:1", user_text="hello")
+        assert out.text == "ok"
+        assert provider.last_max_tokens == 2048
+        assert provider.last_temperature == 0.25
 
     asyncio.run(_scenario())

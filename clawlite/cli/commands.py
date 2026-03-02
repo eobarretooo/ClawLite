@@ -30,10 +30,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     config_path = str(args.config) if args.config else str(DEFAULT_CONFIG_PATH)
-    channels_enabled: list[str] = []
-    for name, payload in cfg.channels.items():
-        if isinstance(payload, dict) and bool(payload.get("enabled", False)):
-            channels_enabled.append(name)
+    channels_enabled = cfg.channels.enabled_names()
     cron = CronService(store_path=f"{cfg.state_path}/cron_jobs.json")
     jobs_count = len(cron.list_jobs())
     _print_json(
@@ -41,9 +38,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             "config_path": config_path,
             "workspace_path": cfg.workspace_path,
             "provider_model": cfg.provider.model,
-            "channels_enabled": sorted(channels_enabled),
+            "channels_enabled": channels_enabled,
             "cron_jobs_count": jobs_count,
-            "heartbeat_interval_seconds": cfg.scheduler.heartbeat_interval_seconds,
+            "heartbeat_interval_seconds": cfg.gateway.heartbeat.interval_s,
         }
     )
     return 0

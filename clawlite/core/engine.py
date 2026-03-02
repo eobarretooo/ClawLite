@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from dataclasses import dataclass
 from typing import Any
 
@@ -81,6 +82,8 @@ class AgentEngine:
         skills_loader: SkillsLoader | None = None,
         subagents: SubagentManager | None = None,
         max_iterations: int = 40,
+        max_tokens: int = 8192,
+        temperature: float = 0.1,
     ) -> None:
         self.provider = provider
         self.tools = tools
@@ -90,6 +93,19 @@ class AgentEngine:
         self.skills_loader = skills_loader or SkillsLoader()
         self.subagents = subagents or SubagentManager()
         self.max_iterations = max(1, int(max_iterations))
+        self.max_tokens = max(1, int(max_tokens))
+        self.temperature = float(temperature)
+
+    async def _complete_provider(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ProviderResult:
+        complete_sig = inspect.signature(self.provider.complete)
+        accepts_max_tokens = "max_tokens" in complete_sig.parameters
+        accepts_temperature = "temperature" in complete_sig.parameters
+        kwargs: dict[str, Any] = {"messages": messages, "tools": tools}
+        if accepts_max_tokens:
+            kwargs["max_tokens"] = self.max_tokens
+        if accepts_temperature:
+            kwargs["temperature"] = self.temperature
+        return await self.provider.complete(**kwargs)
 
     @staticmethod
     def _tool_call_id(tool_call: Any, idx: int) -> str:
@@ -182,11 +198,25 @@ class AgentEngine:
         while iteration < self.max_iterations:
             iteration += 1
             try:
-                step = await self.provider.complete(messages=messages, tools=self.tools.schema())
+                step = await self._complete_provider(messages=messages, tools=self.tools.schema())
             except Exception as exc:
                 logger.error("llm completion failed session={} iteration={} error={}", session_id, iteration, exc)
+                reason = str(exc)
+                if reason.startswith("provider_auth_error:missing_api_key:"):
+                    provider = reason.rsplit(":", 1)[-1]
+                    text = (
+                        f"Sorry, I could not call the model because API credentials are missing for {provider}. "
+                        "Set the provider API key and try again."
+                    )
+                elif reason.startswith("provider_http_error:401"):
+                    text = (
+                        "Sorry, model authentication failed (401). "
+                        "Check that your API key matches the selected model/provider."
+                    )
+                else:
+                    text = "Sorry, I encountered an error while calling the model. Please try again shortly."
                 final = ProviderResult(
-                    text="Sorry, I encountered an error while calling the model. Please try again shortly.",
+                    text=text,
                     tool_calls=[],
                     model="engine/fallback",
                 )
