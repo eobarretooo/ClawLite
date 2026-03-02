@@ -20,17 +20,14 @@ echo "--- Módulos Python ---"
 python -c "from clawlite.gateway import server" 2>/dev/null \
   && _ok "gateway.server importa" || _fail "gateway.server falhou"
 
-python -c "from clawlite.runtime import multiagent, offline, resilience, secret_store" 2>/dev/null \
-  && _ok "runtime modules importam" || _fail "runtime modules falhou"
-
-python -c "from clawlite.runtime.conversation_cron import list_cron_jobs" 2>/dev/null \
-  && _ok "conversation_cron importa" || _fail "conversation_cron falhou"
+python -c "from clawlite.core.engine import AgentEngine; from clawlite.scheduler.cron import CronService; from clawlite.tools.registry import ToolRegistry" 2>/dev/null \
+  && _ok "core/scheduler/tools importam" || _fail "core/scheduler/tools falhou"
 
 # 2) Testes unitários rápidos
 echo ""
 echo "--- Testes unitários ---"
-if python -m pytest tests/ -q --tb=line -x 2>/dev/null | grep -q "passed"; then
-  TOTAL=$(python -m pytest tests/ -q --tb=no 2>/dev/null | tail -1)
+if python -m pytest tests_next/ -q --tb=line -x 2>/dev/null | grep -q "passed"; then
+  TOTAL=$(python -m pytest tests_next/ -q --tb=no 2>/dev/null | tail -1)
   _ok "Testes: $TOTAL"
 else
   _fail "pytest falhou ou sem testes passando"

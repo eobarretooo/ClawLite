@@ -118,12 +118,12 @@ def ensure_path():
 def bootstrap_workspace():
     code = (
         "import secrets;"
-        "from clawlite.config.settings import load_config,save_config;"
-        "from clawlite.runtime.workspace import init_workspace;"
-        "cfg=load_config();init_workspace();"
-        "cfg.setdefault('gateway',{});"
-        "tok=str(cfg['gateway'].get('token','')).strip();"
-        "cfg['gateway']['token']=tok or secrets.token_urlsafe(24);"
+        "from clawlite.config.loader import load_config,save_config;"
+        "from clawlite.workspace.loader import WorkspaceLoader;"
+        "cfg=load_config();"
+        "WorkspaceLoader(workspace_path=cfg.workspace_path).bootstrap();"
+        "tok=str(cfg.gateway.token or '').strip();"
+        "cfg.gateway.token=tok or secrets.token_urlsafe(24);"
         "save_config(cfg)"
     )
     run([PYBIN, "-c", code], "bootstrap")
@@ -221,7 +221,7 @@ def install_package():
 
 
 def doctor_check():
-    run([str(VENV_DIR / "bin" / "clawlite"), "doctor"], "doctor")
+    run([str(VENV_DIR / "bin" / "clawlite"), "--help"], "clawlite help")
 
 
 def verify_gateway_runtime():
@@ -351,7 +351,7 @@ def rich_flow():
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
-    console.print(Panel.fit("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding", border_style="#ff6b2b"))
+    console.print(Panel.fit("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboard", border_style="#ff6b2b"))
 
 
 def simple_flow():
@@ -372,7 +372,7 @@ def simple_flow():
     doctor_check()
     ensure_gateway_runtime()
     print("✓")
-    print("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboarding")
+    print("🦊 ClawLite v0.4.1 instalado!\n👉 clawlite onboard")
 
 
 def main():

@@ -44,7 +44,7 @@ jobs:
           pip install pytest pytest-anyio httpx "fastapi[all]" uvicorn questionary rich
 
       - name: Rodar testes
-        run: python -m pytest tests/ -q --tb=short
+        run: python -m pytest tests_next/ -q --tb=short
 
   lint:
     name: Lint (ruff)
@@ -86,7 +86,6 @@ jobs:
       - name: Smoke — importação dos módulos principais
         run: |
           python -c "from clawlite.gateway import server; print('gateway ok')"
-          python -c "from clawlite.runtime import multiagent; print('multiagent ok')"
-          python -c "from clawlite.runtime import offline; print('offline ok')"
-          python -c "from clawlite.runtime import resilience; print('resilience ok')"
-          python -c "from clawlite.runtime import secret_store; print('secret_store ok')"
+          python -c "from clawlite.core.engine import AgentEngine; print('engine ok')"
+          python -c "from clawlite.scheduler.cron import CronService; print('scheduler ok')"
+          python -c "from clawlite.tools.registry import ToolRegistry; print('tools ok')"

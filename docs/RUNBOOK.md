@@ -164,15 +164,11 @@ clawlite start --restart
 
 **Diagnóstico:**
 ```bash
-# Verificar conectividade
-python -c "from clawlite.runtime.offline import check_connectivity; print(check_connectivity())"
+# Verificar saúde do gateway
+curl -sf http://127.0.0.1:8787/health | python -m json.tool
 
-# Ver métricas de erro
-TOKEN=$(python -c "from clawlite.gateway.server import _token; print(_token())")
-curl -sf -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/metrics | python -m json.tool
-
-# Ver últimos erros nos logs
-curl -sf -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8787/api/dashboard/logs?level=error&limit=20"
+# Testar chamada direta do agente
+clawlite run "responda apenas: ok"
 ```
 
 **Ação:**

@@ -37,7 +37,7 @@ include = ["clawlite*"]
 
 [tool.setuptools.package-data]
 clawlite = [
-  "gateway/dashboard.html",
   "workspace/templates/*.md",
   "workspace/templates/memory/*.md",
+  "skills/*/SKILL.md",
 ]
