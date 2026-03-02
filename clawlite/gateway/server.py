@@ -186,6 +186,22 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app = FastAPI(title="ClawLite Gateway", version="1.0.0", lifespan=lifespan)
     app.state.runtime = runtime
 
+    def _provider_error_payload(exc: RuntimeError) -> tuple[int, str]:
+        message = str(exc)
+        if message.startswith("provider_http_error:401"):
+            return (
+                502,
+                "Falha de autenticacao no provedor (401). Verifique CLAWLITE_MODEL e CLAWLITE_LITELLM_API_KEY.",
+            )
+        if message.startswith("provider_http_error:429") or message == "provider_429_exhausted":
+            return (429, "Limite de requisicoes no provedor. Tente novamente em instantes.")
+        if message.startswith("provider_http_error:"):
+            code = message.split(":", 1)[1]
+            return (502, f"Falha no provedor remoto (HTTP {code}).")
+        if message.startswith("provider_network_error:"):
+            return (503, "Provedor remoto indisponivel no momento (erro de rede).")
+        return (500, "Falha interna ao processar a solicitacao.")
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {
@@ -198,7 +214,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def chat(req: ChatRequest) -> ChatResponse:
         if not req.session_id.strip() or not req.text.strip():
             raise HTTPException(status_code=400, detail="session_id and text are required")
-        out = await runtime.engine.run(session_id=req.session_id, user_text=req.text)
+        try:
+            out = await runtime.engine.run(session_id=req.session_id, user_text=req.text)
+        except RuntimeError as exc:
+            status_code, detail = _provider_error_payload(exc)
+            raise HTTPException(status_code=status_code, detail=detail)
         return ChatResponse(text=out.text, model=out.model)
 
     @app.post("/v1/cron/add")
@@ -230,7 +250,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 if not session_id or not text:
                     await socket.send_json({"error": "session_id and text are required"})
                     continue
-                out = await runtime.engine.run(session_id=session_id, user_text=text)
+                try:
+                    out = await runtime.engine.run(session_id=session_id, user_text=text)
+                except RuntimeError as exc:
+                    status_code, detail = _provider_error_payload(exc)
+                    await socket.send_json({"error": detail, "status_code": status_code})
+                    continue
                 await socket.send_json({"text": out.text, "model": out.model})
         except WebSocketDisconnect:
             return

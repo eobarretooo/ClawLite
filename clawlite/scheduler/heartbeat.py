@@ -19,7 +19,13 @@ class HeartbeatService:
 
         async def _loop() -> None:
             while self._running:
-                await on_tick()
+                try:
+                    await on_tick()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Heartbeat failures must not crash the background loop.
+                    pass
                 await asyncio.sleep(self.interval_seconds)
 
         self._task = asyncio.create_task(_loop())
@@ -32,5 +38,8 @@ class HeartbeatService:
         try:
             await self._task
         except asyncio.CancelledError:
+            pass
+        except Exception:
+            # Ignore background exceptions during shutdown.
             pass
         self._task = None
