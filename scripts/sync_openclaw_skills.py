@@ -23,7 +23,7 @@ def adapt_text(text: str) -> str:
     note = (
         "\n\n## ClawLite Adaptation\n"
         "Conteúdo sincronizado da skill equivalente do OpenClaw e adaptado para nomenclatura/fluxo do ClawLite.\n"
-        "Quando algum comando depender de backend não disponível no ambiente atual, use `clawlite skill search` para alternativas.\n"
+        "Quando algum comando depender de backend não disponível no ambiente atual, adapte para as tools/skills locais ativas.\n"
     )
     if "## ClawLite Adaptation" not in text:
         text = text.rstrip() + note + "\n"
@@ -33,7 +33,7 @@ def adapt_text(text: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sincroniza SKILL.md do OpenClaw para ClawLite com adaptação de nomenclatura.")
     parser.add_argument("--openclaw-skills", default="/root/projetos/openclaw/skills")
-    parser.add_argument("--clawlite-skills", default="/root/projetos/ClawLite/skills")
+    parser.add_argument("--clawlite-skills", default="/root/projetos/ClawLite/clawlite/skills")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

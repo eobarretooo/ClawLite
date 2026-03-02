@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from clawlite.skills.registry import SKILLS
+from clawlite.core.skills import SkillsLoader
 
 
 def main() -> None:
@@ -24,7 +24,9 @@ def main() -> None:
                 except (TypeError, ValueError):
                     continue
 
-    merged = {slug: existing.get(slug, 0) for slug in sorted(SKILLS.keys())}
+    builtin_root = repo_root / "clawlite" / "skills"
+    discovered = SkillsLoader(builtin_root=builtin_root).discover()
+    merged = {spec.name: existing.get(spec.name, 0) for spec in sorted(discovered, key=lambda row: row.name)}
     total = sum(merged.values())
     payload = {
         "schema_version": "1.0",

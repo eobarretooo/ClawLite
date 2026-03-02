@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES_DIR = ROOT / "templates" / "community"
+TEMPLATES_DIR = ROOT / "scripts" / "templates" / "community"
 
 
 def _load(path: Path) -> str:

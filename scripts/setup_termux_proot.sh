@@ -108,9 +108,9 @@ echo "[6/6] Finalizado."
 echo
 echo "Próximos comandos (no Termux):"
 echo "  clawlitex status"
-echo "  clawlitex onboarding"
+echo "  clawlitex onboard"
 echo "  clawlitex start"
 echo
 echo "Se necessário, fallback direto:"
-echo "  proot-distro login ${DISTRO} -- /bin/bash -lc 'cd ${CLAWLITE_DIR} && clawlite onboarding'"
+echo "  proot-distro login ${DISTRO} -- /bin/bash -lc 'cd ${CLAWLITE_DIR} && clawlite onboard'"
 echo "  proot-distro login ${DISTRO} -- /bin/bash -lc 'cd ${CLAWLITE_DIR} && clawlite start --host 127.0.0.1 --port 8787'"

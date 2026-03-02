@@ -15,7 +15,7 @@
 ## Validation
 
 - [ ] `pytest -q`
-- [ ] Manual smoke test (`clawlite doctor`, `clawlite onboarding`, `clawlite start`)
+- [ ] Manual smoke test (`clawlite --help`, `clawlite onboard`, `clawlite start`)
 - [ ] No secrets added to repo
 
 ## Risks

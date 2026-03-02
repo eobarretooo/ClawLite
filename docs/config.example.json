@@ -1,185 +1,24 @@
 {
-  "model": "openai/gpt-4o-mini",
-  "model_fallback": [
-    "openrouter/auto",
-    "ollama/llama3.1:8b"
-  ],
-  "offline_mode": {
-    "enabled": true,
-    "auto_fallback_to_ollama": true,
-    "connectivity_timeout_sec": 1.5
-  },
-  "ollama": {
-    "model": "llama3.1:8b"
-  },
-  "battery_mode": {
-    "enabled": false,
-    "throttle_seconds": 6.0
-  },
-  "notifications": {
-    "enabled": true,
-    "dedupe_window_seconds": 300
+  "workspace_path": "/home/user/.clawlite/workspace",
+  "state_path": "/home/user/.clawlite/state",
+  "provider": {
+    "model": "gemini/gemini-2.5-flash",
+    "litellm_base_url": "https://api.openai.com/v1",
+    "litellm_api_key": ""
   },
   "gateway": {
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "port": 8787,
-    "token": "",
-    "dashboard_enabled": true
+    "token": ""
   },
-  "update": {
-    "channel": "stable",
-    "check_on_start": true
+  "scheduler": {
+    "heartbeat_interval_seconds": 1800,
+    "timezone": "UTC"
   },
   "channels": {
     "telegram": {
       "enabled": false,
-      "token": "",
-      "chat_id": "",
-      "accounts": [],
-      "allowFrom": [],
-      "stt_enabled": false,
-      "stt_model": "base",
-      "stt_language": "pt",
-      "tts_enabled": false,
-      "tts_provider": "local",
-      "tts_model": "gpt-4o-mini-tts",
-      "tts_voice": "alloy",
-      "tts_default_reply": false
-    },
-    "whatsapp": {
-      "enabled": false,
-      "token": "",
-      "phone": "",
-      "accounts": [],
-      "allowFrom": [],
-      "stt_enabled": false,
-      "stt_model": "base",
-      "stt_language": "pt",
-      "tts_enabled": false,
-      "tts_provider": "local",
-      "tts_model": "gpt-4o-mini-tts",
-      "tts_voice": "alloy",
-      "tts_default_reply": false
-    },
-    "discord": {
-      "enabled": false,
-      "token": "",
-      "guild_id": "",
-      "accounts": [],
-      "allowFrom": [],
-      "allowChannels": []
-    },
-    "slack": {
-      "enabled": false,
-      "token": "",
-      "workspace": "",
-      "app_token": "",
-      "accounts": [],
-      "allowFrom": [],
-      "allowChannels": []
-    },
-    "googlechat": {
-      "enabled": false,
-      "token": "",
-      "botUser": "",
-      "requireMention": true,
-      "allowFrom": [],
-      "allowChannels": [],
-      "serviceAccountFile": "",
-      "webhookPath": "/api/webhooks/googlechat",
-      "dm": {
-        "policy": "pairing",
-        "allowFrom": []
-      }
-    },
-    "irc": {
-      "enabled": false,
-      "token": "",
-      "host": "",
-      "port": 6697,
-      "tls": true,
-      "nick": "clawlite-bot",
-      "channels": [],
-      "allowFrom": [],
-      "allowChannels": [],
-      "requireMention": true,
-      "relay_url": ""
-    },
-    "signal": {
-      "enabled": false,
-      "token": "",
-      "account": "",
-      "cliPath": "signal-cli",
-      "httpUrl": "",
-      "allowFrom": []
-    },
-    "imessage": {
-      "enabled": false,
-      "token": "",
-      "cliPath": "imsg",
-      "service": "auto",
-      "allowFrom": []
-    },
-    "teams": {
-      "enabled": false,
-      "token": "",
-      "tenant": "",
-      "accounts": []
+      "token": ""
     }
-  },
-  "hooks": {
-    "boot": true,
-    "session_memory": true,
-    "command_logger": false
-  },
-  "web_tools": {
-    "web_search": {
-      "enabled": true,
-      "provider": "brave"
-    },
-    "reddit": {
-      "enabled": false,
-      "subreddits": [
-        "selfhosted",
-        "Python"
-      ]
-    },
-    "threads": {
-      "enabled": false,
-      "username": ""
-    }
-  },
-  "language": "pt-br",
-  "security": {
-    "allow_shell_exec": true,
-    "redact_tokens_in_logs": true,
-    "require_gateway_token": true,
-    "pairing": {
-      "enabled": false,
-      "code_ttl_seconds": 86400
-    },
-    "rbac": {
-      "viewer_tokens": []
-    },
-    "tool_policies": {}
-  },
-  "skills": [
-    "core-tools",
-    "memory",
-    "gateway"
-  ],
-  "reddit": {
-    "enabled": false,
-    "client_id": "",
-    "client_secret": "",
-    "redirect_uri": "http://127.0.0.1:8788/reddit/callback",
-    "refresh_token": "",
-    "subreddits": [
-      "selfhosted",
-      "Python",
-      "AIAssistants",
-      "termux"
-    ],
-    "notify_chat_id": ""
   }
 }

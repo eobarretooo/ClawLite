@@ -29,9 +29,8 @@ Comandos:
   help        Mostra esta ajuda
 
 Qualquer outro comando e repassado para o ClawLite dentro do proot:
-  clawlitex onboarding      -> clawlite onboarding
+  clawlitex onboard         -> clawlite onboard
   clawlitex doctor          -> clawlite doctor
-  clawlitex skills list     -> clawlite skills list
   clawlitex <qualquer>      -> clawlite <qualquer>
 
 Variaveis opcionais:
@@ -187,7 +186,7 @@ cmd_status() {
 
   if [[ "$ok_proot" -eq 1 && "$ok_distro" -eq 1 && "$ok_clawlite" -eq 1 ]]; then
     echo "Pronto para uso."
-    echo "  clawlitex onboarding"
+    echo "  clawlitex onboard"
     echo "  clawlitex start"
   else
     echo "Setup incompleto. Execute: clawlitex setup"
