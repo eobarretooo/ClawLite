@@ -4,11 +4,16 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
+
 from clawlite.core.memory import MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager
 from clawlite.session.store import SessionStore
+from clawlite.utils.logging import setup_logging
+
+setup_logging()
 
 
 @dataclass(slots=True)
@@ -95,6 +100,7 @@ class AgentEngine:
         )
 
     async def run(self, *, session_id: str, user_text: str) -> ProviderResult:
+        logger.info("processing message session={} chars={}", session_id, len(user_text))
         history = self.sessions.read(session_id, limit=20)
         memories = [row.text for row in self.memory.search(user_text, limit=6)]
         skills = self.skills_loader.render_for_prompt()
@@ -120,13 +126,23 @@ class AgentEngine:
             messages.append({"role": "system", "content": f"[Skill Guides]\n{prompt.skills_context}"})
         messages.append({"role": "user", "content": user_text})
 
-        first = await self.provider.complete(messages=messages, tools=self.tools.schema())
+        try:
+            first = await self.provider.complete(messages=messages, tools=self.tools.schema())
+        except Exception as exc:
+            logger.error("llm completion failed session={} stage=first error={}", session_id, exc)
+            raise
 
         if first.tool_calls:
+            logger.debug("tool calls requested session={} count={}", session_id, len(first.tool_calls))
             for tool_call in first.tool_calls[:3]:
+                logger.debug("executing tool session={} tool={}", session_id, tool_call.name)
                 tool_result = await self.tools.execute(tool_call.name, tool_call.arguments, session_id=session_id)
                 messages.append({"role": "assistant", "content": self._tool_json(tool_call.name, tool_call.arguments, tool_result)})
-            second = await self.provider.complete(messages=messages, tools=self.tools.schema())
+            try:
+                second = await self.provider.complete(messages=messages, tools=self.tools.schema())
+            except Exception as exc:
+                logger.error("llm completion failed session={} stage=second error={}", session_id, exc)
+                raise
             final = second
         else:
             final = first
@@ -134,4 +150,5 @@ class AgentEngine:
         self.sessions.append(session_id, "user", user_text)
         self.sessions.append(session_id, "assistant", final.text)
         self.memory.consolidate([{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}], source=f"session:{session_id}")
+        logger.info("response generated session={} model={} chars={}", session_id, final.model, len(final.text))
         return final

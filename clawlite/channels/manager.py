@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable
 
+from loguru import logger
+
 from clawlite.bus.events import InboundEvent, OutboundEvent
 from clawlite.bus.queue import MessageQueue
 from clawlite.channels.base import BaseChannel
@@ -20,6 +22,9 @@ from clawlite.channels.signal import SignalChannel
 from clawlite.channels.slack import SlackChannel
 from clawlite.channels.telegram import TelegramChannel
 from clawlite.channels.whatsapp import WhatsAppChannel
+from clawlite.utils.logging import setup_logging
+
+setup_logging()
 
 
 class EngineProtocol:
@@ -56,6 +61,13 @@ class ChannelManager:
 
     async def _on_channel_message(self, session_id: str, user_id: str, text: str, metadata: dict[str, Any]) -> None:
         channel = str(metadata.get("channel", "")).strip() or session_id.split(":", 1)[0]
+        logger.debug(
+            "inbound message queued channel={} session={} user={} chars={}",
+            channel,
+            session_id,
+            user_id,
+            len(text),
+        )
         await self.bus.publish_inbound(
             InboundEvent(
                 channel=channel,
@@ -69,7 +81,24 @@ class ChannelManager:
     async def _dispatch_loop(self) -> None:
         while True:
             event = await self.bus.next_inbound()
-            result = await self.engine.run(session_id=event.session_id, user_text=event.text)
+            logger.debug(
+                "dispatch processing channel={} session={} target={}",
+                event.channel,
+                event.session_id,
+                event.user_id,
+            )
+            try:
+                result = await self.engine.run(session_id=event.session_id, user_text=event.text)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "dispatch engine failed channel={} session={} error={}",
+                    event.channel,
+                    event.session_id,
+                    exc,
+                )
+                continue
 
             target = str(event.metadata.get("chat_id") or event.user_id)
             outbound = OutboundEvent(
@@ -82,7 +111,26 @@ class ChannelManager:
             await self.bus.publish_outbound(outbound)
             channel = self._channels.get(event.channel)
             if channel is not None:
-                await channel.send(target=target, text=result.text)
+                try:
+                    await channel.send(target=target, text=result.text)
+                    logger.info(
+                        "dispatch sent channel={} session={} target={}",
+                        event.channel,
+                        event.session_id,
+                        target,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error(
+                        "dispatch send failed channel={} session={} target={} error={}",
+                        event.channel,
+                        event.session_id,
+                        target,
+                        exc,
+                    )
+            else:
+                logger.error("dispatch channel unavailable channel={} session={}", event.channel, event.session_id)
 
     async def start(self, config: dict[str, Any]) -> None:
         channels_cfg = config.get("channels", {}) if isinstance(config, dict) else {}
@@ -93,25 +141,33 @@ class ChannelManager:
                 continue
             cls = self._registry.get(name)
             if cls is None:
+                logger.error("channel enabled but not registered channel={}", name)
                 continue
+            logger.info("channel enabled channel={}", name)
             channel = cls(config=row, on_message=self._on_channel_message)
             self._channels[name] = channel
             await channel.start()
+            logger.info("channel started channel={}", name)
 
         if self._dispatcher_task is None:
             self._dispatcher_task = asyncio.create_task(self._dispatch_loop())
+            logger.info("channel dispatcher started")
 
     async def stop(self) -> None:
         if self._dispatcher_task is not None:
+            logger.info("channel dispatcher stopping")
             self._dispatcher_task.cancel()
             try:
                 await self._dispatcher_task
             except asyncio.CancelledError:
                 pass
             self._dispatcher_task = None
+            logger.info("channel dispatcher stopped")
 
-        for channel in list(self._channels.values()):
+        for name, channel in list(self._channels.items()):
+            logger.info("channel stopping channel={}", name)
             await channel.stop()
+            logger.info("channel stopped channel={}", name)
         self._channels.clear()
 
     async def send(self, *, channel: str, target: str, text: str, metadata: dict[str, Any] | None = None) -> str:

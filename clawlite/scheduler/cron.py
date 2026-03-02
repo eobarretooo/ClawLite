@@ -8,7 +8,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from loguru import logger
+
 from clawlite.scheduler.types import CronJob, CronPayload, CronSchedule
+from clawlite.utils.logging import setup_logging
+
+setup_logging()
 
 try:
     from croniter import croniter
@@ -54,6 +59,8 @@ class CronService:
             except Exception:
                 continue
             self._jobs[job.id] = job
+        if self._jobs:
+            logger.info("cron jobs loaded count={} path={}", len(self._jobs), self.path)
 
     def _save(self) -> None:
         items = [asdict(job) for job in self._jobs.values()]
@@ -91,16 +98,19 @@ class CronService:
         if self._task is not None:
             return
         self._task = asyncio.create_task(self._loop())
+        logger.info("cron service started path={}", self.path)
 
     async def stop(self) -> None:
         if self._task is None:
             return
+        logger.info("cron service stopping")
         self._task.cancel()
         try:
             await self._task
         except asyncio.CancelledError:
             pass
         self._task = None
+        logger.info("cron service stopped")
 
     async def _loop(self) -> None:
         while True:
@@ -121,7 +131,14 @@ class CronService:
                 if next_run > now:
                     continue
                 if self._on_job is not None:
-                    await self._on_job(job)
+                    logger.info("cron job executing id={} session={} name={}", job.id, job.session_id, job.name)
+                    try:
+                        await self._on_job(job)
+                        logger.info("cron job executed id={} session={}", job.id, job.session_id)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.error("cron job failed id={} session={} error={}", job.id, job.session_id, exc)
                 job.last_run_iso = now.isoformat()
                 after = self._compute_next(job.schedule, now)
                 # one-shot jobs (at) disable after first run
@@ -156,6 +173,13 @@ class CronService:
         )
         self._jobs[job_id] = job
         self._save()
+        logger.info(
+            "cron job created id={} session={} schedule_kind={} name={}",
+            job_id,
+            session_id,
+            schedule.kind,
+            job.name,
+        )
         return job_id
 
     def remove_job(self, job_id: str) -> bool:
@@ -163,6 +187,7 @@ class CronService:
         self._jobs.pop(job_id, None)
         if existed:
             self._save()
+            logger.info("cron job removed id={}", job_id)
         return existed
 
     @staticmethod
