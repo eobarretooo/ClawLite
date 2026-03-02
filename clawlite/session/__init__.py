@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .manager import SessionStore
+from .store import SessionStore
 
 __all__ = ["SessionStore"]
-

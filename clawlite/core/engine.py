@@ -8,6 +8,7 @@ from clawlite.core.memory import MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager
+from clawlite.session.store import SessionStore
 
 
 @dataclass(slots=True)
@@ -76,7 +77,7 @@ class AgentEngine:
     ) -> None:
         self.provider = provider
         self.tools = tools
-        self.sessions = sessions or InMemorySessionStore()
+        self.sessions = sessions or SessionStore()
         self.memory = memory or MemoryStore()
         self.prompt_builder = prompt_builder or PromptBuilder()
         self.skills_loader = skills_loader or SkillsLoader()
