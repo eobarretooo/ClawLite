@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from clawlite.config.loader import load_config
+from clawlite.core.skills import SkillsLoader
 from clawlite.gateway.server import build_runtime, run_gateway
 from clawlite.workspace.loader import WorkspaceLoader
 
@@ -88,6 +89,54 @@ def cmd_cron_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skills_list(args: argparse.Namespace) -> int:
+    loader = SkillsLoader()
+    rows = loader.discover(include_unavailable=args.all)
+    payload = {
+        "skills": [
+            {
+                "name": row.name,
+                "description": row.description,
+                "always": row.always,
+                "source": row.source,
+                "available": row.available,
+                "missing": row.missing,
+                "command": row.command,
+                "script": row.script,
+                "path": str(row.path),
+            }
+            for row in rows
+        ]
+    }
+    _print_json(payload)
+    return 0
+
+
+def cmd_skills_show(args: argparse.Namespace) -> int:
+    loader = SkillsLoader()
+    row = loader.get(args.name)
+    if row is None:
+        _print_json({"error": f"skill_not_found:{args.name}"})
+        return 1
+    _print_json(
+        {
+            "name": row.name,
+            "description": row.description,
+            "always": row.always,
+            "source": row.source,
+            "available": row.available,
+            "missing": row.missing,
+            "command": row.command,
+            "script": row.script,
+            "homepage": row.homepage,
+            "path": str(row.path),
+            "metadata": row.metadata,
+            "body": row.body,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="clawlite", description="ClawLite autonomous assistant CLI")
     parser.add_argument("--config", default=None, help="Path to config JSON/YAML")
@@ -133,6 +182,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_cron_remove = cron_sub.add_parser("remove", help="Remove job by id")
     p_cron_remove.add_argument("--job-id", required=True)
     p_cron_remove.set_defaults(handler=cmd_cron_remove)
+
+    p_skills = sub.add_parser("skills", help="Inspect available skills")
+    skills_sub = p_skills.add_subparsers(dest="skills_command", required=True)
+
+    p_skills_list = skills_sub.add_parser("list", help="List skills")
+    p_skills_list.add_argument("--all", action="store_true", help="Include unavailable skills")
+    p_skills_list.set_defaults(handler=cmd_skills_list)
+
+    p_skills_show = skills_sub.add_parser("show", help="Show one skill body + metadata")
+    p_skills_show.add_argument("name")
+    p_skills_show.set_defaults(handler=cmd_skills_show)
 
     return parser
 

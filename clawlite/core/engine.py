@@ -98,12 +98,15 @@ class AgentEngine:
         history = self.sessions.read(session_id, limit=20)
         memories = [row.text for row in self.memory.search(user_text, limit=6)]
         skills = self.skills_loader.render_for_prompt()
+        always_names = [item.name for item in self.skills_loader.always_on()]
+        skills_context = self.skills_loader.load_skills_for_context(always_names)
 
         prompt = self.prompt_builder.build(
             user_text=user_text,
             history=history,
             memory_snippets=memories,
             skills_for_prompt=skills,
+            skills_context=skills_context,
         )
 
         messages = []
@@ -113,6 +116,8 @@ class AgentEngine:
             messages.append({"role": "system", "content": prompt.memory_section})
         if prompt.history_section:
             messages.append({"role": "system", "content": prompt.history_section})
+        if prompt.skills_context:
+            messages.append({"role": "system", "content": f"[Skill Guides]\n{prompt.skills_context}"})
         messages.append({"role": "user", "content": user_text})
 
         first = await self.provider.complete(messages=messages, tools=self.tools.schema())

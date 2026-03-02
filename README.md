@@ -55,6 +55,8 @@ curl -sS http://127.0.0.1:8787/v1/chat \
 clawlite start
 clawlite run "resuma este projeto"
 clawlite onboard
+clawlite skills list
+clawlite skills show cron
 clawlite cron add --session-id cli:ops --expression "every 120" --prompt "check"
 clawlite cron list --session-id cli:ops
 ```

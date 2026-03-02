@@ -27,3 +27,13 @@ ClawLite usa skills em markdown (`SKILL.md`) com discovery automático.
 - `weather`
 - `tmux`
 - `hub`
+
+## CLI de inspeção
+
+```bash
+clawlite skills list
+clawlite skills list --all
+clawlite skills show cron
+```
+
+`skills list --all` inclui skills indisponíveis no ambiente atual e mostra os requisitos faltantes.

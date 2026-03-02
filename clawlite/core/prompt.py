@@ -12,6 +12,7 @@ class PromptArtifacts:
     system_prompt: str
     memory_section: str
     history_section: str
+    skills_context: str
 
 
 class PromptBuilder:
@@ -48,6 +49,7 @@ class PromptBuilder:
         memory_snippets: Iterable[str],
         history: Iterable[dict[str, str]],
         skills_for_prompt: Iterable[str],
+        skills_context: str = "",
     ) -> PromptArtifacts:
         workspace_block = self._read_workspace_files()
         skills_block = "\n".join(f"- {item}" for item in skills_for_prompt if item.strip())
@@ -60,4 +62,5 @@ class PromptBuilder:
             system_prompt=system_prompt,
             memory_section=self._render_memory(memory_snippets),
             history_section=self._render_history(history),
+            skills_context=skills_context.strip(),
         )
