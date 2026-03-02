@@ -36,4 +36,8 @@ clawlite = "clawlite.cli:main"
 include = ["clawlite*"]
 
 [tool.setuptools.package-data]
-clawlite = ["gateway/dashboard.html"]
+clawlite = [
+  "gateway/dashboard.html",
+  "workspace/templates/*.md",
+  "workspace/templates/memory/*.md",
+]

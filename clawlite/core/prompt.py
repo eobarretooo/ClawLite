@@ -4,13 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-WORKSPACE_FILES = (
-    "IDENTITY.md",
-    "SOUL.md",
-    "AGENTS.md",
-    "TOOLS.md",
-    "USER.md",
-)
+from clawlite.workspace.loader import WorkspaceLoader
 
 
 @dataclass(slots=True)
@@ -24,20 +18,10 @@ class PromptBuilder:
     """Builds the final system/user prompt bundle for the agent engine."""
 
     def __init__(self, workspace_path: str | Path | None = None) -> None:
-        root = Path(workspace_path) if workspace_path else (Path.home() / ".clawlite" / "workspace")
-        self.workspace = root
+        self.workspace_loader = WorkspaceLoader(workspace_path=workspace_path)
 
     def _read_workspace_files(self) -> str:
-        parts: list[str] = []
-        for filename in WORKSPACE_FILES:
-            file_path = self.workspace / filename
-            if not file_path.exists():
-                continue
-            text = file_path.read_text(encoding="utf-8", errors="ignore").strip()
-            if not text:
-                continue
-            parts.append(f"## {filename}\n{text}")
-        return "\n\n".join(parts).strip()
+        return self.workspace_loader.system_context()
 
     @staticmethod
     def _render_memory(memory_snippets: Iterable[str]) -> str:
