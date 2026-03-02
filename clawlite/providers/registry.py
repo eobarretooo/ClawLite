@@ -68,7 +68,7 @@ SPECS: tuple[ProviderSpec, ...] = (
         name="anthropic",
         model_prefixes=("anthropic/",),
         key_envs=("ANTHROPIC_API_KEY",),
-        default_base_url="",
+        default_base_url="https://api.anthropic.com/v1",
         base_url_keywords=("api.anthropic.com",),
         openai_compatible=False,
     ),
@@ -113,6 +113,20 @@ def _spec_from_api_key(api_key: str) -> ProviderSpec | None:
     return None
 
 
+def _is_compatible_key_for_spec(value: str, spec: ProviderSpec) -> bool:
+    token = (value or "").strip()
+    if not token:
+        return False
+    if not spec.key_prefixes:
+        return True
+    if any(token.startswith(prefix) for prefix in spec.key_prefixes):
+        return True
+    guessed = _spec_from_api_key(token)
+    if guessed is not None and guessed.name != spec.name:
+        return False
+    return True
+
+
 def _spec_from_base_url(base_url: str) -> ProviderSpec | None:
     value = (base_url or "").strip().lower()
     if not value:
@@ -125,13 +139,21 @@ def _spec_from_base_url(base_url: str) -> ProviderSpec | None:
 
 def _resolve_api_key(spec: ProviderSpec, configured_api_key: str) -> str:
     direct = (configured_api_key or "").strip()
-    if direct:
+    if direct and _is_compatible_key_for_spec(direct, spec):
         return direct
 
-    for env_name in ("CLAWLITE_LITELLM_API_KEY", "CLAWLITE_API_KEY", *spec.key_envs):
+    for env_name in spec.key_envs:
         value = os.getenv(env_name, "").strip()
         if value:
             return value
+
+    for env_name in ("CLAWLITE_LITELLM_API_KEY", "CLAWLITE_API_KEY"):
+        value = os.getenv(env_name, "").strip()
+        if not value:
+            continue
+        if not _is_compatible_key_for_spec(value, spec):
+            continue
+        return value
     return ""
 
 
@@ -199,35 +221,71 @@ def resolve_litellm_provider(model: str, *, api_key: str, base_url: str) -> Prov
     )
 
 
+def _provider_cfg(raw: dict[str, Any], name: str) -> dict[str, Any]:
+    payload = raw.get(name)
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _cfg_value(payload: dict[str, Any], snake: str, camel: str) -> str:
+    return str(payload.get(snake, payload.get(camel, "")) or "").strip()
+
+
 def build_provider(config: dict[str, Any]) -> LLMProvider:
     model = str(config.get("model", "gemini/gemini-2.5-flash")).strip()
     model_lower = model.lower()
+    providers_cfg = dict(config.get("providers") or {})
+    litellm_cfg = _provider_cfg(providers_cfg, "litellm")
 
     if model_lower.startswith(("openai-codex/", "openai_codex/")):
         auth = config.get("auth", {}).get("providers", {}).get("openai-codex", {})
         token = str(auth.get("token", "")).strip() or os.getenv("CLAWLITE_CODEX_ACCESS_TOKEN", "").strip()
         account_id = str(auth.get("account_id", "")).strip() or os.getenv("CLAWLITE_CODEX_ACCOUNT_ID", "").strip()
         model_name = model.split("/", 1)[1] if "/" in model else model
-        return CodexProvider(model=model_name, access_token=token, account_id=account_id)
+        if token and account_id:
+            return CodexProvider(model=model_name, access_token=token, account_id=account_id)
 
-    if model_lower.startswith("custom/"):
-        custom_cfg = config.get("providers", {}).get("custom", {})
-        return CustomProvider(
-            base_url=str(custom_cfg.get("base_url", "http://127.0.0.1:4000/v1")),
-            api_key=str(custom_cfg.get("api_key", "")),
-            model=str(custom_cfg.get("model", model.split("/", 1)[-1])),
+        openai_cfg = _provider_cfg(providers_cfg, "openai")
+        resolved = resolve_litellm_provider(
+            model=f"openai/{model_name}",
+            api_key=_cfg_value(openai_cfg, "api_key", "apiKey") or _cfg_value(litellm_cfg, "api_key", "apiKey"),
+            base_url=_cfg_value(openai_cfg, "api_base", "apiBase") or _cfg_value(litellm_cfg, "base_url", "baseUrl"),
+        )
+        return LiteLLMProvider(
+            base_url=resolved.base_url,
+            api_key=resolved.api_key,
+            model=resolved.model,
+            provider_name=resolved.name,
+            openai_compatible=resolved.openai_compatible,
+            extra_headers={},
         )
 
-    litellm_cfg = config.get("providers", {}).get("litellm", {})
+    if model_lower.startswith("custom/"):
+        custom_cfg = _provider_cfg(providers_cfg, "custom")
+        return CustomProvider(
+            base_url=_cfg_value(custom_cfg, "api_base", "apiBase") or _cfg_value(custom_cfg, "base_url", "baseUrl") or "http://127.0.0.1:4000/v1",
+            api_key=_cfg_value(custom_cfg, "api_key", "apiKey") or "",
+            model=str(custom_cfg.get("model", model.split("/", 1)[-1])),
+            extra_headers=custom_cfg.get("extra_headers", custom_cfg.get("extraHeaders", {})) if isinstance(custom_cfg.get("extra_headers", custom_cfg.get("extraHeaders", {})), dict) else {},
+        )
+
+    predicted_name = detect_provider_name(model, api_key="", base_url="")
+    selected_cfg = _provider_cfg(providers_cfg, predicted_name)
+    selected_api_key = _cfg_value(selected_cfg, "api_key", "apiKey")
+    selected_api_base = _cfg_value(selected_cfg, "api_base", "apiBase")
     resolved = resolve_litellm_provider(
         model=model,
-        api_key=str(litellm_cfg.get("api_key", "")),
-        base_url=str(litellm_cfg.get("base_url", "")),
+        api_key=selected_api_key or _cfg_value(litellm_cfg, "api_key", "apiKey"),
+        base_url=selected_api_base or _cfg_value(litellm_cfg, "base_url", "baseUrl"),
     )
+
+    extra_headers_raw = selected_cfg.get("extra_headers", selected_cfg.get("extraHeaders", {}))
+    extra_headers = dict(extra_headers_raw) if isinstance(extra_headers_raw, dict) else {}
+
     return LiteLLMProvider(
         base_url=resolved.base_url,
         api_key=resolved.api_key,
         model=resolved.model,
         provider_name=resolved.name,
         openai_compatible=resolved.openai_compatible,
+        extra_headers=extra_headers,
     )

@@ -20,6 +20,46 @@ class ProviderConfig:
 
 
 @dataclass(slots=True)
+class ProviderOverrideConfig:
+    api_key: str = ""
+    api_base: str = ""
+    extra_headers: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> ProviderOverrideConfig:
+        data = dict(raw or {})
+        api_key = str(data.get("api_key", data.get("apiKey", "")) or "")
+        api_base = str(data.get("api_base", data.get("apiBase", "")) or "")
+        extra_headers_raw = data.get("extra_headers", data.get("extraHeaders", {}))
+        extra_headers = dict(extra_headers_raw) if isinstance(extra_headers_raw, dict) else {}
+        return cls(api_key=api_key, api_base=api_base, extra_headers=extra_headers)
+
+
+@dataclass(slots=True)
+class ProvidersConfig:
+    openrouter: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    gemini: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    openai: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    anthropic: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    deepseek: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    groq: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    custom: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> ProvidersConfig:
+        data = dict(raw or {})
+        return cls(
+            openrouter=ProviderOverrideConfig.from_dict(dict(data.get("openrouter") or {})),
+            gemini=ProviderOverrideConfig.from_dict(dict(data.get("gemini") or {})),
+            openai=ProviderOverrideConfig.from_dict(dict(data.get("openai") or {})),
+            anthropic=ProviderOverrideConfig.from_dict(dict(data.get("anthropic") or {})),
+            deepseek=ProviderOverrideConfig.from_dict(dict(data.get("deepseek") or {})),
+            groq=ProviderOverrideConfig.from_dict(dict(data.get("groq") or {})),
+            custom=ProviderOverrideConfig.from_dict(dict(data.get("custom") or {})),
+        )
+
+
+@dataclass(slots=True)
 class SchedulerConfig:
     heartbeat_interval_seconds: int = 1800
     timezone: str = "UTC"
@@ -78,6 +118,7 @@ class AppConfig:
     workspace_path: str = str(Path.home() / ".clawlite" / "workspace")
     state_path: str = str(Path.home() / ".clawlite" / "state")
     provider: ProviderConfig = field(default_factory=ProviderConfig)
+    providers: ProvidersConfig = field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -95,6 +136,7 @@ class AppConfig:
         raw = dict(data or {})
         defaults = cls()
         provider = ProviderConfig(**_pick(ProviderConfig, dict(raw.get("provider") or {})))
+        providers = ProvidersConfig.from_dict(dict(raw.get("providers") or {}))
         gateway = GatewayConfig(**_pick(GatewayConfig, dict(raw.get("gateway") or {})))
         scheduler = SchedulerConfig(**_pick(SchedulerConfig, dict(raw.get("scheduler") or {})))
         channels = raw.get("channels")
@@ -103,6 +145,7 @@ class AppConfig:
             workspace_path=str(raw.get("workspace_path") or defaults.workspace_path),
             state_path=str(raw.get("state_path") or defaults.state_path),
             provider=provider,
+            providers=providers,
             gateway=gateway,
             scheduler=scheduler,
             channels=dict(channels) if isinstance(channels, dict) else {},

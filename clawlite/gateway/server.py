@@ -19,7 +19,7 @@ from clawlite.core.engine import AgentEngine
 from clawlite.core.memory import MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
-from clawlite.providers import build_provider
+from clawlite.providers import build_provider, detect_provider_name
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatService
 from clawlite.session.store import SessionStore
@@ -86,13 +86,48 @@ class _MessageAPI:
 
 
 def _provider_config(config: AppConfig) -> dict[str, Any]:
+    provider_name = detect_provider_name(config.provider.model)
+    selected = getattr(config.providers, provider_name, None)
+    selected_api_key = selected.api_key if selected is not None else ""
+    selected_api_base = selected.api_base if selected is not None else ""
+
     return {
         "model": config.provider.model,
         "providers": {
             "litellm": {
-                "base_url": config.provider.litellm_base_url,
-                "api_key": config.provider.litellm_api_key,
-            }
+                "base_url": selected_api_base or config.provider.litellm_base_url,
+                "api_key": selected_api_key or config.provider.litellm_api_key,
+                "extra_headers": selected.extra_headers if selected is not None else {},
+            },
+            "custom": {
+                "api_base": config.providers.custom.api_base,
+                "api_key": config.providers.custom.api_key,
+                "extra_headers": dict(config.providers.custom.extra_headers),
+            },
+            "openrouter": {
+                "api_key": config.providers.openrouter.api_key,
+                "api_base": config.providers.openrouter.api_base,
+            },
+            "gemini": {
+                "api_key": config.providers.gemini.api_key,
+                "api_base": config.providers.gemini.api_base,
+            },
+            "openai": {
+                "api_key": config.providers.openai.api_key,
+                "api_base": config.providers.openai.api_base,
+            },
+            "anthropic": {
+                "api_key": config.providers.anthropic.api_key,
+                "api_base": config.providers.anthropic.api_base,
+            },
+            "deepseek": {
+                "api_key": config.providers.deepseek.api_key,
+                "api_base": config.providers.deepseek.api_base,
+            },
+            "groq": {
+                "api_key": config.providers.groq.api_key,
+                "api_base": config.providers.groq.api_base,
+            },
         },
     }
 

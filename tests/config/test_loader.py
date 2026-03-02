@@ -13,6 +13,7 @@ def test_load_config_defaults_when_missing(tmp_path: Path) -> None:
 
 
 def test_load_config_file_and_env_override(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
     path = tmp_path / "config.json"
     path.write_text(
         json.dumps(
@@ -47,3 +48,34 @@ def test_load_config_tools_flags(tmp_path: Path) -> None:
     cfg = load_config(path)
     assert cfg.tools.restrict_to_workspace is True
     assert cfg.tools.exec.path_append == "/usr/sbin"
+
+
+def test_load_config_provider_blocks(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "model": "openrouter/openai/gpt-4o-mini",
+                    "litellm_api_key": "legacy-key",
+                },
+                "providers": {
+                    "openrouter": {"api_key": "sk-or-123", "api_base": "https://openrouter.ai/api/v1"},
+                    "custom": {
+                        "api_key": "custom-key",
+                        "api_base": "http://127.0.0.1:5000/v1",
+                        "extra_headers": {"X-Test": "1"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.provider.litellm_api_key == "legacy-key"
+    assert cfg.providers.openrouter.api_key == "sk-or-123"
+    assert cfg.providers.openrouter.api_base == "https://openrouter.ai/api/v1"
+    assert cfg.providers.custom.api_key == "custom-key"
+    assert cfg.providers.custom.extra_headers == {"X-Test": "1"}

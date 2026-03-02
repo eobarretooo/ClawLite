@@ -21,6 +21,7 @@ class LiteLLMProvider(LLMProvider):
         provider_name: str = "litellm",
         openai_compatible: bool = True,
         timeout: float = 30.0,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -28,6 +29,7 @@ class LiteLLMProvider(LLMProvider):
         self.provider_name = provider_name
         self.openai_compatible = openai_compatible
         self.timeout = timeout
+        self.extra_headers = dict(extra_headers or {})
 
     @staticmethod
     def _max_attempts() -> int:
@@ -97,7 +99,172 @@ class LiteLLMProvider(LLMProvider):
             parsed.append(ToolCall(id=call_id, name=name, arguments=arguments))
         return parsed
 
+    @staticmethod
+    def _anthropic_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+        system_parts: list[str] = []
+        converted: list[dict[str, Any]] = []
+
+        for row in messages:
+            role = str(row.get("role", "")).strip()
+            content = row.get("content", "")
+
+            if role == "system":
+                text = LiteLLMProvider._extract_text(content)
+                if text:
+                    system_parts.append(text)
+                continue
+
+            if role == "assistant":
+                assistant_blocks: list[dict[str, Any]] = []
+                text = LiteLLMProvider._extract_text(content)
+                if text:
+                    assistant_blocks.append({"type": "text", "text": text})
+
+                tool_calls = row.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for idx, call in enumerate(tool_calls):
+                        if not isinstance(call, dict):
+                            continue
+                        fn = call.get("function") if isinstance(call.get("function"), dict) else call
+                        name = str(fn.get("name") or "").strip()
+                        if not name:
+                            continue
+                        arguments = LiteLLMProvider._parse_arguments(fn.get("arguments", {}))
+                        call_id = str(call.get("id") or f"call_{idx}")
+                        assistant_blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": call_id,
+                                "name": name,
+                                "input": arguments,
+                            }
+                        )
+                if assistant_blocks:
+                    converted.append({"role": "assistant", "content": assistant_blocks})
+                continue
+
+            if role == "tool":
+                tool_use_id = str(row.get("tool_call_id") or "").strip()
+                if tool_use_id:
+                    tool_text = LiteLLMProvider._extract_text(content)
+                    converted.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": tool_text,
+                                }
+                            ],
+                        }
+                    )
+                continue
+
+            user_text = LiteLLMProvider._extract_text(content)
+            converted.append({"role": "user", "content": user_text})
+
+        return "\n\n".join(part for part in system_parts if part).strip(), converted
+
+    @staticmethod
+    def _anthropic_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            name = str(tool.get("name") or "").strip()
+            if not name:
+                continue
+            rows.append(
+                {
+                    "name": name,
+                    "description": str(tool.get("description") or ""),
+                    "input_schema": tool.get("arguments") if isinstance(tool.get("arguments"), dict) else {"type": "object", "properties": {}},
+                }
+            )
+        return rows
+
+    async def _complete_anthropic(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+        if not self.api_key.strip():
+            raise RuntimeError("provider_auth_error:missing_api_key:anthropic")
+
+        if not self.base_url.strip():
+            raise RuntimeError("provider_config_error:missing_base_url:anthropic")
+
+        system_text, anthropic_messages = self._anthropic_messages(messages)
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": anthropic_messages,
+        }
+        if system_text:
+            payload["system"] = system_text
+        anth_tools = self._anthropic_tools(tools)
+        if anth_tools:
+            payload["tools"] = anth_tools
+
+        headers = {
+            "content-type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        headers.update(self.extra_headers)
+
+        url = f"{self.base_url}/messages"
+        attempts = self._max_attempts()
+        wait_seconds = self._wait_seconds()
+
+        for attempt in range(1, attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+
+                parts = data.get("content")
+                text_parts: list[str] = []
+                tool_calls: list[ToolCall] = []
+                if isinstance(parts, list):
+                    for idx, part in enumerate(parts):
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "text":
+                            text = str(part.get("text") or "").strip()
+                            if text:
+                                text_parts.append(text)
+                        if part.get("type") == "tool_use":
+                            name = str(part.get("name") or "").strip()
+                            if not name:
+                                continue
+                            tool_calls.append(
+                                ToolCall(
+                                    id=str(part.get("id") or f"tool_{idx}"),
+                                    name=name,
+                                    arguments=part.get("input") if isinstance(part.get("input"), dict) else {},
+                                )
+                            )
+
+                return LLMResult(
+                    text="\n".join(text_parts).strip(),
+                    model=self.model,
+                    tool_calls=tool_calls,
+                    metadata={"provider": "anthropic"},
+                )
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 429 and attempt < attempts:
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                raise RuntimeError(f"provider_http_error:{status}") from exc
+            except httpx.RequestError as exc:
+                raise RuntimeError(f"provider_network_error:{exc}") from exc
+
+        raise RuntimeError("provider_429_exhausted")
+
     async def complete(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResult:
+        if not self.openai_compatible and self.provider_name == "anthropic":
+            return await self._complete_anthropic(messages=messages, tools=tools)
+
         if not self.openai_compatible:
             raise RuntimeError(
                 f"provider_config_error:provider '{self.provider_name}' is not OpenAI-compatible in ClawLite. "
@@ -113,6 +280,7 @@ class LiteLLMProvider(LLMProvider):
         url = f"{self.base_url}/chat/completions"
         headers = {"content-type": "application/json"}
         headers["authorization"] = f"Bearer {self.api_key}"
+        headers.update(self.extra_headers)
 
         payload: dict[str, Any] = {
             "model": self.model,
