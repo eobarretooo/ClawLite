@@ -1,78 +1,57 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from clawlite.auth import auth_status
-from clawlite.config.settings import load_config, save_config
-from clawlite.core.providers import PROVIDER_SPECS, get_provider_spec, normalize_provider, resolve_provider_token
-from clawlite.runtime.offline import provider_from_model
-
-
-@dataclass(frozen=True)
-class ProviderStatus:
-    key: str
-    display: str
-    default_model: str
-    api_style: str
-    auth_url: str
-    token_available: bool
-    configured_in_auth: bool
-    env_vars: tuple[str, ...]
+from clawlite.providers.base import LLMProvider
+from clawlite.providers.codex import CodexProvider
+from clawlite.providers.custom import CustomProvider
+from clawlite.providers.litellm import LiteLLMProvider
 
 
-def _build_status(provider_key: str) -> ProviderStatus:
-    key = normalize_provider(provider_key)
-    spec = get_provider_spec(key)
-    if spec is None:
-        raise ValueError(f"provider desconhecido: {provider_key}")
+@dataclass(slots=True)
+class ProviderSpec:
+    name: str
+    model_prefixes: tuple[str, ...]
 
-    auth_map = {row["provider"]: bool(row["logged_in"]) for row in auth_status()}
-    token_available = bool(resolve_provider_token(key))
-    return ProviderStatus(
-        key=key,
-        display=spec.display,
-        default_model=spec.default_model,
-        api_style=spec.api_style,
-        auth_url=spec.auth_url,
-        token_available=token_available or bool(auth_map.get(key, False)),
-        configured_in_auth=bool(auth_map.get(key, False)),
-        env_vars=tuple(spec.env_vars),
+
+SPECS = (
+    ProviderSpec(name="codex", model_prefixes=("openai-codex/", "openai_codex/")),
+    ProviderSpec(name="litellm", model_prefixes=("openai/", "anthropic/", "gemini/", "openrouter/", "groq/")),
+    ProviderSpec(name="custom", model_prefixes=("custom/",)),
+)
+
+
+def detect_provider_name(model: str) -> str:
+    raw = (model or "").strip().lower()
+    for spec in SPECS:
+        if any(raw.startswith(prefix) for prefix in spec.model_prefixes):
+            return spec.name
+    return "litellm"
+
+
+def build_provider(config: dict[str, Any]) -> LLMProvider:
+    model = str(config.get("model", "openai/gpt-4o-mini")).strip()
+    provider_name = detect_provider_name(model)
+
+    if provider_name == "codex":
+        auth = config.get("auth", {}).get("providers", {}).get("openai-codex", {})
+        token = str(auth.get("token", "")).strip()
+        account_id = str(auth.get("account_id", "")).strip()
+        model_name = model.split("/", 1)[1] if "/" in model else model
+        return CodexProvider(model=model_name, access_token=token, account_id=account_id)
+
+    if provider_name == "custom":
+        custom_cfg = config.get("providers", {}).get("custom", {})
+        return CustomProvider(
+            base_url=str(custom_cfg.get("base_url", "http://127.0.0.1:4000/v1")),
+            api_key=str(custom_cfg.get("api_key", "")),
+            model=str(custom_cfg.get("model", model.split("/", 1)[-1])),
+        )
+
+    litellm_cfg = config.get("providers", {}).get("litellm", {})
+    return LiteLLMProvider(
+        base_url=str(litellm_cfg.get("base_url", "https://api.openai.com/v1")),
+        api_key=str(litellm_cfg.get("api_key", "")),
+        model=model.split("/", 1)[1] if "/" in model else model,
     )
-
-
-def list_provider_statuses() -> list[ProviderStatus]:
-    return [_build_status(key) for key in sorted(PROVIDER_SPECS.keys())]
-
-
-def current_provider_status() -> tuple[str, str]:
-    cfg = load_config()
-    model = str(cfg.get("model", "openai/gpt-4o-mini")).strip() or "openai/gpt-4o-mini"
-    provider = provider_from_model(model)
-    return provider, model
-
-
-def _resolve_model_for_provider(provider: str, model: str | None = None) -> str:
-    key = normalize_provider(provider)
-    spec = get_provider_spec(key)
-    if spec is None:
-        raise ValueError(f"provider não suportado: {provider}")
-
-    custom_model = str(model or "").strip()
-    if custom_model:
-        return custom_model if "/" in custom_model else f"{key}/{custom_model}"
-
-    default_model = str(spec.default_model).strip()
-    if not default_model:
-        raise ValueError(f"provider '{key}' sem modelo padrão")
-    if "/" in default_model:
-        return default_model
-    return f"{key}/{default_model}"
-
-
-def set_active_provider(provider: str, model: str | None = None) -> str:
-    resolved = _resolve_model_for_provider(provider, model)
-    cfg = load_config()
-    cfg["model"] = resolved
-    save_config(cfg)
-    return resolved
-
