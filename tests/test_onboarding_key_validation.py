@@ -111,6 +111,20 @@ def test_openai_invalid_key_401():
     assert "401" in msg
 
 
+def test_openai_codex_oauth_without_account_id_fails_fast():
+    with patch("clawlite.onboarding.resolve_codex_account_id", return_value=""):
+        ok, msg = _test_api_key("openai-codex", "oauth-token")
+    assert ok is False
+    assert "account_id" in msg
+
+
+def test_openai_codex_oauth_with_account_id_is_accepted():
+    with patch("clawlite.onboarding.resolve_codex_account_id", return_value="acc-123"):
+        ok, msg = _test_api_key("openai-codex", "oauth-token")
+    assert ok is True
+    assert "oauth" in msg.lower()
+
+
 def test_rate_limit_429_treated_as_valid():
     with patch("httpx.post", return_value=_mock_response(429)):
         ok, msg = _test_api_key("anthropic", "sk-ant-quota")

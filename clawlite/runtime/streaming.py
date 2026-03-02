@@ -8,9 +8,12 @@ from typing import Iterator
 
 import httpx
 
+from clawlite.core.codex_auth import is_codex_api_key, resolve_codex_account_id
 from clawlite.core.providers import get_provider_spec, resolve_provider_token
+from clawlite.runtime.codex_provider import CodexExecutionError, run_codex_oauth_stream
 from clawlite.runtime.offline import (
     ProviderExecutionError,
+    _codex_account_id_from_config,
     _model_name_without_provider,
     _remote_timeout_seconds,
     gemini_rate_limit_max_attempts,
@@ -40,6 +43,26 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
         raise ProviderExecutionError(f"token ausente para provedor remoto '{provider}'")
 
     timeout = _remote_timeout_seconds()
+
+    if provider == "openai-codex" and resolved_token and not is_codex_api_key(resolved_token):
+        account_id = resolve_codex_account_id(_codex_account_id_from_config())
+        if not account_id:
+            raise ProviderExecutionError(
+                "token OAuth do Codex detectado, mas account_id não foi encontrado. "
+                "Rode `clawlite auth login openai-codex` novamente."
+            )
+        try:
+            yield from run_codex_oauth_stream(
+                prompt=prompt,
+                model=model_name,
+                access_token=resolved_token,
+                account_id=account_id,
+                timeout=timeout,
+            )
+            return
+        except CodexExecutionError as exc:
+            raise ProviderExecutionError(str(exc)) from exc
+
     url = spec.request_url
     headers = {"Content-Type": "application/json"}
     if resolved_token:

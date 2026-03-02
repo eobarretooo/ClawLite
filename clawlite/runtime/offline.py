@@ -8,7 +8,10 @@ import time
 from typing import Any, Callable, Iterator
 
 import httpx
+from clawlite.config.settings import load_config
+from clawlite.core.codex_auth import is_codex_api_key, resolve_codex_account_id
 from clawlite.core.providers import get_provider_spec, normalize_provider, resolve_provider_token
+from clawlite.runtime.codex_provider import CodexExecutionError, run_codex_oauth
 
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_CONNECTIVITY_TIMEOUT = 1.5
@@ -63,6 +66,20 @@ def _provider_token(cfg: dict[str, Any], provider: str) -> str:
     if not token and provider != normalized:
         token = providers.get(provider, {}).get("token", "")
     return resolve_provider_token(normalized, str(token).strip())
+
+
+def _codex_account_id_from_config() -> str:
+    try:
+        cfg = load_config()
+    except Exception:
+        return ""
+    providers = cfg.get("auth", {}).get("providers", {})
+    if not isinstance(providers, dict):
+        return ""
+    row = providers.get("openai-codex", {})
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("account_id", "")).strip()
 
 
 def _model_name_without_provider(model: str) -> str:
@@ -171,6 +188,24 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
     resolved_token = resolve_provider_token(provider, str(token or "").strip())
     if not resolved_token and not spec.token_optional:
         raise ProviderExecutionError(f"token ausente para provedor remoto '{provider}'")
+
+    if provider == "openai-codex" and resolved_token and not is_codex_api_key(resolved_token):
+        account_id = resolve_codex_account_id(_codex_account_id_from_config())
+        if not account_id:
+            raise ProviderExecutionError(
+                "token OAuth do Codex detectado, mas account_id não foi encontrado. "
+                "Rode `clawlite auth login openai-codex` novamente."
+            )
+        try:
+            return run_codex_oauth(
+                prompt=prompt,
+                model=model_name,
+                access_token=resolved_token,
+                account_id=account_id,
+                timeout=_remote_timeout_seconds(),
+            )
+        except CodexExecutionError as exc:
+            raise ProviderExecutionError(str(exc)) from exc
 
     timeout = _remote_timeout_seconds()
     url = spec.request_url

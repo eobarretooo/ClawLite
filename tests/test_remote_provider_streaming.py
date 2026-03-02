@@ -58,6 +58,26 @@ class RemoteProviderStreamingTests(unittest.TestCase):
         self.assertEqual(sleep_mock.call_count, 2)
         sleep_mock.assert_called_with(60.0)
 
+    def test_codex_oauth_stream_uses_codex_runtime(self) -> None:
+        with patch(
+            "clawlite.runtime.streaming.resolve_codex_account_id",
+            return_value="acc_123",
+        ) as account_mock:
+            with patch(
+                "clawlite.runtime.streaming.run_codex_oauth_stream",
+                return_value=iter(["co", "dex"]),
+            ) as codex_mock:
+                out = "".join(run_remote_provider_stream("ping", "openai-codex/gpt-5.3-codex", "oauth-token"))
+
+        self.assertEqual(out, "codex")
+        account_mock.assert_called_once()
+        codex_mock.assert_called_once()
+        kwargs = codex_mock.call_args.kwargs
+        self.assertEqual(kwargs["prompt"], "ping")
+        self.assertEqual(kwargs["model"], "gpt-5.3-codex")
+        self.assertEqual(kwargs["access_token"], "oauth-token")
+        self.assertEqual(kwargs["account_id"], "acc_123")
+
     def test_gemini_stream_429_exhausted_returns_clear_message(self) -> None:
         stream_429_a = MagicMock()
         stream_429_a.raise_for_status.side_effect = self._http_status_error(429)

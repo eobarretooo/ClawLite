@@ -41,6 +41,7 @@ def test_auth_login_openai_codex_reuses_cli_token(monkeypatch, tmp_path: Path):
     (codex_home / "auth.json").write_text(
         json.dumps(
             {
+                "account_id": "acc-xyz",
                 "tokens": {
                     "access_token": "codex-access-token-xyz",
                     "refresh_token": "codex-refresh-token-xyz",
@@ -69,6 +70,13 @@ def test_auth_login_openai_codex_reuses_cli_token(monkeypatch, tmp_path: Path):
         .get("openai-codex", {})
         .get("token", "")
         == "codex-access-token-xyz"
+    )
+    assert (
+        cfg.get("auth", {})
+        .get("providers", {})
+        .get("openai-codex", {})
+        .get("account_id", "")
+        == "acc-xyz"
     )
 
 

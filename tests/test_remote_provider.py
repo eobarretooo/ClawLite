@@ -64,7 +64,7 @@ class RemoteProviderTests(unittest.TestCase):
 
         self.assertEqual(out, "resposta-openai")
 
-    def test_provider_selection_openai_codex_uses_openai_chat_completions(self) -> None:
+    def test_provider_selection_openai_codex_api_key_uses_openai_chat_completions(self) -> None:
         response = MagicMock()
         response.raise_for_status.return_value = None
         response.json.return_value = {
@@ -79,12 +79,32 @@ class RemoteProviderTests(unittest.TestCase):
         cm.__exit__.return_value = False
 
         with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
-            out = run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "cfg-token")
+            out = run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "sk-codex-token")
 
         self.assertEqual(out, "ok-codex")
         args, kwargs = client.post.call_args
         self.assertEqual(args[0], "https://api.openai.com/v1/chat/completions")
         self.assertEqual(kwargs["json"]["model"], "gpt-5.3-codex")
+
+    def test_provider_selection_openai_codex_oauth_uses_codex_runtime(self) -> None:
+        with patch(
+            "clawlite.runtime.offline.resolve_codex_account_id",
+            return_value="acc_123",
+        ) as account_mock:
+            with patch(
+                "clawlite.runtime.offline.run_codex_oauth",
+                return_value="ok-codex-oauth",
+            ) as codex_mock:
+                out = run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "oauth-token")
+
+        self.assertEqual(out, "ok-codex-oauth")
+        account_mock.assert_called_once()
+        codex_mock.assert_called_once()
+        kwargs = codex_mock.call_args.kwargs
+        self.assertEqual(kwargs["prompt"], "ping")
+        self.assertEqual(kwargs["model"], "gpt-5.3-codex")
+        self.assertEqual(kwargs["access_token"], "oauth-token")
+        self.assertEqual(kwargs["account_id"], "acc_123")
 
     def test_provider_selection_gemini_uses_openai_compat_url(self) -> None:
         response = MagicMock()

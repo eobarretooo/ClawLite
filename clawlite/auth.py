@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import shutil
@@ -15,6 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from clawlite.config.settings import load_config, save_config
+from clawlite.core.codex_auth import (
+    is_codex_api_key,
+    read_codex_account_id,
+    read_codex_cli_access_token,
+    resolve_codex_account_id,
+    resolve_codex_auth_path,
+)
 from clawlite.core.providers import get_provider_spec, normalize_provider
 
 _AUTH_PROVIDER_KEYS = (
@@ -43,27 +49,15 @@ _AUTH_PROVIDER_KEYS = (
 
 
 def _resolve_codex_auth_path() -> Path:
-    codex_home = os.getenv("CODEX_HOME", "").strip()
-    if codex_home:
-        return Path(codex_home).expanduser() / "auth.json"
-    return Path.home() / ".codex" / "auth.json"
+    return resolve_codex_auth_path()
 
 
 def _read_codex_cli_access_token() -> str:
-    auth_path = _resolve_codex_auth_path()
-    if not auth_path.exists():
-        return ""
-    try:
-        raw = json.loads(auth_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return ""
-    if not isinstance(raw, dict):
-        return ""
-    tokens = raw.get("tokens", {})
-    if not isinstance(tokens, dict):
-        return ""
-    access = str(tokens.get("access_token", "")).strip()
-    return access
+    return read_codex_cli_access_token()
+
+
+def _read_codex_cli_account_id() -> str:
+    return read_codex_account_id()
 
 
 def _can_prompt_user() -> bool:
@@ -258,9 +252,15 @@ def auth_login(provider: str, non_interactive_token: str | None = None) -> tuple
     if not token:
         return False, "Token não informado."
 
-    cfg["auth"]["providers"][p] = {
+    provider_row: dict[str, Any] = {
         "token": token,
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
+    if p == "openai-codex" and token and not is_codex_api_key(token):
+        account_id = resolve_codex_account_id(_read_codex_cli_account_id())
+        if account_id:
+            provider_row["account_id"] = account_id
+
+    cfg["auth"]["providers"][p] = provider_row
     save_config(cfg)
     return True, f"Login salvo para {meta['display']}"

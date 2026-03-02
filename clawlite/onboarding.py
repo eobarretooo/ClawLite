@@ -17,6 +17,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 
 from clawlite.config.settings import load_config, save_config
+from clawlite.core.codex_auth import is_codex_api_key, resolve_codex_account_id
 from clawlite.core.model_catalog import get_model_or_default
 from clawlite.core.providers import get_provider_spec, normalize_provider, provider_env_vars
 from clawlite.runtime.daemon import DaemonError, install_systemd_user_service
@@ -704,6 +705,16 @@ def _test_api_key(provider: str, key: str) -> tuple[bool, str]:
         resolved_key = str(key or "").strip()
         if not resolved_key and not spec.token_optional:
             return False, f"Token ausente para provider '{normalized}'"
+
+        if normalized == "openai-codex" and resolved_key and not is_codex_api_key(resolved_key):
+            account_id = resolve_codex_account_id()
+            if not account_id:
+                return (
+                    False,
+                    "Token OAuth do Codex detectado, mas account_id não encontrado. "
+                    "Rode `clawlite auth login openai-codex` para importar ~/.codex/auth.json.",
+                )
+            return True, f"Token OAuth do Codex detectado (account_id: {account_id[:6]}...)"
 
         headers = {"content-type": "application/json"}
         if resolved_key:
