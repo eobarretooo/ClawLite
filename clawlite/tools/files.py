@@ -5,14 +5,35 @@ from pathlib import Path
 from clawlite.tools.base import Tool, ToolContext
 
 
-def _safe_path(raw_path: str) -> Path:
-    path = Path(raw_path).expanduser().resolve()
+def _workspace_path(raw_workspace: str | Path | None) -> Path | None:
+    if raw_workspace is None:
+        return None
+    return Path(raw_workspace).expanduser().resolve()
+
+
+def _safe_path(
+    raw_path: str,
+    *,
+    workspace: Path | None = None,
+    restrict_to_workspace: bool = False,
+) -> Path:
+    candidate = Path(raw_path).expanduser()
+    if workspace is not None and not candidate.is_absolute():
+        candidate = workspace / candidate
+    path = candidate.resolve()
+    if restrict_to_workspace and workspace is not None:
+        if path != workspace and workspace not in path.parents:
+            raise PermissionError(f"path_outside_workspace:{path}")
     return path
 
 
 class ReadFileTool(Tool):
     name = "read_file"
     description = "Read text file content."
+
+    def __init__(self, *, workspace_path: str | Path | None = None, restrict_to_workspace: bool = False) -> None:
+        self.workspace = _workspace_path(workspace_path)
+        self.restrict_to_workspace = bool(restrict_to_workspace)
 
     def args_schema(self) -> dict:
         return {
@@ -22,7 +43,11 @@ class ReadFileTool(Tool):
         }
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
-        path = _safe_path(str(arguments.get("path", "")))
+        path = _safe_path(
+            str(arguments.get("path", "")),
+            workspace=self.workspace,
+            restrict_to_workspace=self.restrict_to_workspace,
+        )
         if not path.exists():
             raise FileNotFoundError(str(path))
         return path.read_text(encoding="utf-8", errors="ignore")
@@ -31,6 +56,10 @@ class ReadFileTool(Tool):
 class WriteFileTool(Tool):
     name = "write_file"
     description = "Write text file content."
+
+    def __init__(self, *, workspace_path: str | Path | None = None, restrict_to_workspace: bool = False) -> None:
+        self.workspace = _workspace_path(workspace_path)
+        self.restrict_to_workspace = bool(restrict_to_workspace)
 
     def args_schema(self) -> dict:
         return {
@@ -43,7 +72,11 @@ class WriteFileTool(Tool):
         }
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
-        path = _safe_path(str(arguments.get("path", "")))
+        path = _safe_path(
+            str(arguments.get("path", "")),
+            workspace=self.workspace,
+            restrict_to_workspace=self.restrict_to_workspace,
+        )
         content = str(arguments.get("content", ""))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -53,6 +86,10 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     name = "edit_file"
     description = "Replace text in a file."
+
+    def __init__(self, *, workspace_path: str | Path | None = None, restrict_to_workspace: bool = False) -> None:
+        self.workspace = _workspace_path(workspace_path)
+        self.restrict_to_workspace = bool(restrict_to_workspace)
 
     def args_schema(self) -> dict:
         return {
@@ -66,7 +103,11 @@ class EditFileTool(Tool):
         }
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
-        path = _safe_path(str(arguments.get("path", "")))
+        path = _safe_path(
+            str(arguments.get("path", "")),
+            workspace=self.workspace,
+            restrict_to_workspace=self.restrict_to_workspace,
+        )
         if not path.exists():
             raise FileNotFoundError(str(path))
         old = path.read_text(encoding="utf-8", errors="ignore")
@@ -83,6 +124,10 @@ class ListDirTool(Tool):
     name = "list_dir"
     description = "List files from directory."
 
+    def __init__(self, *, workspace_path: str | Path | None = None, restrict_to_workspace: bool = False) -> None:
+        self.workspace = _workspace_path(workspace_path)
+        self.restrict_to_workspace = bool(restrict_to_workspace)
+
     def args_schema(self) -> dict:
         return {
             "type": "object",
@@ -91,7 +136,11 @@ class ListDirTool(Tool):
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         raw = str(arguments.get("path", "."))
-        path = _safe_path(raw)
+        path = _safe_path(
+            raw,
+            workspace=self.workspace,
+            restrict_to_workspace=self.restrict_to_workspace,
+        )
         if not path.exists() or not path.is_dir():
             raise NotADirectoryError(str(path))
         rows = sorted(item.name for item in path.iterdir())

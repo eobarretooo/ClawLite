@@ -96,17 +96,24 @@ def _provider_config(config: AppConfig) -> dict[str, Any]:
 def build_runtime(config: AppConfig) -> RuntimeContainer:
     workspace = WorkspaceLoader(workspace_path=config.workspace_path)
     workspace.bootstrap()
+    workspace_path = Path(config.workspace_path).expanduser().resolve()
 
     provider = build_provider(_provider_config(config))
     cron = CronService(store_path=Path(config.state_path) / "cron_jobs.json")
     heartbeat = HeartbeatService(interval_seconds=config.scheduler.heartbeat_interval_seconds)
 
     tools = ToolRegistry()
-    tools.register(ExecTool())
-    tools.register(ReadFileTool())
-    tools.register(WriteFileTool())
-    tools.register(EditFileTool())
-    tools.register(ListDirTool())
+    tools.register(
+        ExecTool(
+            workspace_path=workspace_path,
+            restrict_to_workspace=config.tools.restrict_to_workspace,
+            path_append=config.tools.exec.path_append,
+        )
+    )
+    tools.register(ReadFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
+    tools.register(WriteFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
+    tools.register(EditFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
+    tools.register(ListDirTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(WebFetchTool())
     tools.register(WebSearchTool())
     tools.register(CronTool(_CronAPI(cron)))

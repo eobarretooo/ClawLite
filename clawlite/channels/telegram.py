@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from clawlite.channels.base import BaseChannel, cancel_task
+from clawlite.config.schema import ChannelConfig
 
 MAX_MESSAGE_LEN = 4000
 
@@ -44,6 +45,7 @@ class TelegramChannel(BaseChannel):
         if not token:
             raise ValueError("telegram token is required")
         self.token = token
+        self.allow_from = ChannelConfig.from_dict(config).allow_from
         self.bot: Any | None = None
         self.poll_interval_s = float(config.get("poll_interval_s", 1.0) or 1.0)
         self.poll_timeout_s = int(config.get("poll_timeout_s", 20) or 20)
@@ -51,6 +53,18 @@ class TelegramChannel(BaseChannel):
         self.reconnect_max_s = float(config.get("reconnect_max_s", 30.0) or 30.0)
         self._task: asyncio.Task[Any] | None = None
         self._offset = self._load_offset()
+
+    def _is_allowed_sender(self, user_id: str, username: str = "") -> bool:
+        if not self.allow_from:
+            return True
+        allowed = {item.strip() for item in self.allow_from if item.strip()}
+        candidates = {str(user_id).strip()}
+        if username:
+            uname = username.strip()
+            if uname:
+                candidates.add(uname)
+                candidates.add(f"@{uname}")
+        return any(candidate in allowed for candidate in candidates)
 
     def _offset_path(self) -> Path:
         key = hashlib.sha256(self.token.encode("utf-8")).hexdigest()[:16]
@@ -97,6 +111,9 @@ class TelegramChannel(BaseChannel):
                         continue
                     chat_id = str(message.chat_id)
                     user_id = str(message.from_user.id) if message.from_user else chat_id
+                    username = str(message.from_user.username or "").strip() if message.from_user else ""
+                    if not self._is_allowed_sender(user_id, username):
+                        continue
                     session_id = f"telegram:{chat_id}"
                     await self.emit(
                         session_id=session_id,
