@@ -73,6 +73,27 @@ class LiteLLMProvider(LLMProvider):
         attempts = self._max_attempts()
         wait_seconds = self._wait_seconds()
 
+        def _error_detail(resp: httpx.Response | None) -> str:
+            if resp is None:
+                return ""
+            detail = ""
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = None
+
+            if isinstance(payload, dict):
+                if isinstance(payload.get("error"), dict):
+                    detail = str(payload["error"].get("message", "")).strip()
+                if not detail:
+                    detail = str(payload.get("message", "") or payload.get("detail", "")).strip()
+
+            if not detail:
+                detail = (resp.text or "").strip()
+
+            detail = " ".join(detail.split())
+            return detail[:300]
+
         for attempt in range(1, attempts + 1):
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -87,6 +108,9 @@ class LiteLLMProvider(LLMProvider):
                 if status == 429 and attempt < attempts:
                     time.sleep(wait_seconds)
                     continue
+                detail = _error_detail(exc.response)
+                if detail:
+                    raise RuntimeError(f"provider_http_error:{status}:{detail}") from exc
                 raise RuntimeError(f"provider_http_error:{status}") from exc
             except httpx.RequestError as exc:
                 raise RuntimeError(f"provider_network_error:{exc}") from exc

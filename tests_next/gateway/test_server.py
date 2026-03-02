@@ -58,3 +58,21 @@ def test_gateway_chat_provider_error_returns_actionable_message(tmp_path: Path) 
         assert "clawlite_litellm_api_key" in detail
         # Avoid provider error leaking from heartbeat lifecycle during client shutdown.
         app.state.runtime.engine.provider = FakeProvider()
+
+
+def test_gateway_chat_provider_http_400_includes_provider_detail(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FailingProvider("provider_http_error:400:invalid model")
+
+    with TestClient(app) as client:
+        chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
+        assert chat.status_code == 400
+        detail = str(chat.json().get("detail", "")).lower()
+        assert "invalid model" in detail
+        app.state.runtime.engine.provider = FakeProvider()

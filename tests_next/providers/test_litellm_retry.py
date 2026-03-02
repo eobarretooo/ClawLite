@@ -44,3 +44,31 @@ def test_litellm_provider_retries_429_then_success(monkeypatch) -> None:
         assert post_mock.call_count == 3
 
     asyncio.run(_scenario())
+
+
+def test_litellm_provider_http_error_keeps_provider_message(monkeypatch) -> None:
+    async def _scenario() -> None:
+        provider = LiteLLMProvider(base_url="https://api.example/v1", api_key="k", model="gpt-test")
+        monkeypatch.setenv("CLAWLITE_PROVIDER_429_MAX_ATTEMPTS", "1")
+
+        class _BadResponse(_FakeResponse):
+            def __init__(self) -> None:
+                super().__init__(400, {"error": {"message": "invalid model"}})
+
+            def raise_for_status(self) -> None:
+                request = httpx.Request("POST", "https://api.example/v1/chat/completions")
+                response = httpx.Response(400, request=request, json={"error": {"message": "invalid model"}})
+                raise httpx.HTTPStatusError("err", request=request, response=response)
+
+        post_mock = AsyncMock(side_effect=[_BadResponse()])
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            try:
+                await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+            except RuntimeError as exc:
+                message = str(exc)
+                assert message.startswith("provider_http_error:400:")
+                assert "invalid model" in message
+                return
+            raise AssertionError("expected provider error")
+
+    asyncio.run(_scenario())

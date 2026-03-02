@@ -188,6 +188,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     def _provider_error_payload(exc: RuntimeError) -> tuple[int, str]:
         message = str(exc)
+        provider_http_code = None
+        provider_http_detail = ""
+        if message.startswith("provider_http_error:"):
+            _, _, raw = message.partition("provider_http_error:")
+            code, _, detail = raw.partition(":")
+            provider_http_code = code.strip()
+            provider_http_detail = detail.strip()
+
         if message.startswith("provider_auth_error:missing_api_key:"):
             provider = message.rsplit(":", 1)[-1]
             return (
@@ -202,16 +210,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
         if message.startswith("provider_config_error:"):
             return (400, "Configuracao invalida do provedor. Revise modelo, base URL e chave de API.")
-        if message.startswith("provider_http_error:401"):
+        if provider_http_code == "400":
+            hint = provider_http_detail or "Verifique modelo, chave de API e base URL do provedor."
+            return (400, f"Requisicao invalida ao provedor (400). {hint}")
+        if provider_http_code == "401":
             return (
                 502,
-                "Falha de autenticacao no provedor (401). Verifique CLAWLITE_MODEL e CLAWLITE_LITELLM_API_KEY.",
+                "Falha de autenticacao no provedor (401). Verifique CLAWLITE_MODEL e CLAWLITE_LITELLM_API_KEY."
+                + (f" Detalhe: {provider_http_detail}" if provider_http_detail else ""),
             )
-        if message.startswith("provider_http_error:429") or message == "provider_429_exhausted":
+        if provider_http_code == "429" or message == "provider_429_exhausted":
             return (429, "Limite de requisicoes no provedor. Tente novamente em instantes.")
-        if message.startswith("provider_http_error:"):
-            code = message.split(":", 1)[1]
-            return (502, f"Falha no provedor remoto (HTTP {code}).")
+        if provider_http_code:
+            detail = f" Detalhe: {provider_http_detail}" if provider_http_detail else ""
+            return (502, f"Falha no provedor remoto (HTTP {provider_http_code}).{detail}")
         if message.startswith("provider_network_error:"):
             return (503, "Provedor remoto indisponivel no momento (erro de rede).")
         if message.startswith("codex_http_error:401"):
