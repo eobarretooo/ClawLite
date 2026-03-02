@@ -9,7 +9,6 @@ from clawlite import __version__
 from clawlite.config.loader import load_config
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.core.skills import SkillsLoader
-from clawlite.gateway.server import build_runtime, run_gateway
 from clawlite.scheduler.cron import CronService
 from clawlite.workspace.loader import WorkspaceLoader
 
@@ -19,6 +18,8 @@ def _print_json(payload: dict[str, Any]) -> None:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import run_gateway
+
     cfg = load_config(args.config)
     host = args.host or cfg.gateway.host
     port = args.port or cfg.gateway.port
@@ -49,6 +50,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
 
@@ -94,6 +97,8 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_add(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
 
@@ -111,6 +116,8 @@ def cmd_cron_add(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_list(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
     rows = runtime.cron.list_jobs(session_id=args.session_id)
@@ -119,6 +126,8 @@ def cmd_cron_list(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_remove(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
     ok = runtime.cron.remove_job(args.job_id)
@@ -127,6 +136,8 @@ def cmd_cron_remove(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_enable(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
     ok = runtime.cron.enable_job(args.job_id, enabled=True)
@@ -135,6 +146,8 @@ def cmd_cron_enable(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_disable(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
     ok = runtime.cron.enable_job(args.job_id, enabled=False)
@@ -143,6 +156,8 @@ def cmd_cron_disable(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_run(args: argparse.Namespace) -> int:
+    from clawlite.gateway.server import build_runtime
+
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
 

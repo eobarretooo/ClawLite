@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from clawlite.cli.commands import main
@@ -103,7 +104,39 @@ def test_cli_gateway_alias_parses(tmp_path: Path, monkeypatch) -> None:
         assert host == "127.0.0.1"
         assert port == 8787
 
-    monkeypatch.setattr("clawlite.cli.commands.run_gateway", _fake_run_gateway)
+    monkeypatch.setattr("clawlite.gateway.server.run_gateway", _fake_run_gateway)
     rc = main(["--config", str(config_path), "gateway"])
     assert rc == 0
     assert called["ok"] is True
+
+
+def test_cli_help_version_status_do_not_import_gateway(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    state_path = tmp_path / "state"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc_ver = main(["--version"])
+    assert rc_ver == 0
+    assert "clawlite.gateway.server" not in sys.modules
+    capsys.readouterr()
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc_help = main([])
+    assert rc_help == 1
+    assert "clawlite.gateway.server" not in sys.modules
+    capsys.readouterr()
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc_status = main(["--config", str(config_path), "status"])
+    assert rc_status == 0
+    assert "clawlite.gateway.server" not in sys.modules
