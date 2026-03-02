@@ -5,6 +5,7 @@
   <p><strong>FastAPI gateway, Telegram-first operations, persistent memory, and real tool execution.</strong></p>
   <p>
     <a href="https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml"><img src="https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/eobarretooo/ClawLite/releases"><img src="https://img.shields.io/github/v/release/eobarretooo/ClawLite" alt="Latest Release"></a>
     <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
     <img src="https://img.shields.io/badge/platform-linux-0ea5e9" alt="Linux">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT License"></a>
@@ -13,6 +14,7 @@
 
 ## ⚡ What Is ClawLite
 ClawLite is a practical autonomous assistant focused on execution: it receives messages, runs tools, stores memory, schedules jobs, and sends proactive updates through channels.
+Unlike heavier alternatives, ClawLite is intentionally compact: around **4.2k lines of focused Python core code** designed for personal operation and fast iteration.
 
 ## ✨ Main Features
 - 🧠 **Unified agent engine** for CLI, HTTP API, WebSocket, scheduler, and channels.
@@ -209,16 +211,28 @@ clawlite/
 ```
 
 ## 🛣️ Roadmap
-- **P0 Core Stability**: unified execution path, stronger integration tests, hardened input validation.
-- **P1 Operational Autonomy**: resilient long-running operation, proactive channel delivery, stronger long-term memory.
-- **P2 Ecosystem**: better skills UX, deeper MCP/provider integrations, tighter deployment and release runbooks.
+- **P0 Core Stability**
+- [ ] Consolidate one execution path across CLI, gateway, and channels.
+- [ ] Expand integration tests for scheduler and channel dispatch.
+- [ ] Harden input validation for channel webhooks and external I/O tools.
+- [ ] Keep `pytest -q tests` green in CI for Python 3.10 and 3.12.
+- **P1 Operational Autonomy**
+- [ ] Finalize 24/7 supervised runtime on Linux with automatic recovery.
+- [ ] Improve proactive outbound delivery reliability for Telegram.
+- [ ] Strengthen long-term memory retrieval quality across sessions.
+- [ ] Add clearer operational logs and failure runbooks.
+- **P2 Ecosystem**
+- [ ] Improve user skill experience (discovery, execution diagnostics).
+- [ ] Expand MCP integration and specialized provider support.
+- [ ] Publish objective release/deploy guides with pass/fail checklists.
 
 See full plan in [`ROADMAP.md`](ROADMAP.md).
 
 ## 🤝 Contributing
-Contributions are welcome.
+PRs are welcome and encouraged.
 
 - Read [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Check open issues: <https://github.com/eobarretooo/ClawLite/issues>
 - Run tests before PR: `pytest -q tests`
 - Keep docs aligned with runtime behavior
 
