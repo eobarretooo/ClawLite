@@ -10,6 +10,7 @@ def test_load_config_defaults_when_missing(tmp_path: Path) -> None:
     cfg = load_config(tmp_path / "missing.json")
     assert cfg.provider.model
     assert cfg.gateway.port == 8787
+    assert cfg.channels.send_progress is False
 
 
 def test_load_config_file_and_env_override(tmp_path: Path, monkeypatch) -> None:
@@ -225,3 +226,28 @@ def test_load_config_gateway_auth_and_diagnostics_env_overrides(tmp_path: Path, 
     assert cfg.gateway.auth.token == "secret-token"
     assert cfg.gateway.diagnostics.enabled is False
     assert cfg.gateway.diagnostics.require_auth is False
+
+
+def test_load_config_tool_loop_detection_settings(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "loopDetection": {
+                        "enabled": True,
+                        "historySize": 12,
+                        "repeatThreshold": 2,
+                        "criticalThreshold": 4,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.tools.loop_detection.enabled is True
+    assert cfg.tools.loop_detection.history_size == 12
+    assert cfg.tools.loop_detection.repeat_threshold == 2
+    assert cfg.tools.loop_detection.critical_threshold == 4

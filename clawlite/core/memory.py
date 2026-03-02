@@ -42,6 +42,12 @@ class MemoryRecord:
 class MemoryStore:
     """Durable two-layer memory with optional history/curated split."""
 
+    _MAX_HISTORY_RECORDS = 2000
+    _MAX_CURATED_FACTS = 250
+    _MAX_CURATED_SESSIONS_PER_FACT = 12
+    _MAX_CHECKPOINT_SOURCES = 4096
+    _MAX_CHECKPOINT_SIGNATURES = 4096
+
     def __init__(
         self,
         db_path: str | Path | None = None,
@@ -71,7 +77,7 @@ class MemoryStore:
         self._ensure_file(self.history_path, default="")
         if self.curated_path is not None:
             self.curated_path.parent.mkdir(parents=True, exist_ok=True)
-            self._ensure_file(self.curated_path, default='{"facts": []}\n')
+            self._ensure_file(self.curated_path, default='{"version": 2, "facts": []}\n')
         self.checkpoints_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_file(self.checkpoints_path, default="{}\n")
 
@@ -124,19 +130,150 @@ class MemoryStore:
         return hashlib.sha256(raw).hexdigest()
 
     @staticmethod
-    def _parse_checkpoints(raw: str) -> dict[str, str]:
+    def _parse_checkpoints(raw: str) -> dict[str, dict[str, object]]:
+        empty_state = {
+            "source_signatures": {},
+            "source_activity": {},
+            "global_signatures": {},
+        }
         payload_raw = raw.strip()
         if not payload_raw:
-            return {}
+            return empty_state
         try:
             payload = json.loads(payload_raw)
         except json.JSONDecodeError:
-            return {}
+            return empty_state
         if not isinstance(payload, dict):
-            return {}
-        return {str(k): str(v) for k, v in payload.items()}
+            return empty_state
 
-    def _read_curated_facts(self) -> list[dict[str, str]]:
+        has_v2_shape = any(key in payload for key in ("source_signatures", "global_signatures", "source_activity"))
+        if not has_v2_shape:
+            legacy_signatures = {
+                str(k): str(v)
+                for k, v in payload.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+            return {
+                "source_signatures": legacy_signatures,
+                "source_activity": {},
+                "global_signatures": {},
+            }
+
+        source_signatures_raw = payload.get("source_signatures", {})
+        source_activity_raw = payload.get("source_activity", {})
+        global_signatures_raw = payload.get("global_signatures", {})
+
+        source_signatures = {}
+        if isinstance(source_signatures_raw, dict):
+            source_signatures = {
+                str(k): str(v)
+                for k, v in source_signatures_raw.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+
+        source_activity = {}
+        if isinstance(source_activity_raw, dict):
+            source_activity = {
+                str(k): str(v)
+                for k, v in source_activity_raw.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+
+        global_signatures: dict[str, dict[str, object]] = {}
+        if isinstance(global_signatures_raw, dict):
+            for key, value in global_signatures_raw.items():
+                if not isinstance(key, str) or not isinstance(value, dict):
+                    continue
+                count_raw = value.get("count", 0)
+                try:
+                    count = int(count_raw)
+                except Exception:
+                    count = 0
+                global_signatures[str(key)] = {
+                    "count": max(0, count),
+                    "last_seen_at": str(value.get("last_seen_at", "") or ""),
+                    "last_source": str(value.get("last_source", "") or ""),
+                }
+
+        return {
+            "source_signatures": source_signatures,
+            "source_activity": source_activity,
+            "global_signatures": global_signatures,
+        }
+
+    @staticmethod
+    def _format_checkpoints(payload: dict[str, dict[str, object]]) -> str:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+
+    @staticmethod
+    def _parse_iso_timestamp(value: str) -> datetime:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    @classmethod
+    def _normalize_curated_fact(cls, row: dict[str, object]) -> dict[str, object] | None:
+        text = str(row.get("text", "")).strip()
+        if not text:
+            return None
+        created_at = str(row.get("created_at", "") or datetime.now(timezone.utc).isoformat())
+        last_seen_at = str(row.get("last_seen_at", "") or created_at)
+        try:
+            mentions = int(row.get("mentions", 1))
+        except Exception:
+            mentions = 1
+        try:
+            session_count = int(row.get("session_count", 1))
+        except Exception:
+            session_count = 1
+        try:
+            importance = float(row.get("importance", 1.0))
+        except Exception:
+            importance = 1.0
+
+        sessions_raw = row.get("sessions", [])
+        sessions: list[str] = []
+        if isinstance(sessions_raw, list):
+            for session in sessions_raw:
+                clean = str(session or "").strip()
+                if clean and clean not in sessions:
+                    sessions.append(clean)
+
+        return {
+            "id": str(row.get("id", "") or uuid.uuid4().hex),
+            "text": text,
+            "source": str(row.get("source", "curated") or "curated"),
+            "created_at": created_at,
+            "last_seen_at": last_seen_at,
+            "mentions": max(1, mentions),
+            "session_count": max(1, session_count),
+            "sessions": sessions[-cls._MAX_CURATED_SESSIONS_PER_FACT :],
+            "importance": max(0.1, importance),
+        }
+
+    def _curated_rank(self, row: dict[str, object]) -> tuple[float, int, int, datetime, datetime, str, str]:
+        importance = float(row.get("importance", 0.0))
+        mentions = int(row.get("mentions", 0))
+        session_count = int(row.get("session_count", 0))
+        last_seen = self._parse_iso_timestamp(str(row.get("last_seen_at", "")))
+        created = self._parse_iso_timestamp(str(row.get("created_at", "")))
+        text = str(row.get("text", ""))
+        rid = str(row.get("id", ""))
+        return (importance, mentions, session_count, last_seen, created, text, rid)
+
+    def _prune_history(self) -> None:
+        with self._locked_file(self.history_path, "r+", exclusive=True) as fh:
+            lines = fh.read().splitlines()
+            if len(lines) <= self._MAX_HISTORY_RECORDS:
+                return
+            kept = lines[-self._MAX_HISTORY_RECORDS :]
+            fh.seek(0)
+            fh.truncate()
+            fh.write("\n".join(kept) + "\n")
+            fh.flush()
+
+    def _read_curated_facts(self) -> list[dict[str, object]]:
         if self.curated_path is None:
             return []
         with self._locked_file(self.curated_path, "r", exclusive=False) as fh:
@@ -152,54 +289,103 @@ class MemoryStore:
         facts = payload.get("facts", [])
         if not isinstance(facts, list):
             return []
-        out: list[dict[str, str]] = []
+        out: list[dict[str, object]] = []
         for row in facts:
             if not isinstance(row, dict):
                 continue
-            text = str(row.get("text", "")).strip()
-            if not text:
+            normalized = self._normalize_curated_fact(row)
+            if normalized is None:
                 continue
-            out.append(
-                {
-                    "id": str(row.get("id", "") or uuid.uuid4().hex),
-                    "text": text,
-                    "source": str(row.get("source", "curated") or "curated"),
-                    "created_at": str(row.get("created_at", "") or datetime.now(timezone.utc).isoformat()),
-                }
-            )
+            out.append(normalized)
         return out
 
-    def _write_curated_facts(self, facts: list[dict[str, str]]) -> None:
+    def _write_curated_facts(self, facts: list[dict[str, object]]) -> None:
         if self.curated_path is None:
             return
-        payload = {"facts": facts[-250:]}
+        normalized: list[dict[str, object]] = []
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            clean = self._normalize_curated_fact(fact)
+            if clean is not None:
+                normalized.append(clean)
+
+        normalized.sort(key=self._curated_rank, reverse=True)
+        payload = {"version": 2, "facts": normalized[: self._MAX_CURATED_FACTS]}
         encoded = json.dumps(payload, ensure_ascii=False, indent=2)
         with self._locked_file(self.curated_path, "w", exclusive=True) as fh:
             fh.write(encoded)
             fh.write("\n")
             fh.flush()
 
-    def _curate_candidates(self, candidates: list[str], *, source: str) -> None:
+    @staticmethod
+    def _source_session_key(source: str) -> str:
+        return str(source or "").strip().lower() or "unknown"
+
+    @staticmethod
+    def _candidate_importance(*, role: str, text: str, repeated_count: int) -> float:
+        score = 1.0
+        if role == "user":
+            score += 0.5
+        if CURATION_HINT_RE.search(text):
+            score += 1.0
+        score += min(0.8, len(text) / 320.0)
+        score += min(2.0, max(0, repeated_count - 1) * 0.35)
+        return score
+
+    def _curate_candidates(self, candidates: list[tuple[str, str]], *, source: str, repeated_count: int = 1) -> None:
         if self.curated_path is None or not candidates:
             return
         current = self._read_curated_facts()
-        by_norm = {self._normalize_memory_text(item["text"]): item for item in current}
+        by_norm = {self._normalize_memory_text(str(item["text"])): item for item in current}
         now_iso = datetime.now(timezone.utc).isoformat()
+        source_session = self._source_session_key(source)
         changed = False
-        for candidate in candidates:
+        for role, candidate in candidates:
             norm = self._normalize_memory_text(candidate)
             if not norm:
                 continue
-            if norm in by_norm:
+            existing = by_norm.get(norm)
+            if existing is None:
+                row: dict[str, object] = {
+                    "id": uuid.uuid4().hex,
+                    "text": candidate,
+                    "source": f"curated:{source}",
+                    "created_at": now_iso,
+                    "last_seen_at": now_iso,
+                    "mentions": 1,
+                    "session_count": 1,
+                    "sessions": [source_session],
+                    "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
+                }
+                current.append(row)
+                by_norm[norm] = row
+                changed = True
                 continue
-            row = {
-                "id": uuid.uuid4().hex,
-                "text": candidate,
-                "source": f"curated:{source}",
-                "created_at": now_iso,
-            }
-            current.append(row)
-            by_norm[norm] = row
+
+            existing_sessions = existing.get("sessions", [])
+            if not isinstance(existing_sessions, list):
+                existing_sessions = []
+            clean_sessions = []
+            for raw_session in existing_sessions:
+                clean = str(raw_session or "").strip().lower()
+                if clean and clean not in clean_sessions:
+                    clean_sessions.append(clean)
+            if source_session not in clean_sessions:
+                clean_sessions.append(source_session)
+
+            old_mentions = int(existing.get("mentions", 1))
+            old_session_count = int(existing.get("session_count", max(1, len(clean_sessions))))
+            old_importance = float(existing.get("importance", 1.0))
+            existing["mentions"] = old_mentions + 1
+            existing["session_count"] = max(old_session_count, len(clean_sessions))
+            existing["last_seen_at"] = now_iso
+            existing["sessions"] = clean_sessions[-self._MAX_CURATED_SESSIONS_PER_FACT :]
+            existing["importance"] = old_importance + self._candidate_importance(
+                role=role,
+                text=candidate,
+                repeated_count=repeated_count,
+            ) * 0.35
             changed = True
         if changed:
             self._write_curated_facts(current)
@@ -233,6 +419,7 @@ class MemoryStore:
         with self._locked_file(self.history_path, "a", exclusive=True) as fh:
             fh.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
             fh.flush()
+        self._prune_history()
         return row
 
     def all(self) -> list[MemoryRecord]:
@@ -271,7 +458,21 @@ class MemoryStore:
         ]
 
     def search(self, query: str, *, limit: int = 5) -> list[MemoryRecord]:
-        records = self.curated() + self.all()
+        curated_rows = self._read_curated_facts()
+        curated_records = [
+            MemoryRecord(
+                id=str(item.get("id", "")),
+                text=str(item.get("text", "")).strip(),
+                source=str(item.get("source", "curated")),
+                created_at=str(item.get("created_at", "")),
+            )
+            for item in curated_rows
+            if str(item.get("text", "")).strip()
+        ]
+        curated_importance = {str(item.get("id", "")): float(item.get("importance", 1.0)) for item in curated_rows}
+        curated_mentions = {str(item.get("id", "")): int(item.get("mentions", 1)) for item in curated_rows}
+
+        records = curated_records + self.all()
         if not records:
             return []
 
@@ -295,7 +496,11 @@ class MemoryStore:
         scored: list[tuple[float, float, int]] = []
         for idx, toks in enumerate(corpus_tokens):
             overlap = len(qset.intersection(toks))
-            curated_boost = 0.75 if records[idx].source.startswith("curated:") else 0.0
+            curated_boost = 0.0
+            if records[idx].source.startswith("curated:"):
+                importance = curated_importance.get(records[idx].id, 1.0)
+                mentions = curated_mentions.get(records[idx].id, 1)
+                curated_boost = 0.75 + min(2.0, importance * 0.25) + min(1.0, mentions * 0.1)
             scored.append((float(overlap) + curated_boost, bm25_scores[idx], idx))
 
         scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
@@ -320,21 +525,78 @@ class MemoryStore:
 
         with self._locked_file(self.checkpoints_path, "r+", exclusive=True) as checkpoints_fh:
             checkpoints = self._parse_checkpoints(checkpoints_fh.read())
-            if checkpoints.get(source) == signature:
+            source_signatures = checkpoints.get("source_signatures", {})
+            if not isinstance(source_signatures, dict):
+                source_signatures = {}
+
+            source_activity = checkpoints.get("source_activity", {})
+            if not isinstance(source_activity, dict):
+                source_activity = {}
+
+            global_signatures = checkpoints.get("global_signatures", {})
+            if not isinstance(global_signatures, dict):
+                global_signatures = {}
+
+            if source_signatures.get(source) == signature:
                 return None
 
             summary = "\n".join(summary_lines)
             row = self.add(summary, source=source)
 
-            checkpoints[source] = signature
+            now_iso = datetime.now(timezone.utc).isoformat()
+            source_signatures[source] = signature
+            source_activity[source] = now_iso
+
+            global_signature_row = global_signatures.get(signature)
+            current_count = 0
+            if isinstance(global_signature_row, dict):
+                try:
+                    current_count = int(global_signature_row.get("count", 0))
+                except Exception:
+                    current_count = 0
+            repeated_count = max(1, current_count + 1)
+            global_signatures[signature] = {
+                "count": repeated_count,
+                "last_seen_at": now_iso,
+                "last_source": source,
+            }
+
+            if len(source_signatures) > self._MAX_CHECKPOINT_SOURCES:
+                ordered_sources = sorted(
+                    source_signatures.keys(),
+                    key=lambda key: source_activity.get(key, ""),
+                )
+                drop = len(source_signatures) - self._MAX_CHECKPOINT_SOURCES
+                for key in ordered_sources[:drop]:
+                    source_signatures.pop(key, None)
+                    source_activity.pop(key, None)
+
+            if len(global_signatures) > self._MAX_CHECKPOINT_SIGNATURES:
+                ordered_signatures = sorted(
+                    global_signatures.keys(),
+                    key=lambda key: str(global_signatures.get(key, {}).get("last_seen_at", "")),
+                )
+                drop = len(global_signatures) - self._MAX_CHECKPOINT_SIGNATURES
+                for key in ordered_signatures[:drop]:
+                    global_signatures.pop(key, None)
+
+            checkpoints = {
+                "source_signatures": source_signatures,
+                "source_activity": source_activity,
+                "global_signatures": global_signatures,
+            }
             checkpoints_fh.seek(0)
             checkpoints_fh.truncate()
-            checkpoints_fh.write(json.dumps(checkpoints, ensure_ascii=False, sort_keys=True))
-            checkpoints_fh.write("\n")
+            checkpoints_fh.write(self._format_checkpoints(checkpoints))
             checkpoints_fh.flush()
 
-        curated_candidates = [line.split(":", 1)[1].strip() for line in summary_lines if ":" in line]
-        self._curate_candidates(curated_candidates, source=source)
+        curated_candidates: list[tuple[str, str]] = []
+        for line in summary_lines:
+            if ":" not in line:
+                continue
+            role, value = line.split(":", 1)
+            curated_candidates.append((role.strip().lower(), value.strip()))
+        self._curate_candidates(curated_candidates, source=source, repeated_count=repeated_count)
         return row
 
 

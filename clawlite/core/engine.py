@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import inspect
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -47,6 +49,21 @@ class ProgressEvent:
     message: str = ""
     tool_name: str = ""
     metadata: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class LoopDetectionSettings:
+    enabled: bool = False
+    history_size: int = 20
+    repeat_threshold: int = 3
+    critical_threshold: int = 6
+
+
+@dataclass(slots=True)
+class _ToolExecutionRecord:
+    signature: str
+    tool_name: str
+    outcome_hash: str
 
 
 class AgentLoopError(Exception):
@@ -124,6 +141,28 @@ class AgentEngine:
     """Core autonomous loop used by channels, cron and CLI."""
 
     _TOOL_RESULT_TRUNCATED_SUFFIX = "\n...[tool result truncated]"
+    _THINK_DIRECTIVE_RE = re.compile(r"(?:^|\s)/(?:thinking|think|t)\s*[:=]?\s*([a-zA-Z][a-zA-Z_\-]*)\b")
+    _REASONING_ALIASES: dict[str, str | None] = {
+        "off": None,
+        "none": None,
+        "disable": None,
+        "disabled": None,
+        "minimal": "minimal",
+        "min": "minimal",
+        "think": "minimal",
+        "low": "low",
+        "thinkhard": "low",
+        "medium": "medium",
+        "med": "medium",
+        "mid": "medium",
+        "thinkharder": "medium",
+        "high": "high",
+        "max": "high",
+        "highest": "high",
+        "ultrathink": "high",
+        "xhigh": "high",
+        "extrahigh": "high",
+    }
 
     def __init__(
         self,
@@ -145,6 +184,8 @@ class AgentEngine:
         max_tool_calls_per_turn: int = 80,
         max_tool_result_chars: int = 4000,
         max_progress_events_per_turn: int = 120,
+        reasoning_effort_default: str | None = None,
+        loop_detection: LoopDetectionSettings | None = None,
     ) -> None:
         self.provider = provider
         self.tools = tools
@@ -164,18 +205,91 @@ class AgentEngine:
         self.max_tool_calls_per_turn = max(1, int(max_tool_calls_per_turn))
         self.max_tool_result_chars = max(32, int(max_tool_result_chars))
         self.max_progress_events_per_turn = max(1, int(max_progress_events_per_turn))
+        self.reasoning_effort_default = self._normalize_reasoning_effort(reasoning_effort_default)
+        resolved_loop = loop_detection or LoopDetectionSettings()
+        critical_threshold = max(1, int(resolved_loop.critical_threshold))
+        repeat_threshold = max(1, int(resolved_loop.repeat_threshold))
+        if critical_threshold <= repeat_threshold:
+            critical_threshold = repeat_threshold + 1
+        self.loop_detection = LoopDetectionSettings(
+            enabled=bool(resolved_loop.enabled),
+            history_size=max(1, int(resolved_loop.history_size)),
+            repeat_threshold=repeat_threshold,
+            critical_threshold=critical_threshold,
+        )
         self._stop_requests: set[str] = set()
 
-    async def _complete_provider(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ProviderResult:
+    async def _complete_provider(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None,
+    ) -> ProviderResult:
         complete_sig = inspect.signature(self.provider.complete)
         accepts_max_tokens = "max_tokens" in complete_sig.parameters
         accepts_temperature = "temperature" in complete_sig.parameters
+        accepts_reasoning_effort = "reasoning_effort" in complete_sig.parameters
         kwargs: dict[str, Any] = {"messages": messages, "tools": tools}
         if accepts_max_tokens:
             kwargs["max_tokens"] = self.max_tokens
         if accepts_temperature:
             kwargs["temperature"] = self.temperature
+        if accepts_reasoning_effort and reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
         return await self.provider.complete(**kwargs)
+
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: str | None) -> str | None:
+        text = str(value or "").strip().lower()
+        if not text:
+            return None
+        collapsed = re.sub(r"[\s_-]+", "", text)
+        return cls._REASONING_ALIASES.get(collapsed)
+
+    @classmethod
+    def _resolve_reasoning_effort(cls, user_text: str, config_default: str | None) -> str | None:
+        inline_match = cls._THINK_DIRECTIVE_RE.search(user_text or "")
+        if inline_match:
+            raw_value = inline_match.group(1).strip().lower()
+            parsed = cls._normalize_reasoning_effort(raw_value)
+            if parsed is not None or raw_value in {"off", "none", "disable", "disabled"}:
+                return parsed
+        return cls._normalize_reasoning_effort(config_default)
+
+    @staticmethod
+    def _tool_signature(name: str, arguments: dict[str, Any]) -> str:
+        try:
+            serialized = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            serialized = repr(arguments)
+        digest = hashlib.sha256(serialized.encode("utf-8", errors="ignore")).hexdigest()
+        return f"{name}:{digest}"
+
+    @staticmethod
+    def _tool_outcome_hash(result: Any) -> str:
+        text = str(result)
+        digest = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+        return digest
+
+    def _detect_tool_loop(self, history: list[_ToolExecutionRecord], signature: str) -> tuple[bool, str, int]:
+        streak = 0
+        latest_outcome_hash = ""
+        for record in reversed(history):
+            if record.signature != signature:
+                continue
+            if not latest_outcome_hash:
+                latest_outcome_hash = record.outcome_hash
+                streak = 1
+                continue
+            if record.outcome_hash != latest_outcome_hash:
+                break
+            streak += 1
+        if streak >= self.loop_detection.critical_threshold:
+            return True, "critical", streak
+        if streak >= self.loop_detection.repeat_threshold:
+            return True, "warning", streak
+        return False, "", streak
 
     @staticmethod
     def _tool_call_id(tool_call: Any, idx: int) -> str:
@@ -389,6 +503,8 @@ class AgentEngine:
         graceful_error = False
         tool_calls_used = 0
         iteration = 0
+        resolved_reasoning_effort = self._resolve_reasoning_effort(user_text, self.reasoning_effort_default)
+        tool_history: list[_ToolExecutionRecord] = []
 
         await self._emit_progress(
             progress_hook=progress_hook,
@@ -411,7 +527,11 @@ class AgentEngine:
                 limit=budget.max_progress_events or 1,
             )
             try:
-                step = await self._complete_provider(messages=messages, tools=self.tools.schema())
+                step = await self._complete_provider(
+                    messages=messages,
+                    tools=self.tools.schema(),
+                    reasoning_effort=resolved_reasoning_effort,
+                )
             except Exception as exc:
                 typed = self._classify_provider_error(exc)
                 run_log.error("llm completion failed iteration={} type={} error={}", iteration, typed.__class__.__name__, typed)
@@ -483,6 +603,48 @@ class AgentEngine:
                     if not name:
                         run_log.error("tool call without name iteration={} idx={}", iteration, idx)
                         continue
+                    signature = self._tool_signature(name, arguments)
+                    if self.loop_detection.enabled:
+                        should_stop, severity, streak = self._detect_tool_loop(tool_history, signature)
+                        if should_stop:
+                            final = ProviderResult(
+                                text=(
+                                    "I stopped this turn because loop detection found repeated "
+                                    f"non-progress tool calls for `{name}` ({streak} repeats)."
+                                ),
+                                tool_calls=[],
+                                model="engine/loop-detected",
+                            )
+                            run_log.warning(
+                                "tool loop detected iteration={} tool={} streak={} severity={} threshold={} critical_threshold={}",
+                                iteration,
+                                name,
+                                streak,
+                                severity,
+                                self.loop_detection.repeat_threshold,
+                                self.loop_detection.critical_threshold,
+                            )
+                            await self._emit_progress(
+                                progress_hook=progress_hook,
+                                event=ProgressEvent(
+                                    stage="loop_detected",
+                                    session_id=session_id,
+                                    iteration=iteration,
+                                    message=final.text,
+                                    tool_name=name,
+                                    metadata={
+                                        "detector": "repeating_no_progress",
+                                        "severity": severity,
+                                        "repeats": streak,
+                                        "threshold": self.loop_detection.repeat_threshold,
+                                        "critical_threshold": self.loop_detection.critical_threshold,
+                                        "history_size": self.loop_detection.history_size,
+                                    },
+                                ),
+                                counter=progress_counter,
+                                limit=budget.max_progress_events or 1,
+                            )
+                            break
                     tool_calls_used += 1
                     await self._emit_progress(
                         progress_hook=progress_hook,
@@ -537,6 +699,18 @@ class AgentEngine:
                         counter=progress_counter,
                         limit=budget.max_progress_events or 1,
                     )
+
+                    if self.loop_detection.enabled:
+                        tool_history.append(
+                            _ToolExecutionRecord(
+                                signature=signature,
+                                tool_name=name,
+                                outcome_hash=self._tool_outcome_hash(normalized_result),
+                            )
+                        )
+                        max_history = self.loop_detection.history_size
+                        if len(tool_history) > max_history:
+                            del tool_history[:-max_history]
 
                 if final.text:
                     break

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from dataclasses import replace
 from typing import Any
 
@@ -66,7 +67,7 @@ class ChannelManager:
         self._channels: dict[str, BaseChannel] = {}
         self._dispatcher_task: asyncio.Task[Any] | None = None
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
-        self._send_progress = True
+        self._send_progress = False
         self._send_tool_hints = False
         self._dispatcher_max_concurrency = 4
         self._dispatcher_max_per_session = 1
@@ -75,6 +76,10 @@ class ChannelManager:
         self._send_retry_max_backoff_s = 4.0
         self._dispatch_slots = asyncio.Semaphore(self._dispatcher_max_concurrency)
         self._session_slots: dict[str, asyncio.Semaphore] = {}
+        self._dispatch_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+            "channel_dispatch_context",
+            default=None,
+        )
 
     def register(self, name: str, channel_cls: type[BaseChannel]) -> None:
         self._registry[name] = channel_cls
@@ -290,6 +295,8 @@ class ChannelManager:
                 )
             )
 
+        dispatch_token = self._dispatch_context.set({"session_id": event.session_id, "sent_targets": set()})
+        suppress_final_reply = False
         try:
             result = await self.engine.run(
                 session_id=event.session_id,
@@ -306,6 +313,18 @@ class ChannelManager:
             return
         finally:
             self.bus.clear_stop(event.session_id)
+            dispatch_context = self._dispatch_context.get()
+            sent_targets = dispatch_context.get("sent_targets", set()) if isinstance(dispatch_context, dict) else set()
+            if (event.channel, target) in sent_targets:
+                suppress_final_reply = True
+            self._dispatch_context.reset(dispatch_token)
+
+        if suppress_final_reply:
+            bind_event("channel.dispatch", session=event.session_id, channel=event.channel).debug(
+                "dispatch final reply suppressed target={} reason=already_sent_in_turn",
+                target,
+            )
+            return
 
         await self._publish_and_send(
             event=OutboundEvent(
@@ -337,7 +356,7 @@ class ChannelManager:
 
     async def start(self, config: dict[str, Any]) -> None:
         channels_cfg = config.get("channels", {}) if isinstance(config, dict) else {}
-        self._send_progress = bool(channels_cfg.get("send_progress", channels_cfg.get("sendProgress", True)))
+        self._send_progress = bool(channels_cfg.get("send_progress", channels_cfg.get("sendProgress", False)))
         self._send_tool_hints = bool(channels_cfg.get("send_tool_hints", channels_cfg.get("sendToolHints", False)))
         self._dispatcher_max_concurrency = max(
             1,
@@ -413,7 +432,13 @@ class ChannelManager:
         instance = self._channels.get(channel)
         if instance is None:
             raise KeyError(f"channel_not_available:{channel}")
-        return await instance.send(target=target, text=text, metadata=metadata or {})
+        response = await instance.send(target=target, text=text, metadata=metadata or {})
+        dispatch_context = self._dispatch_context.get()
+        if isinstance(dispatch_context, dict):
+            sent_targets = dispatch_context.get("sent_targets")
+            if isinstance(sent_targets, set):
+                sent_targets.add((str(channel), str(target)))
+        return response
 
     def status(self) -> dict[str, dict[str, Any]]:
         return {

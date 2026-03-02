@@ -191,6 +191,7 @@ class LiteLLMProvider(LLMProvider):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMResult:
         if not self.api_key.strip():
             raise RuntimeError("provider_auth_error:missing_api_key:anthropic")
@@ -277,6 +278,7 @@ class LiteLLMProvider(LLMProvider):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMResult:
         if not self.openai_compatible and self.provider_name == "anthropic":
             return await self._complete_anthropic(
@@ -284,6 +286,7 @@ class LiteLLMProvider(LLMProvider):
                 tools=tools,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                reasoning_effort=reasoning_effort,
             )
 
         if not self.openai_compatible:
@@ -311,6 +314,8 @@ class LiteLLMProvider(LLMProvider):
             payload["max_tokens"] = max(1, int(max_tokens))
         if temperature is not None:
             payload["temperature"] = float(temperature)
+        if reasoning_effort is not None and self.provider_name in {"openai", "openai_codex"}:
+            payload["reasoning_effort"] = reasoning_effort
         if tools:
             payload["tools"] = [{"type": "function", "function": row} for row in tools]
             payload["tool_choice"] = "auto"

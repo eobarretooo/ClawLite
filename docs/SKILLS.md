@@ -42,6 +42,7 @@ Quando duas skills possuem o mesmo `name`, a resolução é determinística:
 - `weather`
 - `tmux`
 - `hub`
+- `clawhub`
 
 ## CLI de inspeção
 

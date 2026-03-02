@@ -51,6 +51,14 @@ def _read_file(path: Path) -> dict[str, Any]:
 def _migrate_config(raw: dict[str, Any]) -> dict[str, Any]:
     cfg = dict(raw)
 
+    tools = cfg.get("tools")
+    if isinstance(tools, dict):
+        tools = dict(tools)
+        if "loopDetection" in tools and "loop_detection" not in tools:
+            loop_detection = tools.get("loopDetection")
+            tools["loop_detection"] = dict(loop_detection) if isinstance(loop_detection, dict) else {}
+        cfg["tools"] = tools
+
     gateway = cfg.get("gateway")
     if isinstance(gateway, dict):
         gateway = dict(gateway)

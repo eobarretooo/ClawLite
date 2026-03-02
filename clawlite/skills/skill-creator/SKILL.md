@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Create and maintain high-quality SKILL.md packages with clear triggers and executable mappings.
+description: Create or update SKILL.md packages with deterministic frontmatter, clear trigger descriptions, and valid command/script execution mappings.
 always: false
 metadata: {"clawlite":{"emoji":"🛠️"}}
 ---
@@ -10,8 +10,9 @@ metadata: {"clawlite":{"emoji":"🛠️"}}
 Use this skill to create or improve skills in `clawlite/skills/` or `~/.clawlite/workspace/skills/`.
 
 ## Checklist
-1. Define clear trigger conditions in `description`.
-2. Keep frontmatter minimal and accurate.
-3. Ensure `command`/`script` values map to real executables or tool names.
-4. Use metadata JSON for requirements (`metadata.clawlite.requires`).
-5. Include practical command/tool examples.
+
+1. Keep frontmatter deterministic: `name`, `description`, optional `always`, optional `homepage`, optional `metadata`, and only one of `command` or `script`.
+2. Keep `metadata` as single-line JSON (`metadata: {"clawlite":{...}}`).
+3. Put environment/binary/OS requirements in `metadata.clawlite.requires` and `metadata.clawlite.os`.
+4. Use tool names that exist in ClawLite (for example `web_search` for `script`).
+5. Keep instructions concise and action-oriented; avoid non-executable filler.

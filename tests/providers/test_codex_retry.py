@@ -42,3 +42,22 @@ def test_codex_provider_retries_429_with_async_sleep(monkeypatch) -> None:
         assert post_mock.call_count == 2
 
     asyncio.run(_scenario())
+
+
+def test_codex_provider_passes_reasoning_effort(monkeypatch) -> None:
+    async def _scenario() -> None:
+        monkeypatch.setenv("CLAWLITE_CODEX_429_MAX_ATTEMPTS", "1")
+        provider = CodexProvider(model="codex-5.3", access_token="token")
+
+        post_mock = AsyncMock(side_effect=[_FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})])
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            await provider.complete(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                reasoning_effort="medium",
+            )
+
+        payload = post_mock.call_args.kwargs["json"]
+        assert payload["reasoning_effort"] == "medium"
+
+    asyncio.run(_scenario())

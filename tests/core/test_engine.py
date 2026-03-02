@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import asyncio
 from typing import Any
 
-from clawlite.core.engine import AgentEngine, ProviderResult, ToolCall, TurnBudget
+from clawlite.core.engine import AgentEngine, LoopDetectionSettings, ProviderResult, ToolCall, TurnBudget
 
 
 class FakeProvider:
@@ -62,6 +62,15 @@ class FakeProviderWithSamplingCapture:
         return ProviderResult(text="ok", tool_calls=[], model="fake/model")
 
 
+class FakeProviderWithReasoningCapture:
+    def __init__(self) -> None:
+        self.last_reasoning_effort: str | None = None
+
+    async def complete(self, *, messages, tools, reasoning_effort=None):
+        self.last_reasoning_effort = reasoning_effort
+        return ProviderResult(text="ok", tool_calls=[], model="fake/model")
+
+
 class FakeLongToolProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -87,6 +96,19 @@ class FakeBurstToolProvider:
                 ToolCall(name="echo", arguments={"text": "one"}),
                 ToolCall(name="echo", arguments={"text": "two"}),
             ],
+            model="fake/model",
+        )
+
+
+class FakeLoopingToolProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *, messages, tools):
+        self.calls += 1
+        return ProviderResult(
+            text="keep trying",
+            tool_calls=[ToolCall(name="echo", arguments={"text": "same"})],
             model="fake/model",
         )
 
@@ -226,5 +248,66 @@ def test_engine_handles_typed_provider_errors() -> None:
         text = out.text.lower()
         assert "sorry" in text
         assert "network" in text
+
+    asyncio.run(_scenario())
+
+
+def test_engine_reasoning_effort_uses_config_default() -> None:
+    async def _scenario() -> None:
+        provider = FakeProviderWithReasoningCapture()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), reasoning_effort_default="medium")
+        out = await engine.run(session_id="cli:reasoning-default", user_text="hello")
+        assert out.text == "ok"
+        assert provider.last_reasoning_effort == "medium"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_reasoning_effort_inline_overrides_config() -> None:
+    async def _scenario() -> None:
+        provider = FakeProviderWithReasoningCapture()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), reasoning_effort_default="low")
+        out = await engine.run(session_id="cli:reasoning-inline", user_text="/think:high summarize")
+        assert out.text == "ok"
+        assert provider.last_reasoning_effort == "high"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_reasoning_effort_inline_off_disables_default() -> None:
+    async def _scenario() -> None:
+        provider = FakeProviderWithReasoningCapture()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), reasoning_effort_default="high")
+        out = await engine.run(session_id="cli:reasoning-off", user_text="/t off do this")
+        assert out.text == "ok"
+        assert provider.last_reasoning_effort is None
+
+    asyncio.run(_scenario())
+
+
+def test_engine_detects_repeated_non_progress_tool_loops() -> None:
+    async def _scenario() -> None:
+        provider = FakeLoopingToolProvider()
+        stages: list[str] = []
+
+        def _hook(event) -> None:
+            stages.append(event.stage)
+
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            max_iterations=20,
+            loop_detection=LoopDetectionSettings(
+                enabled=True,
+                history_size=10,
+                repeat_threshold=2,
+                critical_threshold=3,
+            ),
+        )
+        out = await engine.run(session_id="cli:loop-detect", user_text="run", progress_hook=_hook)
+        assert out.model == "engine/loop-detected"
+        assert "loop detection" in out.text.lower()
+        assert provider.calls < 20
+        assert "loop_detected" in stages
 
     asyncio.run(_scenario())

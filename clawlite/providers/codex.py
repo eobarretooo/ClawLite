@@ -42,6 +42,7 @@ class CodexProvider(LLMProvider):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMResult:
         headers = {"content-type": "application/json"}
         if self.access_token:
@@ -54,6 +55,8 @@ class CodexProvider(LLMProvider):
             payload["max_tokens"] = max(1, int(max_tokens))
         if temperature is not None:
             payload["temperature"] = float(temperature)
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
         if tools:
             payload["tools"] = [{"type": "function", "function": row} for row in tools]
             payload["tool_choice"] = "auto"

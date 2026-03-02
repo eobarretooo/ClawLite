@@ -33,6 +33,7 @@ class LLMProvider(ABC):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMResult:
         raise NotImplementedError
 

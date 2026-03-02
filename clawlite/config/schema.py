@@ -260,7 +260,7 @@ class WhatsAppChannelConfig(BaseChannelConfig):
 
 @dataclass(slots=True)
 class ChannelsConfig:
-    send_progress: bool = True
+    send_progress: bool = False
     send_tool_hints: bool = False
     telegram: TelegramChannelConfig = field(default_factory=TelegramChannelConfig)
     discord: DiscordChannelConfig = field(default_factory=DiscordChannelConfig)
@@ -279,7 +279,7 @@ class ChannelsConfig:
             if isinstance(value, dict):
                 extra[str(key)] = dict(value)
         return cls(
-            send_progress=bool(data.get("send_progress", data.get("sendProgress", True))),
+            send_progress=bool(data.get("send_progress", data.get("sendProgress", False))),
             send_tool_hints=bool(data.get("send_tool_hints", data.get("sendToolHints", False))),
             telegram=TelegramChannelConfig.from_dict(dict(data.get("telegram") or {})),
             discord=DiscordChannelConfig.from_dict(dict(data.get("discord") or {})),
@@ -487,11 +487,38 @@ class MCPToolConfig:
 
 
 @dataclass(slots=True)
+class ToolLoopDetectionConfig:
+    enabled: bool = False
+    history_size: int = 20
+    repeat_threshold: int = 3
+    critical_threshold: int = 6
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> ToolLoopDetectionConfig:
+        data = dict(raw or {})
+        history_raw = data.get("historySize") if "historySize" in data else data.get("history_size", 20)
+        repeat_raw = data.get("repeatThreshold") if "repeatThreshold" in data else data.get("repeat_threshold", 3)
+        critical_raw = data.get("criticalThreshold") if "criticalThreshold" in data else data.get("critical_threshold", 6)
+        history_size = max(1, int(history_raw or 20))
+        repeat_threshold = max(1, int(repeat_raw or 3))
+        critical_threshold = max(1, int(critical_raw or 6))
+        if critical_threshold <= repeat_threshold:
+            critical_threshold = repeat_threshold + 1
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            history_size=history_size,
+            repeat_threshold=repeat_threshold,
+            critical_threshold=critical_threshold,
+        )
+
+
+@dataclass(slots=True)
 class ToolsConfig:
     restrict_to_workspace: bool = False
     web: WebToolConfig = field(default_factory=WebToolConfig)
     exec: ExecToolConfig = field(default_factory=ExecToolConfig)
     mcp: MCPToolConfig = field(default_factory=MCPToolConfig)
+    loop_detection: ToolLoopDetectionConfig = field(default_factory=ToolLoopDetectionConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> ToolsConfig:
@@ -503,7 +530,15 @@ class ToolsConfig:
         web_cfg = WebToolConfig.from_dict(dict(data.get("web") or {}))
         exec_cfg = ExecToolConfig.from_dict(dict(data.get("exec") or {}))
         mcp_cfg = MCPToolConfig.from_dict(dict(data.get("mcp") or {}))
-        return cls(restrict_to_workspace=restrict, web=web_cfg, exec=exec_cfg, mcp=mcp_cfg)
+        loop_detection_raw = data.get("loop_detection", data.get("loopDetection", {}))
+        loop_detection_cfg = ToolLoopDetectionConfig.from_dict(dict(loop_detection_raw or {}))
+        return cls(
+            restrict_to_workspace=restrict,
+            web=web_cfg,
+            exec=exec_cfg,
+            mcp=mcp_cfg,
+            loop_detection=loop_detection_cfg,
+        )
 
 
 @dataclass(slots=True)

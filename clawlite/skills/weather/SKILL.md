@@ -1,6 +1,6 @@
 ---
 name: weather
-description: Get current weather and forecast with the weather script binding.
+description: Get current weather for a location using the built-in weather script binding.
 always: false
 metadata: {"clawlite":{"emoji":"🌤️"}}
 script: weather
@@ -10,9 +10,13 @@ script: weather
 
 Use this skill for weather requests.
 
-Input:
-- `location` (preferred) or `input` as fallback.
+## Input
 
-Behavior:
-- Calls weather source and returns a concise line.
-- If location is missing, default location is used.
+- `location` (preferred)
+- `input` (fallback)
+
+## Behavior
+
+- Dispatches to `script: weather` handled by ClawLite.
+- Returns a concise weather line.
+- Defaults to Sao Paulo when no location is provided.

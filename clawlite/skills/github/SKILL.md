@@ -1,6 +1,6 @@
 ---
 name: github
-description: Interact with GitHub using gh CLI for PRs, issues, runs and API queries.
+description: Interact with GitHub using gh CLI for issues, pull requests, checks, workflow runs, and API queries.
 always: false
 metadata: {"clawlite":{"emoji":"🐙","requires":{"bins":["gh"]}}}
 command: gh

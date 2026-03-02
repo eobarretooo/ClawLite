@@ -1,6 +1,6 @@
 ---
 name: hub
-description: Search and install community skills into the ClawLite workspace skill directory.
+description: Backward-compatible alias for ClawHub skill discovery and installation into the ClawLite workspace.
 always: false
 homepage: https://clawhub.ai
 metadata: {"clawlite":{"emoji":"🦞","requires":{"bins":["npx"]}}}

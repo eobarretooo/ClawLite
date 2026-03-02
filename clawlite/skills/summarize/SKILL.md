@@ -1,20 +1,35 @@
 ---
 name: summarize
-description: Summarize long documents, logs, links and transcripts quickly.
+description: Summarize URLs, local files, and transcripts with the summarize CLI when available.
 always: false
-metadata: {"clawlite":{"emoji":"🧾"}}
+homepage: https://summarize.sh
+metadata: {"clawlite":{"emoji":"🧾","requires":{"bins":["summarize"]}}}
+command: summarize
 ---
 
 # Summarize
 
-Use this skill when content is long and the user wants distilled output.
+Use this skill when the user asks to summarize an article/file/video or extract transcript-like output quickly.
 
-## Output shape
-1. Key points
-2. Risks/decisions
-3. Actionable next steps
+## Examples
+
+Summarize URL:
+```bash
+summarize "https://example.com"
+```
+
+Summarize local file:
+```bash
+summarize "/path/to/file.pdf"
+```
+
+Summarize YouTube URL:
+```bash
+summarize "https://youtu.be/dQw4w9WgXcQ" --youtube auto
+```
 
 ## Rules
+
 - Preserve hard facts (numbers, deadlines, owners).
 - Avoid generic filler.
-- If content is too large, deliver an executive summary first and then expand sections on demand.
+- If content is too large, return an executive summary first and expand by section on demand.

@@ -110,3 +110,22 @@ def test_litellm_provider_parses_tool_calls(monkeypatch) -> None:
         assert call.arguments == {"action": "add", "expression": "every 60", "prompt": "ping"}
 
     asyncio.run(_scenario())
+
+
+def test_litellm_provider_passes_reasoning_effort_for_openai(monkeypatch) -> None:
+    async def _scenario() -> None:
+        provider = LiteLLMProvider(base_url="https://api.example/v1", api_key="k", model="gpt-test", provider_name="openai")
+        monkeypatch.setenv("CLAWLITE_PROVIDER_429_MAX_ATTEMPTS", "1")
+
+        post_mock = AsyncMock(side_effect=[_FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})])
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            await provider.complete(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                reasoning_effort="high",
+            )
+
+        payload = post_mock.call_args.kwargs["json"]
+        assert payload["reasoning_effort"] == "high"
+
+    asyncio.run(_scenario())

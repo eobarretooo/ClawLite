@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -99,3 +100,141 @@ def test_memory_add_is_concurrency_safe(tmp_path: Path) -> None:
     rows = store.all()
     assert len(rows) == 60
     assert len({row.id for row in rows}) == 60
+
+
+def test_memory_consolidate_promotes_repeated_facts_across_sessions(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    messages = [
+        {"role": "user", "content": "remember that I prefer concise answers in summaries"},
+        {"role": "assistant", "content": "noted, concise summaries preference saved"},
+    ]
+
+    first = store.consolidate(messages, source="session:a")
+    second = store.consolidate(messages, source="session:b")
+
+    assert first is not None
+    assert second is not None
+    curated_payload = json.loads(store.curated_path.read_text(encoding="utf-8"))
+    facts = curated_payload["facts"]
+    assert facts
+    concise_fact = next(item for item in facts if "concise" in item["text"].lower())
+    assert int(concise_fact["mentions"]) >= 2
+    assert int(concise_fact["session_count"]) >= 2
+    assert len(concise_fact["sessions"]) >= 2
+
+
+def test_memory_consolidate_global_signature_count_tracks_cross_session(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    messages = [
+        {"role": "user", "content": "remember my timezone is UTC-3 and keep it"},
+        {"role": "assistant", "content": "timezone UTC-3 saved"},
+    ]
+
+    store.consolidate(messages, source="session:alpha")
+    store.consolidate(messages, source="session:beta")
+
+    checkpoints_payload = json.loads(store.checkpoints_path.read_text(encoding="utf-8"))
+    global_signatures = checkpoints_payload.get("global_signatures", {})
+    assert global_signatures
+    counts = [int(item.get("count", 0)) for item in global_signatures.values()]
+    assert max(counts) >= 2
+
+
+def test_memory_consolidate_reads_legacy_checkpoints_format(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.checkpoints_path.write_text(
+        json.dumps({"session:legacy": "sig-1"}) + "\n",
+        encoding="utf-8",
+    )
+
+    row = store.consolidate(
+        [
+            {"role": "user", "content": "remember that project deadline is monday morning"},
+            {"role": "assistant", "content": "deadline captured"},
+        ],
+        source="session:new",
+    )
+    assert row is not None
+    checkpoints_payload = json.loads(store.checkpoints_path.read_text(encoding="utf-8"))
+    assert "source_signatures" in checkpoints_payload
+    assert "global_signatures" in checkpoints_payload
+
+
+def test_memory_history_prunes_when_store_exceeds_limit(tmp_path: Path, monkeypatch) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    monkeypatch.setattr(store, "_MAX_HISTORY_RECORDS", 5)
+
+    for idx in range(12):
+        store.add(f"remember preference {idx}", source="bulk")
+
+    rows = store.all()
+    assert len(rows) == 5
+    assert rows[0].text.endswith("7")
+    assert rows[-1].text.endswith("11")
+
+
+def test_memory_curated_prunes_low_rank_facts_when_oversized(tmp_path: Path, monkeypatch) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    monkeypatch.setattr(store, "_MAX_CURATED_FACTS", 2)
+
+    repeated = [
+        {"role": "user", "content": "remember I always use python for backend tasks"},
+        {"role": "assistant", "content": "noted backend python preference"},
+    ]
+    store.consolidate(repeated, source="session:1")
+    store.consolidate(repeated, source="session:2")
+
+    store.consolidate(
+        [
+            {"role": "user", "content": "remember that I enjoy mountain biking on weekends"},
+            {"role": "assistant", "content": "weekend biking noted"},
+        ],
+        source="session:3",
+    )
+    store.consolidate(
+        [
+            {"role": "user", "content": "remember that my favorite snack is popcorn"},
+            {"role": "assistant", "content": "popcorn preference noted"},
+        ],
+        source="session:4",
+    )
+
+    curated_payload = json.loads(store.curated_path.read_text(encoding="utf-8"))
+    facts = curated_payload["facts"]
+    assert len(facts) == 2
+    assert any("python" in item["text"].lower() for item in facts)
+
+
+def test_memory_search_is_deterministic_for_repeated_queries(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.consolidate(
+        [
+            {"role": "user", "content": "remember that project alpha deadline is friday"},
+            {"role": "assistant", "content": "project alpha deadline captured"},
+        ],
+        source="session:a",
+    )
+    store.add("project alpha includes migration work", source="user")
+    store.add("project beta has a different schedule", source="user")
+
+    first = [item.id for item in store.search("project alpha deadline", limit=4)]
+    second = [item.id for item in store.search("project alpha deadline", limit=4)]
+    assert first == second
+
+
+def test_memory_search_prefers_promoted_curated_fact(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    for source in ("session:a", "session:b", "session:c"):
+        store.consolidate(
+            [
+                {"role": "user", "content": "remember that my timezone is UTC-3"},
+                {"role": "assistant", "content": "timezone preference UTC-3 saved"},
+            ],
+            source=source,
+        )
+    store.add("Timezone conversions can use UTC offsets", source="note")
+
+    found = store.search("timezone utc-3", limit=3)
+    assert found
+    assert found[0].source.startswith("curated:")
+    assert "utc-3" in found[0].text.lower()

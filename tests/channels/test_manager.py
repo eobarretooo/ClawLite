@@ -76,6 +76,25 @@ class ConcurrentEngine(FakeEngine):
         return _Result(text=f"reply:{session_id}:{user_text}")
 
 
+class MessageToolEngine(FakeEngine):
+    def __init__(self) -> None:
+        self.manager: ChannelManager | None = None
+
+    async def run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        progress_hook=None,
+        stop_event=None,
+    ):
+        assert self.manager is not None
+        await self.manager.send(channel=str(channel or "fake"), target=str(chat_id or ""), text="tool:sent")
+        return _Result(text=f"reply:{session_id}:{user_text}")
+
+
 class FakeChannel(BaseChannel):
     def __init__(
         self,
@@ -190,6 +209,48 @@ def test_channel_manager_retries_and_dead_letters_failed_send() -> None:
         assert dead.dead_letter_reason == "send_failed"
         assert dead.attempt == 2
         assert dead.channel == "fake"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_default_drops_progress_events() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=ProgressEngine())
+        mgr.register("fake", FakeChannel)
+        await mgr.start({"channels": {"fake": {"enabled": True, "supports_progress": True, "supports_tool_hints": True}}})
+
+        fake = mgr._channels["fake"]
+        await fake.emit(session_id="fake:4", user_id="u1", text="hello", metadata={"channel": "fake", "chat_id": "4"})
+        await asyncio.sleep(0.1)
+
+        sent_texts = [row[1] for row in fake.sent]
+        assert "progress:planning" not in sent_texts
+        assert "progress:using-tool" not in sent_texts
+        assert any(text.startswith("reply:fake:4:") for text in sent_texts)
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_suppresses_final_reply_after_tool_message_same_target() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        engine = MessageToolEngine()
+        mgr = ChannelManager(bus=bus, engine=engine)
+        engine.manager = mgr
+        mgr.register("fake", FakeChannel)
+
+        await mgr.start({"channels": {"fake": {"enabled": True}}})
+
+        fake = mgr._channels["fake"]
+        await fake.emit(session_id="fake:5", user_id="u1", text="hello", metadata={"channel": "fake", "chat_id": "5"})
+        await asyncio.sleep(0.1)
+
+        assert [text for _, text, _ in fake.sent] == ["tool:sent"]
 
         await mgr.stop()
 

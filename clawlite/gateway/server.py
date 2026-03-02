@@ -16,7 +16,7 @@ from clawlite.bus.queue import MessageQueue
 from clawlite.channels.manager import ChannelManager
 from clawlite.config.loader import load_config
 from clawlite.config.schema import AppConfig
-from clawlite.core.engine import AgentEngine
+from clawlite.core.engine import AgentEngine, LoopDetectionSettings
 from clawlite.core.memory import MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
@@ -356,6 +356,13 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         max_iterations=config.agents.defaults.max_tool_iterations,
         max_tokens=config.agents.defaults.max_tokens,
         temperature=config.agents.defaults.temperature,
+        reasoning_effort_default=config.agents.defaults.reasoning_effort,
+        loop_detection=LoopDetectionSettings(
+            enabled=config.tools.loop_detection.enabled,
+            history_size=config.tools.loop_detection.history_size,
+            repeat_threshold=config.tools.loop_detection.repeat_threshold,
+            critical_threshold=config.tools.loop_detection.critical_threshold,
+        ),
     )
 
     async def _subagent_runner(session_id: str, task: str) -> str:
