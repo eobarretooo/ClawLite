@@ -13,7 +13,7 @@ class ToolContext:
 
 
 class Tool(ABC):
-    """Tool contract with JSON-schema-like args description."""
+    """Tool contract with OpenAI function-calling JSON schema."""
 
     name: str
     description: str
@@ -30,5 +30,5 @@ class Tool(ABC):
         return {
             "name": self.name,
             "description": self.description,
-            "arguments": self.args_schema(),
+            "parameters": self.args_schema(),
         }
