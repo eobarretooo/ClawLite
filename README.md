@@ -1,14 +1,29 @@
-# ClawLite
+<div align="center">
+  <h1>ClawLite</h1>
+  <p><strong>Assistente pessoal autônomo em Python</strong></p>
+  <p>Arquitetura modular, foco em execução real e operação contínua.</p>
+  <p>
+    <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
+    <img src="https://img.shields.io/badge/license-MIT-10b981" alt="MIT">
+    <img src="https://img.shields.io/badge/runtime-active-0ea5e9" alt="runtime active">
+    <img src="https://img.shields.io/badge/status-in%20development-f59e0b" alt="in development">
+  </p>
+</div>
 
-Assistente pessoal autônomo em Python, com arquitetura modular própria e foco em execução real.
+## Visão geral
 
-## O que já está no runtime atual
+ClawLite foi construído para ser um assistente que **age**, não só responde texto.  
+O núcleo atual já unifica engine, tools, memória, cron, skills e gateway HTTP/WS.
 
-- Engine único para chat/canais com prompt de workspace + memória + skills
+## O que já está funcionando
+
+- Engine único para CLI, chat e canais
+- Prompt com contexto de workspace (`IDENTITY`, `SOUL`, `USER`, `AGENTS`, `TOOLS`)
+- Memória persistente com busca lexical/BM25
 - Gateway FastAPI (`/health`, `/v1/chat`, `/v1/cron/*`, `/v1/ws`)
-- Scheduler com cron e heartbeat
-- Sistema de skills por `SKILL.md` com autoload e execução por `command/script`
-- Estrutura preparada para múltiplos canais e subagentes
+- Scheduler com `cron` + `heartbeat`
+- Skills por `SKILL.md` com autoload e execução via `command/script`
+- Estrutura pronta para múltiplos canais e subagentes
 
 ## Instalação
 
@@ -22,7 +37,7 @@ Desenvolvimento local:
 pip install -e .
 ```
 
-## Quickstart
+## Quickstart (1 minuto)
 
 ```bash
 clawlite onboard
@@ -52,8 +67,36 @@ clawlite cron list --session-id cli:ops
 clawlite cron remove --job-id <id>
 ```
 
+## Arquitetura
+
+```text
+clawlite/
+├── core/       # engine, prompt, memory, skills, subagent
+├── tools/      # registry + ferramentas locais
+├── bus/        # eventos e fila interna
+├── channels/   # integrações de canal
+├── gateway/    # FastAPI + websocket
+├── scheduler/  # cron + heartbeat
+├── providers/  # LLM providers
+├── session/    # histórico por sessão
+├── workspace/  # templates e bootstrap
+├── skills/     # skills builtin
+└── cli/        # comandos do usuário
+```
+
+## Planos futuros (roadmap de implementação)
+
+- [ ] Fechar autonomia operacional 24/7 em Linux/proot com supervisão completa
+- [ ] Expandir confiabilidade de canais com reconexão e entrega proativa robusta
+- [ ] Internacionalização completa (`pt-BR` e `en`) em CLI + docs
+- [ ] Evoluir sistema de skills (hub, versionamento, métricas e quality gates)
+- [ ] Melhorar memória de longo prazo com consolidação mais inteligente
+- [ ] Integração com ClawWork para fluxos de execução contínua
+- [ ] Benchmark e tuning de provedores para custo/latência/qualidade
+
 ## Documentação
 
+- Web docs: https://eobarretooo.github.io/ClawLite/
 - [Docs Index](docs/README.md)
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
@@ -62,28 +105,10 @@ clawlite cron remove --job-id <id>
 - [Skills](docs/SKILLS.md)
 - [Operations](docs/OPERATIONS.md)
 
-## Estrutura
+## Agradecimentos
 
-```text
-clawlite/
-├── core/
-├── tools/
-├── bus/
-├── channels/
-├── gateway/
-├── scheduler/
-├── providers/
-├── session/
-├── config/
-├── workspace/
-├── skills/
-├── cli/
-└── utils/
-```
-
-## Referências
-
-ClawLite é implementação própria. Agradecimento aos projetos open source **OpenClaw** e **nanobot**, usados como referência de arquitetura e operação para inspirar decisões de design.
+ClawLite é implementação própria.  
+Agradecimento aos projetos open source **OpenClaw** e **nanobot**, que serviram como referência de arquitetura e operação.
 
 ## Licença
 
