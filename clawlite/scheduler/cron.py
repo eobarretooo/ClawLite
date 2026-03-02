@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from clawlite.scheduler.types import CronJob, CronPayload, CronSchedule
-from clawlite.utils.logging import setup_logging
+from clawlite.utils.logging import bind_event, setup_logging
 
 setup_logging()
 
@@ -103,14 +103,14 @@ class CronService:
     async def stop(self) -> None:
         if self._task is None:
             return
-        logger.info("cron service stopping")
+        bind_event("cron.lifecycle").info("cron service stopping")
         self._task.cancel()
         try:
             await self._task
         except asyncio.CancelledError:
             pass
         self._task = None
-        logger.info("cron service stopped")
+        bind_event("cron.lifecycle").info("cron service stopped")
 
     async def _loop(self) -> None:
         while True:
@@ -187,7 +187,7 @@ class CronService:
         self._jobs.pop(job_id, None)
         if existed:
             self._save()
-            logger.info("cron job removed id={}", job_id)
+            bind_event("cron.job").info("cron job removed id={}", job_id)
         return existed
 
     def enable_job(self, job_id: str, *, enabled: bool) -> bool:
@@ -199,7 +199,7 @@ class CronService:
             next_dt = self._compute_next(job.schedule, self._now())
             job.next_run_iso = next_dt.isoformat() if next_dt else ""
         self._save()
-        logger.info("cron job updated id={} enabled={}", job_id, enabled)
+        bind_event("cron.job").info("cron job updated id={} enabled={}", job_id, enabled)
         return True
 
     def get_job(self, job_id: str) -> CronJob | None:
@@ -224,7 +224,7 @@ class CronService:
         else:
             job.next_run_iso = after.isoformat() if after else ""
         self._save()
-        logger.info("cron job manually executed id={} enabled={}", job.id, job.enabled)
+        bind_event("cron.job", session=job.session_id).info("cron job manually executed id={} enabled={}", job.id, job.enabled)
         return out
 
     @staticmethod

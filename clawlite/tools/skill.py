@@ -18,6 +18,9 @@ import httpx
 from clawlite.core.skills import SkillsLoader
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
+from clawlite.utils.logging import bind_event, setup_logging
+
+setup_logging()
 
 
 class SkillTool(Tool):
@@ -108,6 +111,7 @@ class SkillTool(Tool):
 
     async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
         name = str(arguments.get("name", "")).strip()
+        log = bind_event("tool.skill", session=ctx.session_id, tool=self.name)
         if not name:
             raise ValueError("skill name is required")
 
@@ -120,9 +124,11 @@ class SkillTool(Tool):
 
         if spec.command:
             argv = shlex.split(spec.command) + self._extra_args(arguments)
+            log.info("running skill command skill={}", spec.name)
             return await self._run_command(argv, timeout=float(arguments.get("timeout", 30) or 30))
 
         if spec.script:
+            log.info("running skill script skill={} script={}", spec.name, spec.script)
             return await self._dispatch_script(spec.script, arguments, ctx)
 
         return f"skill_not_executable:{spec.name}"

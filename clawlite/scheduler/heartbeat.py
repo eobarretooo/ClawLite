@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from clawlite.utils.logging import setup_logging
+from clawlite.utils.logging import bind_event, setup_logging
 
 TickHandler = Callable[[], Awaitable[str | None]]
 
@@ -22,22 +22,22 @@ class HeartbeatService:
         if self._task is not None:
             return
         self._running = True
-        logger.info("heartbeat started interval_seconds={}", self.interval_seconds)
+        bind_event("heartbeat.lifecycle").info("heartbeat started interval_seconds={}", self.interval_seconds)
 
         async def _loop() -> None:
             while self._running:
                 try:
-                    logger.debug("heartbeat tick")
+                    bind_event("heartbeat.tick").debug("heartbeat tick")
                     result = await on_tick()
                     if result is None or not str(result).strip() or str(result).strip().lower().startswith("skip"):
-                        logger.debug("heartbeat skip")
+                        bind_event("heartbeat.tick").debug("heartbeat skip")
                     else:
-                        logger.info("heartbeat run")
+                        bind_event("heartbeat.tick").info("heartbeat run")
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     # Heartbeat failures must not crash the background loop.
-                    logger.error("heartbeat error error={}", exc)
+                    bind_event("heartbeat.tick").error("heartbeat error={}", exc)
                 await asyncio.sleep(self.interval_seconds)
 
         self._task = asyncio.create_task(_loop())
@@ -46,7 +46,7 @@ class HeartbeatService:
         self._running = False
         if self._task is None:
             return
-        logger.info("heartbeat stopping")
+        bind_event("heartbeat.lifecycle").info("heartbeat stopping")
         self._task.cancel()
         try:
             await self._task
@@ -54,6 +54,6 @@ class HeartbeatService:
             pass
         except Exception as exc:
             # Ignore background exceptions during shutdown.
-            logger.error("heartbeat stop error error={}", exc)
+            bind_event("heartbeat.lifecycle").error("heartbeat stop error={}", exc)
         self._task = None
-        logger.info("heartbeat stopped")
+        bind_event("heartbeat.lifecycle").info("heartbeat stopped")

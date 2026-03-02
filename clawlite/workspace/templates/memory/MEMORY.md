@@ -6,3 +6,7 @@ Use this file for durable facts:
 - project context worth preserving
 
 Do not store secrets in plain text.
+
+## Operational notes
+- Store heartbeat bookkeeping in `memory/heartbeat-state.json`.
+- Keep this file concise and curated; avoid raw noisy logs.

@@ -32,7 +32,7 @@ from clawlite.tools.registry import ToolRegistry
 from clawlite.tools.skill import SkillTool
 from clawlite.tools.spawn import SpawnTool
 from clawlite.tools.web import WebFetchTool, WebSearchTool
-from clawlite.utils.logging import setup_logging
+from clawlite.utils.logging import bind_event, setup_logging
 from clawlite.workspace.loader import WorkspaceLoader
 
 setup_logging()
@@ -134,7 +134,7 @@ def _provider_config(config: AppConfig) -> dict[str, Any]:
 
 
 def build_runtime(config: AppConfig) -> RuntimeContainer:
-    logger.info("building runtime workspace={} state={}", config.workspace_path, config.state_path)
+    bind_event("gateway.runtime").info("building runtime workspace={} state={}", config.workspace_path, config.state_path)
     workspace = WorkspaceLoader(workspace_path=config.workspace_path)
     workspace.bootstrap()
     workspace_path = Path(config.workspace_path).expanduser().resolve()
@@ -189,7 +189,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     channels = ChannelManager(bus=bus, engine=engine)
     tools.register(MessageTool(_MessageAPI(channels)))
 
-    logger.info("runtime ready provider_model={} tools={}", config.provider.model, len(tools.schema()))
+    bind_event("gateway.runtime").info("runtime ready provider_model={} tools={}", config.agents.defaults.model, len(tools.schema()))
     return RuntimeContainer(
         config=config,
         bus=bus,
@@ -202,7 +202,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
 
 
 async def _route_cron_job(runtime: RuntimeContainer, job) -> str | None:
-    logger.info("cron dispatch start job_id={} session={}", job.id, job.session_id)
+    bind_event("cron.dispatch", session=job.session_id).info("cron dispatch start job_id={}", job.id)
     result = await runtime.engine.run(session_id=job.session_id, user_text=job.payload.prompt)
     channel = job.payload.channel.strip() or job.session_id.split(":", 1)[0]
     target = job.payload.target.strip() or job.session_id.split(":", 1)[-1]
@@ -210,18 +210,18 @@ async def _route_cron_job(runtime: RuntimeContainer, job) -> str | None:
         try:
             await runtime.channels.send(channel=channel, target=target, text=result.text)
         except Exception:
-            logger.error("cron dispatch send failed job_id={} channel={} target={}", job.id, channel, target)
+            bind_event("channel.send", session=job.session_id, channel=channel).error("cron dispatch send failed job_id={} target={}", job.id, target)
             return "cron_send_skipped"
-    logger.info("cron dispatch finished job_id={} session={}", job.id, job.session_id)
+    bind_event("cron.dispatch", session=job.session_id).info("cron dispatch finished job_id={}", job.id)
     return result.text
 
 
 async def _run_heartbeat(runtime: RuntimeContainer) -> str | None:
     heartbeat_prompt = "heartbeat: check pending tasks and send proactive updates when needed"
     session_id = "heartbeat:system"
-    logger.debug("heartbeat callback running")
+    bind_event("heartbeat.tick", session="heartbeat:system").debug("heartbeat callback running")
     result = await runtime.engine.run(session_id=session_id, user_text=heartbeat_prompt)
-    logger.debug("heartbeat callback completed")
+    bind_event("heartbeat.tick", session="heartbeat:system").debug("heartbeat callback completed")
     return result.text
 
 
@@ -231,21 +231,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        logger.info("gateway startup begin host={} port={}", cfg.gateway.host, cfg.gateway.port)
+        bind_event("gateway.lifecycle").info("gateway startup begin host={} port={}", cfg.gateway.host, cfg.gateway.port)
         await runtime.channels.start(cfg.to_dict())
         await runtime.cron.start(lambda job: _route_cron_job(runtime, job))
         if cfg.gateway.heartbeat.enabled:
             await runtime.heartbeat.start(lambda: _run_heartbeat(runtime))
-        logger.info("gateway startup complete")
+        bind_event("gateway.lifecycle").info("gateway startup complete")
         try:
             yield
         finally:
-            logger.info("gateway shutdown begin")
+            bind_event("gateway.lifecycle").info("gateway shutdown begin")
             if cfg.gateway.heartbeat.enabled:
                 await runtime.heartbeat.stop()
             await runtime.cron.stop()
             await runtime.channels.stop()
-            logger.info("gateway shutdown complete")
+            bind_event("gateway.lifecycle").info("gateway shutdown complete")
 
     app = FastAPI(title="ClawLite Gateway", version="1.0.0", lifespan=lifespan)
     app.state.runtime = runtime
@@ -318,9 +318,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             out = await runtime.engine.run(session_id=req.session_id, user_text=req.text)
         except RuntimeError as exc:
             status_code, detail = _provider_error_payload(exc)
-            logger.error("chat request failed session={} status={} detail={}", req.session_id, status_code, detail)
+            bind_event("gateway.chat", session=req.session_id).error("chat request failed status={} detail={}", status_code, detail)
             raise HTTPException(status_code=status_code, detail=detail)
-        logger.info("chat response generated session={} model={}", req.session_id, out.model)
+        bind_event("gateway.chat", session=req.session_id).info("chat response generated model={}", out.model)
         return ChatResponse(text=out.text, model=out.model)
 
     @app.post("/v1/cron/add")
@@ -344,7 +344,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @app.websocket("/v1/ws")
     async def ws_chat(socket: WebSocket) -> None:
         await socket.accept()
-        logger.info("websocket client connected path=/v1/ws")
+        bind_event("gateway.ws", channel="ws").info("websocket client connected path=/v1/ws")
         try:
             while True:
                 payload = await socket.receive_json()
@@ -357,13 +357,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     out = await runtime.engine.run(session_id=session_id, user_text=text)
                 except RuntimeError as exc:
                     status_code, detail = _provider_error_payload(exc)
-                    logger.error("websocket request failed session={} status={} detail={}", session_id, status_code, detail)
+                    bind_event("gateway.ws", session=session_id, channel="ws").error("websocket request failed status={} detail={}", status_code, detail)
                     await socket.send_json({"error": detail, "status_code": status_code})
                     continue
                 await socket.send_json({"text": out.text, "model": out.model})
-                logger.debug("websocket response sent session={} model={}", session_id, out.model)
+                bind_event("gateway.ws", session=session_id, channel="ws").debug("websocket response sent model={}", out.model)
         except WebSocketDisconnect:
-            logger.info("websocket client disconnected path=/v1/ws")
+            bind_event("gateway.ws", channel="ws").info("websocket client disconnected path=/v1/ws")
             return
 
     return app
@@ -374,7 +374,7 @@ def run_gateway(host: str | None = None, port: int | None = None) -> None:
     app = create_app(cfg)
     resolved_host = host or cfg.gateway.host
     resolved_port = port or int(cfg.gateway.port)
-    logger.info("running gateway host={} port={}", resolved_host, resolved_port)
+    bind_event("gateway.lifecycle").info("running gateway host={} port={}", resolved_host, resolved_port)
     uvicorn.run(
         app,
         host=resolved_host,

@@ -5,14 +5,12 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
-from loguru import logger
-
 from clawlite.core.memory import MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager
 from clawlite.session.store import SessionStore
-from clawlite.utils.logging import setup_logging
+from clawlite.utils.logging import bind_event, setup_logging
 
 setup_logging()
 
@@ -160,13 +158,14 @@ class AgentEngine:
         channel: str | None = None,
         chat_id: str | None = None,
     ) -> ProviderResult:
-        logger.info("processing message session={} chars={}", session_id, len(user_text))
+        runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
+        run_log = bind_event("agent.loop", session=session_id, channel=runtime_channel or "-")
+        run_log.info("processing message chars={}", len(user_text))
         history = self.sessions.read(session_id, limit=20)
         memories = [row.text for row in self.memory.search(user_text, limit=6)]
         skills = self.skills_loader.render_for_prompt()
         always_names = [item.name for item in self.skills_loader.always_on()]
         skills_context = self.skills_loader.load_skills_for_context(always_names)
-        runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
 
         prompt = self.prompt_builder.build(
             user_text=user_text,
@@ -200,7 +199,7 @@ class AgentEngine:
             try:
                 step = await self._complete_provider(messages=messages, tools=self.tools.schema())
             except Exception as exc:
-                logger.error("llm completion failed session={} iteration={} error={}", session_id, iteration, exc)
+                run_log.error("llm completion failed iteration={} error={}", iteration, exc)
                 reason = str(exc)
                 if reason.startswith("provider_auth_error:missing_api_key:"):
                     provider = reason.rsplit(":", 1)[-1]
@@ -224,7 +223,7 @@ class AgentEngine:
                 break
 
             if step.tool_calls:
-                logger.debug("tool calls requested session={} iteration={} count={}", session_id, iteration, len(step.tool_calls))
+                run_log.debug("tool calls requested iteration={} count={}", iteration, len(step.tool_calls))
                 messages.append(
                     {
                         "role": "assistant",
@@ -238,13 +237,13 @@ class AgentEngine:
                     name = self._tool_call_name(tool_call)
                     arguments = self._tool_call_arguments(tool_call)
                     if not name:
-                        logger.error("tool call without name session={} iteration={} idx={}", session_id, iteration, idx)
+                        run_log.error("tool call without name iteration={} idx={}", iteration, idx)
                         continue
-                    logger.debug("executing tool session={} tool={} call_id={}", session_id, name, call_id)
+                    bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).debug("executing call_id={}", call_id)
                     try:
                         tool_result = await self.tools.execute(name, arguments, session_id=session_id)
                     except Exception as exc:
-                        logger.error("tool execution failed session={} tool={} call_id={} error={}", session_id, name, call_id, exc)
+                        bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).error("execution failed call_id={} error={}", call_id, exc)
                         tool_result = f"tool_error:{name}:{exc}"
                     messages.append(
                         {
@@ -260,7 +259,7 @@ class AgentEngine:
             break
 
         if not final.text and iteration >= self.max_iterations:
-            logger.error("max iterations reached session={} max_iterations={}", session_id, self.max_iterations)
+            run_log.error("max iterations reached max_iterations={}", self.max_iterations)
             final = ProviderResult(
                 text=f"I reached the maximum number of tool iterations ({self.max_iterations}) without completing the task.",
                 tool_calls=[],
@@ -275,6 +274,6 @@ class AgentEngine:
                 source=f"session:{session_id}",
             )
         else:
-            logger.info("skipping assistant persistence after provider failure session={}", session_id)
-        logger.info("response generated session={} model={} chars={}", session_id, final.model, len(final.text))
+            run_log.info("skipping assistant persistence after provider failure")
+        run_log.info("response generated model={} chars={}", final.model, len(final.text))
         return final

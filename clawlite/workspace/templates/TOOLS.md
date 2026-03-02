@@ -1,27 +1,35 @@
 # Tools
 
 ## Execution
-- `exec`: run shell commands with timeout and structured output.
+- `exec`: run shell commands with timeout and structured output (`command`, optional `timeout`).
 
 ## Filesystem
-- `read_file`, `write_file`, `list_files`, `edit_file`: workspace file operations.
+- `read_file`: read UTF-8 file content.
+- `write_file`: write UTF-8 file content.
+- `edit_file`: replace text in a file (`search` -> `replace`).
+- `list_dir`: list directory entries.
 
 ## Web
-- `web_fetch`, `web_search`: fetch pages and search the web when needed.
+- `web_fetch`: fetch content from a URL.
+- `web_search`: search the web and return snippets.
 
 ## Scheduling
-- `cron_add`, `cron_list`, `cron_remove`: schedule and manage recurring tasks.
+- `cron`: manage jobs with `action`:
+  - `add` (`session_id`, `expression`, `prompt`, optional `name`)
+  - `list` (`session_id`)
+  - `remove` (`job_id`)
+  - `enable` / `disable` (`job_id`)
+  - `run` (`job_id`)
 
-## Messaging
-- `message_send`: send proactive notifications to channels.
+## Messaging and Delegation
+- `message`: send proactive notifications (`channel`, `target`, `text`).
+- `spawn`: run delegated background tasks (`task`, optional `session_id`).
 
-## Delegation
-- `spawn_subagent`: run delegated background tasks in parallel.
+## MCP and Skills
+- `mcp`: call configured MCP endpoint (`url`, `tool`, `arguments`).
+- `run_skill`: execute SKILL.md bindings by `name`.
 
-## MCP
-- `mcp_call`: call MCP servers using configured endpoints.
-
-## Limits and Care
+## Safety Rules
 - Validate inputs before execution.
-- Respect channel/provider rate limits.
+- Respect provider/channel rate limits.
 - Avoid destructive commands unless explicitly requested.

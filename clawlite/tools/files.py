@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from clawlite.tools.base import Tool, ToolContext
+from clawlite.utils.logging import bind_event, setup_logging
+
+setup_logging()
 
 
 def _workspace_path(raw_workspace: str | Path | None) -> Path | None:
@@ -50,6 +53,7 @@ class ReadFileTool(Tool):
         )
         if not path.exists():
             raise FileNotFoundError(str(path))
+        bind_event("tool.files", session=ctx.session_id, tool=self.name).debug("read file path={}", path)
         return path.read_text(encoding="utf-8", errors="ignore")
 
 
@@ -80,6 +84,7 @@ class WriteFileTool(Tool):
         content = str(arguments.get("content", ""))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        bind_event("tool.files", session=ctx.session_id, tool=self.name).info("write file path={}", path)
         return f"ok:{path}"
 
 
@@ -114,9 +119,11 @@ class EditFileTool(Tool):
         search = str(arguments.get("search", ""))
         replace = str(arguments.get("replace", ""))
         if search not in old:
+            bind_event("tool.files", session=ctx.session_id, tool=self.name).debug("edit no change path={}", path)
             return "no_change"
         new = old.replace(search, replace)
         path.write_text(new, encoding="utf-8")
+        bind_event("tool.files", session=ctx.session_id, tool=self.name).info("edit file path={}", path)
         return "ok"
 
 
@@ -144,4 +151,5 @@ class ListDirTool(Tool):
         if not path.exists() or not path.is_dir():
             raise NotADirectoryError(str(path))
         rows = sorted(item.name for item in path.iterdir())
+        bind_event("tool.files", session=ctx.session_id, tool=self.name).debug("list dir path={} count={}", path, len(rows))
         return "\n".join(rows)

@@ -1,11 +1,13 @@
-# Bootstrap
+# BOOTSTRAP.md
 
-This file is only for first-run setup.
+First-run setup checklist. This file is consumed once.
 
-On first startup:
-1. Ask for missing identity fields.
-2. Confirm primary communication channel.
+## Steps
+1. Confirm assistant identity and user profile fields.
+2. Confirm primary channel and notification preferences.
 3. Validate provider credentials.
-4. Create initial memory note with user goals.
+4. Create first memory note with user goals.
 
-After setup is complete, mark bootstrap as done and stop using this file.
+## Completion contract
+- After successful first-run setup, bootstrap must be marked complete.
+- The runtime should stop using this file and remove it from workspace to avoid repeated bootstrap prompts.

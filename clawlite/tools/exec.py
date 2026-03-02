@@ -6,6 +6,9 @@ import shlex
 from pathlib import Path
 
 from clawlite.tools.base import Tool, ToolContext
+from clawlite.utils.logging import bind_event, setup_logging
+
+setup_logging()
 
 
 class ExecTool(Tool):
@@ -54,6 +57,7 @@ class ExecTool(Tool):
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         command = str(arguments.get("command", "")).strip()
+        log = bind_event("tool.exec", session=ctx.session_id, tool=self.name)
         if not command:
             raise ValueError("command is required")
 
@@ -61,6 +65,7 @@ class ExecTool(Tool):
         argv = shlex.split(command)
         guard_error = self._workspace_guard(argv)
         if guard_error:
+            log.warning("command blocked by workspace guard error={}", guard_error)
             return f"exit=-1\nstdout=\nstderr={guard_error}"
 
         env = os.environ.copy()
@@ -79,14 +84,17 @@ class ExecTool(Tool):
                 env=env,
             )
         except OSError as exc:
+            log.error("spawn failed error={}", exc)
             return f"exit=-1\nstdout=\nstderr={exc}"
         try:
             out, err = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             process.kill()
             await process.communicate()
+            log.warning("command timeout timeout_s={}", timeout)
             return f"exit=-1\nstdout=\nstderr=timeout after {timeout}s"
 
         stdout = out.decode("utf-8", errors="ignore").strip()
+        log.debug("command finished exit_code={}", process.returncode)
         stderr = err.decode("utf-8", errors="ignore").strip()
         return f"exit={process.returncode}\nstdout={stdout}\nstderr={stderr}"

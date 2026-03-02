@@ -3,6 +3,9 @@ from __future__ import annotations
 import httpx
 
 from clawlite.tools.base import Tool, ToolContext
+from clawlite.utils.logging import bind_event, setup_logging
+
+setup_logging()
 
 
 class MCPTool(Tool):
@@ -22,6 +25,7 @@ class MCPTool(Tool):
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()
+        log = bind_event("tool.mcp", session=ctx.session_id, tool=self.name)
         tool = str(arguments.get("tool", "")).strip()
         payload_args = arguments.get("arguments", {})
         if not isinstance(payload_args, dict):
@@ -40,6 +44,7 @@ class MCPTool(Tool):
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
+        log.info("mcp call url={} method=tools/call", url)
 
         if isinstance(data, dict) and data.get("error"):
             return f"mcp_error:{data['error']}"

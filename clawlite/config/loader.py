@@ -10,6 +10,11 @@ from clawlite.config.schema import AppConfig
 DEFAULT_CONFIG_PATH = Path.home() / ".clawlite" / "config.json"
 
 
+def _strict_mode_enabled() -> bool:
+    raw = os.getenv("CLAWLITE_CONFIG_STRICT", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for key, value in extra.items():
@@ -41,6 +46,68 @@ def _read_file(path: Path) -> dict[str, Any]:
     return dict(loaded)
 
 
+
+
+def _migrate_config(raw: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(raw)
+
+    gateway = cfg.get("gateway")
+    if isinstance(gateway, dict):
+        gateway = dict(gateway)
+        gateway.pop("token", None)
+        cfg["gateway"] = gateway
+
+    scheduler = cfg.get("scheduler")
+    if isinstance(scheduler, dict):
+        scheduler = dict(scheduler)
+        interval = scheduler.get("heartbeat_interval_seconds")
+        gateway = dict(cfg.get("gateway") or {})
+        heartbeat = dict(gateway.get("heartbeat") or {})
+        if interval is not None and "interval_s" not in heartbeat and "intervalS" not in heartbeat:
+            heartbeat["interval_s"] = interval
+            gateway["heartbeat"] = heartbeat
+            cfg["gateway"] = gateway
+
+    provider = cfg.get("provider")
+    agents = dict(cfg.get("agents") or {})
+    defaults = dict(agents.get("defaults") or {})
+    if isinstance(provider, dict):
+        model = str(provider.get("model", "") or "").strip()
+        if model and "model" not in defaults:
+            defaults["model"] = model
+    if defaults:
+        agents["defaults"] = defaults
+        cfg["agents"] = agents
+
+    return cfg
+
+
+def _validate_config_keys(config: dict[str, Any]) -> None:
+    template = AppConfig().to_dict()
+    errors: list[str] = []
+
+    def _walk(node: Any, ref: Any, path: str) -> None:
+        if not isinstance(node, dict) or not isinstance(ref, dict):
+            return
+
+        for key, value in node.items():
+            location = f"{path}.{key}" if path else key
+            if key in ref:
+                _walk(value, ref[key], location)
+                continue
+
+            if path == "channels" and isinstance(value, dict):
+                continue
+            if path.endswith("extra_headers"):
+                continue
+            errors.append(location)
+
+    _walk(config, template, "")
+    if errors:
+        formatted = ", ".join(sorted(errors))
+        raise RuntimeError(f"invalid config keys: {formatted}")
+
+
 def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if include_model:
@@ -69,12 +136,15 @@ def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
     return out
 
 
-def load_config(path: str | Path | None = None) -> AppConfig:
+def load_config(path: str | Path | None = None, *, strict: bool | None = None) -> AppConfig:
     target = Path(path) if path else DEFAULT_CONFIG_PATH
-    file_cfg = _read_file(target)
+    file_cfg = _migrate_config(_read_file(target))
     defaults = AppConfig().to_dict()
     merged = _deep_merge(defaults, file_cfg)
     merged = _deep_merge(merged, _env_overrides(include_model=path is None))
+    strict_mode = strict if strict is not None else _strict_mode_enabled()
+    if strict_mode:
+        _validate_config_keys(merged)
     return AppConfig.from_dict(merged)
 
 

@@ -1,8 +1,8 @@
 ---
 name: weather
-description: Get current weather and forecast without API key.
+description: Get current weather and forecast with the weather script binding.
 always: false
-metadata: {"clawlite":{"emoji":"🌤️","requires":{"bins":["curl"]}}}
+metadata: {"clawlite":{"emoji":"🌤️"}}
 script: weather
 ---
 
@@ -10,22 +10,9 @@ script: weather
 
 Use this skill for weather requests.
 
-## Primary source: wttr.in
+Input:
+- `location` (preferred) or `input` as fallback.
 
-Current condition:
-```bash
-curl -s "wttr.in/Sao+Paulo?format=3"
-```
-
-Detailed line:
-```bash
-curl -s "wttr.in/Sao+Paulo?format=%l:+%c+%t+%h+%w"
-```
-
-## Fallback source: Open-Meteo
-
-```bash
-curl -s "https://api.open-meteo.com/v1/forecast?latitude=-23.55&longitude=-46.63&current_weather=true"
-```
-
-When ambiguity exists, confirm location and timezone before responding.
+Behavior:
+- Calls weather source and returns a concise line.
+- If location is missing, default location is used.

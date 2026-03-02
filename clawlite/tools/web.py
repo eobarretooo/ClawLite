@@ -5,6 +5,9 @@ from urllib.parse import urlparse
 import httpx
 
 from clawlite.tools.base import Tool, ToolContext
+from clawlite.utils.logging import bind_event, setup_logging
+
+setup_logging()
 
 
 class WebFetchTool(Tool):
@@ -23,6 +26,7 @@ class WebFetchTool(Tool):
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()
+        log = bind_event("tool.web", session=ctx.session_id, tool=self.name)
         if not url:
             raise ValueError("url is required")
 
@@ -34,6 +38,7 @@ class WebFetchTool(Tool):
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
+        log.info("fetched url={} status={}", url, getattr(response, "status_code", "-"))
         text = response.text.strip()
         return text[:12000]
 
@@ -54,6 +59,7 @@ class WebSearchTool(Tool):
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
+        log = bind_event("tool.web", session=ctx.session_id, tool=self.name)
         if not query:
             raise ValueError("query is required")
         limit = int(arguments.get("limit", 5) or 5)
@@ -68,4 +74,5 @@ class WebSearchTool(Tool):
                 href = str(item.get("href", "")).strip()
                 body = str(item.get("body", "")).strip()
                 rows.append(f"- {title}\n  {href}\n  {body}")
+        log.info("search query={} results={}", query, len(rows))
         return "\n".join(rows) if rows else "no_results"

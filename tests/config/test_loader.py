@@ -114,3 +114,22 @@ def test_load_config_channels_and_gateway_heartbeat_backward_compat(tmp_path: Pa
     assert cfg.channels.telegram.allow_from == ["123"]
     assert cfg.channels.telegram.poll_timeout_s == 15
     assert "qq" in cfg.channels.extra
+
+
+def test_load_config_strict_mode_rejects_invalid_keys(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"gateway": {"port": 8787, "unknown": True}}), encoding="utf-8")
+
+    try:
+        load_config(path, strict=True)
+        raise AssertionError("expected strict invalid-key failure")
+    except RuntimeError as exc:
+        assert "invalid config keys" in str(exc)
+
+
+def test_load_config_migrates_legacy_gateway_token(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"gateway": {"host": "127.0.0.1", "port": 8787, "token": "legacy"}}), encoding="utf-8")
+    cfg = load_config(path, strict=True)
+    assert cfg.gateway.host == "127.0.0.1"
+    assert cfg.gateway.port == 8787
