@@ -28,8 +28,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     runtime = build_runtime(cfg)
 
     async def _scenario() -> None:
-        out = await runtime.engine.run(session_id=args.session_id, user_text=args.prompt)
-        _print_json({"text": out.text, "model": out.model})
+        try:
+            out = await asyncio.wait_for(
+                runtime.engine.run(session_id=args.session_id, user_text=args.prompt),
+                timeout=max(1.0, float(args.timeout)),
+            )
+            _print_json({"text": out.text, "model": out.model})
+        except asyncio.TimeoutError:
+            _print_json(
+                {
+                    "text": "Run timed out before the model finished. Increase --timeout or verify provider latency.",
+                    "model": "engine/fallback",
+                    "timed_out": True,
+                }
+            )
 
     asyncio.run(_scenario())
     return 0
@@ -150,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="Run one prompt through the agent engine")
     p_run.add_argument("prompt")
     p_run.add_argument("--session-id", default="cli:default")
+    p_run.add_argument("--timeout", type=float, default=20.0, help="Max seconds to wait for a single run")
     p_run.set_defaults(handler=cmd_run)
 
     p_onboard = sub.add_parser("onboard", help="Generate workspace identity templates")

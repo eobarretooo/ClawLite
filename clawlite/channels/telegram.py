@@ -171,7 +171,27 @@ class TelegramChannel(BaseChannel):
 
             self.bot = Bot(token=self.token)
         chunks = split_message(text)
-        for chunk in chunks:
-            await self.bot.send_message(chat_id=chat_id, text=chunk)
+        max_attempts = 3
+        initial_backoff_s = 1.0
+        for idx, chunk in enumerate(chunks, start=1):
+            backoff_s = initial_backoff_s
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    await self.bot.send_message(chat_id=chat_id, text=chunk)
+                    break
+                except Exception as exc:
+                    logger.error(
+                        "telegram outbound failed chat={} chunk={}/{} attempt={}/{} error={}",
+                        chat_id,
+                        idx,
+                        len(chunks),
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    if attempt >= max_attempts:
+                        raise
+                    await asyncio.sleep(backoff_s)
+                    backoff_s *= 2
         logger.info("telegram outbound sent chat={} chunks={} chars={}", chat_id, len(chunks), len(text))
         return f"telegram:sent:{len(chunks)}"
