@@ -28,7 +28,7 @@ setup_logging()
 
 
 class EngineProtocol:
-    async def run(self, *, session_id: str, user_text: str): ...
+    async def run(self, *, session_id: str, user_text: str, channel: str | None = None, chat_id: str | None = None): ...
 
 
 class ChannelManager:
@@ -88,7 +88,12 @@ class ChannelManager:
                 event.user_id,
             )
             try:
-                result = await self.engine.run(session_id=event.session_id, user_text=event.text)
+                result = await self.engine.run(
+                    session_id=event.session_id,
+                    user_text=event.text,
+                    channel=event.channel,
+                    chat_id=str(event.metadata.get("chat_id") or event.user_id),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

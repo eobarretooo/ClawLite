@@ -16,3 +16,4 @@ edge-tts>=6.1.12
 groq>=0.11.0
 rank_bm25>=0.2.2
 loguru>=0.7.2
+json-repair>=0.30.0

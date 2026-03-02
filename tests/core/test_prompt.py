@@ -20,4 +20,5 @@ def test_prompt_builder_reads_workspace_files(tmp_path: Path) -> None:
     assert "IDENTITY.md" in out.system_prompt
     assert "SOUL.md" in out.system_prompt
     assert "fact A" in out.memory_section
-    assert "user: old" in out.history_section
+    assert out.history_messages == [{"role": "user", "content": "old"}]
+    assert "[Runtime Context" in out.runtime_context

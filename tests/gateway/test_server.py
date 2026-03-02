@@ -40,7 +40,7 @@ def test_gateway_chat_endpoint(tmp_path: Path) -> None:
         assert chat.json()["text"] == "pong"
 
 
-def test_gateway_chat_provider_error_returns_actionable_message(tmp_path: Path) -> None:
+def test_gateway_chat_provider_error_returns_graceful_message(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
         state_path=str(tmp_path / "state"),
@@ -52,15 +52,14 @@ def test_gateway_chat_provider_error_returns_actionable_message(tmp_path: Path) 
 
     with TestClient(app) as client:
         chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
-        assert chat.status_code == 502
-        detail = str(chat.json().get("detail", "")).lower()
-        assert "autenticacao" in detail
-        assert "clawlite_litellm_api_key" in detail
+        assert chat.status_code == 200
+        text = str(chat.json().get("text", "")).lower()
+        assert "sorry" in text
         # Avoid provider error leaking from heartbeat lifecycle during client shutdown.
         app.state.runtime.engine.provider = FakeProvider()
 
 
-def test_gateway_chat_provider_http_400_includes_provider_detail(tmp_path: Path) -> None:
+def test_gateway_chat_provider_http_400_returns_graceful_message(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
         state_path=str(tmp_path / "state"),
@@ -72,7 +71,7 @@ def test_gateway_chat_provider_http_400_includes_provider_detail(tmp_path: Path)
 
     with TestClient(app) as client:
         chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
-        assert chat.status_code == 400
-        detail = str(chat.json().get("detail", "")).lower()
-        assert "invalid model" in detail
+        assert chat.status_code == 200
+        text = str(chat.json().get("text", "")).lower()
+        assert "sorry" in text
         app.state.runtime.engine.provider = FakeProvider()

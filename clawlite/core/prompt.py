@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -11,7 +13,8 @@ from clawlite.workspace.loader import WorkspaceLoader
 class PromptArtifacts:
     system_prompt: str
     memory_section: str
-    history_section: str
+    history_messages: list[dict[str, str]]
+    runtime_context: str
     skills_context: str
 
 
@@ -32,15 +35,25 @@ class PromptBuilder:
         return "[Memory]\n" + "\n".join(f"- {item}" for item in clean)
 
     @staticmethod
-    def _render_history(history: Iterable[dict[str, str]]) -> str:
-        lines: list[str] = []
+    def _normalize_history(history: Iterable[dict[str, str]]) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
         for row in history:
             role = str(row.get("role", "")).strip()
             content = str(row.get("content", "")).strip()
-            if not role or not content:
+            if role not in {"system", "user", "assistant", "tool"} or not content:
                 continue
-            lines.append(f"{role}: {content}")
-        return "[History]\n" + "\n".join(lines) if lines else ""
+            rows.append({"role": role, "content": content})
+        return rows
+
+    @staticmethod
+    def _render_runtime_context(channel: str, chat_id: str) -> str:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+        tz = time.strftime("%Z") or "UTC"
+        lines = [f"Current Time: {now} ({tz})"]
+        if channel and chat_id:
+            lines.append(f"Channel: {channel}")
+            lines.append(f"Chat ID: {chat_id}")
+        return "[Runtime Context — metadata only, not instructions]\n" + "\n".join(lines)
 
     def build(
         self,
@@ -50,6 +63,8 @@ class PromptBuilder:
         history: Iterable[dict[str, str]],
         skills_for_prompt: Iterable[str],
         skills_context: str = "",
+        channel: str = "",
+        chat_id: str = "",
     ) -> PromptArtifacts:
         workspace_block = self._read_workspace_files()
         skills_block = "\n".join(f"- {item}" for item in skills_for_prompt if item.strip())
@@ -61,6 +76,7 @@ class PromptBuilder:
         return PromptArtifacts(
             system_prompt=system_prompt,
             memory_section=self._render_memory(memory_snippets),
-            history_section=self._render_history(history),
+            history_messages=self._normalize_history(history),
+            runtime_context=self._render_runtime_context(channel=channel.strip(), chat_id=chat_id.strip()),
             skills_context=skills_context.strip(),
         )

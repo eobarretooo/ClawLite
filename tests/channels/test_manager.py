@@ -15,7 +15,7 @@ class _Result:
 
 
 class FakeEngine:
-    async def run(self, *, session_id: str, user_text: str):
+    async def run(self, *, session_id: str, user_text: str, channel: str | None = None, chat_id: str | None = None):
         return _Result(text=f"reply:{session_id}:{user_text}")
 
 

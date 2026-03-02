@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import time
 from typing import Any
 
 import httpx
+from json_repair import loads as json_repair_loads
 
 from clawlite.providers.base import LLMProvider, LLMResult, ToolCall
 
@@ -70,8 +71,8 @@ class LiteLLMProvider(LLMProvider):
             if not text:
                 return {}
             try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
+                payload = json_repair_loads(text)
+            except Exception:
                 return {"raw": text}
             return payload if isinstance(payload, dict) else {"value": payload}
         return {}
@@ -158,7 +159,7 @@ class LiteLLMProvider(LLMProvider):
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else None
                 if status == 429 and attempt < attempts:
-                    time.sleep(wait_seconds)
+                    await asyncio.sleep(wait_seconds)
                     continue
                 detail = _error_detail(exc.response)
                 if detail:
