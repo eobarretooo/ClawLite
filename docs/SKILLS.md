@@ -37,3 +37,19 @@ clawlite skills show cron
 ```
 
 `skills list --all` inclui skills indisponíveis no ambiente atual e mostra os requisitos faltantes.
+
+## Execução real de skill (tool)
+
+O runtime expõe a tool `run_skill`.
+
+Campos principais:
+- `name` (obrigatório)
+- `input` ou `args`
+- `timeout`
+- `query` (para `web-search`)
+- `location` (para `weather`)
+
+Fluxo:
+1. resolve skill por nome
+2. valida disponibilidade (`bins/env/os`)
+3. executa `command` ou `script` mapeado

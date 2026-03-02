@@ -61,6 +61,8 @@ clawlite cron add --session-id cli:ops --expression "every 120" --prompt "check"
 clawlite cron list --session-id cli:ops
 ```
 
+Skills com `command/script` também podem ser executadas pelo agente via tool `run_skill`.
+
 ## Documentação
 
 - [Docs Index](docs/README.md)

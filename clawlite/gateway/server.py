@@ -28,6 +28,7 @@ from clawlite.tools.files import EditFileTool, ListDirTool, ReadFileTool, WriteF
 from clawlite.tools.mcp import MCPTool
 from clawlite.tools.message import MessageTool
 from clawlite.tools.registry import ToolRegistry
+from clawlite.tools.skill import SkillTool
 from clawlite.tools.spawn import SpawnTool
 from clawlite.tools.web import WebFetchTool, WebSearchTool
 from clawlite.workspace.loader import WorkspaceLoader
@@ -110,11 +111,12 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     tools.register(WebSearchTool())
     tools.register(CronTool(_CronAPI(cron)))
     tools.register(MCPTool())
+    skills = SkillsLoader()
+    tools.register(SkillTool(loader=skills, registry=tools))
 
     sessions = SessionStore(root=Path(config.state_path) / "sessions")
     memory = MemoryStore(db_path=Path(config.state_path) / "memory.jsonl")
     prompt = PromptBuilder(workspace_path=config.workspace_path)
-    skills = SkillsLoader()
 
     engine = AgentEngine(
         provider=provider,
