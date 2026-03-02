@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any, Iterator
 
 from clawlite.config import settings as app_settings
@@ -14,18 +13,11 @@ from clawlite.core.context_manager import build_context_with_budget
 from clawlite.core.model_catalog import estimate_cost_usd, estimate_tokens, get_model_or_default
 from clawlite.core.plugin_sdk import HookPhase
 from clawlite.core.plugins import PluginManager
-from clawlite.core.rbac import Identity, ROLE_SCOPES, Role, check_tool_approval
-from clawlite.core.tools import exec_cmd, read_file, write_file
+from clawlite.core.rbac import Identity, ROLE_SCOPES, Role
 from clawlite.core.vector_memory import search_memory as vector_search_memory
 from clawlite.core.vector_memory import store_memory as vector_store_memory
 from clawlite.runtime.learning import get_retry_strategy, record_task
 from clawlite.runtime.notifications import create_notification
-from clawlite.runtime.offline import (
-    OllamaExecutionError,
-    ProviderExecutionError,
-    run_with_offline_fallback,
-    run_with_offline_fallback_stream,
-)
 from clawlite.runtime.preferences import build_preference_prefix
 from clawlite.runtime.session_memory import (
     append_daily_log,
@@ -327,276 +319,33 @@ def _execute_local_tool(
     plugin_manager: PluginManager | None = None,
     session_id: str = "",
 ) -> str:
-    actor = identity or _default_identity()
-    allowed, policy = check_tool_approval(name, args, identity=actor)
-    if not allowed:
-        return f"Ferramenta bloqueada: {policy}"
+    from clawlite.agent.execution.tools import get_tool_execution
 
-    result = ""
-    try:
-        if name == "exec_cmd":
-            code, out, err = exec_cmd(str(args.get("command", "")))
-            result = f"Exit code {code}\nSTDOUT:\n{out}\nSTDERR:\n{err}"
-        elif name == "read_file":
-            result = read_file(str(args.get("path", "")))
-        elif name == "write_file":
-            write_file(str(args.get("path", "")), str(args.get("content", "")))
-            result = "Arquivo escrito com sucesso."
-        elif name.startswith("browser_"):
-            from clawlite.runtime.browser_manager import get_browser_manager
-
-            bm = get_browser_manager()
-            if name == "browser_goto":
-                res = bm.goto(str(args.get("url", "")))
-                result = f"{res}\n{bm.get_snapshot()}"
-            elif name == "browser_click":
-                res = bm.click(str(args.get("cid", "")))
-                result = f"{res}\n{bm.get_snapshot()}"
-            elif name == "browser_fill":
-                res = bm.fill(str(args.get("cid", "")), str(args.get("text", "")))
-                result = f"{res}\n{bm.get_snapshot()}"
-            elif name == "browser_press":
-                res = bm.press(str(args.get("key", "")))
-                result = f"{res}\n{bm.get_snapshot()}"
-            elif name == "browser_read":
-                result = bm.get_snapshot()
-            else:
-                result = f"Erro: ferramenta browser '{name}' nao mapeada."
-        elif name == "spawn_subagent":
-            from clawlite.runtime.subagents import get_subagent_runtime
-
-            task = str(args.get("task", "")).strip()
-            label = str(args.get("label", "")).strip()
-            if not task:
-                result = "Erro: argumento 'task' é obrigatório para spawn_subagent."
-            else:
-                run = get_subagent_runtime().spawn(
-                    session_id=(session_id or "default"),
-                    task=task,
-                    label=label,
-                )
-                result = json.dumps({"ok": True, "subagent": run}, ensure_ascii=False)
-        elif name == "subagents_list":
-            from clawlite.runtime.subagents import get_subagent_runtime
-
-            active_only = bool(args.get("active_only", False))
-            runs = get_subagent_runtime().list_runs(
-                session_id=(session_id or None),
-                only_active=active_only,
-            )
-            result = json.dumps({"ok": True, "runs": runs}, ensure_ascii=False)
-        elif name == "subagents_kill":
-            from clawlite.runtime.subagents import get_subagent_runtime
-
-            runtime = get_subagent_runtime()
-            run_id = str(args.get("run_id", "")).strip()
-            if run_id:
-                cancelled = runtime.cancel_run(run_id)
-                result = json.dumps({"ok": cancelled, "run_id": run_id}, ensure_ascii=False)
-            else:
-                cancelled_count = runtime.cancel_session(session_id or "")
-                result = json.dumps(
-                    {"ok": True, "cancelled": cancelled_count, "scope": "session"},
-                    ensure_ascii=False,
-                )
-        elif name == "cron":
-            from clawlite.mcp import dispatch_skill_tool
-
-            payload = {
-                "command": str(args.get("command") or args.get("prompt") or "").strip(),
-            }
-            raw = dispatch_skill_tool("skill.cron", payload)
-            content = raw.get("content", []) if isinstance(raw, dict) else []
-            parts = [str(item.get("text", "")).strip() for item in content if isinstance(item, dict)]
-            result = "\n".join([p for p in parts if p]).strip() or json.dumps(raw, ensure_ascii=False)
-        elif name.startswith("skill."):
-            from clawlite.mcp import dispatch_skill_tool
-
-            payload = dict(args)
-            if "command" not in payload and "prompt" in payload:
-                payload["command"] = payload.get("prompt")
-            raw = dispatch_skill_tool(name, payload)
-            content = raw.get("content", []) if isinstance(raw, dict) else []
-            parts = [str(item.get("text", "")).strip() for item in content if isinstance(item, dict)]
-            result = "\n".join([p for p in parts if p]).strip() or json.dumps(raw, ensure_ascii=False)
-        else:
-            if plugin_manager:
-                plugin_output = plugin_manager.try_execute_tool(name, args)
-                if plugin_output is not None:
-                    result = plugin_output
-                else:
-                    result = f"Erro: ferramenta '{name}' nao existe."
-            else:
-                result = f"Erro: ferramenta '{name}' nao existe."
-    except Exception as exc:
-        result = f"Erro ao executar a ferramenta: {exc}"
-
-    if plugin_manager:
-        _fire_hook(
-            plugin_manager,
-            HookPhase.AFTER_TOOL_CALL,
-            session_id=session_id,
-            prompt=json.dumps({"tool": name, "arguments": args}, ensure_ascii=False),
-            response=result,
-            metadata={"policy": policy, "tool_name": name},
-        )
-    return result
+    return get_tool_execution().execute_local_tool(
+        name,
+        args,
+        identity=identity,
+        plugin_manager=plugin_manager,
+        session_id=session_id,
+    )
 
 
 def _run_model_with_meta(prompt: str) -> tuple[str, dict[str, Any]]:
-    requested_model = str(load_config().get("model", "openai/gpt-4o-mini"))
+    from clawlite.agent.execution.provider import get_provider_execution
 
-    if prompt.lower().startswith("resuma o diretorio"):
-        code, out, err = exec_cmd("ls -la")
-        if code == 0:
-            output = f"Diretorio atual:\n{out[:3000]}"
-            meta = {"mode": "local-tool", "reason": "directory-summary", "model": "local/exec_cmd"}
-            return output, _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
-        output = f"Falha ao listar diretorio: {err}"
-        meta = {"mode": "error", "reason": "local-tool-failed", "model": "local/exec_cmd"}
-        return output, _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
-
-    cfg = load_config()
-    requested_model = str(cfg.get("model", "openai/gpt-4o-mini"))
-    try:
-        output, meta = run_with_offline_fallback(prompt, cfg)
-    except ProviderExecutionError as exc:
-        create_notification(
-            event="provider_failed",
-            message=f"Falha no provedor remoto: {exc}",
-            priority="high",
-            dedupe_key=f"provider_failed:{exc}",
-            dedupe_window_seconds=300,
-        )
-        output = f"Falha no provedor remoto: {exc}"
-        meta = {
-            "mode": "error",
-            "reason": "provider-failed",
-            "model": requested_model,
-            "error": str(exc),
-        }
-        return output, _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
-    except OllamaExecutionError as exc:
-        create_notification(
-            event="ollama_failed",
-            message=f"Falha no fallback Ollama: {exc}",
-            priority="high",
-            dedupe_key=f"ollama_failed:{exc}",
-            dedupe_window_seconds=300,
-        )
-        output = f"Falha no fallback Ollama: {exc}"
-        meta = {
-            "mode": "error",
-            "reason": "ollama-failed",
-            "model": requested_model,
-            "error": str(exc),
-        }
-        return output, _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
-
-    if meta.get("mode") == "offline-fallback":
-        create_notification(
-            event="offline_fallback",
-            message=f"Fallback automatico para {meta.get('model')}",
-            priority="normal",
-            dedupe_key=f"offline_fallback:{meta.get('reason')}:{meta.get('model')}",
-            dedupe_window_seconds=300,
-            metadata=meta,
-        )
-    return output, _normalize_meta(meta, prompt=prompt, output=output, requested_model=requested_model)
+    return get_provider_execution().run_model_with_meta(prompt)
 
 
 def _run_model_stream_with_meta(prompt: str) -> tuple[Iterator[str], dict[str, Any]]:
-    requested_model = str(load_config().get("model", "openai/gpt-4o-mini"))
+    from clawlite.agent.execution.provider import get_provider_execution
 
-    if prompt.lower().startswith("resuma o diretorio"):
-        code, out, err = exec_cmd("ls -la")
-
-        def _mock_stream() -> Iterator[str]:
-            if code == 0:
-                yield f"Diretorio atual:\n{out[:3000]}"
-            else:
-                yield f"Falha ao listar diretorio: {err}"
-
-        if code == 0:
-            meta = {"mode": "local-tool", "reason": "directory-summary", "model": "local/exec_cmd"}
-            return _mock_stream(), _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
-        meta = {"mode": "error", "reason": "local-tool-failed", "model": "local/exec_cmd"}
-        return _mock_stream(), _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
-
-    cfg = load_config()
-    requested_model = str(cfg.get("model", "openai/gpt-4o-mini"))
-    try:
-        out_stream, meta = run_with_offline_fallback_stream(prompt, cfg)
-    except ProviderExecutionError as exc:
-        exc_msg = str(exc)
-        create_notification(
-            event="provider_failed",
-            message=f"Falha no provedor remoto (stream): {exc_msg}",
-            priority="high",
-            dedupe_key=f"provider_failed:{exc_msg}",
-            dedupe_window_seconds=300,
-        )
-
-        def _err_stream() -> Iterator[str]:
-            yield f"Falha no provedor remoto: {exc_msg}"
-
-        meta = {
-            "mode": "error",
-            "reason": "provider-failed",
-            "model": requested_model,
-            "error": exc_msg,
-        }
-        return _err_stream(), _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
-    except OllamaExecutionError as exc:
-        exc_msg = str(exc)
-        create_notification(
-            event="ollama_failed",
-            message=f"Falha no fallback Ollama (stream): {exc_msg}",
-            priority="high",
-            dedupe_key=f"ollama_failed:{exc_msg}",
-            dedupe_window_seconds=300,
-        )
-
-        def _err_stream() -> Iterator[str]:
-            yield f"Falha no fallback Ollama: {exc_msg}"
-
-        meta = {
-            "mode": "error",
-            "reason": "ollama-failed",
-            "model": requested_model,
-            "error": exc_msg,
-        }
-        return _err_stream(), _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
-
-    if meta.get("mode") == "offline-fallback":
-        create_notification(
-            event="offline_fallback",
-            message=f"Fallback automatico para {meta.get('model')}",
-            priority="normal",
-            dedupe_key=f"offline_fallback:{meta.get('reason')}:{meta.get('model')}",
-            dedupe_window_seconds=300,
-            metadata=meta,
-        )
-
-    return out_stream, _normalize_meta(meta, prompt=prompt, output="", requested_model=requested_model)
+    return get_provider_execution().run_model_stream_with_meta(prompt)
 
 
 def _run_task_with_timeout(prompt: str, timeout_s: float) -> tuple[str, dict[str, Any]]:
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        fut = executor.submit(_run_model_with_meta, prompt)
-        try:
-            return fut.result(timeout=timeout_s)
-        except FutureTimeout:
-            return (
-                f"Timeout: execucao excedeu {timeout_s:.0f}s",
-                {
-                    "mode": "error",
-                    "reason": "attempt-timeout",
-                    "model": "n/a",
-                    "error": f"timeout>{timeout_s}s",
-                    "error_type": "timeout",
-                },
-            )
+    from clawlite.agent.execution.provider import get_provider_execution
+
+    return get_provider_execution().run_task_with_timeout(prompt, timeout_s)
 
 
 def _run_task_with_meta_impl(
