@@ -18,7 +18,7 @@ class SkillsLoader:
     """Loads SKILL.md from builtin/workspace/marketplace skill roots."""
 
     def __init__(self, builtin_root: str | Path | None = None) -> None:
-        default_builtin = Path(__file__).resolve().parents[2] / "skills"
+        default_builtin = Path(__file__).resolve().parents[1] / "skills"
         self.roots = [
             Path(builtin_root) if builtin_root else default_builtin,
             Path.home() / ".clawlite" / "workspace" / "skills",
