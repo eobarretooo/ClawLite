@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from clawlite.runtime.codex_provider import CodexExecutionError
 from clawlite.runtime.offline import ProviderExecutionError, run_remote_provider, run_with_offline_fallback
 
 
@@ -105,6 +106,81 @@ class RemoteProviderTests(unittest.TestCase):
         self.assertEqual(kwargs["model"], "gpt-5.3-codex")
         self.assertEqual(kwargs["access_token"], "oauth-token")
         self.assertEqual(kwargs["account_id"], "acc_123")
+
+    def test_openai_codex_429_retries_then_succeeds(self) -> None:
+        response_429_a = MagicMock()
+        response_429_a.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_429_b = MagicMock()
+        response_429_b.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_ok = MagicMock()
+        response_ok.raise_for_status.return_value = None
+        response_ok.json.return_value = {
+            "choices": [{"message": {"content": "ok-codex-retry"}}],
+        }
+
+        client = MagicMock()
+        client.post.side_effect = [response_429_a, response_429_b, response_ok]
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            with patch("clawlite.runtime.offline.time.sleep") as sleep_mock:
+                out = run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "sk-codex-token")
+
+        self.assertEqual(out, "ok-codex-retry")
+        self.assertEqual(client.post.call_count, 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+        sleep_mock.assert_called_with(60.0)
+
+    def test_openai_codex_429_exhausted_returns_clear_message(self) -> None:
+        response_429_a = MagicMock()
+        response_429_a.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_429_b = MagicMock()
+        response_429_b.raise_for_status.side_effect = self._http_status_error(429)
+
+        response_429_c = MagicMock()
+        response_429_c.raise_for_status.side_effect = self._http_status_error(429)
+
+        client = MagicMock()
+        client.post.side_effect = [response_429_a, response_429_b, response_429_c]
+
+        cm = MagicMock()
+        cm.__enter__.return_value = client
+        cm.__exit__.return_value = False
+
+        with patch("clawlite.runtime.offline.httpx.Client", return_value=cm):
+            with patch("clawlite.runtime.offline.time.sleep") as sleep_mock:
+                with self.assertRaises(ProviderExecutionError) as ctx:
+                    run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "sk-codex-token")
+
+        message = str(ctx.exception).lower()
+        self.assertIn("codex", message)
+        self.assertIn("limite", message)
+        self.assertNotIn("erro http", message)
+        self.assertEqual(client.post.call_count, 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+
+    def test_openai_codex_oauth_429_retries_then_succeeds(self) -> None:
+        with patch("clawlite.runtime.offline.resolve_codex_account_id", return_value="acc_123"):
+            with patch(
+                "clawlite.runtime.offline.run_codex_oauth",
+                side_effect=[
+                    CodexExecutionError("Codex atingiu limite de uso"),
+                    CodexExecutionError("Codex atingiu limite de uso"),
+                    "ok-codex-oauth-retry",
+                ],
+            ) as codex_mock:
+                with patch("clawlite.runtime.offline.time.sleep") as sleep_mock:
+                    out = run_remote_provider("ping", "openai-codex/gpt-5.3-codex", "oauth-token")
+
+        self.assertEqual(out, "ok-codex-oauth-retry")
+        self.assertEqual(codex_mock.call_count, 3)
+        self.assertEqual(sleep_mock.call_count, 2)
 
     def test_provider_selection_gemini_uses_openai_compat_url(self) -> None:
         response = MagicMock()

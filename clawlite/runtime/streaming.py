@@ -14,8 +14,12 @@ from clawlite.runtime.codex_provider import CodexExecutionError, run_codex_oauth
 from clawlite.runtime.offline import (
     ProviderExecutionError,
     _codex_account_id_from_config,
+    _is_codex_rate_limit_error,
     _model_name_without_provider,
     _remote_timeout_seconds,
+    codex_rate_limit_max_attempts,
+    codex_rate_limit_user_message,
+    codex_rate_limit_wait_seconds,
     gemini_rate_limit_max_attempts,
     gemini_rate_limit_user_message,
     gemini_rate_limit_wait_seconds,
@@ -51,17 +55,25 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
                 "token OAuth do Codex detectado, mas account_id não foi encontrado. "
                 "Rode `clawlite auth login openai-codex` novamente."
             )
-        try:
-            yield from run_codex_oauth_stream(
-                prompt=prompt,
-                model=model_name,
-                access_token=resolved_token,
-                account_id=account_id,
-                timeout=timeout,
-            )
-            return
-        except CodexExecutionError as exc:
-            raise ProviderExecutionError(str(exc)) from exc
+        max_attempts = codex_rate_limit_max_attempts()
+        wait_seconds = codex_rate_limit_wait_seconds()
+        for attempt in range(1, max_attempts + 1):
+            try:
+                yield from run_codex_oauth_stream(
+                    prompt=prompt,
+                    model=model_name,
+                    access_token=resolved_token,
+                    account_id=account_id,
+                    timeout=timeout,
+                )
+                return
+            except CodexExecutionError as exc:
+                if _is_codex_rate_limit_error(exc):
+                    if attempt < max_attempts:
+                        time.sleep(wait_seconds)
+                        continue
+                    raise ProviderExecutionError(codex_rate_limit_user_message(max_attempts, wait_seconds)) from exc
+                raise ProviderExecutionError(str(exc)) from exc
 
     url = spec.request_url
     headers = {"Content-Type": "application/json"}
@@ -86,8 +98,18 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
             "stream": True,
         }
 
-    max_attempts = gemini_rate_limit_max_attempts() if provider == "gemini" else 1
-    wait_seconds = gemini_rate_limit_wait_seconds()
+    if provider == "gemini":
+        max_attempts = gemini_rate_limit_max_attempts()
+        wait_seconds = gemini_rate_limit_wait_seconds()
+        rate_limit_message = gemini_rate_limit_user_message(max_attempts, wait_seconds)
+    elif provider == "openai-codex":
+        max_attempts = codex_rate_limit_max_attempts()
+        wait_seconds = codex_rate_limit_wait_seconds()
+        rate_limit_message = codex_rate_limit_user_message(max_attempts, wait_seconds)
+    else:
+        max_attempts = 1
+        wait_seconds = 0.0
+        rate_limit_message = ""
 
     for attempt in range(1, max_attempts + 1):
         try:
@@ -132,11 +154,11 @@ def run_remote_provider_stream(prompt: str, model: str, token: str) -> Iterator[
             raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
-            if provider == "gemini" and status_code == 429:
+            if status_code == 429 and provider in {"gemini", "openai-codex"}:
                 if attempt < max_attempts:
                     time.sleep(wait_seconds)
                     continue
-                raise ProviderExecutionError(gemini_rate_limit_user_message(max_attempts, wait_seconds)) from exc
+                raise ProviderExecutionError(rate_limit_message) from exc
             status_display = status_code if status_code is not None else "desconhecido"
             raise ProviderExecutionError(f"erro HTTP '{provider}' (status {status_display})") from exc
         except httpx.RequestError as exc:

@@ -19,6 +19,8 @@ DEFAULT_REMOTE_TIMEOUT = 30.0
 _CONNECTIVITY_PROBE = ("1.1.1.1", 53)
 GEMINI_RATE_LIMIT_MAX_ATTEMPTS = 3
 GEMINI_RATE_LIMIT_WAIT_SECONDS = 60.0
+CODEX_RATE_LIMIT_MAX_ATTEMPTS = 3
+CODEX_RATE_LIMIT_WAIT_SECONDS = 60.0
 
 
 class ProviderExecutionError(RuntimeError):
@@ -173,6 +175,42 @@ def gemini_rate_limit_user_message(max_attempts: int, wait_seconds: float) -> st
     )
 
 
+def codex_rate_limit_max_attempts() -> int:
+    raw = os.getenv("CLAWLITE_CODEX_429_MAX_ATTEMPTS", "").strip()
+    if not raw:
+        return CODEX_RATE_LIMIT_MAX_ATTEMPTS
+    try:
+        value = int(raw)
+    except ValueError:
+        return CODEX_RATE_LIMIT_MAX_ATTEMPTS
+    return value if value > 0 else CODEX_RATE_LIMIT_MAX_ATTEMPTS
+
+
+def codex_rate_limit_wait_seconds() -> float:
+    raw = os.getenv("CLAWLITE_CODEX_429_WAIT_SECONDS", "").strip()
+    if not raw:
+        return CODEX_RATE_LIMIT_WAIT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return CODEX_RATE_LIMIT_WAIT_SECONDS
+    return value if value >= 0 else CODEX_RATE_LIMIT_WAIT_SECONDS
+
+
+def codex_rate_limit_user_message(max_attempts: int, wait_seconds: float) -> str:
+    wait_display = int(wait_seconds) if float(wait_seconds).is_integer() else wait_seconds
+    return (
+        "Codex está temporariamente com limite de requisições/quota. "
+        f"Já tentamos novamente {max_attempts} vezes com espera de {wait_display}s "
+        "e ainda não foi possível concluir. Tente novamente em alguns minutos."
+    )
+
+
+def _is_codex_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return ("429" in text) or ("limite" in text) or ("quota" in text) or ("rate limit" in text)
+
+
 def run_remote_provider(prompt: str, model: str, token: str) -> str:
     if os.getenv("CLAWLITE_SIMULATE_PROVIDER_FAILURE", "").strip() == "1":
         raise ProviderExecutionError("falha simulada de provedor")
@@ -196,16 +234,24 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
                 "token OAuth do Codex detectado, mas account_id não foi encontrado. "
                 "Rode `clawlite auth login openai-codex` novamente."
             )
-        try:
-            return run_codex_oauth(
-                prompt=prompt,
-                model=model_name,
-                access_token=resolved_token,
-                account_id=account_id,
-                timeout=_remote_timeout_seconds(),
-            )
-        except CodexExecutionError as exc:
-            raise ProviderExecutionError(str(exc)) from exc
+        max_attempts = codex_rate_limit_max_attempts()
+        wait_seconds = codex_rate_limit_wait_seconds()
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return run_codex_oauth(
+                    prompt=prompt,
+                    model=model_name,
+                    access_token=resolved_token,
+                    account_id=account_id,
+                    timeout=_remote_timeout_seconds(),
+                )
+            except CodexExecutionError as exc:
+                if _is_codex_rate_limit_error(exc):
+                    if attempt < max_attempts:
+                        time.sleep(wait_seconds)
+                        continue
+                    raise ProviderExecutionError(codex_rate_limit_user_message(max_attempts, wait_seconds)) from exc
+                raise ProviderExecutionError(str(exc)) from exc
 
     timeout = _remote_timeout_seconds()
     url = spec.request_url
@@ -229,8 +275,18 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
             "messages": [{"role": "user", "content": prompt}],
         }
 
-    max_attempts = gemini_rate_limit_max_attempts() if provider == "gemini" else 1
-    wait_seconds = gemini_rate_limit_wait_seconds()
+    if provider == "gemini":
+        max_attempts = gemini_rate_limit_max_attempts()
+        wait_seconds = gemini_rate_limit_wait_seconds()
+        rate_limit_message = gemini_rate_limit_user_message(max_attempts, wait_seconds)
+    elif provider == "openai-codex":
+        max_attempts = codex_rate_limit_max_attempts()
+        wait_seconds = codex_rate_limit_wait_seconds()
+        rate_limit_message = codex_rate_limit_user_message(max_attempts, wait_seconds)
+    else:
+        max_attempts = 1
+        wait_seconds = 0.0
+        rate_limit_message = ""
     data: dict[str, Any] | None = None
 
     for attempt in range(1, max_attempts + 1):
@@ -244,11 +300,11 @@ def run_remote_provider(prompt: str, model: str, token: str) -> str:
             raise ProviderExecutionError(f"timeout ao chamar provedor remoto '{provider}'") from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
-            if provider == "gemini" and status_code == 429:
+            if status_code == 429 and provider in {"gemini", "openai-codex"}:
                 if attempt < max_attempts:
                     time.sleep(wait_seconds)
                     continue
-                raise ProviderExecutionError(gemini_rate_limit_user_message(max_attempts, wait_seconds)) from exc
+                raise ProviderExecutionError(rate_limit_message) from exc
 
             detail = ""
             if exc.response is not None:
