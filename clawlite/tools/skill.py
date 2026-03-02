@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Tool bridge for executable SKILL.md entries.
+
+`SkillTool` makes discovered skills runnable at runtime without changing
+`registry.py` for each new skill:
+- `command:` runs shell commands from SKILL metadata
+- `script:` dispatches to built-in tool wrappers or external executables
+"""
+
 import asyncio
 import shlex
 from typing import Any
@@ -13,6 +21,12 @@ from clawlite.tools.registry import ToolRegistry
 
 
 class SkillTool(Tool):
+    """Execute skills discovered by `SkillsLoader`.
+
+    This tool is required to turn SKILL.md discovery into actual execution.
+    Without it, skills would appear in prompt context but would not be callable.
+    """
+
     name = "run_skill"
     description = "Execute a discovered SKILL.md binding via command or script."
 

@@ -44,7 +44,7 @@ jobs:
           pip install pytest pytest-anyio httpx "fastapi[all]" uvicorn questionary rich
 
       - name: Rodar testes
-        run: python -m pytest tests_next/ -q --tb=short
+        run: python -m pytest tests/ -q --tb=short
 
   lint:
     name: Lint (ruff)

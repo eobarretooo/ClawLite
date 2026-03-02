@@ -26,8 +26,8 @@ python -c "from clawlite.core.engine import AgentEngine; from clawlite.scheduler
 # 2) Testes unitários rápidos
 echo ""
 echo "--- Testes unitários ---"
-if python -m pytest tests_next/ -q --tb=line -x 2>/dev/null | grep -q "passed"; then
-  TOTAL=$(python -m pytest tests_next/ -q --tb=no 2>/dev/null | tail -1)
+if python -m pytest tests/ -q --tb=line -x 2>/dev/null | grep -q "passed"; then
+  TOTAL=$(python -m pytest tests/ -q --tb=no 2>/dev/null | tail -1)
   _ok "Testes: $TOTAL"
 else
   _fail "pytest falhou ou sem testes passando"

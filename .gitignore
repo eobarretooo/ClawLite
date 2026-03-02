@@ -21,7 +21,6 @@ build/
 *.pem
 **/secrets*
 .clawlite/
-~/.clawlite/
 
 # Local databases
 *.sqlite

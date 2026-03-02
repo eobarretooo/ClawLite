@@ -15,7 +15,7 @@ bash scripts/smoke_test.sh
 ## Testes
 
 ```bash
-pytest -q tests_next
+pytest -q tests
 ```
 
 ## Verificar saúde
@@ -36,4 +36,4 @@ clawlite cron list --session-id cli:ops
 1. Confirmar `/health`.
 2. Confirmar `clawlite run "ok"`.
 3. Validar provider (`CLAWLITE_MODEL`, `CLAWLITE_LITELLM_API_KEY`).
-4. Rodar `pytest -q tests_next` antes de qualquer release/hotfix.
+4. Rodar `pytest -q tests` antes de qualquer release/hotfix.
