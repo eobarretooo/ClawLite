@@ -70,11 +70,40 @@ class _CronAPI:
     def __init__(self, service: CronService) -> None:
         self.service = service
 
-    async def add_job(self, *, session_id: str, expression: str, prompt: str) -> str:
-        return await self.service.add_job(session_id=session_id, expression=expression, prompt=prompt)
+    async def add_job(
+        self,
+        *,
+        session_id: str,
+        expression: str,
+        prompt: str,
+        name: str = "",
+        timezone_name: str | None = None,
+        channel: str = "",
+        target: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        return await self.service.add_job(
+            session_id=session_id,
+            expression=expression,
+            prompt=prompt,
+            name=name,
+            timezone_name=timezone_name,
+            channel=channel,
+            target=target,
+            metadata=metadata,
+        )
 
     def list_jobs(self, *, session_id: str) -> list[dict[str, Any]]:
         return self.service.list_jobs(session_id=session_id)
+
+    def remove_job(self, job_id: str) -> bool:
+        return self.service.remove_job(job_id)
+
+    def enable_job(self, job_id: str, *, enabled: bool) -> bool:
+        return self.service.enable_job(job_id, enabled=enabled)
+
+    async def run_job(self, job_id: str, *, force: bool = True) -> str | None:
+        return await self.service.run_job(job_id, force=force)
 
 
 class _MessageAPI:
@@ -140,7 +169,10 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     workspace_path = Path(config.workspace_path).expanduser().resolve()
 
     provider = build_provider(_provider_config(config))
-    cron = CronService(store_path=Path(config.state_path) / "cron_jobs.json")
+    cron = CronService(
+        store_path=Path(config.state_path) / "cron_jobs.json",
+        default_timezone=config.scheduler.timezone,
+    )
     heartbeat = HeartbeatService(interval_seconds=config.gateway.heartbeat.interval_s)
 
     tools = ToolRegistry()
@@ -150,16 +182,30 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
             restrict_to_workspace=config.tools.restrict_to_workspace,
             path_append=config.tools.exec.path_append,
             timeout_seconds=config.tools.exec.timeout,
+            deny_patterns=config.tools.exec.deny_patterns,
+            allow_patterns=config.tools.exec.allow_patterns,
+            deny_path_patterns=config.tools.exec.deny_path_patterns,
+            allow_path_patterns=config.tools.exec.allow_path_patterns,
         )
     )
     tools.register(ReadFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(WriteFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(EditFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(ListDirTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
-    tools.register(WebFetchTool())
-    tools.register(WebSearchTool())
+    tools.register(
+        WebFetchTool(
+            proxy=config.tools.web.proxy,
+            max_redirects=config.tools.web.max_redirects,
+            timeout=config.tools.web.timeout,
+            max_chars=config.tools.web.max_chars,
+            allowlist=config.tools.web.allowlist,
+            denylist=config.tools.web.denylist,
+            block_private_addresses=config.tools.web.block_private_addresses,
+        )
+    )
+    tools.register(WebSearchTool(proxy=config.tools.web.proxy, timeout=config.tools.web.search_timeout))
     tools.register(CronTool(_CronAPI(cron)))
-    tools.register(MCPTool())
+    tools.register(MCPTool(config.tools.mcp))
     skills = SkillsLoader()
     tools.register(SkillTool(loader=skills, registry=tools))
 

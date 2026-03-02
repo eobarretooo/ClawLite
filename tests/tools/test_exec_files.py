@@ -66,6 +66,52 @@ def test_exec_tool_restrict_to_workspace_blocks_outside_path(tmp_path: Path) -> 
     asyncio.run(_scenario())
 
 
+def test_exec_tool_default_policy_blocks_dangerous_command() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": "rm -rf /tmp/safe-check"},
+            ToolContext(session_id="s"),
+        )
+        assert "blocked_by_policy:deny_pattern" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_allow_patterns_enforced() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool(allow_patterns=[r"^echo\\s+"]).run(
+            {"command": "pwd"},
+            ToolContext(session_id="s"),
+        )
+        assert "blocked_by_policy:not_in_allow_patterns" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_restrict_to_workspace_blocks_absolute_path_in_flag(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        out = await ExecTool(workspace_path=tmp_path, restrict_to_workspace=True).run(
+            {"command": "echo done --output=/etc/passwd"},
+            ToolContext(session_id="s"),
+        )
+        assert "blocked_by_workspace_guard:path_outside_workspace:/etc/passwd" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_timeout_reports_telemetry() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": 'sh -c "sleep 2"', "timeout": 0.1},
+            ToolContext(session_id="s"),
+        )
+        assert "stderr=timeout after 0.1s" in out
+        assert "telemetry=timeout_s=0.1" in out
+        assert "kill_sent=true" in out
+
+    asyncio.run(_scenario())
+
+
 def test_file_tools_restrict_to_workspace_blocks_outside_path(tmp_path: Path) -> None:
     async def _scenario() -> None:
         outside = tmp_path.parent / "outside.txt"

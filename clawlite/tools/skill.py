@@ -31,7 +31,11 @@ class SkillTool(Tool):
     """
 
     name = "run_skill"
-    description = "Execute a discovered SKILL.md binding via command or script."
+    description = "Execute a discovered SKILL.md binding with deterministic contracts."
+
+    MAX_TIMEOUT_SECONDS = 120.0
+    MAX_SKILL_ARGS = 32
+    MAX_ARG_CHARS = 4000
 
     def __init__(self, *, loader: SkillsLoader, registry: ToolRegistry) -> None:
         self.loader = loader
@@ -59,6 +63,26 @@ class SkillTool(Tool):
             return [str(item) for item in values if str(item).strip()]
         raw = str(arguments.get("input", "")).strip()
         return shlex.split(raw) if raw else []
+
+    @classmethod
+    def _guard_extra_args(cls, values: list[str]) -> str | None:
+        if len(values) > cls.MAX_SKILL_ARGS:
+            return f"skill_args_exceeded:max={cls.MAX_SKILL_ARGS}"
+        for value in values:
+            if len(value) > cls.MAX_ARG_CHARS:
+                return f"skill_arg_too_large:max_chars={cls.MAX_ARG_CHARS}"
+            if "\x00" in value or "\n" in value or "\r" in value:
+                return "skill_arg_invalid_character"
+        return None
+
+    @classmethod
+    def _timeout_value(cls, arguments: dict[str, Any]) -> float:
+        raw = float(arguments.get("timeout", 30) or 30)
+        if raw < 1:
+            return 1.0
+        if raw > cls.MAX_TIMEOUT_SECONDS:
+            return cls.MAX_TIMEOUT_SECONDS
+        return raw
 
     async def _run_command(self, argv: list[str], *, timeout: float) -> str:
         if not argv:
@@ -88,26 +112,31 @@ class SkillTool(Tool):
             response.raise_for_status()
         return response.text.strip()
 
-    async def _dispatch_script(self, script_name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
-        normalized = script_name.replace("-", "_")
+    @staticmethod
+    def _script_tool_arguments(script_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        payload = arguments.get("tool_arguments")
+        if isinstance(payload, dict):
+            return payload
 
-        if normalized == "web_search":
+        if script_name == "web_search":
             query = str(arguments.get("query") or arguments.get("input") or "").strip()
             if not query:
                 raise ValueError("query or input is required for web-search skill")
             limit = int(arguments.get("limit", 5) or 5)
-            return await self.registry.execute("web_search", {"query": query, "limit": limit}, session_id=ctx.session_id)
+            return {"query": query, "limit": limit}
 
-        if normalized == "weather":
+        return {}
+
+    async def _dispatch_script(self, script_name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
+        if script_name == "weather":
             return await self._run_weather(arguments)
 
-        target_tool = self.registry.get(normalized)
-        if target_tool is not None and normalized != self.name:
-            payload = arguments.get("tool_arguments")
-            tool_arguments = payload if isinstance(payload, dict) else {}
-            return await self.registry.execute(normalized, tool_arguments, session_id=ctx.session_id)
+        target_tool = self.registry.get(script_name)
+        if target_tool is not None and script_name != self.name:
+            tool_arguments = self._script_tool_arguments(script_name, arguments)
+            return await self.registry.execute(script_name, tool_arguments, session_id=ctx.session_id)
 
-        return await self._run_command([script_name, *self._extra_args(arguments)], timeout=float(arguments.get("timeout", 30) or 30))
+        return f"skill_script_unavailable:{script_name}"
 
     async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
         name = str(arguments.get("name", "")).strip()
@@ -119,16 +148,27 @@ class SkillTool(Tool):
         if spec is None:
             raise ValueError(f"skill_not_found:{name}")
         if not spec.available:
-            details = ", ".join(spec.missing)
+            details = ", ".join([*spec.missing, *spec.contract_issues])
             return f"skill_unavailable:{spec.name}:{details}"
 
-        if spec.command:
-            argv = shlex.split(spec.command) + self._extra_args(arguments)
-            log.info("running skill command skill={}", spec.name)
-            return await self._run_command(argv, timeout=float(arguments.get("timeout", 30) or 30))
+        extra_args = self._extra_args(arguments)
+        args_guard_error = self._guard_extra_args(extra_args)
+        if args_guard_error:
+            return f"skill_blocked:{spec.name}:{args_guard_error}"
 
-        if spec.script:
-            log.info("running skill script skill={} script={}", spec.name, spec.script)
-            return await self._dispatch_script(spec.script, arguments, ctx)
+        timeout = self._timeout_value(arguments)
+
+        if spec.execution_kind == "command":
+            argv = [*spec.execution_argv, *extra_args]
+            log.info("running skill command skill={}", spec.name)
+            return await self._run_command(argv, timeout=timeout)
+
+        if spec.execution_kind == "script":
+            log.info("running skill script skill={} script={}", spec.name, spec.execution_target)
+            return await self._dispatch_script(spec.execution_target, arguments, ctx)
+
+        if spec.execution_kind == "invalid":
+            details = ", ".join(spec.contract_issues)
+            return f"skill_invalid_contract:{spec.name}:{details}"
 
         return f"skill_not_executable:{spec.name}"

@@ -15,6 +15,7 @@ class CronSchedule:
     every_seconds: int = 300
     cron_expr: str = ""
     run_at_iso: str = ""
+    timezone: str = "UTC"
 
 
 @dataclass(slots=True)

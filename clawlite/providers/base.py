@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -14,10 +14,14 @@ class ToolCall:
 
 @dataclass(slots=True)
 class LLMResult:
-    text: str
     model: str
-    tool_calls: list[ToolCall]
-    metadata: dict[str, Any]
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
 
 
 class LLMProvider(ABC):
@@ -26,8 +30,12 @@ class LLMProvider(ABC):
         self,
         *,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> LLMResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_default_model(self) -> str:
         raise NotImplementedError

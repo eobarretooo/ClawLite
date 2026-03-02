@@ -84,3 +84,25 @@ def test_skills_loader_can_load_body_and_render_prompt(tmp_path: Path) -> None:
 
     prompt_rows = loader.render_for_prompt()
     assert any("alpha:" in row for row in prompt_rows)
+
+
+def test_skills_loader_marks_invalid_execution_contract(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "invalid-contract"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: invalid-contract\n"
+        "description: invalid binding\n"
+        "command: echo hello\n"
+        "script: web_search\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    rows = loader.discover(include_unavailable=True)
+    assert len(rows) == 1
+    assert rows[0].available is False
+    assert rows[0].execution_kind == "invalid"
+    assert "contract:command_and_script_are_mutually_exclusive" in rows[0].contract_issues

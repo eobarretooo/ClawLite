@@ -98,6 +98,26 @@ def test_build_provider_openai_codex_prefers_codex_provider_when_auth_present(mo
     assert isinstance(provider, CodexProvider)
 
 
+def test_build_provider_openai_codex_accepts_auth_provider_alias_and_token_only(monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_CODEX_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("CLAWLITE_CODEX_ACCOUNT_ID", raising=False)
+
+    provider = build_provider(
+        {
+            "model": "openai-codex/codex-5.3",
+            "auth": {
+                "providers": {
+                    "openai_codex": {
+                        "access_token": "oauth-token",
+                    }
+                }
+            },
+        }
+    )
+
+    assert isinstance(provider, CodexProvider)
+
+
 def test_resolve_openai_ignores_incompatible_generic_key_prefix(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("CLAWLITE_LITELLM_API_KEY", "AIza-test-key")

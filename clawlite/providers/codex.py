@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import os
-import time
 from typing import Any
 
 import httpx
@@ -10,7 +10,7 @@ from clawlite.providers.base import LLMProvider, LLMResult
 
 
 class CodexProvider(LLMProvider):
-    def __init__(self, *, model: str, access_token: str, account_id: str, timeout: float = 30.0) -> None:
+    def __init__(self, *, model: str, access_token: str, account_id: str = "", timeout: float = 30.0) -> None:
         self.model = model
         self.access_token = access_token
         self.account_id = account_id
@@ -39,7 +39,7 @@ class CodexProvider(LLMProvider):
         self,
         *,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> LLMResult:
@@ -74,10 +74,13 @@ class CodexProvider(LLMProvider):
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else None
                 if status == 429 and attempt < attempts:
-                    time.sleep(wait_seconds)
+                    await asyncio.sleep(wait_seconds)
                     continue
                 raise RuntimeError(f"codex_http_error:{status}") from exc
             except httpx.RequestError as exc:
                 raise RuntimeError(f"codex_network_error:{exc}") from exc
 
         raise RuntimeError("codex_429_exhausted")
+
+    def get_default_model(self) -> str:
+        return self.model

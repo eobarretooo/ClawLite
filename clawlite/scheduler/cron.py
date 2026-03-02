@@ -7,6 +7,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
@@ -25,13 +26,23 @@ JobCallback = Callable[[CronJob], Awaitable[str | None]]
 
 
 class CronService:
-    def __init__(self, store_path: str | Path | None = None) -> None:
+    def __init__(self, store_path: str | Path | None = None, default_timezone: str = "UTC") -> None:
         self.path = Path(store_path) if store_path else (Path.home() / ".clawlite" / "state" / "cron_jobs.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, CronJob] = {}
         self._task: asyncio.Task[Any] | None = None
         self._on_job: JobCallback | None = None
+        self.default_timezone = self._normalize_timezone(default_timezone)
         self._load()
+
+    @staticmethod
+    def _normalize_timezone(value: str | None) -> str:
+        candidate = (value or "UTC").strip() or "UTC"
+        try:
+            ZoneInfo(candidate)
+        except Exception as exc:
+            raise ValueError(f"unknown timezone '{candidate}'") from exc
+        return candidate
 
     def _load(self) -> None:
         if not self.path.exists():
@@ -45,6 +56,7 @@ class CronService:
         for row in data:
             try:
                 schedule = CronSchedule(**row["schedule"])
+                schedule.timezone = self._normalize_timezone(schedule.timezone or self.default_timezone)
                 payload = CronPayload(**row["payload"])
                 job = CronJob(
                     id=row["id"],
@@ -72,6 +84,8 @@ class CronService:
 
     @staticmethod
     def _compute_next(schedule: CronSchedule, now: datetime) -> datetime | None:
+        tz_name = (schedule.timezone or "UTC").strip() or "UTC"
+        tz = ZoneInfo(tz_name)
         if schedule.kind == "every":
             seconds = max(1, int(schedule.every_seconds or 1))
             return now + timedelta(seconds=seconds)
@@ -83,14 +97,18 @@ class CronService:
             except ValueError:
                 return None
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
+                dt = dt.replace(tzinfo=tz)
+            return dt.astimezone(timezone.utc)
         if schedule.kind == "cron":
             if croniter is None:
                 raise RuntimeError("croniter is required for cron expressions")
             if not schedule.cron_expr.strip():
                 return None
-            return croniter(schedule.cron_expr, now).get_next(datetime)
+            base = now.astimezone(tz)
+            next_local = croniter(schedule.cron_expr, base).get_next(datetime)
+            if next_local.tzinfo is None:
+                next_local = next_local.replace(tzinfo=tz)
+            return next_local.astimezone(timezone.utc)
         return None
 
     async def start(self, on_job: JobCallback) -> None:
@@ -156,10 +174,27 @@ class CronService:
         rows = list(self._jobs.values())
         if session_id:
             rows = [item for item in rows if item.session_id == session_id]
-        return [asdict(item) for item in sorted(rows, key=lambda j: j.name)]
+        out: list[dict[str, Any]] = []
+        for item in sorted(rows, key=lambda j: j.name):
+            row = asdict(item)
+            row["expression"] = self._schedule_to_expression(item.schedule)
+            row["timezone"] = item.schedule.timezone
+            out.append(row)
+        return out
 
-    async def add_job(self, *, session_id: str, expression: str, prompt: str, name: str = "") -> str:
-        schedule = self._parse_expression(expression)
+    async def add_job(
+        self,
+        *,
+        session_id: str,
+        expression: str,
+        prompt: str,
+        name: str = "",
+        timezone_name: str | None = None,
+        channel: str = "",
+        target: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        schedule = self._parse_expression(expression, timezone_name=timezone_name)
         now = self._now()
         next_run = self._compute_next(schedule, now)
         job_id = uuid.uuid4().hex
@@ -168,7 +203,7 @@ class CronService:
             name=name or f"job-{job_id[:8]}",
             session_id=session_id,
             schedule=schedule,
-            payload=CronPayload(prompt=prompt),
+            payload=CronPayload(prompt=prompt, channel=channel, target=target, metadata=metadata or {}),
             next_run_iso=next_run.isoformat() if next_run else "",
         )
         self._jobs[job_id] = job
@@ -227,14 +262,21 @@ class CronService:
         bind_event("cron.job", session=job.session_id).info("cron job manually executed id={} enabled={}", job.id, job.enabled)
         return out
 
-    @staticmethod
-    def _parse_expression(expression: str) -> CronSchedule:
+    def _schedule_to_expression(self, schedule: CronSchedule) -> str:
+        if schedule.kind == "every":
+            return f"every {max(1, int(schedule.every_seconds or 1))}"
+        if schedule.kind == "at":
+            return f"at {schedule.run_at_iso}"
+        return schedule.cron_expr
+
+    def _parse_expression(self, expression: str, *, timezone_name: str | None = None) -> CronSchedule:
         expr = expression.strip()
+        tz_name = self._normalize_timezone(timezone_name or self.default_timezone)
         if expr.startswith("every "):
             raw = expr.split(" ", 1)[1].strip().lower()
             if raw.endswith("s"):
                 raw = raw[:-1]
-            return CronSchedule(kind="every", every_seconds=max(1, int(raw)))
+            return CronSchedule(kind="every", every_seconds=max(1, int(raw)), timezone=tz_name)
         if expr.startswith("at "):
-            return CronSchedule(kind="at", run_at_iso=expr.split(" ", 1)[1].strip())
-        return CronSchedule(kind="cron", cron_expr=expr)
+            return CronSchedule(kind="at", run_at_iso=expr.split(" ", 1)[1].strip(), timezone=tz_name)
+        return CronSchedule(kind="cron", cron_expr=expr, timezone=tz_name)

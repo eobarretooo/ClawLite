@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
+import shlex
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +105,44 @@ def _missing_requirements(requirements: dict[str, list[str]]) -> list[str]:
     return missing
 
 
+def _build_execution_contract(meta: dict[str, str]) -> tuple[str, str, list[str], list[str]]:
+    """
+    Build a deterministic execution contract from frontmatter.
+
+    Returns: (kind, target, argv, issues)
+    - kind: none | command | script | invalid
+    """
+    command = meta.get("command", "").strip()
+    script = meta.get("script", "").strip()
+    issues: list[str] = []
+
+    if command and script:
+        issues.append("contract:command_and_script_are_mutually_exclusive")
+        return "invalid", "", [], issues
+
+    if command:
+        if "\n" in command or "\r" in command:
+            issues.append("contract:command_contains_newline")
+            return "invalid", command, [], issues
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            issues.append("contract:command_parse_error")
+            return "invalid", command, [], issues
+        if not argv:
+            issues.append("contract:empty_command")
+            return "invalid", command, [], issues
+        return "command", command, argv, issues
+
+    if script:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", script):
+            issues.append("contract:invalid_script_name")
+            return "invalid", script, [], issues
+        return "script", script, [], issues
+
+    return "none", "", [], issues
+
+
 @dataclass(slots=True)
 class SkillSpec:
     name: str
@@ -118,6 +158,10 @@ class SkillSpec:
     metadata: dict[str, str]
     available: bool
     missing: list[str]
+    execution_kind: str
+    execution_target: str
+    execution_argv: list[str]
+    contract_issues: list[str]
 
 
 class SkillsLoader:
@@ -156,6 +200,7 @@ class SkillsLoader:
 
         req_map = _extract_requirement_map(meta)
         missing = _missing_requirements(req_map)
+        execution_kind, execution_target, execution_argv, contract_issues = _build_execution_contract(meta)
 
         return SkillSpec(
             name=name,
@@ -169,8 +214,12 @@ class SkillsLoader:
             homepage=homepage,
             body=body.strip(),
             metadata=meta,
-            available=not missing,
+            available=(not missing) and (not contract_issues),
             missing=missing,
+            execution_kind=execution_kind,
+            execution_target=execution_target,
+            execution_argv=execution_argv,
+            contract_issues=contract_issues,
         )
 
     def discover(self, *, include_unavailable: bool = True) -> list[SkillSpec]:
@@ -224,11 +273,12 @@ class SkillsLoader:
             if selected_set and skill.name not in selected_set and not skill.always:
                 continue
             desc = skill.description or "no description"
-            availability = "available" if skill.available else f"unavailable({'; '.join(skill.missing)})"
+            unavailable_reasons = [*skill.missing, *skill.contract_issues]
+            availability = "available" if skill.available else f"unavailable({'; '.join(unavailable_reasons)})"
             command = ""
-            if skill.command:
-                command = f", command={skill.command}"
-            elif skill.script:
-                command = f", script={skill.script}"
+            if skill.execution_kind == "command":
+                command = f", command={skill.execution_target}"
+            elif skill.execution_kind == "script":
+                command = f", script={skill.execution_target}"
             rows.append(f"{skill.name}: {desc} [{availability}, source={skill.source}{command}]")
         return rows

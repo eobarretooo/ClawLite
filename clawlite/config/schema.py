@@ -267,9 +267,51 @@ class ChannelsConfig:
 
 
 @dataclass(slots=True)
+class WebToolConfig:
+    proxy: str = ""
+    timeout: float = 15.0
+    search_timeout: float = 10.0
+    max_redirects: int = 5
+    max_chars: int = 12000
+    block_private_addresses: bool = True
+    allowlist: list[str] = field(default_factory=list)
+    denylist: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def _parse_list(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip() for item in raw if str(item).strip()]
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> WebToolConfig:
+        data = dict(raw or {})
+        return cls(
+            proxy=str(data.get("proxy", "") or ""),
+            timeout=max(1.0, float(data.get("timeout", 15.0) or 15.0)),
+            search_timeout=max(1.0, float(data.get("searchTimeout", data.get("search_timeout", 10.0)) or 10.0)),
+            max_redirects=max(0, int(data.get("maxRedirects", data.get("max_redirects", 5)) or 5)),
+            max_chars=max(128, int(data.get("maxChars", data.get("max_chars", 12000)) or 12000)),
+            block_private_addresses=bool(data.get("blockPrivateAddresses", data.get("block_private_addresses", True))),
+            allowlist=cls._parse_list(data.get("allowlist", [])),
+            denylist=cls._parse_list(data.get("denylist", [])),
+        )
+
+
+@dataclass(slots=True)
 class ExecToolConfig:
     timeout: int = 60
     path_append: str = ""
+    deny_patterns: list[str] = field(default_factory=list)
+    allow_patterns: list[str] = field(default_factory=list)
+    deny_path_patterns: list[str] = field(default_factory=list)
+    allow_path_patterns: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def _parse_patterns(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip() for item in raw if str(item).strip()]
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> ExecToolConfig:
@@ -279,13 +321,130 @@ class ExecToolConfig:
             path_append = str(data.get("pathAppend", "") or "")
         else:
             path_append = str(data.get("path_append", "") or "")
-        return cls(timeout=max(1, timeout), path_append=path_append)
+
+        if "denyPatterns" in data:
+            deny_patterns = cls._parse_patterns(data.get("denyPatterns"))
+        else:
+            deny_patterns = cls._parse_patterns(data.get("deny_patterns", []))
+
+        if "allowPatterns" in data:
+            allow_patterns = cls._parse_patterns(data.get("allowPatterns"))
+        else:
+            allow_patterns = cls._parse_patterns(data.get("allow_patterns", []))
+
+        if "denyPathPatterns" in data:
+            deny_path_patterns = cls._parse_patterns(data.get("denyPathPatterns"))
+        else:
+            deny_path_patterns = cls._parse_patterns(data.get("deny_path_patterns", []))
+
+        if "allowPathPatterns" in data:
+            allow_path_patterns = cls._parse_patterns(data.get("allowPathPatterns"))
+        else:
+            allow_path_patterns = cls._parse_patterns(data.get("allow_path_patterns", []))
+
+        return cls(
+            timeout=max(1, timeout),
+            path_append=path_append,
+            deny_patterns=deny_patterns,
+            allow_patterns=allow_patterns,
+            deny_path_patterns=deny_path_patterns,
+            allow_path_patterns=allow_path_patterns,
+        )
+
+
+@dataclass(slots=True)
+class MCPTransportPolicyConfig:
+    allowed_schemes: list[str] = field(default_factory=lambda: ["http", "https"])
+    allowed_hosts: list[str] = field(default_factory=list)
+    denied_hosts: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def _parse_hosts(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip().lower() for item in raw if str(item).strip()]
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> MCPTransportPolicyConfig:
+        data = dict(raw or {})
+        if "allowedSchemes" in data:
+            schemes_raw = data.get("allowedSchemes")
+        else:
+            schemes_raw = data.get("allowed_schemes", ["http", "https"])
+        if not isinstance(schemes_raw, list):
+            schemes_raw = ["http", "https"]
+        allowed_schemes = [str(item).strip().lower() for item in schemes_raw if str(item).strip()]
+        if not allowed_schemes:
+            allowed_schemes = ["http", "https"]
+        if "allowedHosts" in data:
+            allowed_hosts_raw = data.get("allowedHosts", [])
+        else:
+            allowed_hosts_raw = data.get("allowed_hosts", [])
+        if "deniedHosts" in data:
+            denied_hosts_raw = data.get("deniedHosts", [])
+        else:
+            denied_hosts_raw = data.get("denied_hosts", [])
+        return cls(
+            allowed_schemes=allowed_schemes,
+            allowed_hosts=cls._parse_hosts(allowed_hosts_raw),
+            denied_hosts=cls._parse_hosts(denied_hosts_raw),
+        )
+
+
+@dataclass(slots=True)
+class MCPServerConfig:
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    timeout_s: float = 20.0
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None, *, default_timeout_s: float = 20.0) -> MCPServerConfig:
+        data = dict(raw or {})
+        timeout_raw = data.get("timeout_s", data.get("timeoutS", data.get("tool_timeout_s", data.get("toolTimeoutS", default_timeout_s))))
+        headers_raw = data.get("headers", {})
+        headers = dict(headers_raw) if isinstance(headers_raw, dict) else {}
+        return cls(
+            url=str(data.get("url", "") or "").strip(),
+            headers={str(k): str(v) for k, v in headers.items()},
+            timeout_s=max(0.1, float(timeout_raw or default_timeout_s)),
+        )
+
+
+@dataclass(slots=True)
+class MCPToolConfig:
+    default_timeout_s: float = 20.0
+    policy: MCPTransportPolicyConfig = field(default_factory=MCPTransportPolicyConfig)
+    servers: dict[str, MCPServerConfig] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> MCPToolConfig:
+        data = dict(raw or {})
+        if "defaultTimeoutS" in data:
+            timeout_raw = data.get("defaultTimeoutS")
+        else:
+            timeout_raw = data.get("default_timeout_s", data.get("timeout", 20.0))
+        default_timeout = max(
+            0.1,
+            float(timeout_raw or 20.0),
+        )
+        policy = MCPTransportPolicyConfig.from_dict(dict(data.get("policy") or {}))
+        servers_raw = data.get("servers", {})
+        servers: dict[str, MCPServerConfig] = {}
+        if isinstance(servers_raw, dict):
+            for key, value in servers_raw.items():
+                name = str(key).strip()
+                if not name or not isinstance(value, dict):
+                    continue
+                servers[name] = MCPServerConfig.from_dict(dict(value), default_timeout_s=default_timeout)
+        return cls(default_timeout_s=default_timeout, policy=policy, servers=servers)
 
 
 @dataclass(slots=True)
 class ToolsConfig:
     restrict_to_workspace: bool = False
+    web: WebToolConfig = field(default_factory=WebToolConfig)
     exec: ExecToolConfig = field(default_factory=ExecToolConfig)
+    mcp: MCPToolConfig = field(default_factory=MCPToolConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> ToolsConfig:
@@ -294,8 +453,10 @@ class ToolsConfig:
             restrict = bool(data.get("restrictToWorkspace", False))
         else:
             restrict = bool(data.get("restrict_to_workspace", False))
+        web_cfg = WebToolConfig.from_dict(dict(data.get("web") or {}))
         exec_cfg = ExecToolConfig.from_dict(dict(data.get("exec") or {}))
-        return cls(restrict_to_workspace=restrict, exec=exec_cfg)
+        mcp_cfg = MCPToolConfig.from_dict(dict(data.get("mcp") or {}))
+        return cls(restrict_to_workspace=restrict, web=web_cfg, exec=exec_cfg, mcp=mcp_cfg)
 
 
 @dataclass(slots=True)

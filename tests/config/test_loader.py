@@ -40,6 +40,8 @@ def test_load_config_tools_flags(tmp_path: Path) -> None:
                     "restrictToWorkspace": True,
                     "exec": {
                         "pathAppend": "/usr/sbin",
+                        "denyPatterns": ["rm\\s+-rf"],
+                        "allowPathPatterns": ["^\\./"],
                     },
                 }
             }
@@ -50,6 +52,80 @@ def test_load_config_tools_flags(tmp_path: Path) -> None:
     assert cfg.tools.restrict_to_workspace is True
     assert cfg.tools.exec.path_append == "/usr/sbin"
     assert cfg.tools.exec.timeout == 60
+    assert cfg.tools.exec.deny_patterns == ["rm\\s+-rf"]
+    assert cfg.tools.exec.allow_path_patterns == ["^\\./"]
+    assert cfg.tools.exec.allow_patterns == []
+    assert cfg.tools.exec.deny_path_patterns == []
+
+
+def test_load_config_web_tool_policy(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "web": {
+                        "proxy": "http://127.0.0.1:7890",
+                        "timeout": 22,
+                        "searchTimeout": 9,
+                        "maxRedirects": 3,
+                        "maxChars": 4000,
+                        "blockPrivateAddresses": True,
+                        "allowlist": ["example.com", "*.docs.example.com"],
+                        "denylist": ["127.0.0.0/8"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.tools.web.proxy == "http://127.0.0.1:7890"
+    assert cfg.tools.web.timeout == 22
+    assert cfg.tools.web.search_timeout == 9
+    assert cfg.tools.web.max_redirects == 3
+    assert cfg.tools.web.max_chars == 4000
+    assert cfg.tools.web.block_private_addresses is True
+    assert cfg.tools.web.allowlist == ["example.com", "*.docs.example.com"]
+    assert cfg.tools.web.denylist == ["127.0.0.0/8"]
+
+
+def test_load_config_mcp_registry_and_policy(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "mcp": {
+                        "defaultTimeoutS": 12,
+                        "policy": {
+                            "allowedSchemes": ["https"],
+                            "allowedHosts": ["mcp.example.com", "*.internal.example.com"],
+                            "deniedHosts": ["blocked.example.com"],
+                        },
+                        "servers": {
+                            "search": {
+                                "url": "https://mcp.example.com/rpc",
+                                "timeoutS": 3,
+                                "headers": {"Authorization": "Bearer token"},
+                            }
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.tools.mcp.default_timeout_s == 12
+    assert cfg.tools.mcp.policy.allowed_schemes == ["https"]
+    assert cfg.tools.mcp.policy.allowed_hosts == ["mcp.example.com", "*.internal.example.com"]
+    assert cfg.tools.mcp.policy.denied_hosts == ["blocked.example.com"]
+    assert "search" in cfg.tools.mcp.servers
+    assert cfg.tools.mcp.servers["search"].url == "https://mcp.example.com/rpc"
+    assert cfg.tools.mcp.servers["search"].timeout_s == 3
 
 
 def test_load_config_provider_blocks(tmp_path: Path, monkeypatch) -> None:

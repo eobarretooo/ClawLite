@@ -188,7 +188,7 @@ class LiteLLMProvider(LLMProvider):
         self,
         *,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> LLMResult:
@@ -208,7 +208,7 @@ class LiteLLMProvider(LLMProvider):
             payload["temperature"] = float(temperature)
         if system_text:
             payload["system"] = system_text
-        anth_tools = self._anthropic_tools(tools)
+        anth_tools = self._anthropic_tools(tools or [])
         if anth_tools:
             payload["tools"] = anth_tools
 
@@ -274,7 +274,7 @@ class LiteLLMProvider(LLMProvider):
         self,
         *,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> LLMResult:
@@ -362,3 +362,6 @@ class LiteLLMProvider(LLMProvider):
                 raise RuntimeError(f"provider_network_error:{exc}") from exc
 
         raise RuntimeError("provider_429_exhausted")
+
+    def get_default_model(self) -> str:
+        return self.model

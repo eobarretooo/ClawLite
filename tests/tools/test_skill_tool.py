@@ -91,3 +91,38 @@ def test_run_skill_returns_not_executable_when_no_binding(tmp_path: Path) -> Non
         assert out == "skill_not_executable:doc-only"
 
     asyncio.run(_scenario())
+
+
+def test_run_skill_does_not_fallback_to_external_script_exec(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "external-script",
+        "name: external-script\ndescription: external\nscript: external_tool",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run({"name": "external-script"}, ToolContext(session_id="s5"))
+        assert out == "skill_script_unavailable:external_tool"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_blocks_oversized_argument_list(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "echo-skill",
+        "name: echo-skill\ndescription: echo\ncommand: echo",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "echo-skill", "args": [str(i) for i in range(33)]},
+            ToolContext(session_id="s6"),
+        )
+        assert out == "skill_blocked:echo-skill:skill_args_exceeded:max=32"
+
+    asyncio.run(_scenario())
