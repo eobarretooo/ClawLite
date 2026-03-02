@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="300">
   <rect width="100%" height="100%" fill="#0b1020"/>
-  <text x="20" y="40" fill="#a3e635" font-family="monospace" font-size="22">$ clawlite doctor</text>
-  <text x="20" y="75" fill="#e2e8f0" font-family="monospace" font-size="18">ClawLite Doctor</text>
+  <text x="20" y="40" fill="#a3e635" font-family="monospace" font-size="22">$ clawlite start --host 127.0.0.1 --port 8787</text>
+  <text x="20" y="75" fill="#e2e8f0" font-family="monospace" font-size="18">ClawLite Gateway</text>
   <text x="20" y="105" fill="#e2e8f0" font-family="monospace" font-size="18">python: 3.13.7</text>
-  <text x="20" y="135" fill="#e2e8f0" font-family="monospace" font-size="18">platform: Linux/Termux</text>
+  <text x="20" y="135" fill="#e2e8f0" font-family="monospace" font-size="18">platform: Linux</text>
   <text x="20" y="165" fill="#e2e8f0" font-family="monospace" font-size="18">git: ok</text>
   <text x="20" y="195" fill="#e2e8f0" font-family="monospace" font-size="18">curl: ok</text>
-  <text x="20" y="245" fill="#38bdf8" font-family="monospace" font-size="18">$ clawlite gateway --port 8787</text>
+  <text x="20" y="245" fill="#38bdf8" font-family="monospace" font-size="18">$ curl -sS http://127.0.0.1:8787/health</text>
 </svg>

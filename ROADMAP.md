@@ -8,7 +8,7 @@
 
 ## P1 — Autonomia operacional
 
-- Fechar operação 24/7 em Linux/proot com supervisão e recuperação automática
+- Fechar operação 24/7 em Linux com supervisão e recuperação automática
 - Melhorar entrega proativa por canais com observabilidade mínima
 - Fortalecer memória de longo prazo e recuperação de contexto por sessão
 

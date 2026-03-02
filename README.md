@@ -86,7 +86,7 @@ clawlite/
 
 ## Planos futuros (roadmap de implementação)
 
-- [ ] Fechar autonomia operacional 24/7 em Linux/proot com supervisão completa
+- [ ] Fechar autonomia operacional 24/7 em Linux com supervisão completa
 - [ ] Expandir confiabilidade de canais com reconexão e entrega proativa robusta
 - [ ] Internacionalização completa (`pt-BR` e `en`) em CLI + docs
 - [ ] Evoluir sistema de skills (hub, versionamento, métricas e quality gates)
