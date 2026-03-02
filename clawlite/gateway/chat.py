@@ -6,8 +6,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from clawlite.agent.loop import AgentRequest, get_agent_loop
 from clawlite.config import settings as app_settings
 from clawlite.config.settings import load_config
+from clawlite.core import agent as core_agent_mod
 from clawlite.gateway.utils import (
     _append_jsonl,
     _estimate_cost_parts_usd,
@@ -17,6 +19,9 @@ from clawlite.gateway.utils import (
     _log,
 )
 from clawlite.session.manager import SessionStore
+
+_ORIGINAL_RUN_TASK_WITH_META_ASYNC = core_agent_mod.run_task_with_meta_async
+_ORIGINAL_RUN_TASK_STREAM_WITH_META = core_agent_mod.run_task_stream_with_meta
 
 
 def _dashboard_dir() -> Path:
@@ -55,11 +60,18 @@ def _build_chat_reply(raw_output: str, hooks: dict[str, Any]) -> str:
 
 async def _run_agent_reply(session_id: str, text: str, hooks: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     prompt = _build_chat_prompt(text, hooks)
-
-    from clawlite.core.agent import run_task_with_meta_async
-
-    output, meta = await run_task_with_meta_async(prompt, "", session_id)
-    return _build_chat_reply(output, hooks), meta
+    if core_agent_mod.run_task_with_meta_async is not _ORIGINAL_RUN_TASK_WITH_META_ASYNC:
+        output, meta = await core_agent_mod.run_task_with_meta_async(prompt, "", session_id)
+    else:
+        response = await get_agent_loop().process_request(
+            AgentRequest(
+                prompt=prompt,
+                session_id=session_id,
+                learning=False,
+            )
+        )
+        output, meta = response.text, response.meta
+    return _build_chat_reply(output, hooks), dict(meta or {})
 
 
 def _record_telemetry(
@@ -166,14 +178,21 @@ async def _stream_chat_message(session_id: str, text: str):  # -> AsyncGenerator
     loop = asyncio.get_running_loop()
     q = asyncio.Queue()
 
-    from clawlite.core.agent import run_task_stream_with_meta
-
     def _worker():
         try:
-            try:
-                out_stream, meta = run_task_stream_with_meta(prompt, "", session_id)
-            except TypeError:
-                out_stream, meta = run_task_stream_with_meta(prompt)
+            if core_agent_mod.run_task_stream_with_meta is not _ORIGINAL_RUN_TASK_STREAM_WITH_META:
+                try:
+                    out_stream, meta = core_agent_mod.run_task_stream_with_meta(prompt, "", session_id)
+                except TypeError:
+                    out_stream, meta = core_agent_mod.run_task_stream_with_meta(prompt)
+            else:
+                out_stream, meta = get_agent_loop().stream_request(
+                    AgentRequest(
+                        prompt=prompt,
+                        session_id=session_id,
+                        learning=False,
+                    )
+                )
             asyncio.run_coroutine_threadsafe(q.put(("meta", meta)), loop)
             for chunk in out_stream:
                 asyncio.run_coroutine_threadsafe(q.put(("chunk", chunk)), loop)

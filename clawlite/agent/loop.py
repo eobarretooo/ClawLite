@@ -185,6 +185,25 @@ class AgentLoop:
         )
         return AgentResponse(text=text, meta=meta)
 
+    def stream_request(self, request: AgentRequest) -> tuple[Iterator[str], dict[str, Any]]:
+        req = request
+        if req.learning:
+            return (
+                self.stream_with_learning(
+                    prompt=req.prompt,
+                    skill=req.skill,
+                    session_id=req.session_id,
+                    workspace_path=req.workspace_path,
+                ),
+                {"mode": "learning", "reason": "agent-loop", "model": "n/a"},
+            )
+        return self.stream_with_meta(
+            prompt=req.prompt,
+            skill=req.skill,
+            session_id=req.session_id,
+            workspace_path=req.workspace_path,
+        )
+
 
 _LOOP: AgentLoop | None = None
 _LOCK = asyncio.Lock()

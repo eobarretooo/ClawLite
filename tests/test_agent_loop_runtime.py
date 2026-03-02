@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from clawlite.agent.loop import get_agent_loop
+from clawlite.agent.loop import AgentRequest, get_agent_loop
 from clawlite.core import agent as agent_mod
 
 
@@ -57,3 +57,19 @@ def test_agent_loop_process_async(monkeypatch) -> None:
     out = asyncio.run(_run())
     assert out == "echo:async ping:tg_3"
 
+
+def test_agent_loop_stream_request(monkeypatch) -> None:
+    loop = get_agent_loop()
+
+    def _fake_stream(prompt: str, skill: str = "", session_id: str = "", workspace_path: str | None = None):
+        del skill, workspace_path
+
+        def _iter():
+            yield f"chunk:{prompt}:{session_id}"
+
+        return _iter(), {"mode": "provider", "reason": "stream-ok", "model": "openai/gpt-4o-mini"}
+
+    monkeypatch.setattr(agent_mod, "_run_task_stream_with_meta_impl", _fake_stream)
+    stream, meta = loop.stream_request(AgentRequest(prompt="abc", session_id="s-stream", learning=False))
+    assert "".join(list(stream)) == "chunk:abc:s-stream"
+    assert meta["reason"] == "stream-ok"
