@@ -51,6 +51,7 @@ This note describes current/expected Telegram delivery behavior for operators.
 ## 8) Operational signals
 - Channel status may expose Telegram `signals` for runtime reliability diagnostics.
 - Current signals include retry counts (`send_retry_count`), retry-after usage (`send_retry_after_count`), auth breaker transitions/state (`*_auth_breaker_*`), typing TTL stop count (`typing_ttl_stop_count`), and reconnect count (`reconnect_count`).
+- Breaker transition counters are expected to advance on open->close cycles from both successful probes and natural cooldown expiry; soak tests should show reconnect/retry growth while breaker-open flags return to healthy steady state.
 - Operator expectation: treat spikes as transient unless counters/states remain elevated over multiple poll intervals.
 
 ## Quick operator checks

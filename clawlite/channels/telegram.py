@@ -357,6 +357,19 @@ class TelegramChannel(BaseChannel):
             "typing_ttl_stop_count": 0,
             "reconnect_count": 0,
         }
+        self._send_auth_breaker_seen_open = False
+        self._typing_auth_breaker_seen_open = False
+
+    def _sync_auth_breaker_signal_transition(self, *, breaker: TelegramAuthCircuitBreaker, key_prefix: str) -> None:
+        seen_open_attr = f"_{key_prefix}_auth_breaker_seen_open"
+        seen_open = bool(getattr(self, seen_open_attr, False))
+        is_open = breaker.is_open
+        if is_open:
+            setattr(self, seen_open_attr, True)
+            return
+        if seen_open:
+            self._signals[f"{key_prefix}_auth_breaker_close_count"] += 1
+            setattr(self, seen_open_attr, False)
 
     @staticmethod
     def _coerce_thread_id(value: Any) -> int | None:
@@ -390,26 +403,26 @@ class TelegramChannel(BaseChannel):
         self._send_auth_breaker.on_auth_failure()
         if not was_open and self._send_auth_breaker.is_open:
             self._signals["send_auth_breaker_open_count"] += 1
+            self._send_auth_breaker_seen_open = True
 
     def _on_send_auth_success(self) -> None:
-        was_open = self._send_auth_breaker.is_open
         self._send_auth_breaker.on_success()
-        if was_open:
-            self._signals["send_auth_breaker_close_count"] += 1
+        self._sync_auth_breaker_signal_transition(breaker=self._send_auth_breaker, key_prefix="send")
 
     def _on_typing_auth_failure(self) -> None:
         was_open = self._typing_auth_breaker.is_open
         self._typing_auth_breaker.on_auth_failure()
         if not was_open and self._typing_auth_breaker.is_open:
             self._signals["typing_auth_breaker_open_count"] += 1
+            self._typing_auth_breaker_seen_open = True
 
     def _on_typing_auth_success(self) -> None:
-        was_open = self._typing_auth_breaker.is_open
         self._typing_auth_breaker.on_success()
-        if was_open:
-            self._signals["typing_auth_breaker_close_count"] += 1
+        self._sync_auth_breaker_signal_transition(breaker=self._typing_auth_breaker, key_prefix="typing")
 
     def signals(self) -> dict[str, Any]:
+        self._sync_auth_breaker_signal_transition(breaker=self._send_auth_breaker, key_prefix="send")
+        self._sync_auth_breaker_signal_transition(breaker=self._typing_auth_breaker, key_prefix="typing")
         return {
             **self._signals,
             "send_auth_breaker_open": self._send_auth_breaker.is_open,
@@ -437,8 +450,10 @@ class TelegramChannel(BaseChannel):
                     return
 
                 if self._typing_auth_breaker.is_open:
+                    self._sync_auth_breaker_signal_transition(breaker=self._typing_auth_breaker, key_prefix="typing")
                     await asyncio.sleep(min(interval_s, remaining_s))
                     continue
+                self._sync_auth_breaker_signal_transition(breaker=self._typing_auth_breaker, key_prefix="typing")
 
                 bot = self.bot
                 if bot is None:
@@ -826,6 +841,7 @@ class TelegramChannel(BaseChannel):
             formatting_fallback_used = False
 
             for attempt in range(1, policy.max_attempts + 1):
+                self._sync_auth_breaker_signal_transition(breaker=self._send_auth_breaker, key_prefix="send")
                 if self._send_auth_breaker.is_open:
                     raise TelegramCircuitOpenError("telegram auth circuit is open")
                 try:
