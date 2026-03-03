@@ -297,6 +297,12 @@ def test_load_config_gateway_autonomy_parses_snake_and_camel(tmp_path: Path) -> 
                         "action_cooldown_s": 33.0,
                         "actionRateLimitPerHour": 44,
                         "max_replay_limit": 55,
+                        "actionPolicy": "conservative",
+                        "min_action_confidence": 0.81,
+                        "degradedBacklogThreshold": 88,
+                        "degraded_supervisor_error_threshold": 2,
+                        "auditExportPath": "/tmp/autonomy-audit.jsonl",
+                        "audit_max_entries": 123,
                     }
                 }
             }
@@ -315,6 +321,37 @@ def test_load_config_gateway_autonomy_parses_snake_and_camel(tmp_path: Path) -> 
     assert cfg.gateway.autonomy.action_cooldown_s == 33.0
     assert cfg.gateway.autonomy.action_rate_limit_per_hour == 44
     assert cfg.gateway.autonomy.max_replay_limit == 55
+    assert cfg.gateway.autonomy.action_policy == "conservative"
+    assert cfg.gateway.autonomy.min_action_confidence == 0.81
+    assert cfg.gateway.autonomy.degraded_backlog_threshold == 88
+    assert cfg.gateway.autonomy.degraded_supervisor_error_threshold == 2
+    assert cfg.gateway.autonomy.audit_export_path == "/tmp/autonomy-audit.jsonl"
+    assert cfg.gateway.autonomy.audit_max_entries == 123
+
+
+def test_load_config_gateway_autonomy_conservative_profile_uses_stricter_defaults_when_omitted(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "gateway": {
+                    "autonomy": {
+                        "enabled": True,
+                        "action_policy": "conservative",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.gateway.autonomy.action_policy == "conservative"
+    assert cfg.gateway.autonomy.action_cooldown_s == 300.0
+    assert cfg.gateway.autonomy.action_rate_limit_per_hour == 8
+    assert cfg.gateway.autonomy.min_action_confidence == 0.75
+    assert cfg.gateway.autonomy.degraded_backlog_threshold == 150
+    assert cfg.gateway.autonomy.degraded_supervisor_error_threshold == 1
 
 
 def test_load_config_tool_loop_detection_settings(tmp_path: Path) -> None:

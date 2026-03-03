@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 from clawlite.runtime.autonomy_actions import AutonomyActionController
 
@@ -121,5 +123,97 @@ def test_invalid_json_increments_parse_errors() -> None:
         controller = AutonomyActionController(now_monotonic=clock.monotonic)
         status = await controller.process("this is not valid action payload", {})
         assert status["totals"]["parse_errors"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_low_confidence_quality_gate_blocks_action() -> None:
+    clock = _Clock()
+    calls = {"count": 0}
+
+    async def _scenario() -> None:
+        controller = AutonomyActionController(min_action_confidence=0.8, now_monotonic=clock.monotonic)
+
+        def _validate_provider(**_: object) -> dict[str, bool]:
+            calls["count"] += 1
+            return {"ok": True}
+
+        status = await controller.process(
+            '{"action":"validate_provider","confidence":0.2,"args":{}}',
+            {"validate_provider": _validate_provider},
+        )
+        assert calls["count"] == 0
+        assert status["totals"]["quality_blocked"] == 1
+        assert status["totals"]["blocked"] == 1
+        assert status["totals"]["executed"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_degraded_snapshot_blocks_non_diagnostics_and_allows_diagnostics() -> None:
+    clock = _Clock()
+    calls = {"diag": 0, "provider": 0}
+
+    async def _scenario() -> None:
+        controller = AutonomyActionController(
+            max_actions_per_run=2,
+            degraded_backlog_threshold=10,
+            degraded_supervisor_error_threshold=3,
+            now_monotonic=clock.monotonic,
+        )
+
+        def _diagnostics_snapshot(**_: object) -> dict[str, bool]:
+            calls["diag"] += 1
+            return {"ok": True}
+
+        def _validate_provider(**_: object) -> dict[str, bool]:
+            calls["provider"] += 1
+            return {"ok": True}
+
+        payload = json.dumps(
+            {
+                "actions": [
+                    {"action": "validate_provider", "args": {}},
+                    {"action": "diagnostics_snapshot", "args": {}},
+                ]
+            }
+        )
+        status = await controller.process(
+            payload,
+            {
+                "validate_provider": _validate_provider,
+                "diagnostics_snapshot": _diagnostics_snapshot,
+            },
+            runtime_snapshot={
+                "queue": {"outbound_size": 20, "dead_letter_size": 1},
+                "supervisor": {"incident_count": 0, "consecutive_error_count": 0},
+            },
+        )
+
+        assert calls["provider"] == 0
+        assert calls["diag"] == 1
+        assert status["totals"]["degraded_blocked"] == 1
+        assert status["totals"]["executed"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_audit_export_reads_persisted_entries(tmp_path: Path) -> None:
+    clock = _Clock()
+
+    async def _scenario() -> None:
+        audit_path = tmp_path / "autonomy-actions-audit.jsonl"
+        controller = AutonomyActionController(audit_path=str(audit_path), now_monotonic=clock.monotonic)
+
+        def _validate_provider(**_: object) -> dict[str, bool]:
+            return {"ok": True}
+
+        await controller.process('{"action":"validate_provider","args":{}}', {"validate_provider": _validate_provider})
+
+        exported = controller.export_audit(limit=10)
+        assert exported["ok"] is True
+        assert exported["path"] == str(audit_path)
+        assert exported["count"] >= 1
+        assert any(str(row.get("action", "")) == "validate_provider" for row in exported["entries"])
 
     asyncio.run(_scenario())

@@ -22,6 +22,7 @@
 - P1 progress: long-term memory/session recovery hardening landed with malformed memory JSONL tolerant reads + best-effort read-repair, per-session context recovery fallback (history-first with curated-memory fallback), and additive `memory_store` + `session_recovery` diagnostics in engine/gateway telemetry.
 - P1 progress: autonomy loop bootstrap landed with an opt-in periodic autonomy worker (supervised review turn), bounded queue-backlog/cooldown/timeout guards, fail-soft tick isolation, additive diagnostics telemetry, and manual control endpoint (`/v1/control/autonomy/trigger`).
 - P1 progress: autonomy action execution layer landed with strict allowlist + denylist blocking, per-action cooldown/hourly rate limits, dry-run-only dead-letter replay clamp, fail-soft sequential execution, and additive `autonomy_actions` telemetry/audits in diagnostics + trigger responses.
+- P1 progress: autonomy reliability increment landed with action quality gates, balanced/conservative policy profiles, degraded-runtime action restrictions, and persistent/exportable autonomy audit trail (`/v1/control/autonomy/audit`).
 
 ## P2 — Ecosystem
 

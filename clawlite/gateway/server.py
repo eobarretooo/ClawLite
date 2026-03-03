@@ -450,11 +450,20 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
 def create_app(config: AppConfig | None = None) -> FastAPI:
     cfg = config or load_config()
     runtime = build_runtime(cfg)
+    audit_path = str(cfg.gateway.autonomy.audit_export_path or "").strip()
+    if not audit_path:
+        audit_path = str(Path(cfg.state_path) / "autonomy-actions-audit.jsonl")
     runtime.autonomy_actions = AutonomyActionController(
         max_actions_per_run=cfg.gateway.autonomy.max_actions_per_run,
         action_cooldown_s=cfg.gateway.autonomy.action_cooldown_s,
         action_rate_limit_per_hour=cfg.gateway.autonomy.action_rate_limit_per_hour,
         max_replay_limit=cfg.gateway.autonomy.max_replay_limit,
+        policy=cfg.gateway.autonomy.action_policy,
+        min_action_confidence=cfg.gateway.autonomy.min_action_confidence,
+        degraded_backlog_threshold=cfg.gateway.autonomy.degraded_backlog_threshold,
+        degraded_supervisor_error_threshold=cfg.gateway.autonomy.degraded_supervisor_error_threshold,
+        audit_path=audit_path,
+        audit_max_entries=cfg.gateway.autonomy.audit_max_entries,
     )
     auth_guard = GatewayAuthGuard.from_config(cfg)
     if auth_guard.mode == "required" and not auth_guard.token:
@@ -569,7 +578,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 dry_run=True,
             ),
         }
-        status = await controller.process(result.text, executors)
+        status = await controller.process(result.text, executors, runtime_snapshot=snapshot)
         totals = status.get("totals", {}) if isinstance(status.get("totals"), dict) else {}
         last_run = status.get("last_run", {}) if isinstance(status.get("last_run"), dict) else {}
         return (
@@ -852,6 +861,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "autonomy": status,
             "autonomy_actions": runtime.autonomy_actions.status() if runtime.autonomy_actions is not None else {},
         }
+
+    @app.get("/v1/control/autonomy/audit")
+    async def export_autonomy_audit(request: Request, limit: int = 100) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        controller = runtime.autonomy_actions
+        if controller is None:
+            return {"ok": False, "path": "", "count": 0, "entries": []}
+        return controller.export_audit(limit=limit)
 
     @app.post("/v1/chat", response_model=ChatResponse)
     async def chat(req: ChatRequest, request: Request) -> ChatResponse:

@@ -236,7 +236,7 @@ clawlite/
   - Scheduler is active with both Cron jobs and Heartbeat loop, plus CLI/API controls.
   - Gateway runtime supervisor is active with additive health telemetry and bounded auto-recovery checks for heartbeat/cron/channel runtime health, plus cooldown-based restart-storm protection.
   - Autonomy loop bootstrap is active as an opt-in gateway subsystem: periodic supervised review turns with bounded timeout, queue-backlog/cooldown guards, additive diagnostics, and manual `/v1/control/autonomy/trigger` control.
-  - Autonomy action execution layer is active with allowlisted operations (`validate_provider`, `validate_channels`, `diagnostics_snapshot`, `dead_letter_replay_dry_run`), denylisted unknown-action blocking, per-action cooldown/rate guardrails, and additive `autonomy_actions` diagnostics/audits.
+  - Autonomy action execution layer is active with allowlisted operations (`validate_provider`, `validate_channels`, `diagnostics_snapshot`, `dead_letter_replay_dry_run`), denylisted unknown-action blocking, per-action cooldown/rate guardrails, quality-confidence and degraded-runtime gates, and additive `autonomy_actions` diagnostics plus persisted audit export (`/v1/control/autonomy/audit`).
   - P1 proactive delivery observability is active: additive outbound/dead-letter telemetry in queue/channel diagnostics plus bounded dead-letter replay control via API.
   - Scheduler reliability telemetry hardening landed: heartbeat/cron now expose additive durability counters, trigger/reason/job health signals, and isolate transient persistence/schedule/job failures without crashing runtime loops.
   - Provider routing is active for Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, and custom OpenAI-compatible endpoints.
@@ -245,7 +245,7 @@ clawlite/
   - Telegram reliability is improved with long-run soak/recovery validation coverage, but not yet a guaranteed zero-error operation under all network/provider conditions.
   - Typing keepalive cadence/TTL tuning and richer Telegram formatting consistency still need more production validation.
   - Most non-Telegram channels are still skeleton adapters.
-  - 24/7 supervision/recovery bootstrap is active and autonomy periodic review bootstrap is available, but full autonomous self-improvement loops with internet research and quality gates remain in progress.
+  - 24/7 supervision/recovery bootstrap is active and autonomy periodic review bootstrap is available, but full autonomous self-improvement loops with internet research and deeper policy adaptation remain in progress.
 
 ## 🛣️ Roadmap
 - **P0 Reliability and Core Completion (highest priority)**

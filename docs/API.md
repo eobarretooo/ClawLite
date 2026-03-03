@@ -87,7 +87,7 @@ Supervisor telemetry is additive under `supervisor` and may include: `ticks`, `i
 
 Autonomy telemetry is additive under `autonomy` and may include: `running`, `enabled`, `session_id`, `ticks`, `run_attempts`, `run_success`, `run_failures`, `skipped_backlog`, `skipped_cooldown`, `skipped_disabled`, `last_run_at`, `last_result_excerpt`, `last_error`, `consecutive_error_count`, `last_snapshot`, and `cooldown_remaining_s`.
 
-Autonomy action execution telemetry is additive under top-level `autonomy_actions` and may include: `totals` (`proposed`, `executed`, `succeeded`, `failed`, `blocked`, `parse_errors`, `rate_limited`, `cooldown_blocked`, `unknown_blocked`), `per_action`, `last_run`, and bounded `recent_audits`.
+Autonomy action execution telemetry is additive under top-level `autonomy_actions` and may include: policy/guardrail settings (`policy`, `min_action_confidence`, degraded thresholds, audit path/limits), `totals` (`proposed`, `executed`, `succeeded`, `failed`, `blocked`, `parse_errors`, `rate_limited`, `cooldown_blocked`, `unknown_blocked`, `quality_blocked`, `degraded_blocked`, `audit_writes`, `audit_write_failures`), `per_action`, `last_run`, and bounded `recent_audits`.
 
 Example response:
 
@@ -151,6 +151,32 @@ Request body is optional:
 ```json
 {
   "force": true
+}
+```
+
+## `GET /v1/control/autonomy/audit?limit=100`
+
+Control-plane endpoint to export persisted autonomy action audit rows (JSONL-backed, fail-soft).
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "path": "/home/user/.clawlite/state/autonomy-actions-audit.jsonl",
+  "count": 2,
+  "entries": [
+    {
+      "kind": "action",
+      "action": "validate_provider",
+      "status": "succeeded"
+    },
+    {
+      "kind": "run",
+      "proposed": 1,
+      "executed": 1
+    }
+  ]
 }
 ```
 

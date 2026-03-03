@@ -199,6 +199,8 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "run_attempts" in payload["autonomy"]
         assert "skipped_disabled" in payload["autonomy"]
         assert "totals" in payload["autonomy_actions"]
+        assert "quality_blocked" in payload["autonomy_actions"]["totals"]
+        assert "degraded_blocked" in payload["autonomy_actions"]["totals"]
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
         assert "engine" in payload["environment"]
         assert "persistence" in payload["environment"]["engine"]
@@ -341,6 +343,51 @@ def test_gateway_autonomy_trigger_executes_allowlisted_action_from_provider_text
         payload = response.json()
         assert payload["ok"] is True
         assert payload["autonomy_actions"]["totals"]["executed"] >= 1
+
+        audit = client.get(
+            "/v1/control/autonomy/audit?limit=50",
+            headers={"Authorization": "Bearer autonomy-action-token"},
+        )
+        assert audit.status_code == 200
+        audit_payload = audit.json()
+        assert audit_payload["ok"] is True
+        assert audit_payload["count"] >= 1
+
+
+def test_gateway_autonomy_audit_endpoint_auth_and_success_payload(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "autonomy-audit-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+            "autonomy": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        unauthorized = client.get("/v1/control/autonomy/audit")
+        assert unauthorized.status_code == 401
+
+        response = client.get(
+            "/v1/control/autonomy/audit?limit=20",
+            headers={"Authorization": "Bearer autonomy-audit-token"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "path" in payload
+        assert "count" in payload
+        assert "entries" in payload
+        assert isinstance(payload["entries"], list)
 
 
 def test_gateway_startup_rollback_when_subsystem_fails(tmp_path: Path) -> None:

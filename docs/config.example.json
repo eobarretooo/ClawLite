@@ -54,9 +54,15 @@
       "max_queue_backlog": 200,
       "session_id": "autonomy:system",
       "max_actions_per_run": 1,
+      "action_policy": "balanced",
       "action_cooldown_s": 120.0,
       "action_rate_limit_per_hour": 20,
-      "max_replay_limit": 50
+      "max_replay_limit": 50,
+      "min_action_confidence": 0.55,
+      "degraded_backlog_threshold": 300,
+      "degraded_supervisor_error_threshold": 3,
+      "audit_export_path": "",
+      "audit_max_entries": 200
     }
   },
   "scheduler": {

@@ -98,10 +98,41 @@ class GatewayAutonomyConfig:
     action_cooldown_s: float = 120.0
     action_rate_limit_per_hour: int = 20
     max_replay_limit: int = 50
+    action_policy: str = "balanced"
+    min_action_confidence: float = 0.55
+    degraded_backlog_threshold: int = 300
+    degraded_supervisor_error_threshold: int = 3
+    audit_export_path: str = ""
+    audit_max_entries: int = 200
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> GatewayAutonomyConfig:
         data = dict(raw or {})
+        if "actionPolicy" in data:
+            policy_raw = data.get("actionPolicy")
+        else:
+            policy_raw = data.get("action_policy", "balanced")
+        policy = str(policy_raw or "balanced").strip().lower()
+        if policy not in {"balanced", "conservative"}:
+            policy = "balanced"
+
+        conservative_defaults: dict[str, Any] = {
+            "action_cooldown_s": 300.0,
+            "action_rate_limit_per_hour": 8,
+            "min_action_confidence": 0.75,
+            "degraded_backlog_threshold": 150,
+            "degraded_supervisor_error_threshold": 1,
+        }
+
+        def _raw_with_alias(snake: str, camel: str, default: Any) -> Any:
+            if camel in data:
+                return data.get(camel)
+            if snake in data:
+                return data.get(snake)
+            if policy == "conservative" and snake in conservative_defaults:
+                return conservative_defaults[snake]
+            return default
+
         if "intervalS" in data:
             interval_raw = data.get("intervalS")
         else:
@@ -129,15 +160,47 @@ class GatewayAutonomyConfig:
         if "actionCooldownS" in data:
             action_cooldown_raw = data.get("actionCooldownS")
         else:
-            action_cooldown_raw = data.get("action_cooldown_s", 120.0)
+            action_cooldown_raw = _raw_with_alias("action_cooldown_s", "actionCooldownS", 120.0)
         if "actionRateLimitPerHour" in data:
             action_rate_limit_raw = data.get("actionRateLimitPerHour")
         else:
-            action_rate_limit_raw = data.get("action_rate_limit_per_hour", 20)
+            action_rate_limit_raw = _raw_with_alias("action_rate_limit_per_hour", "actionRateLimitPerHour", 20)
         if "maxReplayLimit" in data:
             max_replay_limit_raw = data.get("maxReplayLimit")
         else:
             max_replay_limit_raw = data.get("max_replay_limit", 50)
+        min_action_confidence_raw = _raw_with_alias("min_action_confidence", "minActionConfidence", 0.55)
+        degraded_backlog_threshold_raw = _raw_with_alias("degraded_backlog_threshold", "degradedBacklogThreshold", 300)
+        degraded_supervisor_error_threshold_raw = _raw_with_alias(
+            "degraded_supervisor_error_threshold",
+            "degradedSupervisorErrorThreshold",
+            3,
+        )
+        audit_export_path_raw = _raw_with_alias("audit_export_path", "auditExportPath", "")
+        audit_max_entries_raw = _raw_with_alias("audit_max_entries", "auditMaxEntries", 200)
+
+        action_cooldown_s = max(0.0, float(action_cooldown_raw or 120.0))
+        action_rate_limit_per_hour = max(1, int(action_rate_limit_raw or 20))
+        min_action_confidence = float(min_action_confidence_raw or 0.55)
+        if min_action_confidence < 0.0:
+            min_action_confidence = 0.0
+        if min_action_confidence > 1.0:
+            min_action_confidence = 1.0
+        degraded_backlog_threshold = max(1, int(degraded_backlog_threshold_raw or 300))
+        degraded_supervisor_error_threshold = max(1, int(degraded_supervisor_error_threshold_raw or 3))
+
+        if policy == "conservative":
+            if action_cooldown_s == 120.0:
+                action_cooldown_s = 300.0
+            if action_rate_limit_per_hour == 20:
+                action_rate_limit_per_hour = 8
+            if min_action_confidence == 0.55:
+                min_action_confidence = 0.75
+            if degraded_backlog_threshold == 300:
+                degraded_backlog_threshold = 150
+            if degraded_supervisor_error_threshold == 3:
+                degraded_supervisor_error_threshold = 1
+
         return cls(
             enabled=bool(data.get("enabled", False)),
             interval_s=max(1, int(interval_raw or 900)),
@@ -146,9 +209,15 @@ class GatewayAutonomyConfig:
             max_queue_backlog=max(0, int(max_backlog_raw or 200)),
             session_id=str(session_raw or "autonomy:system").strip() or "autonomy:system",
             max_actions_per_run=max(1, int(max_actions_raw or 1)),
-            action_cooldown_s=max(0.0, float(action_cooldown_raw or 120.0)),
-            action_rate_limit_per_hour=max(1, int(action_rate_limit_raw or 20)),
+            action_cooldown_s=action_cooldown_s,
+            action_rate_limit_per_hour=action_rate_limit_per_hour,
             max_replay_limit=max(1, int(max_replay_limit_raw or 50)),
+            action_policy=policy,
+            min_action_confidence=min_action_confidence,
+            degraded_backlog_threshold=degraded_backlog_threshold,
+            degraded_supervisor_error_threshold=degraded_supervisor_error_threshold,
+            audit_export_path=str(audit_export_path_raw or "").strip(),
+            audit_max_entries=max(1, int(audit_max_entries_raw or 200)),
         )
 
 

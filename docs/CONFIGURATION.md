@@ -71,9 +71,15 @@ Note: provider-specific key variables (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `
       "max_queue_backlog": 200,
       "session_id": "autonomy:system",
       "max_actions_per_run": 1,
+      "action_policy": "balanced",
       "action_cooldown_s": 120.0,
       "action_rate_limit_per_hour": 20,
-      "max_replay_limit": 50
+      "max_replay_limit": 50,
+      "min_action_confidence": 0.55,
+      "degraded_backlog_threshold": 300,
+      "degraded_supervisor_error_threshold": 3,
+      "audit_export_path": "",
+      "audit_max_entries": 200
     }
   }
 }
@@ -103,10 +109,16 @@ Compatibility: if legacy `gateway.token` exists, the loader migrates it to `gate
 - `gateway.autonomy.max_queue_backlog` skips non-forced ticks when `outbound_size + dead_letter_size` is high.
 - `gateway.autonomy.session_id` defines the engine session used for autonomy turns.
 - `gateway.autonomy.max_actions_per_run` bounds autonomous action execution per run (default `1`).
+- `gateway.autonomy.action_policy` supports `balanced` (default) and `conservative` profiles.
 - `gateway.autonomy.action_cooldown_s` enforces per-action cooldown (default `120s`).
 - `gateway.autonomy.action_rate_limit_per_hour` enforces per-action hourly cap (default `20`).
 - `gateway.autonomy.max_replay_limit` clamps `dead_letter_replay_dry_run.limit` (default `50`).
-- Snake case and camelCase are accepted (`interval_s`/`intervalS`, `cooldown_s`/`cooldownS`, `timeout_s`/`timeoutS`, `max_queue_backlog`/`maxQueueBacklog`, `session_id`/`sessionId`, `max_actions_per_run`/`maxActionsPerRun`, `action_cooldown_s`/`actionCooldownS`, `action_rate_limit_per_hour`/`actionRateLimitPerHour`, `max_replay_limit`/`maxReplayLimit`).
+- `gateway.autonomy.min_action_confidence` blocks low-confidence action proposals before execution.
+- `gateway.autonomy.degraded_backlog_threshold` and `gateway.autonomy.degraded_supervisor_error_threshold` define degraded-runtime guardrails.
+- `gateway.autonomy.audit_export_path` sets JSONL persistence path for autonomy action audit rows. Empty uses runtime default (`<state_path>/autonomy-actions-audit.jsonl`).
+- `gateway.autonomy.audit_max_entries` bounds in-memory/export batch size for recent audit reads.
+- Policy profile behavior: when `action_policy=conservative`, omitted guardrail fields auto-tighten to `action_cooldown_s=300`, `action_rate_limit_per_hour=8`, `min_action_confidence=0.75`, `degraded_backlog_threshold=150`, and `degraded_supervisor_error_threshold=1`.
+- Snake case and camelCase are accepted (`interval_s`/`intervalS`, `cooldown_s`/`cooldownS`, `timeout_s`/`timeoutS`, `max_queue_backlog`/`maxQueueBacklog`, `session_id`/`sessionId`, `max_actions_per_run`/`maxActionsPerRun`, `action_policy`/`actionPolicy`, `action_cooldown_s`/`actionCooldownS`, `action_rate_limit_per_hour`/`actionRateLimitPerHour`, `max_replay_limit`/`maxReplayLimit`, `min_action_confidence`/`minActionConfidence`, `degraded_backlog_threshold`/`degradedBacklogThreshold`, `degraded_supervisor_error_threshold`/`degradedSupervisorErrorThreshold`, `audit_export_path`/`auditExportPath`, `audit_max_entries`/`auditMaxEntries`).
 
 ## Automatic provider resolution
 

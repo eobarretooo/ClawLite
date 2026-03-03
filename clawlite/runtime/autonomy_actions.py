@@ -5,6 +5,7 @@ import json
 import time
 from datetime import datetime, timezone
 from json import JSONDecodeError
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 ActionExecutor = Callable[..., Any | Awaitable[Any]]
@@ -39,12 +40,24 @@ class AutonomyActionController:
         action_cooldown_s: float = 120.0,
         action_rate_limit_per_hour: int = 20,
         max_replay_limit: int = 50,
+        policy: str = "balanced",
+        min_action_confidence: float = 0.55,
+        degraded_backlog_threshold: int = 300,
+        degraded_supervisor_error_threshold: int = 3,
+        audit_path: str = "",
+        audit_max_entries: int = 200,
         now_monotonic: Callable[[], float] | None = None,
     ) -> None:
         self.max_actions_per_run = max(1, int(max_actions_per_run or 1))
         self.action_cooldown_s = max(0.0, float(action_cooldown_s or 0.0))
         self.action_rate_limit_per_hour = max(1, int(action_rate_limit_per_hour or 1))
         self.max_replay_limit = max(1, int(max_replay_limit or 1))
+        self.policy = self._normalize_policy(policy)
+        self.min_action_confidence = self._clamp_confidence(min_action_confidence)
+        self.degraded_backlog_threshold = max(1, int(degraded_backlog_threshold or 1))
+        self.degraded_supervisor_error_threshold = max(1, int(degraded_supervisor_error_threshold or 1))
+        self.audit_path = str(audit_path or "").strip()
+        self.audit_max_entries = max(1, int(audit_max_entries or 1))
         self._now_monotonic = now_monotonic or time.monotonic
         self._lock = asyncio.Lock()
 
@@ -58,10 +71,33 @@ class AutonomyActionController:
             "rate_limited": 0,
             "cooldown_blocked": 0,
             "unknown_blocked": 0,
+            "quality_blocked": 0,
+            "degraded_blocked": 0,
+            "audit_writes": 0,
+            "audit_write_failures": 0,
         }
         self._per_action: dict[str, dict[str, Any]] = {name: self._new_action_status() for name in self.ALLOWLIST}
         self._recent_audits: list[dict[str, Any]] = []
         self._last_run: dict[str, Any] = {}
+
+    @staticmethod
+    def _normalize_policy(policy: str) -> str:
+        value = str(policy or "balanced").strip().lower()
+        if value not in {"balanced", "conservative"}:
+            return "balanced"
+        return value
+
+    @staticmethod
+    def _clamp_confidence(raw: Any) -> float:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value < 0.0:
+            return 0.0
+        if value > 1.0:
+            return 1.0
+        return value
 
     @staticmethod
     def _new_action_status() -> dict[str, Any]:
@@ -92,6 +128,72 @@ class AutonomyActionController:
     @staticmethod
     def _clean_args(raw_args: Any) -> dict[str, Any]:
         return dict(raw_args) if isinstance(raw_args, dict) else {}
+
+    def _default_confidence_for_action(self, action: str) -> float:
+        if self.policy == "conservative":
+            defaults = {
+                "diagnostics_snapshot": 0.9,
+                "validate_provider": 0.82,
+                "validate_channels": 0.82,
+                "dead_letter_replay_dry_run": 0.76,
+            }
+        else:
+            defaults = {
+                "diagnostics_snapshot": 0.86,
+                "validate_provider": 0.75,
+                "validate_channels": 0.75,
+                "dead_letter_replay_dry_run": 0.68,
+            }
+        return float(defaults.get(str(action or "").strip(), 0.5))
+
+    def _action_confidence(self, action: str, raw_confidence: Any) -> float:
+        if raw_confidence is None:
+            return self._default_confidence_for_action(action)
+        parsed = self._clamp_confidence(raw_confidence)
+        return parsed
+
+    def _detect_degraded(self, runtime_snapshot: Any) -> tuple[bool, str, dict[str, int]]:
+        snapshot = runtime_snapshot if isinstance(runtime_snapshot, dict) else {}
+        queue = snapshot.get("queue", {}) if isinstance(snapshot.get("queue"), dict) else {}
+        supervisor = snapshot.get("supervisor", {}) if isinstance(snapshot.get("supervisor"), dict) else {}
+        outbound_size = int(queue.get("outbound_size", 0) or 0)
+        dead_letter_size = int(queue.get("dead_letter_size", 0) or 0)
+        backlog = max(0, outbound_size) + max(0, dead_letter_size)
+        incident_count = int(supervisor.get("incident_count", 0) or 0)
+        supervisor_errors = int(supervisor.get("consecutive_error_count", 0) or 0)
+        details = {
+            "queue_backlog": backlog,
+            "incident_count": incident_count,
+            "supervisor_error_count": supervisor_errors,
+        }
+        if backlog >= self.degraded_backlog_threshold:
+            return (True, "queue_backlog", details)
+        if incident_count > 0:
+            return (True, "supervisor_incidents", details)
+        if supervisor_errors >= self.degraded_supervisor_error_threshold:
+            return (True, "supervisor_errors", details)
+        return (False, "", details)
+
+    def _append_recent_audits(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        self._recent_audits.extend(dict(row) for row in rows)
+        if len(self._recent_audits) > self.audit_max_entries:
+            self._recent_audits = self._recent_audits[-self.audit_max_entries :]
+
+    def _persist_audits(self, rows: list[dict[str, Any]]) -> None:
+        if not self.audit_path or not rows:
+            return
+        target = Path(self.audit_path)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False))
+                    handle.write("\n")
+            self._totals["audit_writes"] += len(rows)
+        except Exception:
+            self._totals["audit_write_failures"] += 1
 
     @classmethod
     def _extract_first_json_object(cls, raw_text: str) -> dict[str, Any] | None:
@@ -126,12 +228,27 @@ class AutonomyActionController:
                 action_name = str(row.get("action", "") or "").strip()
                 if not action_name:
                     continue
-                actions.append({"action": action_name, "args": self._clean_args(row.get("args"))})
+                actions.append(
+                    {
+                        "action": action_name,
+                        "args": self._clean_args(row.get("args")),
+                        "confidence": row.get("confidence"),
+                    }
+                )
             return (actions, False)
         action_name = str(payload.get("action", "") or "").strip()
         if not action_name:
             return ([], True)
-        return ([{"action": action_name, "args": self._clean_args(payload.get("args"))}], False)
+        return (
+            [
+                {
+                    "action": action_name,
+                    "args": self._clean_args(payload.get("args")),
+                    "confidence": payload.get("confidence"),
+                }
+            ],
+            False,
+        )
 
     def _per_action_row(self, action: str) -> dict[str, Any]:
         row = self._per_action.get(action)
@@ -156,16 +273,23 @@ class AutonomyActionController:
                 return True
         return False
 
-    async def process(self, raw_text: str, executors: dict[str, ActionExecutor]) -> dict[str, Any]:
+    async def process(
+        self,
+        raw_text: str,
+        executors: dict[str, ActionExecutor],
+        runtime_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         async with self._lock:
             now = self._now_monotonic()
             run_started_at = self._utc_now_iso()
+            run_id = f"{int(now * 1000)}-{int(time.time() * 1000)}"
             run_audits: list[dict[str, Any]] = []
             run_proposed = 0
             run_executed = 0
             run_succeeded = 0
             run_failed = 0
             run_blocked = 0
+            degraded, degraded_reason, degraded_details = self._detect_degraded(runtime_snapshot)
 
             actions, parse_error = self._parse_actions(raw_text)
             if parse_error:
@@ -175,6 +299,7 @@ class AutonomyActionController:
             for index, row in enumerate(actions):
                 action = str(row.get("action", "") or "").strip()
                 args = self._clean_args(row.get("args"))
+                confidence = self._action_confidence(action, row.get("confidence"))
                 if not action:
                     continue
                 run_proposed += 1
@@ -186,7 +311,15 @@ class AutonomyActionController:
                     self._totals["blocked"] += 1
                     run_blocked += 1
                     action_row["blocked"] += 1
-                    run_audits.append({"action": action, "status": "blocked", "reason": "max_actions_per_run", "args": dict(args)})
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "blocked",
+                            "reason": "max_actions_per_run",
+                            "args": dict(args),
+                            "confidence": confidence,
+                        }
+                    )
                     continue
 
                 if action not in self.ALLOWLIST or self._denylisted(action):
@@ -194,7 +327,50 @@ class AutonomyActionController:
                     self._totals["unknown_blocked"] += 1
                     run_blocked += 1
                     action_row["blocked"] += 1
-                    run_audits.append({"action": action, "status": "blocked", "reason": "unknown_or_denylisted", "args": dict(args)})
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "blocked",
+                            "reason": "unknown_or_denylisted",
+                            "args": dict(args),
+                            "confidence": confidence,
+                        }
+                    )
+                    continue
+
+                if degraded and action != "diagnostics_snapshot":
+                    self._totals["blocked"] += 1
+                    self._totals["degraded_blocked"] += 1
+                    run_blocked += 1
+                    action_row["blocked"] += 1
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "blocked",
+                            "reason": "degraded_runtime",
+                            "args": dict(args),
+                            "confidence": confidence,
+                            "degraded_reason": degraded_reason,
+                            "degraded": dict(degraded_details),
+                        }
+                    )
+                    continue
+
+                if confidence < self.min_action_confidence:
+                    self._totals["blocked"] += 1
+                    self._totals["quality_blocked"] += 1
+                    run_blocked += 1
+                    action_row["blocked"] += 1
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "blocked",
+                            "reason": "quality_gate",
+                            "args": dict(args),
+                            "confidence": confidence,
+                            "min_action_confidence": self.min_action_confidence,
+                        }
+                    )
                     continue
 
                 timestamps = self._prune_rate_window(action_row, now=now)
@@ -204,7 +380,15 @@ class AutonomyActionController:
                     run_blocked += 1
                     action_row["blocked"] += 1
                     action_row["rate_limited"] += 1
-                    run_audits.append({"action": action, "status": "blocked", "reason": "rate_limited", "args": dict(args)})
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "blocked",
+                            "reason": "rate_limited",
+                            "args": dict(args),
+                            "confidence": confidence,
+                        }
+                    )
                     continue
 
                 last_exec = float(action_row.get("_last_exec_monotonic", 0.0) or 0.0)
@@ -214,7 +398,15 @@ class AutonomyActionController:
                     run_blocked += 1
                     action_row["blocked"] += 1
                     action_row["cooldown_blocked"] += 1
-                    run_audits.append({"action": action, "status": "blocked", "reason": "cooldown", "args": dict(args)})
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "blocked",
+                            "reason": "cooldown",
+                            "args": dict(args),
+                            "confidence": confidence,
+                        }
+                    )
                     continue
 
                 if action == "dead_letter_replay_dry_run":
@@ -231,7 +423,15 @@ class AutonomyActionController:
                     self._totals["failed"] += 1
                     run_failed += 1
                     action_row["failed"] += 1
-                    run_audits.append({"action": action, "status": "failed", "reason": "executor_missing", "args": dict(args)})
+                    run_audits.append(
+                        {
+                            "action": action,
+                            "status": "failed",
+                            "reason": "executor_missing",
+                            "args": dict(args),
+                            "confidence": confidence,
+                        }
+                    )
                     continue
 
                 self._totals["executed"] += 1
@@ -253,6 +453,7 @@ class AutonomyActionController:
                             "action": action,
                             "status": "succeeded",
                             "args": dict(args),
+                            "confidence": confidence,
                             "result_excerpt": self._excerpt(result),
                         }
                     )
@@ -265,23 +466,45 @@ class AutonomyActionController:
                             "action": action,
                             "status": "failed",
                             "args": dict(args),
+                            "confidence": confidence,
                             "error": self._excerpt(exc),
                         }
                     )
 
             if parse_error:
-                run_audits.append({"action": "", "status": "parse_error", "reason": "no_valid_action_json"})
+                run_audits.append({"action": "", "status": "parse_error", "reason": "no_valid_action_json", "confidence": 0.0})
 
-            self._recent_audits.extend(
+            recent_rows = [
                 {
+                    "kind": "action",
+                    "run_id": run_id,
                     "at": run_started_at,
+                    "policy": self.policy,
                     "raw_excerpt": self._excerpt(raw_text),
                     **dict(row),
                 }
                 for row in run_audits
-            )
-            if len(self._recent_audits) > 25:
-                self._recent_audits = self._recent_audits[-25:]
+            ]
+            run_summary_row = {
+                "kind": "run",
+                "run_id": run_id,
+                "at": run_started_at,
+                "policy": self.policy,
+                "raw_excerpt": self._excerpt(raw_text),
+                "proposed": run_proposed,
+                "executed": run_executed,
+                "succeeded": run_succeeded,
+                "failed": run_failed,
+                "blocked": run_blocked,
+                "parse_error": bool(parse_error),
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+                "degraded_details": dict(degraded_details),
+            }
+            persisted_rows = recent_rows + [run_summary_row]
+
+            self._append_recent_audits(persisted_rows)
+            self._persist_audits(persisted_rows)
 
             self._last_run = {
                 "at": run_started_at,
@@ -292,9 +515,43 @@ class AutonomyActionController:
                 "failed": run_failed,
                 "blocked": run_blocked,
                 "parse_error": bool(parse_error),
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+                "degraded_details": dict(degraded_details),
                 "audits": run_audits,
             }
             return self.status()
+
+    def export_audit(self, limit: int = 100) -> dict[str, Any]:
+        max_limit = max(1, int(limit or 100))
+        safe_limit = min(max_limit, self.audit_max_entries)
+        path = self.audit_path
+        if not path:
+            entries = self._recent_audits[-safe_limit:]
+            return {"ok": True, "path": "", "count": len(entries), "entries": entries}
+
+        target = Path(path)
+        if not target.exists():
+            return {"ok": True, "path": str(target), "count": 0, "entries": []}
+
+        try:
+            parsed: list[dict[str, Any]] = []
+            with target.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    text = line.strip()
+                    if not text:
+                        continue
+                    try:
+                        row = json.loads(text)
+                    except JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        parsed.append(row)
+            if len(parsed) > safe_limit:
+                parsed = parsed[-safe_limit:]
+            return {"ok": True, "path": str(target), "count": len(parsed), "entries": parsed}
+        except Exception:
+            return {"ok": False, "path": str(target), "count": 0, "entries": []}
 
     def status(self) -> dict[str, Any]:
         now = self._now_monotonic()
@@ -314,9 +571,15 @@ class AutonomyActionController:
             }
         return {
             "max_actions_per_run": self.max_actions_per_run,
+            "policy": self.policy,
+            "min_action_confidence": self.min_action_confidence,
+            "degraded_backlog_threshold": self.degraded_backlog_threshold,
+            "degraded_supervisor_error_threshold": self.degraded_supervisor_error_threshold,
             "action_cooldown_s": self.action_cooldown_s,
             "action_rate_limit_per_hour": self.action_rate_limit_per_hour,
             "max_replay_limit": self.max_replay_limit,
+            "audit_path": self.audit_path,
+            "audit_max_entries": self.audit_max_entries,
             "totals": dict(self._totals),
             "per_action": per_action_out,
             "last_run": dict(self._last_run),
