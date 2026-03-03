@@ -24,5 +24,5 @@ clawlite/
 1. Message enters through `channels` or `gateway`.
 2. `core.engine` builds prompt (workspace + memory + history + skills).
 3. Provider responds; if there are tool calls, `tools.registry` executes them.
-4. Final response is persisted in `session.store` and consolidated in `core.memory`.
+4. Final response is delivered first; persistence (`session.store` append + `core.memory` consolidate) runs in best-effort mode and logs degraded storage failures without aborting the turn.
 5. `scheduler.cron` and `scheduler.heartbeat` trigger proactive runs.

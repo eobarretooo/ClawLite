@@ -130,6 +130,42 @@ class FakeErrorProvider:
         raise RuntimeError(self.message)
 
 
+class FakeOneShotProvider:
+    async def complete(self, *, messages, tools):
+        return ProviderResult(text="ok", tool_calls=[], model="fake/model")
+
+
+class FakeSessionStore:
+    def __init__(self, *, fail_role: str | None = None) -> None:
+        self.fail_role = fail_role
+        self.rows: dict[str, list[dict[str, str]]] = {}
+
+    def read(self, session_id: str, limit: int = 20) -> list[dict[str, str]]:
+        return self.rows.get(session_id, [])[-limit:]
+
+    def append(self, session_id: str, role: str, content: str) -> None:
+        if role == self.fail_role:
+            raise RuntimeError(f"append failed for {role}")
+        self.rows.setdefault(session_id, []).append({"role": role, "content": content})
+
+
+class _MemoryRow:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class FakeMemoryStore:
+    def __init__(self, *, fail_consolidate: bool = False) -> None:
+        self.fail_consolidate = fail_consolidate
+
+    def search(self, query: str, limit: int = 6) -> list[_MemoryRow]:
+        return []
+
+    def consolidate(self, messages: list[dict[str, str]], *, source: str) -> None:
+        if self.fail_consolidate:
+            raise RuntimeError("consolidate failed")
+
+
 class BlockingConcurrencyProvider:
     def __init__(self) -> None:
         self.active_calls = 0
@@ -384,5 +420,69 @@ def test_engine_keeps_parallelism_for_different_sessions() -> None:
         assert first_result.text == "ok"
         assert second_result.text == "ok"
         assert provider.max_active_calls >= 2
+
+    asyncio.run(_scenario())
+
+
+def test_engine_returns_response_when_user_session_append_fails() -> None:
+    async def _scenario() -> None:
+        sessions = FakeSessionStore(fail_role="user")
+        memory = FakeMemoryStore()
+        engine = AgentEngine(provider=FakeOneShotProvider(), tools=FakeTools(), sessions=sessions, memory=memory)
+
+        out = await engine.run(session_id="cli:persist-user-fail", user_text="hello")
+
+        assert out.text == "ok"
+        assert out.model == "fake/model"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_returns_response_when_assistant_session_append_fails() -> None:
+    async def _scenario() -> None:
+        sessions = FakeSessionStore(fail_role="assistant")
+        memory = FakeMemoryStore()
+        engine = AgentEngine(provider=FakeOneShotProvider(), tools=FakeTools(), sessions=sessions, memory=memory)
+
+        out = await engine.run(session_id="cli:persist-assistant-fail", user_text="hello")
+
+        assert out.text == "ok"
+        assert out.model == "fake/model"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_returns_response_when_memory_consolidate_fails() -> None:
+    async def _scenario() -> None:
+        sessions = FakeSessionStore()
+        memory = FakeMemoryStore(fail_consolidate=True)
+        engine = AgentEngine(provider=FakeOneShotProvider(), tools=FakeTools(), sessions=sessions, memory=memory)
+
+        out = await engine.run(session_id="cli:persist-memory-fail", user_text="hello")
+
+        assert out.text == "ok"
+        assert out.model == "fake/model"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_persistence_failures_still_emit_turn_completed() -> None:
+    async def _scenario() -> None:
+        sessions = FakeSessionStore(fail_role="user")
+        memory = FakeMemoryStore()
+        engine = AgentEngine(provider=FakeOneShotProvider(), tools=FakeTools(), sessions=sessions, memory=memory)
+        stages: list[str] = []
+
+        def _hook(event) -> None:
+            stages.append(event.stage)
+
+        out = await engine.run(
+            session_id="cli:persist-progress",
+            user_text="hello",
+            progress_hook=_hook,
+        )
+
+        assert out.text == "ok"
+        assert "turn_completed" in stages
 
     asyncio.run(_scenario())

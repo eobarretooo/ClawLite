@@ -76,6 +76,13 @@ pytest -q tests
 3. If heartbeat fails, validate `gateway.heartbeat.enabled` and trigger it manually (`/v1/control/heartbeat/trigger`).
 4. Before hotfix/release: `bash scripts/smoke_test.sh` and `pytest -q tests`.
 
+## Persistence degraded mode (engine fail-soft)
+
+- Engine responses continue even if session or memory persistence fails for a turn.
+- During degraded storage, session history or consolidated memory can be partially missing until storage recovers.
+- Check logs for persistence operation failures (`user_session_append`, `assistant_session_append`, `memory_consolidate`) and affected `session`.
+- After recovery, monitor subsequent turns to confirm session append and memory consolidation are succeeding again.
+
 ## Telegram reliability runbook checks
 
 - Check channel diagnostics/status for Telegram `signals` counters/state.

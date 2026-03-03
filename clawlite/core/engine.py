@@ -172,6 +172,7 @@ class AgentEngine:
         "out of credits",
         "billing exhausted",
     )
+    _PERSISTENCE_RETRY_DELAY_SECONDS = 0.01
 
     def __init__(
         self,
@@ -485,6 +486,48 @@ class AgentEngine:
         if inspect.isawaitable(maybe_awaitable):
             await maybe_awaitable
 
+    async def _persist_best_effort(
+        self,
+        *,
+        run_log: Any,
+        session_id: str,
+        operation: str,
+        action: Callable[[], None],
+    ) -> None:
+        attempts = 2
+        for attempt in range(1, attempts + 1):
+            try:
+                action()
+                return
+            except OSError as exc:
+                if attempt < attempts:
+                    run_log.warning(
+                        "persistence operation failed operation={} session={} attempt={} retrying error={}",
+                        operation,
+                        session_id,
+                        attempt,
+                        exc,
+                    )
+                    await asyncio.sleep(self._PERSISTENCE_RETRY_DELAY_SECONDS)
+                    continue
+                run_log.error(
+                    "persistence operation failed operation={} session={} attempt={} error={}",
+                    operation,
+                    session_id,
+                    attempt,
+                    exc,
+                )
+                return
+            except Exception as exc:
+                run_log.error(
+                    "persistence operation failed operation={} session={} attempt={} error={}",
+                    operation,
+                    session_id,
+                    attempt,
+                    exc,
+                )
+                return
+
     async def run(
         self,
         *,
@@ -781,12 +824,27 @@ class AgentEngine:
                 model="engine/fallback",
             )
 
-        self.sessions.append(session_id, "user", user_text)
+        await self._persist_best_effort(
+            run_log=run_log,
+            session_id=session_id,
+            operation="user_session_append",
+            action=lambda: self.sessions.append(session_id, "user", user_text),
+        )
         if not graceful_error:
-            self.sessions.append(session_id, "assistant", final.text)
-            self.memory.consolidate(
-                [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}],
-                source=f"session:{session_id}",
+            await self._persist_best_effort(
+                run_log=run_log,
+                session_id=session_id,
+                operation="assistant_session_append",
+                action=lambda: self.sessions.append(session_id, "assistant", final.text),
+            )
+            await self._persist_best_effort(
+                run_log=run_log,
+                session_id=session_id,
+                operation="memory_consolidate",
+                action=lambda: self.memory.consolidate(
+                    [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}],
+                    source=f"session:{session_id}",
+                ),
             )
         else:
             run_log.info("skipping assistant persistence after provider failure")
