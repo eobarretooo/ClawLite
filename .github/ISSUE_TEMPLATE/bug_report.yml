@@ -1,5 +1,5 @@
 name: Bug report
-description: Relate um problema reproduzível no ClawLite.
+description: Report a reproducible issue in ClawLite.
 title: "bug: "
 labels:
   - bug
@@ -7,33 +7,33 @@ body:
   - type: textarea
     id: summary
     attributes:
-      label: Descrição
-      description: O que aconteceu e o que você esperava?
-      placeholder: Explique o problema objetivamente.
+      label: Description
+      description: What happened and what did you expect?
+      placeholder: Explain the issue objectively.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: Passos para reproduzir
-      description: Liste os passos mínimos para reproduzir.
+      label: Steps to reproduce
+      description: List the minimum steps to reproduce.
       placeholder: |
-        1. Rode...
+        1. Run...
         2. Execute...
-        3. Veja erro...
+        3. Observe the error...
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: Logs/stacktrace
-      description: Cole trechos relevantes (sem segredos).
+      description: Paste relevant excerpts (without secrets).
       render: shell
   - type: textarea
     id: env
     attributes:
-      label: Ambiente
-      description: Sistema, Python, modo (Linux/Termux), versão do ClawLite.
+      label: Environment
+      description: System, Python, mode (Linux/Termux), ClawLite version.
       placeholder: Ubuntu 24.04 / Python 3.11 / ClawLite 0.4.1
     validations:
       required: true

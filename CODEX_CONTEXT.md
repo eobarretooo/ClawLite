@@ -11,7 +11,7 @@
 1. `tests_next/` renamed to `tests/`.
 2. `clawlite/core/__init__.py` created.
 3. Removed from version control:
-   - `docs-site/`
+   - stale website artifacts
    - `hub/marketplace/`
    - `scripts/community_pack.py`
    - `scripts/sync_community_downloads.py`
@@ -31,4 +31,4 @@
 
 ## Suggested next step
 
-- Review README/documentation to remove references to `docs-site` and `hub/marketplace` if they still exist.
+- Review README/documentation to remove references to removed legacy artifacts if they still exist.

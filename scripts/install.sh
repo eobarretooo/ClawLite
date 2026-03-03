@@ -16,9 +16,9 @@ if [[ -z "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="$(command -v python || true)"
 fi
 
-[[ -n "${PYTHON_BIN}" ]] || { echo "✗ python/python3 não encontrado"; exit 1; }
-command -v git >/dev/null 2>&1 || { echo "✗ git não encontrado"; exit 1; }
-command -v curl >/dev/null 2>&1 || { echo "✗ curl não encontrado"; exit 1; }
+[[ -n "${PYTHON_BIN}" ]] || { echo "✗ python/python3 not found"; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "✗ git not found"; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "✗ curl not found"; exit 1; }
 
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
@@ -62,8 +62,8 @@ def run(cmd: list[str], desc: str) -> None:
     output = (proc.stderr or proc.stdout or "").strip()
     cmd_txt = " ".join(cmd)
     if output:
-        raise RuntimeError(f"{desc} falhou (cmd: {cmd_txt})\n{output}")
-    raise RuntimeError(f"{desc} falhou (cmd: {cmd_txt})")
+        raise RuntimeError(f"{desc} failed (cmd: {cmd_txt})\n{output}")
+    raise RuntimeError(f"{desc} failed (cmd: {cmd_txt})")
 
 
 def ensure_path() -> None:
@@ -160,16 +160,16 @@ def install_playwright_runtime() -> None:
 def rich_flow() -> None:
     console.print("[bold #ff6b2b]🦊 ClawLite Installer v0.5.0-beta.2[/bold #ff6b2b]")
     console.print("[bold #00f5ff]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold #00f5ff]")
-    console.print(f"[cyan]Plataforma: Linux | Python: {platform.python_version()}[/cyan]")
+    console.print(f"[cyan]Platform: Linux | Python: {platform.python_version()}[/cyan]")
 
     with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
-        t = sp.add_task("[1/5] Detectando ambiente...", total=None)
+        t = sp.add_task("[1/5] Detecting environment...", total=None)
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
     with Progress(
         SpinnerColumn(style="#00f5ff"),
-        TextColumn("[bold][2/5] Instalando dependências..."),
+        TextColumn("[bold][2/5] Installing dependencies..."),
         BarColumn(complete_style="#ff6b2b", finished_style="#ff6b2b"),
         TaskProgressColumn(),
         transient=True,
@@ -184,52 +184,52 @@ def rich_flow() -> None:
     console.print("[green]✓[/green]")
 
     with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
-        t = sp.add_task("[3/5] Configurando CLI...", total=None)
+        t = sp.add_task("[3/5] Configuring CLI...", total=None)
         ensure_path()
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
     with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
-        t = sp.add_task("[4/5] Preparando workspace...", total=None)
+        t = sp.add_task("[4/5] Preparing workspace...", total=None)
         bootstrap_workspace()
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
     with Progress(SpinnerColumn(style="#00f5ff"), TextColumn("[bold]{task.description}"), transient=True, console=console) as sp:
-        t = sp.add_task("[5/5] Verificando instalação...", total=None)
+        t = sp.add_task("[5/5] Verifying installation...", total=None)
         install_playwright_runtime()
         doctor_check()
         ensure_gateway_runtime()
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
-    console.print(Panel.fit("🦊 ClawLite v0.5.0-beta.2 instalado!\n👉 clawlite onboard", border_style="#ff6b2b"))
+    console.print(Panel.fit("🦊 ClawLite v0.5.0-beta.2 installed!\n👉 clawlite onboard", border_style="#ff6b2b"))
 
 
 def simple_flow() -> None:
     print("🦊 ClawLite Installer v0.5.0-beta.2")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"Plataforma: Linux | Python: {platform.python_version()}")
+    print(f"Platform: Linux | Python: {platform.python_version()}")
 
-    print("[1/5] Detectando ambiente... ✓")
-    print("[2/5] Instalando dependências...")
+    print("[1/5] Detecting environment... ✓")
+    print("[2/5] Installing dependencies...")
     if ROOT_DIR and Path(ROOT_DIR, "pyproject.toml").exists():
         install_local()
     else:
         install_from_git()
     print("✓")
-    print("[3/5] Configurando CLI...")
+    print("[3/5] Configuring CLI...")
     ensure_path()
     print("✓")
-    print("[4/5] Preparando workspace...")
+    print("[4/5] Preparing workspace...")
     bootstrap_workspace()
     print("✓")
-    print("[5/5] Verificando instalação...")
+    print("[5/5] Verifying installation...")
     install_playwright_runtime()
     doctor_check()
     ensure_gateway_runtime()
     print("✓")
-    print("🦊 ClawLite v0.5.0-beta.2 instalado!\n👉 clawlite onboard")
+    print("🦊 ClawLite v0.5.0-beta.2 installed!\n👉 clawlite onboard")
 
 
 def main() -> None:
@@ -246,10 +246,10 @@ if __name__ == "__main__":
         msg = str(exc)
         if any(x in msg for x in ("verify gateway runtime", "fastapi", "uvicorn", "websockets", "wsproto")):
             msg = (
-                "Gateway runtime nao esta pronto (fastapi/uvicorn/websockets). "
+                "Gateway runtime is not ready (fastapi/uvicorn/websockets). "
                 "Execute: ~/.clawlite/venv/bin/python -m pip install --upgrade "
                 "fastapi uvicorn websockets wsproto\n\n"
-                f"Detalhes tecnicos: {exc}"
+                f"Technical details: {exc}"
             )
         if USE_RICH:
             console.print(f"[red]✗[/red] {msg}")

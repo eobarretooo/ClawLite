@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# smoke_test.sh — Validação rápida pós-deploy do ClawLite
-# Uso: bash scripts/smoke_test.sh [--gateway-port 8787]
+# smoke_test.sh - Quick post-deploy validation for ClawLite
+# Usage: bash scripts/smoke_test.sh [--gateway-port 8787]
 set -euo pipefail
 
 PORT="${CLAWLITE_PORT:-8787}"
@@ -15,43 +15,43 @@ echo "=== ClawLite Smoke Test ==="
 echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
 
-# 1) Importação dos módulos críticos
-echo "--- Módulos Python ---"
+# 1) Critical module imports
+echo "--- Python Modules ---"
 python -c "from clawlite.gateway import server" 2>/dev/null \
-  && _ok "gateway.server importa" || _fail "gateway.server falhou"
+  && _ok "gateway.server import" || _fail "gateway.server failed"
 
 python -c "from clawlite.core.engine import AgentEngine; from clawlite.scheduler.cron import CronService; from clawlite.tools.registry import ToolRegistry" 2>/dev/null \
-  && _ok "core/scheduler/tools importam" || _fail "core/scheduler/tools falhou"
+  && _ok "core/scheduler/tools import" || _fail "core/scheduler/tools failed"
 
-# 2) Testes unitários rápidos
+# 2) Quick unit tests
 echo ""
-echo "--- Testes unitários ---"
+echo "--- Unit Tests ---"
 if python -m pytest tests/ -q --tb=line -x 2>/dev/null | grep -q "passed"; then
   TOTAL=$(python -m pytest tests/ -q --tb=no 2>/dev/null | tail -1)
-  _ok "Testes: $TOTAL"
+  _ok "Tests: $TOTAL"
 else
-  _fail "pytest falhou ou sem testes passando"
+  _fail "pytest failed or no passing tests"
 fi
 
-# 3) Gateway health check (opcional — só se gateway estiver rodando)
+# 3) Gateway health check (optional - only if gateway is running)
 echo ""
 echo "--- Gateway (${BASE_URL}) ---"
 if curl -sf "${BASE_URL}/health" -o /dev/null 2>/dev/null; then
   HEALTH=$(curl -sf "${BASE_URL}/health" 2>/dev/null)
   _ok "health: $HEALTH"
 else
-  echo "  ⚠️  Gateway não está rodando em ${BASE_URL} (ok se não iniciado)"
+  echo "  ⚠️  Gateway is not running at ${BASE_URL} (ok if not started)"
 fi
 
-# 4) Dependências opcionais
+# 4) Optional dependencies
 echo ""
-echo "--- Dependências ---"
-python -c "import httpx" 2>/dev/null && _ok "httpx disponível" || _fail "httpx ausente"
-python -c "import fastapi" 2>/dev/null && _ok "fastapi disponível" || _fail "fastapi ausente"
-python -c "import uvicorn" 2>/dev/null && _ok "uvicorn disponível" || _fail "uvicorn ausente"
+echo "--- Dependencies ---"
+python -c "import httpx" 2>/dev/null && _ok "httpx available" || _fail "httpx missing"
+python -c "import fastapi" 2>/dev/null && _ok "fastapi available" || _fail "fastapi missing"
+python -c "import uvicorn" 2>/dev/null && _ok "uvicorn available" || _fail "uvicorn missing"
 
 echo ""
-echo "=== Resultado: ${PASS} ok / ${FAIL} falha(s) ==="
+echo "=== Result: ${PASS} ok / ${FAIL} failure(s) ==="
 if [ "${FAIL}" -gt 0 ]; then
   exit 1
 fi

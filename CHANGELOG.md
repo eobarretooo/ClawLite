@@ -7,7 +7,7 @@ Relevant ClawLite changes.
 ### Changed
 - Markdown documentation cleanup to reflect only the current runtime.
 - Updated README, CONTRIBUTING, SECURITY, and ROADMAP for current commands/flows.
-- Updated site documentation (`docs-site/docs`) removing legacy pages.
+- Updated documentation to remove stale legacy pages.
 
 ### Removed
 - Legacy internal analysis/context files that are not part of public documentation.

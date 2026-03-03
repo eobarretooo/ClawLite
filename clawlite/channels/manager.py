@@ -187,7 +187,7 @@ class ChannelManager:
         if not target:
             raise ValueError("invalid_outbound_session")
         if channel_name not in self._channels:
-            raise RuntimeError(f"canal outbound indisponível: {channel_name}")
+            raise RuntimeError(f"outbound channel unavailable: {channel_name}")
         return await self.send(channel=channel_name, target=target, text=str(text or ""))
 
     async def _retry_send(self, *, channel: BaseChannel, event: OutboundEvent) -> OutboundEvent | None:

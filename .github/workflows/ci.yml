@@ -1,4 +1,4 @@
-name: CI — Testes e Qualidade
+name: CI - Tests and Quality
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Instalar dependências
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
           if python - <<'PY'
@@ -43,7 +43,7 @@ jobs:
           fi
           pip install pytest pytest-anyio httpx "fastapi[all]" uvicorn questionary rich
 
-      - name: Rodar testes
+      - name: Run tests
         run: python -m pytest tests/ -q --tb=short
 
   lint:
@@ -58,11 +58,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Instalar ruff
+      - name: Install ruff
         run: pip install ruff
 
-      - name: Verificar formatação e linting
-        # Falha em erros críticos (E9xx = erros de runtime, F = pyflakes)
+      - name: Check formatting and linting
+        # Fail on critical errors (E9xx = runtime errors, F = pyflakes)
         run: ruff check clawlite/ --select E9,F --ignore F401,F811
 
   smoke:
@@ -77,13 +77,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Instalar ClawLite
+      - name: Install ClawLite
         run: |
           pip install --upgrade pip
           pip install -e .
           pip install httpx fastapi uvicorn rich questionary
 
-      - name: Smoke — importação dos módulos principais
+      - name: Smoke - import core modules
         run: |
           python -c "from clawlite.gateway import server; print('gateway ok')"
           python -c "from clawlite.core.engine import AgentEngine; print('engine ok')"

@@ -545,42 +545,42 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             provider = message.rsplit(":", 1)[-1]
             return (
                 400,
-                f"Chave de API ausente para o provedor '{provider}'. Defina CLAWLITE_LITELLM_API_KEY ou a chave especifica do provedor.",
+                f"Missing API key for provider '{provider}'. Set CLAWLITE_LITELLM_API_KEY or the provider-specific key.",
             )
         if message.startswith("provider_config_error:missing_base_url:"):
             provider = message.rsplit(":", 1)[-1]
             return (
                 400,
-                f"Base URL ausente para o provedor '{provider}'. Configure CLAWLITE_LITELLM_BASE_URL.",
+                f"Missing base URL for provider '{provider}'. Configure CLAWLITE_LITELLM_BASE_URL.",
             )
         if message.startswith("provider_config_error:"):
-            return (400, "Configuracao invalida do provedor. Revise modelo, base URL e chave de API.")
+            return (400, "Invalid provider configuration. Review model, base URL, and API key.")
         if provider_http_code == "400":
-            hint = provider_http_detail or "Verifique modelo, chave de API e base URL do provedor."
-            return (400, f"Requisicao invalida ao provedor (400). {hint}")
+            hint = provider_http_detail or "Check provider model, API key, and base URL."
+            return (400, f"Invalid request to provider (400). {hint}")
         if provider_http_code == "401":
             return (
                 502,
-                "Falha de autenticacao no provedor (401). Verifique CLAWLITE_MODEL e CLAWLITE_LITELLM_API_KEY."
-                + (f" Detalhe: {provider_http_detail}" if provider_http_detail else ""),
+                "Provider authentication failed (401). Check CLAWLITE_MODEL and CLAWLITE_LITELLM_API_KEY."
+                + (f" Detail: {provider_http_detail}" if provider_http_detail else ""),
             )
         if provider_http_code == "429" or message == "provider_429_exhausted":
-            return (429, "Limite de requisicoes no provedor. Tente novamente em instantes.")
+            return (429, "Provider rate limit reached. Try again shortly.")
         if provider_http_code:
-            detail = f" Detalhe: {provider_http_detail}" if provider_http_detail else ""
-            return (502, f"Falha no provedor remoto (HTTP {provider_http_code}).{detail}")
+            detail = f" Detail: {provider_http_detail}" if provider_http_detail else ""
+            return (502, f"Remote provider failure (HTTP {provider_http_code}).{detail}")
         if message.startswith("provider_network_error:"):
-            return (503, "Provedor remoto indisponivel no momento (erro de rede).")
+            return (503, "Remote provider is currently unavailable (network error).")
         if message.startswith("codex_http_error:401"):
-            return (502, "Falha de autenticacao no Codex (401). Refaça login OAuth do provedor Codex.")
+            return (502, "Codex authentication failed (401). Re-authenticate OAuth for the Codex provider.")
         if message.startswith("codex_http_error:429") or message == "codex_429_exhausted":
-            return (429, "Limite de requisicoes no Codex. Tente novamente em instantes.")
+            return (429, "Codex rate limit reached. Try again shortly.")
         if message.startswith("codex_http_error:"):
             code = message.split(":", 1)[1]
-            return (502, f"Falha no Codex (HTTP {code}).")
+            return (502, f"Codex failure (HTTP {code}).")
         if message.startswith("codex_network_error:"):
-            return (503, "Codex indisponivel no momento (erro de rede).")
-        return (500, "Falha interna ao processar a solicitacao.")
+            return (503, "Codex is currently unavailable (network error).")
+        return (500, "Internal failure while processing the request.")
 
     @app.get("/health")
     async def health(request: Request) -> dict[str, Any]:

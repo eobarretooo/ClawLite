@@ -230,7 +230,7 @@ clawlite/
 
 ## 🛣️ Roadmap
 - **P0 Reliability and Core Completion (highest priority)**
-  - [ ] Telegram at near-100% reliability: typing signal, formatting stability, resilient retries, and zero-crash channel loop (inspired by OpenClaw + nanobot reliability targets).
+  - [ ] Telegram at near-100% reliability: typing signal, formatting stability, resilient retries, and zero-crash channel loop (inspired by [OpenClaw](https://github.com/openclaw/openclaw) + [nanobot](https://github.com/HKUDS/nanobot) reliability targets).
   - [ ] ClawLite core loop fully reliable across Memory, Agents, Heartbeat, Soul context, Tools, and User context.
   - [ ] Gateway v1 stability hardening with expanded integration tests for `/v1/chat`, `/v1/cron/*`, and scheduler dispatch.
   - [ ] Provider/runtime robustness: safer auth/config validation, clearer provider error taxonomy, and stronger fallback/retry behavior (aligned with OpenClaw/nanobot production lessons).
@@ -258,7 +258,7 @@ PRs are welcome and encouraged.
 ## 🙏 Acknowledgements
 ClawLite is its own implementation.
 
-Thanks to the open-source projects **nanobot** and **OpenClaw** for architectural inspiration and practical reference points.
+Thanks to the official repositories [**nanobot**](https://github.com/HKUDS/nanobot) and [**OpenClaw**](https://github.com/openclaw/openclaw) for architectural inspiration and practical reference points.
 
 ## 📄 License
 This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
