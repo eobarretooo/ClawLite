@@ -251,3 +251,54 @@ def test_load_config_tool_loop_detection_settings(tmp_path: Path) -> None:
     assert cfg.tools.loop_detection.history_size == 12
     assert cfg.tools.loop_detection.repeat_threshold == 2
     assert cfg.tools.loop_detection.critical_threshold == 4
+
+
+def test_load_config_preserves_telegram_roundtrip_fields(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "channels": {
+                    "telegram": {
+                        "enabled": True,
+                        "token": "tok",
+                        "mode": "webhook",
+                        "webhook_enabled": True,
+                        "webhook_secret": "secret",
+                        "webhook_path": "/api/webhooks/telegram-custom",
+                        "poll_interval_s": 2.5,
+                        "poll_timeout_s": 45,
+                        "reconnect_initial_s": 3.0,
+                        "reconnect_max_s": 35.0,
+                        "send_timeout_s": 20.0,
+                        "send_retry_attempts": 4,
+                        "send_backoff_base_s": 0.4,
+                        "send_backoff_max_s": 9.0,
+                        "send_backoff_jitter": 0.15,
+                        "send_circuit_failure_threshold": 2,
+                        "send_circuit_cooldown_s": 70.0,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    telegram = cfg.to_dict()["channels"]["telegram"]
+    assert telegram["token"] == "tok"
+    assert telegram["mode"] == "webhook"
+    assert telegram["webhook_enabled"] is True
+    assert telegram["webhook_secret"] == "secret"
+    assert telegram["webhook_path"] == "/api/webhooks/telegram-custom"
+    assert telegram["poll_interval_s"] == 2.5
+    assert telegram["poll_timeout_s"] == 45
+    assert telegram["reconnect_initial_s"] == 3.0
+    assert telegram["reconnect_max_s"] == 35.0
+    assert telegram["send_timeout_s"] == 20.0
+    assert telegram["send_retry_attempts"] == 4
+    assert telegram["send_backoff_base_s"] == 0.4
+    assert telegram["send_backoff_max_s"] == 9.0
+    assert telegram["send_backoff_jitter"] == 0.15
+    assert telegram["send_circuit_failure_threshold"] == 2
+    assert telegram["send_circuit_cooldown_s"] == 70.0

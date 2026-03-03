@@ -197,8 +197,21 @@ class ChannelConfig(BaseChannelConfig):
 @dataclass(slots=True)
 class TelegramChannelConfig(BaseChannelConfig):
     token: str = ""
+    mode: str = "polling"
+    webhook_enabled: bool = False
+    webhook_secret: str = ""
+    webhook_path: str = "/api/webhooks/telegram"
     poll_interval_s: float = 1.0
     poll_timeout_s: int = 20
+    reconnect_initial_s: float = 2.0
+    reconnect_max_s: float = 30.0
+    send_timeout_s: float = 15.0
+    send_retry_attempts: int = 3
+    send_backoff_base_s: float = 0.35
+    send_backoff_max_s: float = 8.0
+    send_backoff_jitter: float = 0.2
+    send_circuit_failure_threshold: int = 1
+    send_circuit_cooldown_s: float = 60.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> TelegramChannelConfig:
@@ -207,8 +220,23 @@ class TelegramChannelConfig(BaseChannelConfig):
             enabled=bool(data.get("enabled", False)),
             allow_from=cls._allow_from(data),
             token=str(data.get("token", "") or ""),
+            mode=str(data.get("mode", "polling") or "polling"),
+            webhook_enabled=bool(data.get("webhook_enabled", data.get("webhookEnabled", False))),
+            webhook_secret=str(data.get("webhook_secret", data.get("webhookSecret", "")) or ""),
+            webhook_path=str(data.get("webhook_path", data.get("webhookPath", "/api/webhooks/telegram")) or "/api/webhooks/telegram"),
             poll_interval_s=float(data.get("poll_interval_s", data.get("pollIntervalS", 1.0)) or 1.0),
             poll_timeout_s=int(data.get("poll_timeout_s", data.get("pollTimeoutS", 20)) or 20),
+            reconnect_initial_s=float(data.get("reconnect_initial_s", data.get("reconnectInitialS", 2.0)) or 2.0),
+            reconnect_max_s=float(data.get("reconnect_max_s", data.get("reconnectMaxS", 30.0)) or 30.0),
+            send_timeout_s=float(data.get("send_timeout_s", data.get("sendTimeoutSec", 15.0)) or 15.0),
+            send_retry_attempts=int(data.get("send_retry_attempts", data.get("sendRetryAttempts", 3)) or 3),
+            send_backoff_base_s=float(data.get("send_backoff_base_s", data.get("sendBackoffBaseSec", 0.35)) or 0.35),
+            send_backoff_max_s=float(data.get("send_backoff_max_s", data.get("sendBackoffMaxSec", 8.0)) or 8.0),
+            send_backoff_jitter=float(data.get("send_backoff_jitter", data.get("sendBackoffJitter", 0.2)) or 0.2),
+            send_circuit_failure_threshold=int(
+                data.get("send_circuit_failure_threshold", data.get("sendCircuitFailureThreshold", 1)) or 1
+            ),
+            send_circuit_cooldown_s=float(data.get("send_circuit_cooldown_s", data.get("sendCircuitCooldownSec", 60.0)) or 60.0),
         )
 
 

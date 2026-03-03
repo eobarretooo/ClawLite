@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import hashlib
 import json
+import random
 import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +20,130 @@ from clawlite.utils.logging import setup_logging
 MAX_MESSAGE_LEN = 4000
 
 setup_logging()
+
+
+@dataclass(slots=True)
+class TelegramRetryPolicy:
+    max_attempts: int = 3
+    base_backoff_s: float = 0.35
+    max_backoff_s: float = 8.0
+    jitter_ratio: float = 0.2
+
+    def normalized(self) -> "TelegramRetryPolicy":
+        max_attempts = max(1, int(self.max_attempts))
+        base_backoff_s = max(0.0, float(self.base_backoff_s))
+        max_backoff_s = max(base_backoff_s, float(self.max_backoff_s))
+        jitter_ratio = min(0.9, max(0.0, float(self.jitter_ratio)))
+        return TelegramRetryPolicy(
+            max_attempts=max_attempts,
+            base_backoff_s=base_backoff_s,
+            max_backoff_s=max_backoff_s,
+            jitter_ratio=jitter_ratio,
+        )
+
+
+class TelegramCircuitOpenError(RuntimeError):
+    pass
+
+
+class TelegramAuthCircuitBreaker:
+    def __init__(self, *, failure_threshold: int = 1, cooldown_s: float = 60.0) -> None:
+        self.failure_threshold = max(1, int(failure_threshold))
+        self.cooldown_s = max(1.0, float(cooldown_s))
+        self._consecutive_failures = 0
+        self._open_until_monotonic: float | None = None
+
+    @property
+    def is_open(self) -> bool:
+        if self._open_until_monotonic is None:
+            return False
+        return time.monotonic() < self._open_until_monotonic
+
+    def on_success(self) -> None:
+        self._consecutive_failures = 0
+        self._open_until_monotonic = None
+
+    def on_auth_failure(self) -> None:
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self.failure_threshold:
+            self._open_until_monotonic = time.monotonic() + self.cooldown_s
+
+
+def _status_code_from_exc(exc: Exception) -> int | None:
+    for attr in ("status_code", "error_code"):
+        value = getattr(exc, attr, None)
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            pass
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        value = getattr(response, "status_code", None)
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _exception_text(exc: Exception) -> str:
+    return str(exc or "").strip().lower()
+
+
+def _is_auth_failure(exc: Exception) -> bool:
+    status_code = _status_code_from_exc(exc)
+    if status_code in {401, 403}:
+        return True
+    name = exc.__class__.__name__.lower()
+    return "unauthorized" in name or "forbidden" in name
+
+
+def _is_transient_failure(exc: Exception) -> bool:
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)):
+        return True
+
+    status_code = _status_code_from_exc(exc)
+    if status_code == 429:
+        return True
+
+    name = exc.__class__.__name__.lower()
+    if any(part in name for part in ("timeout", "network", "retryafter")):
+        return True
+
+    text = _exception_text(exc)
+    return any(
+        snippet in text
+        for snippet in (
+            "timed out",
+            "timeout",
+            "temporary failure",
+            "connection reset",
+            "too many requests",
+            "retry after",
+            "network",
+        )
+    )
+
+
+def _is_formatting_error(exc: Exception) -> bool:
+    if _status_code_from_exc(exc) != 400:
+        return False
+    text = _exception_text(exc)
+    return "can't parse entities" in text or "parse entities" in text
+
+
+def _retry_delay_s(policy: TelegramRetryPolicy, attempt: int) -> float:
+    normalized = policy.normalized()
+    base = normalized.base_backoff_s * (2 ** max(0, int(attempt) - 1))
+    capped = min(base, normalized.max_backoff_s)
+    if capped <= 0:
+        return 0.0
+    jitter_span = capped * normalized.jitter_ratio
+    jitter = (random.random() * 2.0 - 1.0) * jitter_span
+    return max(0.0, capped + jitter)
 
 
 def split_message(text: str, max_len: int = MAX_MESSAGE_LEN) -> list[str]:
@@ -108,6 +236,25 @@ class TelegramChannel(BaseChannel):
         self.poll_timeout_s = int(config.get("poll_timeout_s", 20) or 20)
         self.reconnect_initial_s = float(config.get("reconnect_initial_s", 2.0) or 2.0)
         self.reconnect_max_s = float(config.get("reconnect_max_s", 30.0) or 30.0)
+        self.send_timeout_s = float(config.get("send_timeout_s", config.get("sendTimeoutSec", 15.0)) or 15.0)
+        self.send_retry_attempts = int(config.get("send_retry_attempts", config.get("sendRetryAttempts", 3)) or 3)
+        self.send_backoff_base_s = float(config.get("send_backoff_base_s", config.get("sendBackoffBaseSec", 0.35)) or 0.35)
+        self.send_backoff_max_s = float(config.get("send_backoff_max_s", config.get("sendBackoffMaxSec", 8.0)) or 8.0)
+        self.send_backoff_jitter = float(config.get("send_backoff_jitter", config.get("sendBackoffJitter", 0.2)) or 0.2)
+        self.send_circuit_failure_threshold = int(
+            config.get("send_circuit_failure_threshold", config.get("sendCircuitFailureThreshold", 1)) or 1
+        )
+        self.send_circuit_cooldown_s = float(config.get("send_circuit_cooldown_s", config.get("sendCircuitCooldownSec", 60.0)) or 60.0)
+        self._send_retry_policy = TelegramRetryPolicy(
+            max_attempts=self.send_retry_attempts,
+            base_backoff_s=self.send_backoff_base_s,
+            max_backoff_s=self.send_backoff_max_s,
+            jitter_ratio=self.send_backoff_jitter,
+        ).normalized()
+        self._send_auth_breaker = TelegramAuthCircuitBreaker(
+            failure_threshold=self.send_circuit_failure_threshold,
+            cooldown_s=self.send_circuit_cooldown_s,
+        )
         self.drop_pending_updates = bool(config.get("drop_pending_updates", config.get("dropPendingUpdates", True)))
         self.handle_commands = bool(config.get("handle_commands", config.get("handleCommands", True)))
         self._task: asyncio.Task[Any] | None = None
@@ -192,9 +339,14 @@ class TelegramChannel(BaseChannel):
                     logger.info("telegram connected polling=true")
                 backoff = self.reconnect_initial_s
                 for item in updates:
-                    self._offset = max(self._offset, int(item.update_id) + 1)
+                    processed_ok = await self._handle_update(item)
+                    if not processed_ok:
+                        raise RuntimeError("telegram update processing failed")
+                    update_id = getattr(item, "update_id", None)
+                    if update_id is None:
+                        continue
+                    self._offset = max(self._offset, int(update_id) + 1)
                     self._save_offset()
-                    await self._handle_update(item)
                 await asyncio.sleep(self.poll_interval_s)
             except asyncio.CancelledError:
                 raise
@@ -206,7 +358,7 @@ class TelegramChannel(BaseChannel):
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, self.reconnect_max_s)
 
-    async def _handle_update(self, item: Any) -> None:
+    async def _handle_update(self, item: Any) -> bool:
         message = getattr(item, "message", None)
         is_edit = False
         if message is None:
@@ -216,24 +368,24 @@ class TelegramChannel(BaseChannel):
             message = getattr(item, "effective_message", None)
             is_edit = bool(getattr(item, "edited_message", None))
         if message is None:
-            return
+            return True
 
         media_info = self._extract_media_info(message)
         text = (getattr(message, "text", "") or getattr(message, "caption", "") or "").strip()
         if not text and media_info["has_media"]:
             text = self._build_media_placeholder(media_info)
         if not text:
-            return
+            return True
 
         chat_id = str(getattr(message, "chat_id", "") or "")
         if not chat_id:
-            return
+            return True
         user = getattr(message, "from_user", None)
         user_id = str(getattr(user, "id", "") or chat_id)
         username = str(getattr(user, "username", "") or "").strip()
         if not self._is_allowed_sender(user_id, username):
             logger.debug("telegram inbound blocked user={} chat={}", user_id, chat_id)
-            return
+            return True
 
         message_id = int(getattr(message, "message_id", 0) or 0)
         signature = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -241,7 +393,7 @@ class TelegramChannel(BaseChannel):
         previous_signature = self._message_signatures.get(msg_key)
         if previous_signature == signature:
             logger.debug("telegram inbound duplicate skipped chat={} message_id={} is_edit={}", chat_id, message_id, is_edit)
-            return
+            return True
         self._message_signatures[msg_key] = signature
         if len(self._message_signatures) > self._signature_limit:
             oldest_key = next(iter(self._message_signatures))
@@ -252,10 +404,10 @@ class TelegramChannel(BaseChannel):
         if is_command and self.handle_commands:
             if command == "start":
                 await self._send_start_message(chat_id=chat_id)
-                return
+                return True
             if command == "help":
                 await self._send_help_message(chat_id=chat_id)
-                return
+                return True
 
         session_id = f"telegram:{chat_id}"
         metadata = self._build_metadata(
@@ -276,6 +428,7 @@ class TelegramChannel(BaseChannel):
             command or "",
         )
         await self.emit(session_id=session_id, user_id=user_id, text=text, metadata=metadata)
+        return True
 
     def _build_metadata(
         self,
@@ -359,10 +512,8 @@ class TelegramChannel(BaseChannel):
         return f"[telegram media message: {details}]"
 
     async def _send_start_message(self, *, chat_id: str) -> None:
-        if self.bot is None:
-            return
-        await self.bot.send_message(
-            chat_id=chat_id,
+        await self.send(
+            target=chat_id,
             text=(
                 "Hi! I am ClawLite.\\n\\n"
                 "Send a message to start.\\n"
@@ -371,10 +522,8 @@ class TelegramChannel(BaseChannel):
         )
 
     async def _send_help_message(self, *, chat_id: str) -> None:
-        if self.bot is None:
-            return
-        await self.bot.send_message(
-            chat_id=chat_id,
+        await self.send(
+            target=chat_id,
             text=(
                 "ClawLite commands:\\n"
                 "/help - Show this help\\n"
@@ -406,8 +555,7 @@ class TelegramChannel(BaseChannel):
 
             self.bot = Bot(token=self.token)
         chunks = split_message(text)
-        max_attempts = 3
-        initial_backoff_s = 1.0
+        policy = self._send_retry_policy.normalized()
         reply_to_message_id = metadata.get("reply_to_message_id", metadata.get("message_id"))
         try:
             reply_to_message_id = int(reply_to_message_id) if reply_to_message_id is not None else None
@@ -415,37 +563,51 @@ class TelegramChannel(BaseChannel):
             reply_to_message_id = None
 
         for idx, chunk in enumerate(chunks, start=1):
-            backoff_s = initial_backoff_s
-            for attempt in range(1, max_attempts + 1):
+            html_payload = markdown_to_telegram_html(chunk)
+            payload_text = html_payload
+            payload_parse_mode: str | None = "HTML"
+            formatting_fallback_used = False
+
+            for attempt in range(1, policy.max_attempts + 1):
+                if self._send_auth_breaker.is_open:
+                    raise TelegramCircuitOpenError("telegram auth circuit is open")
                 try:
-                    html = markdown_to_telegram_html(chunk)
-                    try:
-                        await self.bot.send_message(
+                    await asyncio.wait_for(
+                        self.bot.send_message(
                             chat_id=chat_id,
-                            text=html,
-                            parse_mode="HTML",
+                            text=payload_text,
+                            parse_mode=payload_parse_mode,
                             reply_to_message_id=reply_to_message_id,
-                        )
-                    except Exception:
-                        await self.bot.send_message(
-                            chat_id=chat_id,
-                            text=chunk,
-                            reply_to_message_id=reply_to_message_id,
-                        )
+                        ),
+                        timeout=max(1.0, float(self.send_timeout_s)),
+                    )
+                    self._send_auth_breaker.on_success()
                     break
                 except Exception as exc:
+                    if payload_parse_mode and not formatting_fallback_used and _is_formatting_error(exc):
+                        payload_text = html.escape(chunk, quote=False)
+                        payload_parse_mode = None
+                        formatting_fallback_used = True
+                        continue
+
+                    if _is_auth_failure(exc):
+                        self._send_auth_breaker.on_auth_failure()
+                        raise
+
                     logger.error(
                         "telegram outbound failed chat={} chunk={}/{} attempt={}/{} error={}",
                         chat_id,
                         idx,
                         len(chunks),
                         attempt,
-                        max_attempts,
+                        policy.max_attempts,
                         exc,
                     )
-                    if attempt >= max_attempts:
+                    if attempt >= policy.max_attempts or not _is_transient_failure(exc):
                         raise
-                    await asyncio.sleep(backoff_s)
-                    backoff_s *= 2
+
+                    delay_s = _retry_delay_s(policy, attempt)
+                    if delay_s > 0:
+                        await asyncio.sleep(delay_s)
         logger.info("telegram outbound sent chat={} chunks={} chars={}", chat_id, len(chunks), len(text))
         return f"telegram:sent:{len(chunks)}"

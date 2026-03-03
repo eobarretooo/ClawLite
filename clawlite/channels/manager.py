@@ -153,6 +153,43 @@ class ChannelManager:
             return self._send_tool_hints and channel.capabilities.supports_tool_hints
         return self._send_progress and channel.capabilities.supports_progress
 
+    @staticmethod
+    def _target_from_session_id(channel: str, session_id: str) -> str:
+        channel_name = str(channel or "").strip().lower()
+        raw = str(session_id or "").strip()
+        if not raw:
+            return ""
+        if channel_name == "telegram":
+            if raw.startswith("telegram:"):
+                return raw.split(":", 1)[1].strip()
+            if raw.startswith("tg_"):
+                raw = raw[3:]
+                if ":topic:" in raw:
+                    chat_id, _, thread_id = raw.partition(":topic:")
+                    thread = thread_id.strip()
+                    return f"{chat_id.strip()}:{thread}" if thread else chat_id.strip()
+                return raw.strip()
+        if ":" in raw:
+            return raw.split(":", 1)[1].strip()
+        return raw
+
+    async def send_outbound(
+        self,
+        *,
+        channel: str,
+        session_id: str,
+        text: str,
+        instance_key: str = "",
+    ) -> str:
+        del instance_key
+        channel_name = str(channel or "").strip().lower()
+        target = self._target_from_session_id(channel_name, session_id)
+        if not target:
+            raise ValueError("invalid_outbound_session")
+        if channel_name not in self._channels:
+            raise RuntimeError(f"canal outbound indisponível: {channel_name}")
+        return await self.send(channel=channel_name, target=target, text=str(text or ""))
+
     async def _retry_send(self, *, channel: BaseChannel, event: OutboundEvent) -> OutboundEvent | None:
         max_attempts = max(1, self._send_max_attempts)
         last_error = ""

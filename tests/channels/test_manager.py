@@ -423,3 +423,21 @@ def test_channel_manager_stop_reports_subagent_cancellations() -> None:
         await mgr.stop()
 
     asyncio.run(_scenario())
+
+
+def test_channel_manager_send_outbound_uses_session_routing() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("fake", FakeChannel)
+        await mgr.start({"channels": {"fake": {"enabled": True}}})
+
+        out = await mgr.send_outbound(channel="fake", session_id="fake:42", text="hello")
+
+        fake = mgr._channels["fake"]
+        assert out == "ok"
+        assert fake.sent == [("42", "hello", {})]
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
