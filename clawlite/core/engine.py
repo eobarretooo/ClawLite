@@ -227,6 +227,8 @@ class AgentEngine:
             critical_threshold=critical_threshold,
         )
         self._stop_requests: set[str] = set()
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_locks_guard = asyncio.Lock()
 
     async def _complete_provider(
         self,
@@ -357,6 +359,14 @@ class AgentEngine:
         if normalized:
             self._stop_requests.discard(normalized)
 
+    async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        async with self._session_locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_locks[session_id] = lock
+            return lock
+
     @staticmethod
     def _classify_provider_error(exc: Exception) -> AgentLoopError:
         if isinstance(exc, AgentLoopError):
@@ -476,6 +486,29 @@ class AgentEngine:
             await maybe_awaitable
 
     async def run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        turn_budget: TurnBudget | None = None,
+        progress_hook: ProgressHook | None = None,
+        stop_event: asyncio.Event | None = None,
+    ) -> ProviderResult:
+        session_lock = await self._get_session_lock(session_id)
+        async with session_lock:
+            return await self._run_serialized(
+                session_id=session_id,
+                user_text=user_text,
+                channel=channel,
+                chat_id=chat_id,
+                turn_budget=turn_budget,
+                progress_hook=progress_hook,
+                stop_event=stop_event,
+            )
+
+    async def _run_serialized(
         self,
         *,
         session_id: str,

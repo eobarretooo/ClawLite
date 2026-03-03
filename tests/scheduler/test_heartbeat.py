@@ -81,3 +81,35 @@ def test_heartbeat_ok_token_semantics() -> None:
     assert HeartbeatDecision.from_result("HEARTBEAT_OK all good").action == "skip"
     assert HeartbeatDecision.from_result("all good HEARTBEAT_OK").action == "skip"
     assert HeartbeatDecision.from_result("prefix HEARTBEAT_OK suffix").action == "run"
+
+
+def test_next_trigger_source_handles_asyncio_timeout(monkeypatch) -> None:
+    async def _scenario() -> None:
+        hb = HeartbeatService(interval_seconds=5)
+        hb.interval_seconds = 0.01
+
+        async def _raise_timeout(awaitable, *_args, **_kwargs):
+            awaitable.close()
+            raise asyncio.TimeoutError()
+
+        monkeypatch.setattr(asyncio, "wait_for", _raise_timeout)
+        trigger = await hb._next_trigger_source()
+        assert trigger == "interval"
+
+    asyncio.run(_scenario())
+
+
+def test_next_trigger_source_handles_builtin_timeout(monkeypatch) -> None:
+    async def _scenario() -> None:
+        hb = HeartbeatService(interval_seconds=5)
+        hb.interval_seconds = 0.01
+
+        async def _raise_timeout(awaitable, *_args, **_kwargs):
+            awaitable.close()
+            raise TimeoutError()
+
+        monkeypatch.setattr(asyncio, "wait_for", _raise_timeout)
+        trigger = await hb._next_trigger_source()
+        assert trigger == "interval"
+
+    asyncio.run(_scenario())

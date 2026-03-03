@@ -45,6 +45,8 @@ class EngineProtocol:
 class ChannelManager:
     """Owns channel lifecycle and bridges channels <-> bus <-> engine."""
 
+    _ENGINE_ERROR_FALLBACK_TEXT = "I hit an internal error while processing your request."
+
     def __init__(self, *, bus: MessageQueue, engine: EngineProtocol) -> None:
         self.bus = bus
         self.engine = engine
@@ -239,6 +241,20 @@ class ChannelManager:
         if callable(request_stop):
             request_stop(session_id)
 
+        cancelled_subagents = 0
+        subagents = getattr(self.engine, "subagents", None)
+        if subagents is None:
+            subagents = getattr(self.engine, "subagent_manager", None)
+        cancel_session = getattr(subagents, "cancel_session", None)
+        if callable(cancel_session):
+            try:
+                cancelled_subagents = max(0, int(cancel_session(session_id) or 0))
+            except Exception as exc:
+                bind_event("channel.dispatch", session=session_id, channel=event.channel).error(
+                    "dispatch subagent cancel failed error={}",
+                    exc,
+                )
+
         tasks = list(self._active_tasks.get(session_id, set()))
         cancelled = 0
         for task in tasks:
@@ -253,14 +269,18 @@ class ChannelManager:
                 pass
 
         target = str(event.metadata.get("chat_id") or event.user_id)
-        text = f"Stopped {cancelled} active task(s)." if cancelled else "No active task to stop."
+        text = f"Stopped {cancelled} active task(s); cancelled {cancelled_subagents} subagent run(s)."
         await self._publish_and_send(
             event=OutboundEvent(
                 channel=event.channel,
                 session_id=session_id,
                 target=target,
                 text=text,
-                metadata={"_control": "stop", "cancelled_tasks": cancelled},
+                metadata={
+                    "_control": "stop",
+                    "cancelled_tasks": cancelled,
+                    "cancelled_subagents": cancelled_subagents,
+                },
             )
         )
 
@@ -310,6 +330,18 @@ class ChannelManager:
             raise
         except Exception as exc:
             bind_event("channel.dispatch", session=event.session_id, channel=event.channel).error("dispatch engine failed error={}", exc)
+            await self._publish_and_send(
+                event=OutboundEvent(
+                    channel=event.channel,
+                    session_id=event.session_id,
+                    target=target,
+                    text=self._ENGINE_ERROR_FALLBACK_TEXT,
+                    metadata={
+                        "_error": "dispatch_engine_exception",
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            )
             return
         finally:
             self.bus.clear_stop(event.session_id)
@@ -343,14 +375,22 @@ class ChannelManager:
                 await self._handle_stop(event)
                 continue
 
-            await self._acquire_dispatch_slot(event.session_id)
-            task = asyncio.create_task(self._dispatch_event(event))
+            async def _dispatch_worker(current: InboundEvent) -> None:
+                acquired = False
+                try:
+                    await self._acquire_dispatch_slot(current.session_id)
+                    acquired = True
+                    await self._dispatch_event(current)
+                finally:
+                    if acquired:
+                        self._release_dispatch_slot(current.session_id)
+
+            task = asyncio.create_task(_dispatch_worker(event))
             bucket = self._active_tasks.setdefault(event.session_id, set())
             bucket.add(task)
 
             def _on_done(done: asyncio.Task[Any], sid: str = event.session_id) -> None:
                 self._safe_remove_task(self._active_tasks, sid, done)
-                self._release_dispatch_slot(sid)
 
             task.add_done_callback(_on_done)
 

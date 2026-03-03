@@ -95,6 +95,55 @@ class MessageToolEngine(FakeEngine):
         return _Result(text=f"reply:{session_id}:{user_text}")
 
 
+class BlockingEngine(FakeEngine):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        progress_hook=None,
+        stop_event=None,
+    ):
+        self.started.set()
+        assert stop_event is not None
+        await stop_event.wait()
+        return _Result(text=f"reply:{session_id}:{user_text}")
+
+
+class ExceptionEngine(FakeEngine):
+    async def run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        progress_hook=None,
+        stop_event=None,
+    ):
+        raise RuntimeError("boom")
+
+
+class SubagentStub:
+    def __init__(self, cancelled: int) -> None:
+        self.cancelled = cancelled
+        self.calls: list[str] = []
+
+    def cancel_session(self, session_id: str) -> int:
+        self.calls.append(session_id)
+        return self.cancelled
+
+
+class StopAwareEngine(FakeEngine):
+    def __init__(self, *, cancelled_subagents: int) -> None:
+        self.subagents = SubagentStub(cancelled=cancelled_subagents)
+
+
 class FakeChannel(BaseChannel):
     def __init__(
         self,
@@ -285,6 +334,91 @@ def test_channel_manager_dispatch_concurrency_bound() -> None:
 
         await asyncio.sleep(0.7)
         assert engine.max_seen <= 2
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_stop_is_responsive_when_slots_saturated() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        engine = BlockingEngine()
+        mgr = ChannelManager(bus=bus, engine=engine)
+        mgr.register("fake", FakeChannel)
+
+        await mgr.start(
+            {
+                "channels": {
+                    "dispatcher_max_concurrency": 1,
+                    "dispatcher_max_per_session": 1,
+                    "fake": {"enabled": True},
+                }
+            }
+        )
+
+        fake = mgr._channels["fake"]
+        await fake.emit(session_id="fake:sat", user_id="u1", text="first", metadata={"channel": "fake", "chat_id": "sat"})
+        await asyncio.wait_for(engine.started.wait(), timeout=1)
+
+        await fake.emit(session_id="fake:sat", user_id="u1", text="second", metadata={"channel": "fake", "chat_id": "sat"})
+        await fake.emit(session_id="fake:sat", user_id="u1", text="/stop", metadata={"channel": "fake", "chat_id": "sat"})
+
+        for _ in range(20):
+            if any(text.startswith("Stopped ") for _, text, _ in fake.sent):
+                break
+            await asyncio.sleep(0.01)
+
+        assert any(text.startswith("Stopped ") for _, text, _ in fake.sent)
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_sends_fallback_when_engine_raises() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=ExceptionEngine())
+        mgr.register("fake", FakeChannel)
+        await mgr.start({"channels": {"fake": {"enabled": True}}})
+
+        fake = mgr._channels["fake"]
+        await fake.emit(session_id="fake:err", user_id="u1", text="hello", metadata={"channel": "fake", "chat_id": "err"})
+        await asyncio.sleep(0.1)
+
+        assert len(fake.sent) == 1
+        target, text, metadata = fake.sent[0]
+        assert target == "err"
+        assert text == "I hit an internal error while processing your request."
+        assert metadata.get("_error") == "dispatch_engine_exception"
+        assert metadata.get("error_type") == "RuntimeError"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_stop_reports_subagent_cancellations() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        engine = StopAwareEngine(cancelled_subagents=3)
+        mgr = ChannelManager(bus=bus, engine=engine)
+        mgr.register("fake", FakeChannel)
+        await mgr.start({"channels": {"fake": {"enabled": True}}})
+
+        fake = mgr._channels["fake"]
+        await fake.emit(session_id="fake:stop", user_id="u1", text="/stop", metadata={"channel": "fake", "chat_id": "stop"})
+        await asyncio.sleep(0.1)
+
+        assert len(fake.sent) == 1
+        target, text, metadata = fake.sent[0]
+        assert target == "stop"
+        assert text == "Stopped 0 active task(s); cancelled 3 subagent run(s)."
+        assert metadata.get("_control") == "stop"
+        assert metadata.get("cancelled_tasks") == 0
+        assert metadata.get("cancelled_subagents") == 3
+        assert engine.subagents.calls == ["fake:stop"]
 
         await mgr.stop()
 

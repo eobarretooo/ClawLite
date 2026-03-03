@@ -61,3 +61,21 @@ def test_message_queue_dead_letter_roundtrip() -> None:
         assert bus.stats()["dead_letter_size"] == 0
 
     asyncio.run(_scenario())
+
+
+def test_message_queue_outbound_drop_when_full_is_non_blocking() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue(maxsize=1)
+        first = OutboundEvent(channel="telegram", session_id="s1", target="u1", text="first")
+        second = OutboundEvent(channel="telegram", session_id="s1", target="u1", text="second")
+
+        await bus.publish_outbound(first)
+        await asyncio.wait_for(bus.publish_outbound(second), timeout=0.05)
+
+        got = await bus.next_outbound()
+        assert got.text == "first"
+        stats = bus.stats()
+        assert stats["outbound_size"] == 0
+        assert stats["outbound_dropped"] == 1
+
+    asyncio.run(_scenario())

@@ -16,6 +16,7 @@ class MessageQueue:
         self._dead_letter: asyncio.Queue[OutboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._topics: dict[str, list[asyncio.Queue[InboundEvent]]] = defaultdict(list)
         self._stop_events: dict[str, asyncio.Event] = {}
+        self._outbound_dropped = 0
 
     async def publish_inbound(self, event: InboundEvent) -> None:
         await self._inbound.put(event)
@@ -23,7 +24,10 @@ class MessageQueue:
             await queue.put(event)
 
     async def publish_outbound(self, event: OutboundEvent) -> None:
-        await self._outbound.put(event)
+        try:
+            self._outbound.put_nowait(event)
+        except asyncio.QueueFull:
+            self._outbound_dropped += 1
 
     async def next_inbound(self) -> InboundEvent:
         return await self._inbound.get()
@@ -77,6 +81,7 @@ class MessageQueue:
         return {
             "inbound_size": self._inbound.qsize(),
             "outbound_size": self._outbound.qsize(),
+            "outbound_dropped": self._outbound_dropped,
             "dead_letter_size": self._dead_letter.qsize(),
             "topics": sum(len(v) for v in self._topics.values()),
             "stop_sessions": len(self._stop_events),

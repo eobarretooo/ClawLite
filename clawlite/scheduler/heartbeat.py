@@ -170,7 +170,7 @@ class HeartbeatService:
         self._trigger_event.clear()
         try:
             await asyncio.wait_for(self._trigger_event.wait(), timeout=self.interval_seconds)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return "interval"
         if self._pending_now > 0:
             self._pending_now -= 1

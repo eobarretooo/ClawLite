@@ -130,6 +130,27 @@ class FakeErrorProvider:
         raise RuntimeError(self.message)
 
 
+class BlockingConcurrencyProvider:
+    def __init__(self) -> None:
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self.call_count = 0
+        self.first_call_started = asyncio.Event()
+        self.release_first_call = asyncio.Event()
+
+    async def complete(self, *, messages, tools):
+        self.call_count += 1
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            if self.call_count == 1:
+                self.first_call_started.set()
+                await self.release_first_call.wait()
+            return ProviderResult(text="ok", tool_calls=[], model="fake/model")
+        finally:
+            self.active_calls -= 1
+
+
 def test_engine_runs_tool_roundtrip() -> None:
     async def _scenario() -> None:
         engine = AgentEngine(
@@ -323,5 +344,45 @@ def test_engine_detects_repeated_non_progress_tool_loops() -> None:
         assert "loop detection" in out.text.lower()
         assert provider.calls < 20
         assert "loop_detected" in stages
+
+    asyncio.run(_scenario())
+
+
+def test_engine_serializes_concurrent_runs_for_same_session() -> None:
+    async def _scenario() -> None:
+        provider = BlockingConcurrencyProvider()
+        engine = AgentEngine(provider=provider, tools=FakeTools())
+
+        first = asyncio.create_task(engine.run(session_id="cli:same", user_text="one"))
+        await asyncio.wait_for(provider.first_call_started.wait(), timeout=1.0)
+        second = asyncio.create_task(engine.run(session_id="cli:same", user_text="two"))
+
+        await asyncio.sleep(0.05)
+        provider.release_first_call.set()
+
+        first_result, second_result = await asyncio.gather(first, second)
+        assert first_result.text == "ok"
+        assert second_result.text == "ok"
+        assert provider.max_active_calls == 1
+
+    asyncio.run(_scenario())
+
+
+def test_engine_keeps_parallelism_for_different_sessions() -> None:
+    async def _scenario() -> None:
+        provider = BlockingConcurrencyProvider()
+        engine = AgentEngine(provider=provider, tools=FakeTools())
+
+        first = asyncio.create_task(engine.run(session_id="cli:a", user_text="one"))
+        await asyncio.wait_for(provider.first_call_started.wait(), timeout=1.0)
+        second = asyncio.create_task(engine.run(session_id="cli:b", user_text="two"))
+
+        await asyncio.sleep(0.05)
+        provider.release_first_call.set()
+
+        first_result, second_result = await asyncio.gather(first, second)
+        assert first_result.text == "ok"
+        assert second_result.text == "ok"
+        assert provider.max_active_calls >= 2
 
     asyncio.run(_scenario())

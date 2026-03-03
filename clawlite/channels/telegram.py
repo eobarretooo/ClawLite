@@ -218,7 +218,10 @@ class TelegramChannel(BaseChannel):
         if message is None:
             return
 
+        media_info = self._extract_media_info(message)
         text = (getattr(message, "text", "") or getattr(message, "caption", "") or "").strip()
+        if not text and media_info["has_media"]:
+            text = self._build_media_placeholder(media_info)
         if not text:
             return
 
@@ -255,7 +258,15 @@ class TelegramChannel(BaseChannel):
                 return
 
         session_id = f"telegram:{chat_id}"
-        metadata = self._build_metadata(item=item, message=message, text=text, is_edit=is_edit, command=command, command_args=command_args)
+        metadata = self._build_metadata(
+            item=item,
+            message=message,
+            text=text,
+            is_edit=is_edit,
+            command=command,
+            command_args=command_args,
+            media_info=media_info,
+        )
         logger.info(
             "telegram inbound received chat={} user={} chars={} edit={} command={}",
             chat_id,
@@ -275,6 +286,7 @@ class TelegramChannel(BaseChannel):
         is_edit: bool,
         command: str,
         command_args: str,
+        media_info: dict[str, Any],
     ) -> dict[str, Any]:
         user = getattr(message, "from_user", None)
         chat = getattr(message, "chat", None)
@@ -297,6 +309,10 @@ class TelegramChannel(BaseChannel):
             "language_code": str(getattr(user, "language_code", "") or ""),
             "date": str(getattr(message, "date", "") or ""),
             "edit_date": str(getattr(message, "edit_date", "") or ""),
+            "media_present": bool(media_info.get("has_media", False)),
+            "media_types": list(media_info.get("types", [])),
+            "media_counts": dict(media_info.get("counts", {})),
+            "media_total_count": int(media_info.get("total_count", 0) or 0),
         }
         if command:
             metadata["command"] = command
@@ -309,6 +325,38 @@ class TelegramChannel(BaseChannel):
             metadata["reply_to_user_id"] = int(getattr(reply_user, "id", 0) or 0)
             metadata["reply_to_username"] = str(getattr(reply_user, "username", "") or "")
         return metadata
+
+    def _extract_media_info(self, message: Any) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+
+        photos = getattr(message, "photo", None)
+        if photos:
+            counts["photo"] = len(photos)
+
+        for media_type in ("voice", "audio", "document"):
+            if getattr(message, media_type, None) is not None:
+                counts[media_type] = counts.get(media_type, 0) + 1
+
+        media_types = sorted(counts.keys())
+        total_count = sum(counts.values())
+        return {
+            "has_media": bool(counts),
+            "types": media_types,
+            "counts": counts,
+            "total_count": total_count,
+        }
+
+    def _build_media_placeholder(self, media_info: dict[str, Any]) -> str:
+        if not media_info.get("has_media"):
+            return ""
+        counts = dict(media_info.get("counts", {}))
+        details = ", ".join(
+            f"{media_type}({counts[media_type]})" if counts[media_type] > 1 else media_type
+            for media_type in sorted(counts.keys())
+        )
+        if not details:
+            return "[telegram media message]"
+        return f"[telegram media message: {details}]"
 
     async def _send_start_message(self, *, chat_id: str) -> None:
         if self.bot is None:

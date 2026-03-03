@@ -209,6 +209,49 @@ def test_telegram_reply_metadata_is_emitted() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=[SimpleNamespace(file_id="p1"), SimpleNamespace(file_id="p2")],
+            voice=SimpleNamespace(file_id="v1"),
+            audio=None,
+            document=None,
+            chat_id=42,
+            from_user=user,
+            message_id=11,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=101, message=message, edited_message=None, effective_message=message)
+
+        await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:42"
+        assert user_id == "1"
+        assert text == "[telegram media message: photo(2), voice]"
+        assert metadata["media_present"] is True
+        assert metadata["media_types"] == ["photo", "voice"]
+        assert metadata["media_counts"] == {"photo": 2, "voice": 1}
+        assert metadata["media_total_count"] == 3
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_send_markdown_falls_back_to_plain_text() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
