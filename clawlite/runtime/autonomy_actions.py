@@ -69,6 +69,8 @@ class AutonomyActionController:
             "succeeded": 0,
             "failed": 0,
             "blocked": 0,
+            "simulated_runs": 0,
+            "simulated_actions": 0,
             "parse_errors": 0,
             "rate_limited": 0,
             "cooldown_blocked": 0,
@@ -318,6 +320,15 @@ class AutonomyActionController:
         row["_executed_timestamps"] = pruned
         return pruned
 
+    def _rate_window(self, row: dict[str, Any], *, now: float, mutate: bool) -> list[float]:
+        raw = row.get("_executed_timestamps")
+        timestamps = list(raw) if isinstance(raw, list) else []
+        window_start = now - 3600.0
+        pruned = [float(value) for value in timestamps if float(value) >= window_start]
+        if mutate:
+            row["_executed_timestamps"] = pruned
+        return pruned
+
     @classmethod
     def _denylisted(cls, action: str) -> bool:
         lowered = str(action or "").strip().lower()
@@ -325,6 +336,257 @@ class AutonomyActionController:
             if token in lowered:
                 return True
         return False
+
+    def _trace_row(self, gate: str, blocked: bool, reason: str = "") -> dict[str, Any]:
+        row = {"gate": gate, "result": "block" if blocked else "pass"}
+        if reason:
+            row["reason"] = reason
+        return row
+
+    def _clamp_dead_letter_args(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(args)
+        if action == "dead_letter_replay_dry_run":
+            raw_limit = normalized.get("limit", self.max_replay_limit)
+            try:
+                parsed_limit = int(raw_limit)
+            except (TypeError, ValueError):
+                parsed_limit = self.max_replay_limit
+            normalized["limit"] = max(0, min(self.max_replay_limit, parsed_limit))
+            normalized["dry_run"] = True
+        return normalized
+
+    def _evaluate_gates(
+        self,
+        *,
+        index: int,
+        action: str,
+        args: dict[str, Any],
+        action_row: dict[str, Any],
+        now: float,
+        degraded: bool,
+        degraded_reason: str,
+        context_penalty: float,
+        base_confidence: float,
+        effective_confidence: float,
+        runtime_snapshot: dict[str, Any] | None,
+        executors: dict[str, ActionExecutor] | None,
+    ) -> dict[str, Any]:
+        _ = runtime_snapshot
+        trace: list[dict[str, Any]] = []
+
+        if index >= self.max_actions_per_run:
+            trace.append(self._trace_row("max_actions_per_run", True, "max_actions_per_run"))
+            return {
+                "decision": "blocked",
+                "gate": "max_actions_per_run",
+                "reason": "max_actions_per_run",
+                "trace": trace,
+                "args": dict(args),
+                "executor_available": bool(executors is not None and action in executors),
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+        trace.append(self._trace_row("max_actions_per_run", False))
+
+        if action not in self.ALLOWLIST or self._denylisted(action):
+            trace.append(self._trace_row("allowlist", True, "unknown_or_denylisted"))
+            return {
+                "decision": "blocked",
+                "gate": "allowlist",
+                "reason": "unknown_or_denylisted",
+                "trace": trace,
+                "args": dict(args),
+                "executor_available": bool(executors is not None and action in executors),
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+        trace.append(self._trace_row("allowlist", False))
+
+        if degraded and action != "diagnostics_snapshot":
+            trace.append(self._trace_row("degraded_runtime", True, "degraded_runtime"))
+            return {
+                "decision": "blocked",
+                "gate": "degraded_runtime",
+                "reason": "degraded_runtime",
+                "trace": trace,
+                "args": dict(args),
+                "executor_available": bool(executors is not None and action in executors),
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+        trace.append(self._trace_row("degraded_runtime", False))
+
+        if action != "diagnostics_snapshot" and effective_confidence < self.min_action_confidence:
+            trace.append(self._trace_row("quality_gate", True, "quality_gate"))
+            return {
+                "decision": "blocked",
+                "gate": "quality_gate",
+                "reason": "quality_gate",
+                "trace": trace,
+                "args": dict(args),
+                "executor_available": bool(executors is not None and action in executors),
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+        trace.append(self._trace_row("quality_gate", False))
+
+        timestamps = self._rate_window(action_row, now=now, mutate=False)
+        if len(timestamps) >= self.action_rate_limit_per_hour:
+            trace.append(self._trace_row("rate_limit", True, "rate_limited"))
+            return {
+                "decision": "blocked",
+                "gate": "rate_limit",
+                "reason": "rate_limited",
+                "trace": trace,
+                "args": dict(args),
+                "executor_available": bool(executors is not None and action in executors),
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+        trace.append(self._trace_row("rate_limit", False))
+
+        last_exec = float(action_row.get("_last_exec_monotonic", 0.0) or 0.0)
+        if self.action_cooldown_s > 0 and last_exec > 0 and now < (last_exec + self.action_cooldown_s):
+            trace.append(self._trace_row("cooldown", True, "cooldown"))
+            return {
+                "decision": "blocked",
+                "gate": "cooldown",
+                "reason": "cooldown",
+                "trace": trace,
+                "args": dict(args),
+                "executor_available": bool(executors is not None and action in executors),
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+        trace.append(self._trace_row("cooldown", False))
+
+        normalized_args = self._clamp_dead_letter_args(action, args)
+        trace.append(self._trace_row("dry_run_enforcement", False))
+        executor_available = bool(executors is None or action in executors)
+        if executors is not None and not executor_available:
+            trace.append(self._trace_row("executor_available", True, "executor_missing"))
+            return {
+                "decision": "blocked",
+                "gate": "executor_available",
+                "reason": "executor_missing",
+                "trace": trace,
+                "args": dict(normalized_args),
+                "executor_available": False,
+                "base_confidence": base_confidence,
+                "context_penalty": context_penalty,
+                "effective_confidence": effective_confidence,
+                "degraded": degraded,
+                "degraded_reason": degraded_reason,
+            }
+
+        trace.append(self._trace_row("executor_available", False))
+        return {
+            "decision": "allow",
+            "gate": "all_gates_passed",
+            "reason": "allowed",
+            "trace": trace,
+            "args": dict(normalized_args),
+            "executor_available": executor_available,
+            "base_confidence": base_confidence,
+            "context_penalty": context_penalty,
+            "effective_confidence": effective_confidence,
+            "degraded": degraded,
+            "degraded_reason": degraded_reason,
+        }
+
+    def simulate(
+        self,
+        raw_text: str,
+        executors: dict[str, ActionExecutor] | None = None,
+        runtime_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = self._now_monotonic()
+        context_penalty = self._context_penalty(runtime_snapshot)
+        degraded, degraded_reason, _ = self._detect_degraded(runtime_snapshot)
+        actions, parse_error = self._parse_actions(raw_text)
+        action_decisions: list[dict[str, Any]] = []
+        proposed = 0
+        allowed = 0
+        blocked = 0
+
+        for index, row in enumerate(actions):
+            action = str(row.get("action", "") or "").strip()
+            args = self._clean_args(row.get("args"))
+            if not action:
+                continue
+            base_confidence = self._action_confidence(action, row.get("confidence"))
+            effective_confidence = self._clamp_confidence(base_confidence - context_penalty)
+            action_row = self._per_action_row(action)
+            decision = self._evaluate_gates(
+                index=index,
+                action=action,
+                args=args,
+                action_row=action_row,
+                now=now,
+                degraded=degraded,
+                degraded_reason=degraded_reason,
+                context_penalty=context_penalty,
+                base_confidence=base_confidence,
+                effective_confidence=effective_confidence,
+                runtime_snapshot=runtime_snapshot,
+                executors=executors,
+            )
+            proposed += 1
+            if decision["decision"] == "allow":
+                allowed += 1
+            else:
+                blocked += 1
+            action_decisions.append(
+                {
+                    "index": index,
+                    "action": action,
+                    "args": dict(decision.get("args", {})),
+                    "decision": decision["decision"],
+                    "gate": decision["gate"],
+                    "reason": decision["reason"],
+                    "base_confidence": decision["base_confidence"],
+                    "context_penalty": decision["context_penalty"],
+                    "effective_confidence": decision["effective_confidence"],
+                    "degraded": decision["degraded"],
+                    "degraded_reason": decision["degraded_reason"],
+                    "executor_available": decision["executor_available"],
+                    "trace": list(decision["trace"]),
+                }
+            )
+
+        self._totals["simulated_runs"] += 1
+        self._totals["simulated_actions"] += proposed
+
+        return {
+            "parse_error": bool(parse_error),
+            "proposed": proposed,
+            "allowed": allowed,
+            "blocked": blocked,
+            "degraded": degraded,
+            "degraded_reason": degraded_reason,
+            "policy": self.policy,
+            "environment_profile": self.environment_profile,
+            "min_action_confidence": self.min_action_confidence,
+            "actions": action_decisions,
+        }
 
     async def process(
         self,
@@ -372,134 +634,58 @@ class AutonomyActionController:
                 if context_penalty > 0.0:
                     self._totals["quality_penalty_applied"] += 1
 
-                if index >= self.max_actions_per_run:
+                decision = self._evaluate_gates(
+                    index=index,
+                    action=action,
+                    args=args,
+                    action_row=action_row,
+                    now=now,
+                    degraded=degraded,
+                    degraded_reason=degraded_reason,
+                    context_penalty=context_penalty,
+                    base_confidence=base_confidence,
+                    effective_confidence=effective_confidence,
+                    runtime_snapshot=runtime_snapshot,
+                    executors=None,
+                )
+                args = dict(decision.get("args", args))
+
+                if decision["decision"] == "blocked":
                     self._totals["blocked"] += 1
                     run_blocked += 1
                     action_row["blocked"] += 1
-                    run_audits.append(
-                        {
-                            "action": action,
-                            "status": "blocked",
-                            "reason": "max_actions_per_run",
-                            "args": dict(args),
-                            "confidence": effective_confidence,
-                            "base_confidence": base_confidence,
-                            "context_penalty": context_penalty,
-                            "effective_confidence": effective_confidence,
-                        }
-                    )
+                    gate = str(decision.get("gate", ""))
+                    if gate == "allowlist":
+                        self._totals["unknown_blocked"] += 1
+                    elif gate == "degraded_runtime":
+                        self._totals["degraded_blocked"] += 1
+                    elif gate == "quality_gate":
+                        self._totals["quality_blocked"] += 1
+                    elif gate == "rate_limit":
+                        self._totals["rate_limited"] += 1
+                        action_row["rate_limited"] += 1
+                    elif gate == "cooldown":
+                        self._totals["cooldown_blocked"] += 1
+                        action_row["cooldown_blocked"] += 1
+                    audit_row = {
+                        "action": action,
+                        "status": "blocked",
+                        "reason": decision["reason"],
+                        "gate": decision["gate"],
+                        "trace": list(decision["trace"]),
+                        "args": dict(args),
+                        "confidence": effective_confidence,
+                        "base_confidence": base_confidence,
+                        "context_penalty": context_penalty,
+                        "effective_confidence": effective_confidence,
+                    }
+                    if gate == "quality_gate":
+                        audit_row["min_action_confidence"] = self.min_action_confidence
+                    if gate == "degraded_runtime":
+                        audit_row["degraded_reason"] = degraded_reason
+                        audit_row["degraded"] = dict(degraded_details)
+                    run_audits.append(audit_row)
                     continue
-
-                if action not in self.ALLOWLIST or self._denylisted(action):
-                    self._totals["blocked"] += 1
-                    self._totals["unknown_blocked"] += 1
-                    run_blocked += 1
-                    action_row["blocked"] += 1
-                    run_audits.append(
-                        {
-                            "action": action,
-                            "status": "blocked",
-                            "reason": "unknown_or_denylisted",
-                            "args": dict(args),
-                            "confidence": effective_confidence,
-                            "base_confidence": base_confidence,
-                            "context_penalty": context_penalty,
-                            "effective_confidence": effective_confidence,
-                        }
-                    )
-                    continue
-
-                if degraded and action != "diagnostics_snapshot":
-                    self._totals["blocked"] += 1
-                    self._totals["degraded_blocked"] += 1
-                    run_blocked += 1
-                    action_row["blocked"] += 1
-                    run_audits.append(
-                        {
-                            "action": action,
-                            "status": "blocked",
-                            "reason": "degraded_runtime",
-                            "args": dict(args),
-                            "confidence": effective_confidence,
-                            "base_confidence": base_confidence,
-                            "context_penalty": context_penalty,
-                            "effective_confidence": effective_confidence,
-                            "degraded_reason": degraded_reason,
-                            "degraded": dict(degraded_details),
-                        }
-                    )
-                    continue
-
-                if action != "diagnostics_snapshot" and effective_confidence < self.min_action_confidence:
-                    self._totals["blocked"] += 1
-                    self._totals["quality_blocked"] += 1
-                    run_blocked += 1
-                    action_row["blocked"] += 1
-                    run_audits.append(
-                        {
-                            "action": action,
-                            "status": "blocked",
-                            "reason": "quality_gate",
-                            "args": dict(args),
-                            "confidence": effective_confidence,
-                            "base_confidence": base_confidence,
-                            "context_penalty": context_penalty,
-                            "effective_confidence": effective_confidence,
-                            "min_action_confidence": self.min_action_confidence,
-                        }
-                    )
-                    continue
-
-                timestamps = self._prune_rate_window(action_row, now=now)
-                if len(timestamps) >= self.action_rate_limit_per_hour:
-                    self._totals["blocked"] += 1
-                    self._totals["rate_limited"] += 1
-                    run_blocked += 1
-                    action_row["blocked"] += 1
-                    action_row["rate_limited"] += 1
-                    run_audits.append(
-                        {
-                            "action": action,
-                            "status": "blocked",
-                            "reason": "rate_limited",
-                            "args": dict(args),
-                            "confidence": effective_confidence,
-                            "base_confidence": base_confidence,
-                            "context_penalty": context_penalty,
-                            "effective_confidence": effective_confidence,
-                        }
-                    )
-                    continue
-
-                last_exec = float(action_row.get("_last_exec_monotonic", 0.0) or 0.0)
-                if self.action_cooldown_s > 0 and last_exec > 0 and now < (last_exec + self.action_cooldown_s):
-                    self._totals["blocked"] += 1
-                    self._totals["cooldown_blocked"] += 1
-                    run_blocked += 1
-                    action_row["blocked"] += 1
-                    action_row["cooldown_blocked"] += 1
-                    run_audits.append(
-                        {
-                            "action": action,
-                            "status": "blocked",
-                            "reason": "cooldown",
-                            "args": dict(args),
-                            "confidence": effective_confidence,
-                            "base_confidence": base_confidence,
-                            "context_penalty": context_penalty,
-                            "effective_confidence": effective_confidence,
-                        }
-                    )
-                    continue
-
-                if action == "dead_letter_replay_dry_run":
-                    raw_limit = args.get("limit", self.max_replay_limit)
-                    try:
-                        parsed_limit = int(raw_limit)
-                    except (TypeError, ValueError):
-                        parsed_limit = self.max_replay_limit
-                    args["limit"] = max(0, min(self.max_replay_limit, parsed_limit))
-                    args["dry_run"] = True
 
                 executor = executors.get(action)
                 if not callable(executor):
@@ -511,6 +697,8 @@ class AutonomyActionController:
                             "action": action,
                             "status": "failed",
                             "reason": "executor_missing",
+                            "gate": "executor_available",
+                            "trace": list(decision["trace"]) + [self._trace_row("executor_available", True, "executor_missing")],
                             "args": dict(args),
                             "confidence": effective_confidence,
                             "base_confidence": base_confidence,
@@ -538,6 +726,8 @@ class AutonomyActionController:
                         {
                             "action": action,
                             "status": "succeeded",
+                            "gate": "execution",
+                            "trace": list(decision["trace"]) + [self._trace_row("execution", False)],
                             "args": dict(args),
                             "confidence": effective_confidence,
                             "base_confidence": base_confidence,
@@ -554,6 +744,8 @@ class AutonomyActionController:
                         {
                             "action": action,
                             "status": "failed",
+                            "gate": "execution",
+                            "trace": list(decision["trace"]) + [self._trace_row("execution", True, "execution_failed")],
                             "args": dict(args),
                             "confidence": effective_confidence,
                             "base_confidence": base_confidence,

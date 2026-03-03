@@ -84,6 +84,15 @@ curl -sS "http://127.0.0.1:8787/v1/control/autonomy/audit?limit=100" \
   -H "Authorization: Bearer $CLAWLITE_GATEWAY_AUTH_TOKEN"
 ```
 
+Dry-run autonomy action simulation with decision trace:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/v1/control/autonomy/simulate \
+  -H "Authorization: Bearer $CLAWLITE_GATEWAY_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"{\"action\":\"validate_provider\",\"args\":{}}"}'
+```
+
 ## Dead-letter replay control via API
 
 Dry-run (safe preview):
@@ -188,6 +197,7 @@ pytest -q tests
 - Allowlist enforcement: monitor `totals.unknown_blocked` and inspect `recent_audits` for blocked unknown/denylisted proposals.
 - Confidence triage: inspect `base_confidence`, `context_penalty`, and `effective_confidence` in recent action audits to distinguish weak proposals from health-pressure suppression.
 - Dead-letter action safety: `dead_letter_replay_dry_run` is always forced to `dry_run=true` and replay `limit` is clamped by `gateway.autonomy.max_replay_limit`.
+- Change-control safety: use `/v1/control/autonomy/simulate` before relaxing autonomy guardrails or policy thresholds; confirm blocked decisions and gate traces align with expectations.
 - Audit durability: monitor `totals.audit_write_failures` and validate `totals.audit_writes` growth; use `/v1/control/autonomy/audit` to export persisted rows.
 
 ## Delivery observability and dead-letter runbook checks

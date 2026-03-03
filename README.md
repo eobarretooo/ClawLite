@@ -28,7 +28,7 @@ Unlike heavier alternatives, ClawLite is intentionally compact: around **4.2k li
 - 🗓️ **Autonomous scheduling** with Cron jobs and heartbeat loops.
 - 🧭 **Runtime supervisor** for health checks and bounded self-recovery with cooldown protections.
 - 🤖 **Autonomy bootstrap worker (opt-in)** for periodic supervised self-review turns with backlog/cooldown guards, timeout containment, and manual trigger control.
-- 🧱 **Autonomy action execution layer** with strict allowlist, denylisted action blocking, per-action cooldown/rate limits, dry-run-only dead-letter replay clamp, and additive audit diagnostics.
+- 🧱 **Autonomy action execution layer** with strict allowlist, denylisted action blocking, per-action cooldown/rate limits, dry-run-only dead-letter replay clamp, additive audit diagnostics, and simulation/explainability controls.
 - 🗂️ **Persistent memory + sessions** stored under `~/.clawlite/state`.
 - 🔌 **Multi-provider LLM support** (Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, custom OpenAI-compatible endpoints).
 - 🧯 **Provider reliability controls**: bounded retry/backoff (+ jitter), provider circuit breaker, additive provider diagnostics, and optional fallback model failover for retryable failures.
@@ -236,7 +236,7 @@ clawlite/
   - Scheduler is active with both Cron jobs and Heartbeat loop, plus CLI/API controls.
   - Gateway runtime supervisor is active with additive health telemetry and bounded auto-recovery checks for heartbeat/cron/channel runtime health, plus cooldown-based restart-storm protection.
   - Autonomy loop bootstrap is active as an opt-in gateway subsystem: periodic supervised review turns with bounded timeout, queue-backlog/cooldown guards, additive diagnostics, and manual `/v1/control/autonomy/trigger` control.
-  - Autonomy action execution layer is active with allowlisted operations (`validate_provider`, `validate_channels`, `diagnostics_snapshot`, `dead_letter_replay_dry_run`), denylisted unknown-action blocking, environment-profile policy layering (`dev`/`staging`/`prod`), contextual quality scoring (`base_confidence` - `context_penalty` = `effective_confidence`), per-action cooldown/rate guardrails, quality/degraded runtime gates, and additive `autonomy_actions` diagnostics plus persisted audit export (`/v1/control/autonomy/audit`).
+  - Autonomy action execution layer is active with allowlisted operations (`validate_provider`, `validate_channels`, `diagnostics_snapshot`, `dead_letter_replay_dry_run`), denylisted unknown-action blocking, environment-profile policy layering (`dev`/`staging`/`prod`), contextual quality scoring (`base_confidence` - `context_penalty` = `effective_confidence`), per-action cooldown/rate guardrails, quality/degraded runtime gates, additive `autonomy_actions` diagnostics, persisted audit export (`/v1/control/autonomy/audit`), and side-effect-free simulation explainability via `/v1/control/autonomy/simulate`.
   - P1 proactive delivery observability is active: additive outbound/dead-letter telemetry in queue/channel diagnostics plus bounded dead-letter replay control via API.
   - Scheduler reliability telemetry hardening landed: heartbeat/cron now expose additive durability counters, trigger/reason/job health signals, and isolate transient persistence/schedule/job failures without crashing runtime loops.
   - Provider routing is active for Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, and custom OpenAI-compatible endpoints.

@@ -287,3 +287,73 @@ def test_audit_export_reads_persisted_entries(tmp_path: Path) -> None:
         assert any(str(row.get("action", "")) == "validate_provider" for row in exported["entries"])
 
     asyncio.run(_scenario())
+
+
+def test_simulate_returns_decision_trace_for_mixed_actions() -> None:
+    clock = _Clock()
+
+    controller = AutonomyActionController(max_actions_per_run=2, now_monotonic=clock.monotonic)
+    payload = json.dumps(
+        {
+            "actions": [
+                {"action": "validate_provider", "confidence": 0.9, "args": {}},
+                {"action": "delete_everything", "confidence": 0.9, "args": {}},
+            ]
+        }
+    )
+    simulation = controller.simulate(payload, executors={"validate_provider": lambda **_: {"ok": True}}, runtime_snapshot={})
+
+    assert simulation["parse_error"] is False
+    assert simulation["proposed"] == 2
+    assert simulation["allowed"] == 1
+    assert simulation["blocked"] == 1
+    assert simulation["policy"] in {"balanced", "conservative"}
+    first = simulation["actions"][0]
+    second = simulation["actions"][1]
+    assert first["decision"] == "allow"
+    assert first["gate"] == "all_gates_passed"
+    assert isinstance(first["trace"], list)
+    assert any(row.get("result") == "pass" for row in first["trace"])
+    assert "base_confidence" in first
+    assert "context_penalty" in first
+    assert "effective_confidence" in first
+    assert second["decision"] == "blocked"
+    assert second["gate"] == "allowlist"
+    assert isinstance(second["trace"], list)
+    assert any(row.get("result") == "block" for row in second["trace"])
+
+
+def test_simulate_is_side_effect_free_for_execution_counters() -> None:
+    clock = _Clock()
+    controller = AutonomyActionController(now_monotonic=clock.monotonic)
+
+    before = controller.status()["totals"]
+    assert before["executed"] == 0
+    assert before["succeeded"] == 0
+    assert before["simulated_runs"] == 0
+
+    controller.simulate('{"action":"validate_provider","args":{}}', executors={"validate_provider": lambda **_: {"ok": True}})
+    after = controller.status()["totals"]
+
+    assert after["executed"] == 0
+    assert after["succeeded"] == 0
+    assert after["simulated_runs"] == 1
+    assert after["simulated_actions"] == 1
+
+
+def test_process_audit_rows_include_trace_and_gate() -> None:
+    clock = _Clock()
+
+    async def _scenario() -> None:
+        controller = AutonomyActionController(now_monotonic=clock.monotonic)
+
+        def _validate_provider(**_: object) -> dict[str, bool]:
+            return {"ok": True}
+
+        status = await controller.process('{"action":"validate_provider","args":{}}', {"validate_provider": _validate_provider})
+        audit = status["last_run"]["audits"][0]
+        assert audit["gate"] == "execution"
+        assert isinstance(audit["trace"], list)
+        assert len(audit["trace"]) >= 1
+
+    asyncio.run(_scenario())

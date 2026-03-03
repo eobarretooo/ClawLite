@@ -93,6 +93,11 @@ class AutonomyTriggerRequest(BaseModel):
     force: bool = True
 
 
+class AutonomySimulateRequest(BaseModel):
+    text: str
+    runtime_snapshot: dict[str, Any] | None = None
+
+
 @dataclass(slots=True)
 class RuntimeContainer:
     config: AppConfig
@@ -873,6 +878,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "forced": force,
             "autonomy": status,
             "autonomy_actions": runtime.autonomy_actions.status() if runtime.autonomy_actions is not None else {},
+        }
+
+    @app.post("/v1/control/autonomy/simulate")
+    async def simulate_autonomy(request: Request, req: AutonomySimulateRequest) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        controller = runtime.autonomy_actions
+        if controller is None:
+            return {"ok": False, "error": "autonomy_actions_unavailable", "simulation": {}, "autonomy_actions": {}}
+        snapshot = req.runtime_snapshot if req.runtime_snapshot is not None else await _autonomy_snapshot()
+        executors: dict[str, Any] = {name: (lambda **_: None) for name in controller.ALLOWLIST}
+        simulation = controller.simulate(req.text, executors=executors, runtime_snapshot=snapshot)
+        return {
+            "ok": True,
+            "simulation": simulation,
+            "autonomy_actions": controller.status(),
         }
 
     @app.get("/v1/control/autonomy/audit")

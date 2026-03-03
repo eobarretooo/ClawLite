@@ -24,6 +24,7 @@
 - P1 progress: autonomy action execution layer landed with strict allowlist + denylist blocking, per-action cooldown/hourly rate limits, dry-run-only dead-letter replay clamp, fail-soft sequential execution, and additive `autonomy_actions` telemetry/audits in diagnostics + trigger responses.
 - P1 progress: autonomy reliability increment landed with action quality gates, balanced/conservative policy profiles, degraded-runtime action restrictions, and persistent/exportable autonomy audit trail (`/v1/control/autonomy/audit`).
 - P1 progress: autonomy reliability increment added OpenClaw-first environment policy layering (`dev`/`staging`/`prod`) plus contextual quality scoring driven by runtime health snapshots, with additive diagnostics/audit confidence telemetry.
+- P1 progress: autonomy explainability increment landed with side-effect-free policy simulation and per-action decision traces via control endpoint (`/v1/control/autonomy/simulate`), plus additive simulation counters in `autonomy_actions` telemetry.
 
 ## P2 — Ecosystem
 

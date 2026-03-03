@@ -392,6 +392,101 @@ def test_gateway_autonomy_audit_endpoint_auth_and_success_payload(tmp_path: Path
         assert isinstance(payload["entries"], list)
 
 
+def test_gateway_autonomy_simulate_requires_auth(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "autonomy-sim-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+            "autonomy": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        unauthorized = client.post("/v1/control/autonomy/simulate", json={"text": '{"action":"validate_provider","args":{}}'})
+        assert unauthorized.status_code == 401
+
+
+def test_gateway_autonomy_simulate_returns_trace_and_decision_fields(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "autonomy-sim-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+            "autonomy": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/control/autonomy/simulate",
+            headers={"Authorization": "Bearer autonomy-sim-token"},
+            json={
+                "text": '{"actions":[{"action":"validate_provider","args":{}},{"action":"delete_all","args":{}}]}',
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "simulation" in payload
+        assert payload["simulation"]["proposed"] == 2
+        assert len(payload["simulation"]["actions"]) == 2
+        first = payload["simulation"]["actions"][0]
+        assert "decision" in first
+        assert "gate" in first
+        assert isinstance(first["trace"], list)
+        assert "base_confidence" in first
+        assert "context_penalty" in first
+        assert "effective_confidence" in first
+
+
+def test_gateway_autonomy_simulate_returns_status_with_simulated_counters(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "autonomy-sim-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+            "autonomy": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/control/autonomy/simulate",
+            headers={"Authorization": "Bearer autonomy-sim-token"},
+            json={"text": '{"action":"validate_provider","args":{}}'},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert "autonomy_actions" in payload
+        assert payload["autonomy_actions"]["totals"]["simulated_runs"] >= 1
+        assert payload["autonomy_actions"]["totals"]["simulated_actions"] >= 1
+
+
 def test_gateway_startup_rollback_when_subsystem_fails(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
