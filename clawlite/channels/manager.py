@@ -305,7 +305,7 @@ class ChannelManager:
             except Exception:
                 pass
 
-        target = str(event.metadata.get("chat_id") or event.user_id)
+        target = self._target_from_event(event)
         text = f"Stopped {cancelled} active task(s); cancelled {cancelled_subagents} subagent run(s)."
         await self._publish_and_send(
             event=OutboundEvent(
@@ -323,7 +323,7 @@ class ChannelManager:
 
     async def _dispatch_event(self, event: InboundEvent) -> None:
         bind_event("channel.dispatch", session=event.session_id, channel=event.channel).debug("dispatch processing target={}", event.user_id)
-        target = str(event.metadata.get("chat_id") or event.user_id)
+        target = self._target_from_event(event)
 
         async def _progress_hook(progress) -> None:
             stage = str(getattr(progress, "stage", "progress") or "progress")
@@ -517,11 +517,34 @@ class ChannelManager:
                 sent_targets.add((str(channel), str(target)))
         return response
 
+    @staticmethod
+    def _target_from_event(event: InboundEvent) -> str:
+        target = str(event.metadata.get("chat_id") or event.user_id)
+        if event.channel != "telegram":
+            return target
+        thread_raw = event.metadata.get("message_thread_id")
+        try:
+            thread_id = int(thread_raw)
+        except (TypeError, ValueError):
+            return target
+        if thread_id <= 0:
+            return target
+        return f"{target}:{thread_id}"
+
     def status(self) -> dict[str, dict[str, Any]]:
-        return {
-            name: {
+        out: dict[str, dict[str, Any]] = {}
+        for name, ch in self._channels.items():
+            row: dict[str, Any] = {
                 "running": ch.running,
                 "last_error": ch.health().last_error,
             }
-            for name, ch in self._channels.items()
-        }
+            channel_signals = getattr(ch, "signals", None)
+            if callable(channel_signals):
+                try:
+                    signals = channel_signals()
+                except Exception:
+                    signals = None
+                if isinstance(signals, dict) and signals:
+                    row["signals"] = signals
+            out[name] = row
+        return out

@@ -176,6 +176,11 @@ class FakeChannel(BaseChannel):
         return "ok"
 
 
+class FakeChannelWithSignals(FakeChannel):
+    def signals(self) -> dict[str, Any]:
+        return {"foo": 1, "bar": 2}
+
+
 def test_channel_manager_dispatches_inbound_to_engine_and_send() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()
@@ -437,6 +442,71 @@ def test_channel_manager_send_outbound_uses_session_routing() -> None:
         fake = mgr._channels["fake"]
         assert out == "ok"
         assert fake.sent == [("42", "hello", {})]
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_dispatch_preserves_telegram_thread_target() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("telegram", FakeChannel)
+        await mgr.start({"channels": {"telegram": {"enabled": True}}})
+
+        telegram = mgr._channels["telegram"]
+        await telegram.emit(
+            session_id="telegram:42",
+            user_id="u1",
+            text="hello",
+            metadata={"channel": "telegram", "chat_id": "42", "message_thread_id": 9},
+        )
+        await asyncio.sleep(0.1)
+
+        assert telegram.sent
+        assert telegram.sent[0][0] == "42:9"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_stop_preserves_telegram_thread_target() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=StopAwareEngine(cancelled_subagents=0))
+        mgr.register("telegram", FakeChannel)
+        await mgr.start({"channels": {"telegram": {"enabled": True}}})
+
+        telegram = mgr._channels["telegram"]
+        await telegram.emit(
+            session_id="telegram:42",
+            user_id="u1",
+            text="/stop",
+            metadata={"channel": "telegram", "chat_id": "42", "message_thread_id": 7},
+        )
+        await asyncio.sleep(0.1)
+
+        assert telegram.sent
+        assert telegram.sent[0][0] == "42:7"
+        assert telegram.sent[0][2].get("_control") == "stop"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_status_includes_channel_specific_signals() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("fake", FakeChannelWithSignals)
+        await mgr.start({"channels": {"fake": {"enabled": True}}})
+
+        status = mgr.status()
+        assert status["fake"]["running"] is True
+        assert status["fake"]["signals"] == {"foo": 1, "bar": 2}
 
         await mgr.stop()
 

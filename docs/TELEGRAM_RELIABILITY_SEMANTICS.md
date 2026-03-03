@@ -42,7 +42,18 @@ This note describes current/expected Telegram delivery behavior for operators.
 - If a chunk fails transiently, chunk-level retries follow the same backoff policy.
 - Operator expectation: content may lose styling or arrive in parts, but should remain readable.
 
+## 7) Thread/topic semantics (`message_thread_id`)
+- Inbound metadata includes `message_thread_id` when Telegram provides it.
+- Outbound send supports thread targeting using either metadata (`message_thread_id`) or target format `chat_id:thread_id`.
+- Typing keepalive is keyed by `chat_id + thread_id` and sends `send_chat_action` in the same thread context.
+- For older Telegram client libraries that do not accept `message_thread_id`, channel send/typing retries gracefully without the thread argument.
+
+## 8) Operational signals
+- Channel status may expose Telegram `signals` for runtime reliability diagnostics.
+- Current signals include retry counts (`send_retry_count`), retry-after usage (`send_retry_after_count`), auth breaker transitions/state (`*_auth_breaker_*`), typing TTL stop count (`typing_ttl_stop_count`), and reconnect count (`reconnect_count`).
+- Operator expectation: treat spikes as transient unless counters/states remain elevated over multiple poll intervals.
+
 ## Quick operator checks
-- Confirm channel health via `/api/channels/status`.
+- Confirm channel health via `/health` and inspect channel signals via `/v1/diagnostics` (or `clawlite diagnostics`).
 - Look for sustained retry escalation, open auth circuit, or repeated final send failures.
 - Treat isolated duplicates/chunking/fallback logs as expected reliability mechanisms.

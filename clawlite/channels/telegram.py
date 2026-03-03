@@ -347,6 +347,75 @@ class TelegramChannel(BaseChannel):
         self._startup_drop_done = False
         self._message_signatures: dict[tuple[str, int], str] = {}
         self._signature_limit = 4096
+        self._signals: dict[str, int] = {
+            "send_retry_count": 0,
+            "send_retry_after_count": 0,
+            "send_auth_breaker_open_count": 0,
+            "send_auth_breaker_close_count": 0,
+            "typing_auth_breaker_open_count": 0,
+            "typing_auth_breaker_close_count": 0,
+            "typing_ttl_stop_count": 0,
+            "reconnect_count": 0,
+        }
+
+    @staticmethod
+    def _coerce_thread_id(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            thread_id = int(value)
+        except (TypeError, ValueError):
+            return None
+        return thread_id if thread_id > 0 else None
+
+    @staticmethod
+    def _parse_target(target: str) -> tuple[str, int | None]:
+        raw_target = str(target).strip()
+        if not raw_target:
+            return "", None
+        chat_id, sep, maybe_thread = raw_target.partition(":")
+        if not sep:
+            return chat_id.strip(), None
+        thread_id = TelegramChannel._coerce_thread_id(maybe_thread.strip())
+        return chat_id.strip(), thread_id
+
+    @staticmethod
+    def _typing_key(*, chat_id: str, message_thread_id: int | None) -> str:
+        if message_thread_id is None:
+            return chat_id
+        return f"{chat_id}:{message_thread_id}"
+
+    def _on_send_auth_failure(self) -> None:
+        was_open = self._send_auth_breaker.is_open
+        self._send_auth_breaker.on_auth_failure()
+        if not was_open and self._send_auth_breaker.is_open:
+            self._signals["send_auth_breaker_open_count"] += 1
+
+    def _on_send_auth_success(self) -> None:
+        was_open = self._send_auth_breaker.is_open
+        self._send_auth_breaker.on_success()
+        if was_open:
+            self._signals["send_auth_breaker_close_count"] += 1
+
+    def _on_typing_auth_failure(self) -> None:
+        was_open = self._typing_auth_breaker.is_open
+        self._typing_auth_breaker.on_auth_failure()
+        if not was_open and self._typing_auth_breaker.is_open:
+            self._signals["typing_auth_breaker_open_count"] += 1
+
+    def _on_typing_auth_success(self) -> None:
+        was_open = self._typing_auth_breaker.is_open
+        self._typing_auth_breaker.on_success()
+        if was_open:
+            self._signals["typing_auth_breaker_close_count"] += 1
+
+    def signals(self) -> dict[str, Any]:
+        return {
+            **self._signals,
+            "send_auth_breaker_open": self._send_auth_breaker.is_open,
+            "typing_auth_breaker_open": self._typing_auth_breaker.is_open,
+            "typing_keepalive_active": len(self._typing_tasks),
+        }
 
     def _remember_message_signature(self, *, msg_key: tuple[str, int], signature: str) -> None:
         self._message_signatures[msg_key] = signature
@@ -354,15 +423,17 @@ class TelegramChannel(BaseChannel):
             oldest_key = next(iter(self._message_signatures))
             self._message_signatures.pop(oldest_key, None)
 
-    async def _typing_loop(self, *, chat_id: str) -> None:
+    async def _typing_loop(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
         started_at = time.monotonic()
         max_ttl_s = max(1.0, float(self.typing_max_ttl_s))
         interval_s = max(0.2, float(self.typing_interval_s))
         timeout_s = max(0.1, float(self.typing_timeout_s))
+        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
         try:
-            while (time.monotonic() - started_at) < max_ttl_s:
+            while True:
                 remaining_s = max_ttl_s - (time.monotonic() - started_at)
                 if remaining_s <= 0:
+                    self._signals["typing_ttl_stop_count"] += 1
                     return
 
                 if self._typing_auth_breaker.is_open:
@@ -375,16 +446,30 @@ class TelegramChannel(BaseChannel):
                     continue
 
                 try:
+                    payload: dict[str, Any] = {
+                        "chat_id": chat_id,
+                        "action": "typing",
+                    }
+                    if message_thread_id is not None:
+                        payload["message_thread_id"] = message_thread_id
+                    await asyncio.wait_for(
+                        bot.send_chat_action(**payload),
+                        timeout=timeout_s,
+                    )
+                    self._on_typing_auth_success()
+                except TypeError as exc:
+                    if message_thread_id is None or "message_thread_id" not in str(exc):
+                        raise
                     await asyncio.wait_for(
                         bot.send_chat_action(chat_id=chat_id, action="typing"),
                         timeout=timeout_s,
                     )
-                    self._typing_auth_breaker.on_success()
+                    self._on_typing_auth_success()
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     if _is_auth_failure(exc):
-                        self._typing_auth_breaker.on_auth_failure()
+                        self._on_typing_auth_failure()
                     logger.debug("telegram typing keepalive failed chat={} error={}", chat_id, exc)
 
                 remaining_s = max_ttl_s - (time.monotonic() - started_at)
@@ -396,22 +481,26 @@ class TelegramChannel(BaseChannel):
         except Exception as exc:  # pragma: no cover
             logger.warning("telegram typing keepalive crashed chat={} error={}", chat_id, exc)
         finally:
-            task = self._typing_tasks.get(chat_id)
+            task = self._typing_tasks.get(typing_key)
             if task is asyncio.current_task():
-                self._typing_tasks.pop(chat_id, None)
+                self._typing_tasks.pop(typing_key, None)
 
-    def _start_typing_keepalive(self, *, chat_id: str) -> None:
+    def _start_typing_keepalive(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
         if not self.typing_enabled or not self._running:
             return
         if not chat_id:
             return
-        task = self._typing_tasks.get(chat_id)
+        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
+        task = self._typing_tasks.get(typing_key)
         if task is not None and not task.done():
             return
-        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id=chat_id))
+        self._typing_tasks[typing_key] = asyncio.create_task(
+            self._typing_loop(chat_id=chat_id, message_thread_id=message_thread_id)
+        )
 
-    async def _stop_typing_keepalive(self, *, chat_id: str) -> None:
-        task = self._typing_tasks.pop(chat_id, None)
+    async def _stop_typing_keepalive(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
+        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
+        task = self._typing_tasks.pop(typing_key, None)
         await cancel_task(task)
 
     async def _stop_all_typing_keepalive(self) -> None:
@@ -510,6 +599,7 @@ class TelegramChannel(BaseChannel):
                 self._last_error = str(exc)
                 self._connected = False
                 self.bot = None
+                self._signals["reconnect_count"] += 1
                 logger.error("telegram polling error error={} backoff_s={}", exc, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, self.reconnect_max_s)
@@ -534,6 +624,7 @@ class TelegramChannel(BaseChannel):
             return True
 
         chat_id = str(getattr(message, "chat_id", "") or "")
+        message_thread_id = self._coerce_thread_id(getattr(message, "message_thread_id", None))
         if not chat_id:
             return True
         user = getattr(message, "from_user", None)
@@ -581,11 +672,11 @@ class TelegramChannel(BaseChannel):
             is_edit,
             command or "",
         )
-        self._start_typing_keepalive(chat_id=chat_id)
+        self._start_typing_keepalive(chat_id=chat_id, message_thread_id=message_thread_id)
         try:
             await self.emit(session_id=session_id, user_id=user_id, text=text, metadata=metadata)
         except Exception:
-            await self._stop_typing_keepalive(chat_id=chat_id)
+            await self._stop_typing_keepalive(chat_id=chat_id, message_thread_id=message_thread_id)
             raise
         self._remember_message_signature(msg_key=msg_key, signature=signature)
         return True
@@ -627,6 +718,9 @@ class TelegramChannel(BaseChannel):
             "media_counts": dict(media_info.get("counts", {})),
             "media_total_count": int(media_info.get("total_count", 0) or 0),
         }
+        message_thread_id = self._coerce_thread_id(getattr(message, "message_thread_id", None))
+        if message_thread_id is not None:
+            metadata["message_thread_id"] = message_thread_id
         if command:
             metadata["command"] = command
             metadata["command_args"] = command_args
@@ -707,11 +801,12 @@ class TelegramChannel(BaseChannel):
         logger.info("telegram channel stopped")
 
     async def send(self, *, target: str, text: str, metadata: dict[str, Any] | None = None) -> str:
-        chat_id = str(target).strip()
+        chat_id, target_thread_id = self._parse_target(str(target))
         if not chat_id:
             raise ValueError("telegram target(chat_id) is required")
-        await self._stop_typing_keepalive(chat_id=chat_id)
         metadata = dict(metadata or {})
+        message_thread_id = self._coerce_thread_id(metadata.get("message_thread_id", target_thread_id))
+        await self._stop_typing_keepalive(chat_id=chat_id, message_thread_id=message_thread_id)
         if self.bot is None:
             from telegram import Bot
 
@@ -734,6 +829,23 @@ class TelegramChannel(BaseChannel):
                 if self._send_auth_breaker.is_open:
                     raise TelegramCircuitOpenError("telegram auth circuit is open")
                 try:
+                    payload: dict[str, Any] = {
+                        "chat_id": chat_id,
+                        "text": payload_text,
+                        "parse_mode": payload_parse_mode,
+                        "reply_to_message_id": reply_to_message_id,
+                    }
+                    if message_thread_id is not None:
+                        payload["message_thread_id"] = message_thread_id
+                    await asyncio.wait_for(
+                        self.bot.send_message(**payload),
+                        timeout=max(1.0, float(self.send_timeout_s)),
+                    )
+                    self._on_send_auth_success()
+                    break
+                except TypeError as exc:
+                    if message_thread_id is None or "message_thread_id" not in str(exc):
+                        raise
                     await asyncio.wait_for(
                         self.bot.send_message(
                             chat_id=chat_id,
@@ -743,7 +855,7 @@ class TelegramChannel(BaseChannel):
                         ),
                         timeout=max(1.0, float(self.send_timeout_s)),
                     )
-                    self._send_auth_breaker.on_success()
+                    self._on_send_auth_success()
                     break
                 except Exception as exc:
                     if payload_parse_mode and not formatting_fallback_used and _is_formatting_error(exc):
@@ -753,7 +865,7 @@ class TelegramChannel(BaseChannel):
                         continue
 
                     if _is_auth_failure(exc):
-                        self._send_auth_breaker.on_auth_failure()
+                        self._on_send_auth_failure()
                         raise
 
                     logger.error(
@@ -768,9 +880,12 @@ class TelegramChannel(BaseChannel):
                     if attempt >= policy.max_attempts or not _is_transient_failure(exc):
                         raise
 
+                    self._signals["send_retry_count"] += 1
                     delay_s = _retry_after_delay_s(exc)
                     if delay_s is None:
                         delay_s = _retry_delay_s(policy, attempt)
+                    else:
+                        self._signals["send_retry_after_count"] += 1
                     if delay_s > 0:
                         await asyncio.sleep(delay_s)
         logger.info("telegram outbound sent chat={} chunks={} chars={}", chat_id, len(chunks), len(text))

@@ -75,3 +75,11 @@ pytest -q tests
 2. Confirm minimum configuration: `clawlite validate provider` and `clawlite validate channels`.
 3. If heartbeat fails, validate `gateway.heartbeat.enabled` and trigger it manually (`/v1/control/heartbeat/trigger`).
 4. Before hotfix/release: `bash scripts/smoke_test.sh` and `pytest -q tests`.
+
+## Telegram reliability runbook checks
+
+- Check channel diagnostics/status for Telegram `signals` counters/state.
+- Retry pressure: verify `send_retry_count` and `send_retry_after_count` are not continuously climbing.
+- Auth breaker: verify `send_auth_breaker_open` is false during steady state; inspect `send_auth_breaker_open_count` and `send_auth_breaker_close_count` for transition history.
+- Typing TTL: track `typing_ttl_stop_count` growth to confirm keepalive loops are naturally capped.
+- Reconnect behavior: monitor `reconnect_count`; short bursts are expected during transient provider/network issues.

@@ -58,9 +58,13 @@ Example response:
 }
 ```
 
+Channel diagnostics returned via health/diagnostics use additive maps and may include per-channel `signals` entries.
+
 ## `GET /v1/diagnostics`
 
 If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostics_disabled","status":404}`.
+
+`channels` entries are additive and may include channel-specific `signals` maps for operational counters/state.
 
 Example response:
 
