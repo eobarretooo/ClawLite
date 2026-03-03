@@ -230,6 +230,80 @@ class AgentEngine:
         self._stop_requests: set[str] = set()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_locks_guard = asyncio.Lock()
+        self._persistence_diagnostics: dict[str, Any] = {
+            "attempts": 0,
+            "retries": 0,
+            "failures": 0,
+            "success": 0,
+            "operations": {
+                "user_session_append": {"attempts": 0, "retries": 0, "failures": 0, "success": 0},
+                "assistant_session_append": {"attempts": 0, "retries": 0, "failures": 0, "success": 0},
+                "memory_consolidate": {"attempts": 0, "retries": 0, "failures": 0, "success": 0},
+            },
+            "last_error": "",
+        }
+
+    def _persistence_operation_metrics(self, operation: str) -> dict[str, int]:
+        operations = self._persistence_diagnostics.setdefault("operations", {})
+        row = operations.get(operation)
+        if not isinstance(row, dict):
+            row = {"attempts": 0, "retries": 0, "failures": 0, "success": 0}
+            operations[operation] = row
+        return row
+
+    def _track_persistence_attempt(self, operation: str) -> None:
+        self._persistence_diagnostics["attempts"] = int(self._persistence_diagnostics["attempts"]) + 1
+        metrics = self._persistence_operation_metrics(operation)
+        metrics["attempts"] = int(metrics.get("attempts", 0)) + 1
+
+    def _track_persistence_retry(self, operation: str, error: Exception) -> None:
+        self._persistence_diagnostics["retries"] = int(self._persistence_diagnostics["retries"]) + 1
+        self._persistence_diagnostics["last_error"] = str(error)
+        metrics = self._persistence_operation_metrics(operation)
+        metrics["retries"] = int(metrics.get("retries", 0)) + 1
+
+    def _track_persistence_success(self, operation: str) -> None:
+        self._persistence_diagnostics["success"] = int(self._persistence_diagnostics["success"]) + 1
+        self._persistence_diagnostics["last_error"] = ""
+        metrics = self._persistence_operation_metrics(operation)
+        metrics["success"] = int(metrics.get("success", 0)) + 1
+
+    def _track_persistence_failure(self, operation: str, error: Exception) -> None:
+        self._persistence_diagnostics["failures"] = int(self._persistence_diagnostics["failures"]) + 1
+        self._persistence_diagnostics["last_error"] = str(error)
+        metrics = self._persistence_operation_metrics(operation)
+        metrics["failures"] = int(metrics.get("failures", 0)) + 1
+
+    def diagnostics(self) -> dict[str, Any]:
+        session_store_diagnostics: dict[str, Any] = {}
+        diagnostics_fn = getattr(self.sessions, "diagnostics", None)
+        if callable(diagnostics_fn):
+            try:
+                raw = diagnostics_fn()
+                if isinstance(raw, dict):
+                    session_store_diagnostics = dict(raw)
+            except Exception:
+                session_store_diagnostics = {}
+        operations: dict[str, Any] = {}
+        for name, values in dict(self._persistence_diagnostics.get("operations", {})).items():
+            if isinstance(values, dict):
+                operations[name] = {
+                    "attempts": int(values.get("attempts", 0)),
+                    "retries": int(values.get("retries", 0)),
+                    "failures": int(values.get("failures", 0)),
+                    "success": int(values.get("success", 0)),
+                }
+        return {
+            "persistence": {
+                "attempts": int(self._persistence_diagnostics.get("attempts", 0)),
+                "retries": int(self._persistence_diagnostics.get("retries", 0)),
+                "failures": int(self._persistence_diagnostics.get("failures", 0)),
+                "success": int(self._persistence_diagnostics.get("success", 0)),
+                "operations": operations,
+                "last_error": str(self._persistence_diagnostics.get("last_error", "")),
+            },
+            "session_store": session_store_diagnostics,
+        }
 
     async def _complete_provider(
         self,
@@ -496,11 +570,14 @@ class AgentEngine:
     ) -> None:
         attempts = 2
         for attempt in range(1, attempts + 1):
+            self._track_persistence_attempt(operation)
             try:
                 action()
+                self._track_persistence_success(operation)
                 return
             except OSError as exc:
                 if attempt < attempts:
+                    self._track_persistence_retry(operation, exc)
                     run_log.warning(
                         "persistence operation failed operation={} session={} attempt={} retrying error={}",
                         operation,
@@ -510,6 +587,7 @@ class AgentEngine:
                     )
                     await asyncio.sleep(self._PERSISTENCE_RETRY_DELAY_SECONDS)
                     continue
+                self._track_persistence_failure(operation, exc)
                 run_log.error(
                     "persistence operation failed operation={} session={} attempt={} error={}",
                     operation,
@@ -519,6 +597,7 @@ class AgentEngine:
                 )
                 return
             except Exception as exc:
+                self._track_persistence_failure(operation, exc)
                 run_log.error(
                     "persistence operation failed operation={} session={} attempt={} error={}",
                     operation,

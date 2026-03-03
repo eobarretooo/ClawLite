@@ -225,6 +225,7 @@ clawlite/
   - Telegram channel is the only production channel today, with polling, retry/backoff (+ jitter), 401/403 auth circuit breaker, typing keepalive with dedicated typing auth circuit protection, allowlist checks, chunked outbound, formatting fallback, and safe offset commit after successful processing.
   - Telegram reliability test coverage now includes deterministic soak/recovery-style validation for repeated reconnect and outbound transient retry cycles, plus mixed-failure chaos/recovery matrix scenarios (chunking, formatting fallback, 429 retry-after, timeout, and multi-cycle polling recovery).
   - Core loop persistence is now fail-soft: response delivery is preserved when session append or memory consolidation fails, with degraded-mode logging for recovery visibility.
+  - Gateway diagnostics now expose additive engine persistence telemetry and session-store durability/recovery counters when diagnostics config exposure is enabled.
   - Scheduler is active with both Cron jobs and Heartbeat loop, plus CLI/API controls.
   - Provider routing is active for Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, and custom OpenAI-compatible endpoints.
   - Core tools and workspace templates are live: shell/files/web/cron/message/skills/subagent tools and `IDENTITY`, `SOUL`, `AGENTS`, `TOOLS`, `USER`, `HEARTBEAT`, `BOOTSTRAP`, `memory/MEMORY`.

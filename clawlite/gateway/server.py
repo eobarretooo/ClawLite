@@ -609,6 +609,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "workspace_path": cfg.workspace_path,
                 "state_path": cfg.state_path,
                 "provider_model": cfg.agents.defaults.model,
+                "engine": runtime.engine.diagnostics(),
             }
         return DiagnosticsResponse(
             schema_version="2026-03-02",

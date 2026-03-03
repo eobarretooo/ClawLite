@@ -6,6 +6,7 @@
 - Expand scheduler integration test coverage (cron/heartbeat)
 - Harden input validation in channels and tools with external I/O
 - P0 progress: engine turn finalization now uses fail-soft persistence (session append + memory consolidate best-effort with degradation logging); broader core reliability hardening remains in progress.
+- P0 progress: session storage durability/recovery hardening landed with append retry+fsync behavior, malformed JSONL read-repair, and additive engine/session persistence telemetry in diagnostics.
 - Telegram reliability hardening in progress: deterministic soak/recovery tests cover repeated polling reconnects, outbound transient retry cycles, and mixed-failure chaos/recovery matrix cases (chunking + formatting fallback + 429 retry-after + timeout before success); continue runtime tuning for near-100% stability.
 
 ## P1 — Operational autonomy

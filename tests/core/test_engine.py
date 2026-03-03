@@ -166,6 +166,21 @@ class FakeMemoryStore:
             raise RuntimeError("consolidate failed")
 
 
+class FlakySessionStore:
+    def __init__(self) -> None:
+        self.rows: dict[str, list[dict[str, str]]] = {}
+        self._failed_once = False
+
+    def read(self, session_id: str, limit: int = 20) -> list[dict[str, str]]:
+        return self.rows.get(session_id, [])[-limit:]
+
+    def append(self, session_id: str, role: str, content: str) -> None:
+        if role == "user" and not self._failed_once:
+            self._failed_once = True
+            raise OSError("transient write failure")
+        self.rows.setdefault(session_id, []).append({"role": role, "content": content})
+
+
 class BlockingConcurrencyProvider:
     def __init__(self) -> None:
         self.active_calls = 0
@@ -484,5 +499,37 @@ def test_engine_persistence_failures_still_emit_turn_completed() -> None:
 
         assert out.text == "ok"
         assert "turn_completed" in stages
+
+    asyncio.run(_scenario())
+
+
+def test_engine_diagnostics_tracks_persistence_retries_and_failures() -> None:
+    async def _scenario() -> None:
+        sessions = FlakySessionStore()
+        memory = FakeMemoryStore(fail_consolidate=True)
+        engine = AgentEngine(provider=FakeOneShotProvider(), tools=FakeTools(), sessions=sessions, memory=memory)
+
+        out = await engine.run(session_id="cli:persist-telemetry", user_text="hello")
+
+        assert out.text == "ok"
+        diag = engine.diagnostics()
+        persistence = diag["persistence"]
+        operations = persistence["operations"]
+
+        assert persistence["attempts"] == 4
+        assert persistence["retries"] == 1
+        assert persistence["failures"] == 1
+        assert persistence["success"] == 2
+
+        assert operations["user_session_append"]["attempts"] == 2
+        assert operations["user_session_append"]["retries"] == 1
+        assert operations["user_session_append"]["failures"] == 0
+        assert operations["user_session_append"]["success"] == 1
+
+        assert operations["assistant_session_append"]["attempts"] == 1
+        assert operations["assistant_session_append"]["success"] == 1
+
+        assert operations["memory_consolidate"]["attempts"] == 1
+        assert operations["memory_consolidate"]["failures"] == 1
 
     asyncio.run(_scenario())

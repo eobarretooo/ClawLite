@@ -172,6 +172,9 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "cron" in payload
         assert "heartbeat" in payload
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
+        assert "engine" in payload["environment"]
+        assert "persistence" in payload["environment"]["engine"]
+        assert "session_store" in payload["environment"]["engine"]
 
     cfg_disabled = AppConfig(
         workspace_path=str(tmp_path / "workspace2"),

@@ -82,6 +82,9 @@ pytest -q tests
 - During degraded storage, session history or consolidated memory can be partially missing until storage recovers.
 - Check logs for persistence operation failures (`user_session_append`, `assistant_session_append`, `memory_consolidate`) and affected `session`.
 - After recovery, monitor subsequent turns to confirm session append and memory consolidation are succeeding again.
+- In `/v1/diagnostics` (`gateway.diagnostics.include_config=true`), verify `environment.engine.persistence` counters: `attempts`, `retries`, `failures`, `success`, and per-operation totals.
+- For session file integrity, verify `environment.engine.session_store.read_corrupt_lines` and `read_repaired_files`; growth indicates malformed JSONL lines were detected and best-effort repaired.
+- Investigate sustained growth in `append_failures` or repeated retries as degraded storage signal (disk I/O, permissions, or transient filesystem instability).
 
 ## Telegram reliability runbook checks
 
