@@ -32,6 +32,32 @@ class AutonomyActionController:
         "truncate",
         "destroy",
     )
+    ENVIRONMENT_PRESETS: dict[str, dict[str, Any]] = {
+        "dev": {
+            "policy": "balanced",
+            "action_cooldown_s": 120.0,
+            "action_rate_limit_per_hour": 20,
+            "min_action_confidence": 0.55,
+            "degraded_backlog_threshold": 300,
+            "degraded_supervisor_error_threshold": 3,
+        },
+        "staging": {
+            "policy": "balanced",
+            "action_cooldown_s": 180.0,
+            "action_rate_limit_per_hour": 14,
+            "min_action_confidence": 0.65,
+            "degraded_backlog_threshold": 220,
+            "degraded_supervisor_error_threshold": 2,
+        },
+        "prod": {
+            "policy": "conservative",
+            "action_cooldown_s": 300.0,
+            "action_rate_limit_per_hour": 8,
+            "min_action_confidence": 0.75,
+            "degraded_backlog_threshold": 150,
+            "degraded_supervisor_error_threshold": 1,
+        },
+    }
 
     def __init__(
         self,
@@ -71,6 +97,8 @@ class AutonomyActionController:
             "blocked": 0,
             "simulated_runs": 0,
             "simulated_actions": 0,
+            "explain_runs": 0,
+            "policy_switches": 0,
             "parse_errors": 0,
             "rate_limited": 0,
             "cooldown_blocked": 0,
@@ -84,6 +112,15 @@ class AutonomyActionController:
         self._per_action: dict[str, dict[str, Any]] = {name: self._new_action_status() for name in self.ALLOWLIST}
         self._recent_audits: list[dict[str, Any]] = []
         self._last_run: dict[str, Any] = {}
+
+    def _current_guardrails(self) -> dict[str, Any]:
+        return {
+            "action_cooldown_s": self.action_cooldown_s,
+            "action_rate_limit_per_hour": self.action_rate_limit_per_hour,
+            "min_action_confidence": self.min_action_confidence,
+            "degraded_backlog_threshold": self.degraded_backlog_threshold,
+            "degraded_supervisor_error_threshold": self.degraded_supervisor_error_threshold,
+        }
 
     @staticmethod
     def _normalize_policy(policy: str) -> str:
@@ -512,11 +549,12 @@ class AutonomyActionController:
             "degraded_reason": degraded_reason,
         }
 
-    def simulate(
+    def _build_decision_view(
         self,
         raw_text: str,
-        executors: dict[str, ActionExecutor] | None = None,
-        runtime_snapshot: dict[str, Any] | None = None,
+        *,
+        runtime_snapshot: dict[str, Any] | None,
+        executors: dict[str, ActionExecutor] | None,
     ) -> dict[str, Any]:
         now = self._now_monotonic()
         context_penalty = self._context_penalty(runtime_snapshot)
@@ -572,9 +610,6 @@ class AutonomyActionController:
                 }
             )
 
-        self._totals["simulated_runs"] += 1
-        self._totals["simulated_actions"] += proposed
-
         return {
             "parse_error": bool(parse_error),
             "proposed": proposed,
@@ -587,6 +622,124 @@ class AutonomyActionController:
             "min_action_confidence": self.min_action_confidence,
             "actions": action_decisions,
         }
+
+    @staticmethod
+    def _overall_risk_level(risk_counts: dict[str, int]) -> str:
+        if int(risk_counts.get("high", 0) or 0) > 0:
+            return "high"
+        if int(risk_counts.get("medium", 0) or 0) > 0:
+            return "medium"
+        return "low"
+
+    def _classify_risk(self, action_decision: dict[str, Any]) -> tuple[str, str]:
+        gate = str(action_decision.get("gate", "") or "")
+        decision = str(action_decision.get("decision", "") or "")
+        confidence = self._clamp_confidence(action_decision.get("effective_confidence", 0.0))
+
+        if gate == "allowlist":
+            return ("high", "Action blocked by allowlist/denylist; keep blocked and revise proposal.")
+        if gate == "degraded_runtime":
+            return ("high", "Runtime degraded; run diagnostics first and retry after recovery.")
+        if confidence < 0.35:
+            return ("high", "Effective confidence is very low; require stronger evidence.")
+        if gate in {"quality_gate", "rate_limit", "cooldown"}:
+            return ("medium", "Guardrail blocked this action; wait/tune policy or improve confidence.")
+        if decision == "allow" and confidence < 0.65:
+            return ("medium", "Action allowed with moderate confidence; monitor before broader changes.")
+        return ("low", "Action is within policy and confidence guardrails.")
+
+    def set_environment_profile(self, profile: str, *, actor: str = "control", reason: str = "") -> dict[str, Any]:
+        normalized = self._normalize_environment_profile(profile)
+        if normalized != str(profile or "").strip().lower():
+            raise ValueError("invalid_environment_profile")
+
+        preset = dict(self.ENVIRONMENT_PRESETS.get(normalized, {}))
+        if not preset:
+            raise ValueError("invalid_environment_profile")
+
+        previous = {
+            "environment_profile": self.environment_profile,
+            "policy": self.policy,
+            **self._current_guardrails(),
+        }
+
+        self.environment_profile = normalized
+        self.policy = self._normalize_policy(preset.get("policy", self.policy))
+        self.action_cooldown_s = max(0.0, float(preset.get("action_cooldown_s", self.action_cooldown_s) or 0.0))
+        self.action_rate_limit_per_hour = max(
+            1,
+            int(preset.get("action_rate_limit_per_hour", self.action_rate_limit_per_hour) or 1),
+        )
+        self.min_action_confidence = self._clamp_confidence(preset.get("min_action_confidence", self.min_action_confidence))
+        self.degraded_backlog_threshold = max(
+            1,
+            int(preset.get("degraded_backlog_threshold", self.degraded_backlog_threshold) or 1),
+        )
+        self.degraded_supervisor_error_threshold = max(
+            1,
+            int(preset.get("degraded_supervisor_error_threshold", self.degraded_supervisor_error_threshold) or 1),
+        )
+        self._totals["policy_switches"] += 1
+
+        new_values = {
+            "environment_profile": self.environment_profile,
+            "policy": self.policy,
+            **self._current_guardrails(),
+        }
+        changed_at = self._utc_now_iso()
+        row = {
+            "kind": "policy_change",
+            "at": changed_at,
+            "actor": str(actor or "control"),
+            "reason": str(reason or ""),
+            "previous": dict(previous),
+            "new": dict(new_values),
+        }
+        self._append_recent_audits([row])
+        self._persist_audits([row])
+        return {
+            "at": changed_at,
+            "actor": str(actor or "control"),
+            "reason": str(reason or ""),
+            "previous": previous,
+            "new": new_values,
+        }
+
+    def explain(self, raw_text: str, runtime_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        simulation = self._build_decision_view(raw_text, runtime_snapshot=runtime_snapshot, executors=None)
+        self._totals["explain_runs"] += 1
+
+        risk_counts = {"low": 0, "medium": 0, "high": 0}
+        explained_actions: list[dict[str, Any]] = []
+        for row in simulation["actions"]:
+            risk_level, recommendation = self._classify_risk(row)
+            risk_counts[risk_level] += 1
+            explained_actions.append(
+                {
+                    **dict(row),
+                    "risk_level": risk_level,
+                    "recommendation": recommendation,
+                }
+            )
+
+        return {
+            **dict(simulation),
+            "overall_risk": self._overall_risk_level(risk_counts),
+            "risk_counts": risk_counts,
+            "actions": explained_actions,
+        }
+
+    def simulate(
+        self,
+        raw_text: str,
+        executors: dict[str, ActionExecutor] | None = None,
+        runtime_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        result = self._build_decision_view(raw_text, runtime_snapshot=runtime_snapshot, executors=executors)
+
+        self._totals["simulated_runs"] += 1
+        self._totals["simulated_actions"] += int(result.get("proposed", 0) or 0)
+        return result
 
     async def process(
         self,

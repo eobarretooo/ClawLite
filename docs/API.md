@@ -87,7 +87,7 @@ Supervisor telemetry is additive under `supervisor` and may include: `ticks`, `i
 
 Autonomy telemetry is additive under `autonomy` and may include: `running`, `enabled`, `session_id`, `ticks`, `run_attempts`, `run_success`, `run_failures`, `skipped_backlog`, `skipped_cooldown`, `skipped_disabled`, `last_run_at`, `last_result_excerpt`, `last_error`, `consecutive_error_count`, `last_snapshot`, and `cooldown_remaining_s`.
 
-Autonomy action execution telemetry is additive under top-level `autonomy_actions` and may include: policy/profile settings (`policy`, `environment_profile`, `min_action_confidence`, degraded thresholds, audit path/limits), `totals` (`proposed`, `executed`, `succeeded`, `failed`, `blocked`, `simulated_runs`, `simulated_actions`, `parse_errors`, `rate_limited`, `cooldown_blocked`, `unknown_blocked`, `quality_blocked`, `quality_penalty_applied`, `degraded_blocked`, `audit_writes`, `audit_write_failures`), `per_action`, `last_run`, and bounded `recent_audits`.
+Autonomy action execution telemetry is additive under top-level `autonomy_actions` and may include: policy/profile settings (`policy`, `environment_profile`, `min_action_confidence`, degraded thresholds, audit path/limits), `totals` (`proposed`, `executed`, `succeeded`, `failed`, `blocked`, `simulated_runs`, `simulated_actions`, `explain_runs`, `policy_switches`, `parse_errors`, `rate_limited`, `cooldown_blocked`, `unknown_blocked`, `quality_blocked`, `quality_penalty_applied`, `degraded_blocked`, `audit_writes`, `audit_write_failures`), `per_action`, `last_run`, and bounded `recent_audits`.
 
 `autonomy_actions.last_run.quality` is additive and may include confidence quality summary fields (`count`, `avg_base_confidence`, `avg_context_penalty`, `avg_effective_confidence`, `max_base_confidence`, `max_context_penalty`, `max_effective_confidence`).
 
@@ -221,6 +221,105 @@ Response:
   }
 }
 ```
+
+## `POST /v1/control/autonomy/explain`
+
+Control-plane explainability endpoint using the same parser/gate path as autonomy simulation/execution, without executing actions.
+
+Request:
+
+```json
+{
+  "text": "{\"actions\":[{\"action\":\"validate_provider\",\"confidence\":0.9,\"args\":{}},{\"action\":\"delete_all\",\"args\":{}}]}",
+  "runtime_snapshot": {
+    "queue": {"outbound_size": 0, "dead_letter_size": 0},
+    "supervisor": {"incident_count": 0, "consecutive_error_count": 0}
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "explanation": {
+    "parse_error": false,
+    "proposed": 2,
+    "allowed": 1,
+    "blocked": 1,
+    "overall_risk": "high",
+    "risk_counts": {"low": 1, "medium": 0, "high": 1},
+    "policy": "balanced",
+    "environment_profile": "dev",
+    "min_action_confidence": 0.55,
+    "degraded": false,
+    "degraded_reason": "",
+    "actions": [
+      {
+        "action": "validate_provider",
+        "decision": "allow",
+        "gate": "all_gates_passed",
+        "effective_confidence": 0.75,
+        "risk_level": "low",
+        "recommendation": "Action is within policy and confidence guardrails."
+      }
+    ]
+  },
+  "autonomy_actions": {
+    "totals": {
+      "explain_runs": 1
+    }
+  }
+}
+```
+
+## `POST /v1/control/autonomy/policy`
+
+Control-plane endpoint for runtime policy preset switching (`dev`, `staging`, `prod`) with auditable policy-change records.
+
+Request:
+
+```json
+{
+  "environment_profile": "prod",
+  "reason": "release hardening",
+  "actor": "control"
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "update": {
+    "at": "2026-03-03T00:00:00+00:00",
+    "actor": "control",
+    "reason": "release hardening",
+    "previous": {
+      "environment_profile": "dev",
+      "policy": "balanced"
+    },
+    "new": {
+      "environment_profile": "prod",
+      "policy": "conservative",
+      "action_cooldown_s": 300.0,
+      "action_rate_limit_per_hour": 8,
+      "min_action_confidence": 0.75,
+      "degraded_backlog_threshold": 150,
+      "degraded_supervisor_error_threshold": 1
+    }
+  },
+  "autonomy_actions": {
+    "totals": {
+      "policy_switches": 1
+    }
+  }
+}
+```
+
+- Invalid `environment_profile` returns `400` with `{"error":"invalid_environment_profile","status":400}`.
 
 ## `GET /v1/control/autonomy/audit?limit=100`
 

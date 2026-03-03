@@ -341,6 +341,65 @@ def test_simulate_is_side_effect_free_for_execution_counters() -> None:
     assert after["simulated_actions"] == 1
 
 
+def test_explain_reports_risk_levels_recommendations_and_counts() -> None:
+    clock = _Clock()
+    controller = AutonomyActionController(max_actions_per_run=3, now_monotonic=clock.monotonic)
+
+    payload = json.dumps(
+        {
+            "actions": [
+                {"action": "validate_provider", "confidence": 0.95, "args": {}},
+                {"action": "validate_channels", "confidence": 0.4, "args": {}},
+                {"action": "delete_all", "confidence": 0.9, "args": {}},
+            ]
+        }
+    )
+    explanation = controller.explain(payload, runtime_snapshot={})
+
+    assert explanation["policy"] in {"balanced", "conservative"}
+    assert explanation["environment_profile"] in {"dev", "staging", "prod"}
+    assert explanation["overall_risk"] == "high"
+    assert explanation["risk_counts"] == {"low": 1, "medium": 1, "high": 1}
+
+    actions = explanation["actions"]
+    assert len(actions) == 3
+    assert actions[0]["risk_level"] == "low"
+    assert actions[1]["risk_level"] == "medium"
+    assert actions[2]["risk_level"] == "high"
+    assert all(isinstance(row["recommendation"], str) and row["recommendation"] for row in actions)
+
+    totals = controller.status()["totals"]
+    assert totals["explain_runs"] == 1
+
+
+def test_set_environment_profile_applies_preset_and_audits_policy_change() -> None:
+    clock = _Clock()
+    controller = AutonomyActionController(now_monotonic=clock.monotonic)
+
+    update = controller.set_environment_profile("prod", actor="ops", reason="tighten for release")
+
+    expected = AutonomyActionController.ENVIRONMENT_PRESETS["prod"]
+    assert update["new"]["environment_profile"] == "prod"
+    assert update["new"]["policy"] == expected["policy"]
+    assert update["new"]["action_cooldown_s"] == expected["action_cooldown_s"]
+    assert update["new"]["action_rate_limit_per_hour"] == expected["action_rate_limit_per_hour"]
+    assert update["new"]["min_action_confidence"] == expected["min_action_confidence"]
+    assert update["new"]["degraded_backlog_threshold"] == expected["degraded_backlog_threshold"]
+    assert update["new"]["degraded_supervisor_error_threshold"] == expected["degraded_supervisor_error_threshold"]
+
+    status = controller.status()
+    assert status["totals"]["policy_switches"] == 1
+    assert status["environment_profile"] == "prod"
+    assert status["policy"] == expected["policy"]
+
+    row = status["recent_audits"][-1]
+    assert row["kind"] == "policy_change"
+    assert row["actor"] == "ops"
+    assert row["reason"] == "tighten for release"
+    assert row["previous"]["environment_profile"] == "dev"
+    assert row["new"]["environment_profile"] == "prod"
+
+
 def test_process_audit_rows_include_trace_and_gate() -> None:
     clock = _Clock()
 

@@ -89,3 +89,24 @@ jobs:
           python -c "from clawlite.core.engine import AgentEngine; print('engine ok')"
           python -c "from clawlite.scheduler.cron import CronService; print('scheduler ok')"
           python -c "from clawlite.tools.registry import ToolRegistry; print('tools ok')"
+
+  autonomy-contract:
+    name: Autonomy control contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ClawLite
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-anyio httpx "fastapi[all]" uvicorn questionary rich
+
+      - name: Run autonomy contract tests
+        run: python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py

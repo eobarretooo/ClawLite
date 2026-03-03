@@ -98,6 +98,17 @@ class AutonomySimulateRequest(BaseModel):
     runtime_snapshot: dict[str, Any] | None = None
 
 
+class AutonomyExplainRequest(BaseModel):
+    text: str
+    runtime_snapshot: dict[str, Any] | None = None
+
+
+class AutonomyPolicyRequest(BaseModel):
+    environment_profile: str
+    reason: str = ""
+    actor: str = "control"
+
+
 @dataclass(slots=True)
 class RuntimeContainer:
     config: AppConfig
@@ -892,6 +903,40 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return {
             "ok": True,
             "simulation": simulation,
+            "autonomy_actions": controller.status(),
+        }
+
+    @app.post("/v1/control/autonomy/explain")
+    async def explain_autonomy(request: Request, req: AutonomyExplainRequest) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        controller = runtime.autonomy_actions
+        if controller is None:
+            return {"ok": False, "error": "autonomy_actions_unavailable", "explanation": {}, "autonomy_actions": {}}
+        snapshot = req.runtime_snapshot if req.runtime_snapshot is not None else await _autonomy_snapshot()
+        explanation = controller.explain(req.text, runtime_snapshot=snapshot)
+        return {
+            "ok": True,
+            "explanation": explanation,
+            "autonomy_actions": controller.status(),
+        }
+
+    @app.post("/v1/control/autonomy/policy")
+    async def update_autonomy_policy(request: Request, req: AutonomyPolicyRequest) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        controller = runtime.autonomy_actions
+        if controller is None:
+            return {"ok": False, "error": "autonomy_actions_unavailable", "update": {}, "autonomy_actions": {}}
+        try:
+            update = controller.set_environment_profile(
+                req.environment_profile,
+                actor=req.actor,
+                reason=req.reason,
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_environment_profile")
+        return {
+            "ok": True,
+            "update": update,
             "autonomy_actions": controller.status(),
         }
 

@@ -25,6 +25,7 @@
 - P1 progress: autonomy reliability increment landed with action quality gates, balanced/conservative policy profiles, degraded-runtime action restrictions, and persistent/exportable autonomy audit trail (`/v1/control/autonomy/audit`).
 - P1 progress: autonomy reliability increment added OpenClaw-first environment policy layering (`dev`/`staging`/`prod`) plus contextual quality scoring driven by runtime health snapshots, with additive diagnostics/audit confidence telemetry.
 - P1 progress: autonomy explainability increment landed with side-effect-free policy simulation and per-action decision traces via control endpoint (`/v1/control/autonomy/simulate`), plus additive simulation counters in `autonomy_actions` telemetry.
+- P1 progress: autonomy control increment landed with explain endpoint risk classification/recommendations (`/v1/control/autonomy/explain`) and runtime policy preset switching (`/v1/control/autonomy/policy`) including auditable `policy_change` records and additive totals.
 
 ## P2 — Ecosystem
 

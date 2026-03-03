@@ -93,6 +93,24 @@ curl -sS -X POST http://127.0.0.1:8787/v1/control/autonomy/simulate \
   -d '{"text":"{\"action\":\"validate_provider\",\"args\":{}}"}'
 ```
 
+Explainability pass with deterministic risk classification/recommendations:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/v1/control/autonomy/explain \
+  -H "Authorization: Bearer $CLAWLITE_GATEWAY_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"{\"actions\":[{\"action\":\"validate_provider\",\"args\":{}},{\"action\":\"delete_all\",\"args\":{}}]}"}'
+```
+
+Runtime policy preset switch (`dev`/`staging`/`prod`) with auditable policy-change row:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/v1/control/autonomy/policy \
+  -H "Authorization: Bearer $CLAWLITE_GATEWAY_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"environment_profile":"prod","reason":"release hardening","actor":"ops"}'
+```
+
 ## Dead-letter replay control via API
 
 Dry-run (safe preview):
@@ -197,7 +215,8 @@ pytest -q tests
 - Allowlist enforcement: monitor `totals.unknown_blocked` and inspect `recent_audits` for blocked unknown/denylisted proposals.
 - Confidence triage: inspect `base_confidence`, `context_penalty`, and `effective_confidence` in recent action audits to distinguish weak proposals from health-pressure suppression.
 - Dead-letter action safety: `dead_letter_replay_dry_run` is always forced to `dry_run=true` and replay `limit` is clamped by `gateway.autonomy.max_replay_limit`.
-- Change-control safety: use `/v1/control/autonomy/simulate` before relaxing autonomy guardrails or policy thresholds; confirm blocked decisions and gate traces align with expectations.
+- Explain-before-change workflow: use `/v1/control/autonomy/explain` (or `/v1/control/autonomy/simulate`) before relaxing guardrails; confirm `overall_risk`, `risk_counts`, and per-action recommendations match operator intent.
+- Policy switch runbook: apply `/v1/control/autonomy/policy` with explicit `reason` and `actor`, then verify `autonomy_actions.environment_profile`, `totals.policy_switches`, and a `kind=policy_change` row in `/v1/control/autonomy/audit`.
 - Audit durability: monitor `totals.audit_write_failures` and validate `totals.audit_writes` growth; use `/v1/control/autonomy/audit` to export persisted rows.
 
 ## Delivery observability and dead-letter runbook checks
