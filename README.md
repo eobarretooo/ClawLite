@@ -23,7 +23,7 @@ Unlike heavier alternatives, ClawLite is intentionally compact: around **4.2k li
 ## ✨ Main Features
 - 🧠 **Unified agent engine** for CLI, HTTP API, WebSocket, scheduler, and channels.
 - 💬 **Telegram-first channel support** with allowlist validation and long-message chunking.
-- 🛡️ **Telegram reliability mechanisms**: retry/backoff with jitter, auth circuit breaker for 401/403, formatting fallback, and safe offset commit only after successful processing.
+- 🛡️ **Telegram reliability mechanisms**: retry/backoff with jitter, auth circuit breaker for 401/403, typing keepalive during processing with a separate typing auth circuit breaker, formatting fallback, and safe offset commit only after successful processing.
 - 🧩 **Skills via `SKILL.md`** with autoload and executable `command/script` actions.
 - 🗓️ **Autonomous scheduling** with Cron jobs and heartbeat loops.
 - 🗂️ **Persistent memory + sessions** stored under `~/.clawlite/state`.
@@ -222,13 +222,13 @@ clawlite/
 ## 📊 Status Snapshot (2026-03-03)
 - **Working now**
   - Gateway/API v1 endpoints are implemented and documented (`/health`, `/v1/chat`, `/v1/cron/*`, `/v1/ws`).
-  - Telegram channel is the only production channel today, with polling, retry/backoff (+ jitter), 401/403 auth circuit breaker, allowlist checks, chunked outbound, formatting fallback, and safe offset commit after successful processing.
+  - Telegram channel is the only production channel today, with polling, retry/backoff (+ jitter), 401/403 auth circuit breaker, typing keepalive with dedicated typing auth circuit protection, allowlist checks, chunked outbound, formatting fallback, and safe offset commit after successful processing.
   - Scheduler is active with both Cron jobs and Heartbeat loop, plus CLI/API controls.
   - Provider routing is active for Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, and custom OpenAI-compatible endpoints.
   - Core tools and workspace templates are live: shell/files/web/cron/message/skills/subagent tools and `IDENTITY`, `SOUL`, `AGENTS`, `TOOLS`, `USER`, `HEARTBEAT`, `BOOTSTRAP`, `memory/MEMORY`.
 - **Known gaps**
   - Telegram reliability is improved but not yet a guaranteed zero-error operation under all network/provider conditions.
-  - Typing indicator behavior and richer Telegram formatting consistency are not finalized as strict reliability goals.
+  - Typing keepalive cadence/TTL tuning and richer Telegram formatting consistency still need more production validation.
   - Most non-Telegram channels are still skeleton adapters.
   - 24/7 autonomous self-improvement loops are in progress, not complete.
 

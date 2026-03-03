@@ -83,6 +83,12 @@ In `channels.telegram`, besides `enabled` and `token`, the most used operational
 - `send_timeout_s`, `send_retry_attempts`
 - `send_backoff_base_s`, `send_backoff_max_s`, `send_backoff_jitter`
 - `send_circuit_failure_threshold`, `send_circuit_cooldown_s`
+- `typing_enabled` (enable Telegram typing keepalive during processing)
+- `typing_interval_s` (cadence between typing refresh calls)
+- `typing_max_ttl_s` (max total typing keepalive duration per inbound)
+- `typing_timeout_s` (HTTP timeout for typing API calls)
+- `typing_circuit_failure_threshold` (consecutive typing auth failures before opening typing circuit)
+- `typing_circuit_cooldown_s` (cooldown while typing auth circuit is open)
 
 ## Example
 

@@ -27,7 +27,14 @@ This note describes current/expected Telegram delivery behavior for operators.
 - Circuit closes after cooldown/probe success or credential correction + reload/reconnect.
 - Operator expectation: fix token/config first; avoid tight restart loops.
 
-## 5) Formatting/chunk fallback
+## 5) Typing keepalive semantics
+- Typing keepalive starts after inbound acceptance and runs while processing is in progress.
+- Typing keepalive is stopped before outbound send begins.
+- `typing_max_ttl_s` caps total keepalive time per inbound to avoid infinite typing loops.
+- Typing API auth failures use a dedicated typing auth circuit (`typing_circuit_*`), separate from outbound send auth protection.
+- Typing failures are best-effort signals only and must not block outbound message send.
+
+## 6) Formatting/chunk fallback
 - If rich formatting is rejected, sender falls back to safer/plain formatting.
 - If message size exceeds Telegram limits, payload is chunked into multiple ordered sends.
 - If a chunk fails transiently, chunk-level retries follow the same backoff policy.

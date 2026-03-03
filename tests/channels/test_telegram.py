@@ -455,3 +455,164 @@ def test_telegram_offset_not_committed_when_processing_fails() -> None:
         assert saved == []
 
     asyncio.run(_scenario())
+
+
+def test_telegram_typing_starts_on_inbound_and_stops_before_outbound_send() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 1.0,
+                "typing_timeout_s": 0.5,
+            }
+        )
+
+        typing_started = asyncio.Event()
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.typing_calls = 0
+                self.send_calls = 0
+
+            async def send_chat_action(self, **kwargs):
+                del kwargs
+                self.typing_calls += 1
+                typing_started.set()
+                await asyncio.sleep(0.5)
+
+            async def send_message(self, **kwargs):
+                del kwargs
+                assert "42" not in channel._typing_tasks
+                self.send_calls += 1
+
+        bot = FakeBot()
+        channel.bot = bot
+        channel._running = True
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            del session_id, user_id, text, metadata
+            await asyncio.wait_for(typing_started.wait(), timeout=1.0)
+            await channel.send(target="42", text="response")
+
+        channel.on_message = _on_message
+
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text="hello",
+            caption=None,
+            chat_id=42,
+            from_user=user,
+            message_id=10,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+
+        await channel._handle_update(update)
+
+        assert bot.typing_calls >= 1
+        assert bot.send_calls == 1
+        assert "42" not in channel._typing_tasks
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_typing_auth_breaker_suppresses_repeated_calls_when_open() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 0.2,
+                "typing_circuit_failure_threshold": 1,
+                "typing_circuit_cooldown_s": 10.0,
+            }
+        )
+
+        first_call = asyncio.Event()
+        second_call = asyncio.Event()
+
+        class AuthError(RuntimeError):
+            status_code = 401
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def send_chat_action(self, **kwargs):
+                del kwargs
+                self.calls += 1
+                if self.calls == 1:
+                    first_call.set()
+                if self.calls >= 2:
+                    second_call.set()
+                raise AuthError("unauthorized")
+
+            async def send_message(self, **kwargs):
+                return kwargs
+
+        bot = FakeBot()
+        channel.bot = bot
+        channel._running = True
+
+        channel._start_typing_keepalive(chat_id="42")
+        await asyncio.wait_for(first_call.wait(), timeout=1.0)
+
+        try:
+            await asyncio.wait_for(second_call.wait(), timeout=0.1)
+            raise AssertionError("typing breaker should suppress repeated auth calls")
+        except asyncio.TimeoutError:
+            pass
+
+        await channel._stop_typing_keepalive(chat_id="42")
+        assert bot.calls == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_typing_transient_failures_do_not_break_send_path() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 1.0,
+                "typing_timeout_s": 0.2,
+            }
+        )
+
+        typing_failed = asyncio.Event()
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.send_calls = 0
+
+            async def send_chat_action(self, **kwargs):
+                del kwargs
+                typing_failed.set()
+                raise TimeoutError("timed out")
+
+            async def send_message(self, **kwargs):
+                del kwargs
+                self.send_calls += 1
+
+        bot = FakeBot()
+        channel.bot = bot
+        channel._running = True
+        channel._start_typing_keepalive(chat_id="42")
+        await asyncio.wait_for(typing_failed.wait(), timeout=1.0)
+
+        out = await channel.send(target="42", text="hello")
+
+        assert out == "telegram:sent:1"
+        assert bot.send_calls == 1
+        assert "42" not in channel._typing_tasks
+
+    asyncio.run(_scenario())

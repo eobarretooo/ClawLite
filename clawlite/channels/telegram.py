@@ -245,6 +245,16 @@ class TelegramChannel(BaseChannel):
             config.get("send_circuit_failure_threshold", config.get("sendCircuitFailureThreshold", 1)) or 1
         )
         self.send_circuit_cooldown_s = float(config.get("send_circuit_cooldown_s", config.get("sendCircuitCooldownSec", 60.0)) or 60.0)
+        self.typing_enabled = bool(config.get("typing_enabled", config.get("typingEnabled", True)))
+        self.typing_interval_s = float(config.get("typing_interval_s", config.get("typingIntervalS", 2.5)) or 2.5)
+        self.typing_max_ttl_s = float(config.get("typing_max_ttl_s", config.get("typingMaxTtlS", 120.0)) or 120.0)
+        self.typing_timeout_s = float(config.get("typing_timeout_s", config.get("typingTimeoutS", 5.0)) or 5.0)
+        self.typing_circuit_failure_threshold = int(
+            config.get("typing_circuit_failure_threshold", config.get("typingCircuitFailureThreshold", 1)) or 1
+        )
+        self.typing_circuit_cooldown_s = float(
+            config.get("typing_circuit_cooldown_s", config.get("typingCircuitCooldownS", 60.0)) or 60.0
+        )
         self._send_retry_policy = TelegramRetryPolicy(
             max_attempts=self.send_retry_attempts,
             base_backoff_s=self.send_backoff_base_s,
@@ -255,14 +265,85 @@ class TelegramChannel(BaseChannel):
             failure_threshold=self.send_circuit_failure_threshold,
             cooldown_s=self.send_circuit_cooldown_s,
         )
+        self._typing_auth_breaker = TelegramAuthCircuitBreaker(
+            failure_threshold=self.typing_circuit_failure_threshold,
+            cooldown_s=self.typing_circuit_cooldown_s,
+        )
         self.drop_pending_updates = bool(config.get("drop_pending_updates", config.get("dropPendingUpdates", True)))
         self.handle_commands = bool(config.get("handle_commands", config.get("handleCommands", True)))
         self._task: asyncio.Task[Any] | None = None
+        self._typing_tasks: dict[str, asyncio.Task[Any]] = {}
         self._offset = self._load_offset()
         self._connected = False
         self._startup_drop_done = False
         self._message_signatures: dict[tuple[str, int], str] = {}
         self._signature_limit = 4096
+
+    async def _typing_loop(self, *, chat_id: str) -> None:
+        started_at = time.monotonic()
+        max_ttl_s = max(1.0, float(self.typing_max_ttl_s))
+        interval_s = max(0.2, float(self.typing_interval_s))
+        timeout_s = max(0.1, float(self.typing_timeout_s))
+        try:
+            while (time.monotonic() - started_at) < max_ttl_s:
+                remaining_s = max_ttl_s - (time.monotonic() - started_at)
+                if remaining_s <= 0:
+                    return
+
+                if self._typing_auth_breaker.is_open:
+                    await asyncio.sleep(min(interval_s, remaining_s))
+                    continue
+
+                bot = self.bot
+                if bot is None:
+                    await asyncio.sleep(min(interval_s, remaining_s))
+                    continue
+
+                try:
+                    await asyncio.wait_for(
+                        bot.send_chat_action(chat_id=chat_id, action="typing"),
+                        timeout=timeout_s,
+                    )
+                    self._typing_auth_breaker.on_success()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if _is_auth_failure(exc):
+                        self._typing_auth_breaker.on_auth_failure()
+                    logger.debug("telegram typing keepalive failed chat={} error={}", chat_id, exc)
+
+                remaining_s = max_ttl_s - (time.monotonic() - started_at)
+                if remaining_s <= 0:
+                    return
+                await asyncio.sleep(min(interval_s, remaining_s))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover
+            logger.warning("telegram typing keepalive crashed chat={} error={}", chat_id, exc)
+        finally:
+            task = self._typing_tasks.get(chat_id)
+            if task is asyncio.current_task():
+                self._typing_tasks.pop(chat_id, None)
+
+    def _start_typing_keepalive(self, *, chat_id: str) -> None:
+        if not self.typing_enabled or not self._running:
+            return
+        if not chat_id:
+            return
+        task = self._typing_tasks.get(chat_id)
+        if task is not None and not task.done():
+            return
+        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id=chat_id))
+
+    async def _stop_typing_keepalive(self, *, chat_id: str) -> None:
+        task = self._typing_tasks.pop(chat_id, None)
+        await cancel_task(task)
+
+    async def _stop_all_typing_keepalive(self) -> None:
+        tasks = list(self._typing_tasks.values())
+        self._typing_tasks.clear()
+        for task in tasks:
+            await cancel_task(task)
 
     async def _drop_pending_updates(self) -> None:
         if self.bot is None:
@@ -427,7 +508,12 @@ class TelegramChannel(BaseChannel):
             is_edit,
             command or "",
         )
-        await self.emit(session_id=session_id, user_id=user_id, text=text, metadata=metadata)
+        self._start_typing_keepalive(chat_id=chat_id)
+        try:
+            await self.emit(session_id=session_id, user_id=user_id, text=text, metadata=metadata)
+        except Exception:
+            await self._stop_typing_keepalive(chat_id=chat_id)
+            raise
         return True
 
     def _build_metadata(
@@ -540,6 +626,7 @@ class TelegramChannel(BaseChannel):
 
     async def stop(self) -> None:
         self._running = False
+        await self._stop_all_typing_keepalive()
         await cancel_task(self._task)
         self._task = None
         self._connected = False
@@ -549,6 +636,7 @@ class TelegramChannel(BaseChannel):
         chat_id = str(target).strip()
         if not chat_id:
             raise ValueError("telegram target(chat_id) is required")
+        await self._stop_typing_keepalive(chat_id=chat_id)
         metadata = dict(metadata or {})
         if self.bot is None:
             from telegram import Bot

@@ -212,6 +212,12 @@ class TelegramChannelConfig(BaseChannelConfig):
     send_backoff_jitter: float = 0.2
     send_circuit_failure_threshold: int = 1
     send_circuit_cooldown_s: float = 60.0
+    typing_enabled: bool = True
+    typing_interval_s: float = 2.5
+    typing_max_ttl_s: float = 120.0
+    typing_timeout_s: float = 5.0
+    typing_circuit_failure_threshold: int = 1
+    typing_circuit_cooldown_s: float = 60.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> TelegramChannelConfig:
@@ -237,6 +243,14 @@ class TelegramChannelConfig(BaseChannelConfig):
                 data.get("send_circuit_failure_threshold", data.get("sendCircuitFailureThreshold", 1)) or 1
             ),
             send_circuit_cooldown_s=float(data.get("send_circuit_cooldown_s", data.get("sendCircuitCooldownSec", 60.0)) or 60.0),
+            typing_enabled=bool(data.get("typing_enabled", data.get("typingEnabled", True))),
+            typing_interval_s=float(data.get("typing_interval_s", data.get("typingIntervalS", 2.5)) or 2.5),
+            typing_max_ttl_s=float(data.get("typing_max_ttl_s", data.get("typingMaxTtlS", 120.0)) or 120.0),
+            typing_timeout_s=float(data.get("typing_timeout_s", data.get("typingTimeoutS", 5.0)) or 5.0),
+            typing_circuit_failure_threshold=int(
+                data.get("typing_circuit_failure_threshold", data.get("typingCircuitFailureThreshold", 1)) or 1
+            ),
+            typing_circuit_cooldown_s=float(data.get("typing_circuit_cooldown_s", data.get("typingCircuitCooldownS", 60.0)) or 60.0),
         )
 
 

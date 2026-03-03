@@ -55,7 +55,13 @@
       "send_backoff_max_s": 8.0,
       "send_backoff_jitter": 0.2,
       "send_circuit_failure_threshold": 1,
-      "send_circuit_cooldown_s": 60.0
+      "send_circuit_cooldown_s": 60.0,
+      "typing_enabled": true,
+      "typing_interval_s": 4.0,
+      "typing_max_ttl_s": 30.0,
+      "typing_timeout_s": 5.0,
+      "typing_circuit_failure_threshold": 1,
+      "typing_circuit_cooldown_s": 60.0
     }
   }
 }

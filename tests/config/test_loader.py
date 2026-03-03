@@ -277,6 +277,12 @@ def test_load_config_preserves_telegram_roundtrip_fields(tmp_path: Path) -> None
                         "send_backoff_jitter": 0.15,
                         "send_circuit_failure_threshold": 2,
                         "send_circuit_cooldown_s": 70.0,
+                        "typing_enabled": True,
+                        "typing_interval_s": 1.75,
+                        "typing_max_ttl_s": 150.0,
+                        "typing_timeout_s": 3.5,
+                        "typing_circuit_failure_threshold": 3,
+                        "typing_circuit_cooldown_s": 65.0,
                     }
                 }
             }
@@ -302,3 +308,9 @@ def test_load_config_preserves_telegram_roundtrip_fields(tmp_path: Path) -> None
     assert telegram["send_backoff_jitter"] == 0.15
     assert telegram["send_circuit_failure_threshold"] == 2
     assert telegram["send_circuit_cooldown_s"] == 70.0
+    assert telegram["typing_enabled"] is True
+    assert telegram["typing_interval_s"] == 1.75
+    assert telegram["typing_max_ttl_s"] == 150.0
+    assert telegram["typing_timeout_s"] == 3.5
+    assert telegram["typing_circuit_failure_threshold"] == 3
+    assert telegram["typing_circuit_cooldown_s"] == 65.0
