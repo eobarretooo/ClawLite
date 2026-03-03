@@ -199,7 +199,9 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "run_attempts" in payload["autonomy"]
         assert "skipped_disabled" in payload["autonomy"]
         assert "totals" in payload["autonomy_actions"]
+        assert "environment_profile" in payload["autonomy_actions"]
         assert "quality_blocked" in payload["autonomy_actions"]["totals"]
+        assert "quality_penalty_applied" in payload["autonomy_actions"]["totals"]
         assert "degraded_blocked" in payload["autonomy_actions"]["totals"]
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
         assert "engine" in payload["environment"]

@@ -322,11 +322,46 @@ def test_load_config_gateway_autonomy_parses_snake_and_camel(tmp_path: Path) -> 
     assert cfg.gateway.autonomy.action_rate_limit_per_hour == 44
     assert cfg.gateway.autonomy.max_replay_limit == 55
     assert cfg.gateway.autonomy.action_policy == "conservative"
+    assert cfg.gateway.autonomy.environment_profile == "dev"
     assert cfg.gateway.autonomy.min_action_confidence == 0.81
     assert cfg.gateway.autonomy.degraded_backlog_threshold == 88
     assert cfg.gateway.autonomy.degraded_supervisor_error_threshold == 2
     assert cfg.gateway.autonomy.audit_export_path == "/tmp/autonomy-audit.jsonl"
     assert cfg.gateway.autonomy.audit_max_entries == 123
+
+
+def test_load_config_gateway_autonomy_environment_profile_parses_snake_and_camel(tmp_path: Path) -> None:
+    snake_path = tmp_path / "config-snake.json"
+    snake_path.write_text(
+        json.dumps(
+            {
+                "gateway": {
+                    "autonomy": {
+                        "environment_profile": "staging",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    snake_cfg = load_config(snake_path)
+    assert snake_cfg.gateway.autonomy.environment_profile == "staging"
+
+    camel_path = tmp_path / "config-camel.json"
+    camel_path.write_text(
+        json.dumps(
+            {
+                "gateway": {
+                    "autonomy": {
+                        "environmentProfile": "prod",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    camel_cfg = load_config(camel_path)
+    assert camel_cfg.gateway.autonomy.environment_profile == "prod"
 
 
 def test_load_config_gateway_autonomy_conservative_profile_uses_stricter_defaults_when_omitted(tmp_path: Path) -> None:
@@ -352,6 +387,33 @@ def test_load_config_gateway_autonomy_conservative_profile_uses_stricter_default
     assert cfg.gateway.autonomy.min_action_confidence == 0.75
     assert cfg.gateway.autonomy.degraded_backlog_threshold == 150
     assert cfg.gateway.autonomy.degraded_supervisor_error_threshold == 1
+
+
+def test_load_config_gateway_autonomy_prod_profile_defaults_and_explicit_overrides(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "gateway": {
+                    "autonomy": {
+                        "environment_profile": "prod",
+                        "action_rate_limit_per_hour": 17,
+                        "min_action_confidence": 0.83,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.gateway.autonomy.environment_profile == "prod"
+    assert cfg.gateway.autonomy.action_policy == "conservative"
+    assert cfg.gateway.autonomy.action_cooldown_s == 300.0
+    assert cfg.gateway.autonomy.degraded_backlog_threshold == 150
+    assert cfg.gateway.autonomy.degraded_supervisor_error_threshold == 1
+    assert cfg.gateway.autonomy.action_rate_limit_per_hour == 17
+    assert cfg.gateway.autonomy.min_action_confidence == 0.83
 
 
 def test_load_config_tool_loop_detection_settings(tmp_path: Path) -> None:

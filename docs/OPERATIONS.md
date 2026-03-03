@@ -182,9 +182,11 @@ pytest -q tests
 - In `/v1/diagnostics.autonomy_actions`, verify control activity via `totals.proposed/executed/succeeded/failed/blocked`.
 - Parse safety: monitor `totals.parse_errors`; sustained growth means autonomy output is not producing valid action JSON or `AUTONOMY_IDLE`.
 - Quality gate: monitor `totals.quality_blocked`; sustained growth indicates low-confidence action proposals are being rejected.
+- Contextual quality penalty: monitor `totals.quality_penalty_applied` and `last_run.quality` (`avg_context_penalty`, `max_context_penalty`); sustained high penalty means runtime health pressure is reducing effective confidence.
 - Degraded gate: monitor `totals.degraded_blocked`; growth means runtime is degraded and only `diagnostics_snapshot` is allowed.
 - Guardrails: monitor `totals.rate_limited` and `totals.cooldown_blocked` to confirm anti-storm protections are active.
 - Allowlist enforcement: monitor `totals.unknown_blocked` and inspect `recent_audits` for blocked unknown/denylisted proposals.
+- Confidence triage: inspect `base_confidence`, `context_penalty`, and `effective_confidence` in recent action audits to distinguish weak proposals from health-pressure suppression.
 - Dead-letter action safety: `dead_letter_replay_dry_run` is always forced to `dry_run=true` and replay `limit` is clamped by `gateway.autonomy.max_replay_limit`.
 - Audit durability: monitor `totals.audit_write_failures` and validate `totals.audit_writes` growth; use `/v1/control/autonomy/audit` to export persisted rows.
 

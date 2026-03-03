@@ -150,6 +150,76 @@ def test_low_confidence_quality_gate_blocks_action() -> None:
     asyncio.run(_scenario())
 
 
+def test_contextual_penalty_can_block_high_base_confidence() -> None:
+    clock = _Clock()
+    calls = {"count": 0}
+
+    async def _scenario() -> None:
+        controller = AutonomyActionController(min_action_confidence=0.8, now_monotonic=clock.monotonic)
+
+        def _validate_provider(**_: object) -> dict[str, bool]:
+            calls["count"] += 1
+            return {"ok": True}
+
+        status = await controller.process(
+            '{"action":"validate_provider","confidence":0.95,"args":{}}',
+            {"validate_provider": _validate_provider},
+            runtime_snapshot={
+                "queue": {"outbound_size": 100, "dead_letter_size": 0},
+                "supervisor": {"incident_count": 0, "consecutive_error_count": 0},
+                "channels": {"enabled_count": 2, "running_count": 1},
+                "provider": {"circuit_open": False},
+                "heartbeat": {"running": True},
+                "cron": {"running": True},
+            },
+        )
+
+        assert calls["count"] == 0
+        assert status["totals"]["quality_blocked"] == 1
+        assert status["totals"]["quality_penalty_applied"] == 1
+        audit = status["last_run"]["audits"][0]
+        assert audit["base_confidence"] == 0.95
+        assert audit["context_penalty"] > 0.0
+        assert audit["effective_confidence"] < 0.8
+
+    asyncio.run(_scenario())
+
+
+def test_contextual_penalty_mild_still_allows_action_and_tracks_penalty() -> None:
+    clock = _Clock()
+    calls = {"count": 0}
+
+    async def _scenario() -> None:
+        controller = AutonomyActionController(min_action_confidence=0.8, now_monotonic=clock.monotonic)
+
+        def _validate_provider(**_: object) -> dict[str, bool]:
+            calls["count"] += 1
+            return {"ok": True}
+
+        status = await controller.process(
+            '{"action":"validate_provider","confidence":0.95,"args":{}}',
+            {"validate_provider": _validate_provider},
+            runtime_snapshot={
+                "queue": {"outbound_size": 25, "dead_letter_size": 0},
+                "supervisor": {"incident_count": 0, "consecutive_error_count": 0},
+                "channels": {"enabled_count": 2, "running_count": 2},
+                "provider": {"circuit_open": False},
+                "heartbeat": {"running": True},
+                "cron": {"running": True},
+            },
+        )
+
+        assert calls["count"] == 1
+        assert status["totals"]["executed"] == 1
+        assert status["totals"]["quality_penalty_applied"] == 1
+        audit = status["last_run"]["audits"][0]
+        assert audit["base_confidence"] == 0.95
+        assert audit["context_penalty"] > 0.0
+        assert audit["effective_confidence"] >= 0.8
+
+    asyncio.run(_scenario())
+
+
 def test_degraded_snapshot_blocks_non_diagnostics_and_allows_diagnostics() -> None:
     clock = _Clock()
     calls = {"diag": 0, "provider": 0}

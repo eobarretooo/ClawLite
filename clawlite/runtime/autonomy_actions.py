@@ -41,6 +41,7 @@ class AutonomyActionController:
         action_rate_limit_per_hour: int = 20,
         max_replay_limit: int = 50,
         policy: str = "balanced",
+        environment_profile: str = "dev",
         min_action_confidence: float = 0.55,
         degraded_backlog_threshold: int = 300,
         degraded_supervisor_error_threshold: int = 3,
@@ -53,6 +54,7 @@ class AutonomyActionController:
         self.action_rate_limit_per_hour = max(1, int(action_rate_limit_per_hour or 1))
         self.max_replay_limit = max(1, int(max_replay_limit or 1))
         self.policy = self._normalize_policy(policy)
+        self.environment_profile = self._normalize_environment_profile(environment_profile)
         self.min_action_confidence = self._clamp_confidence(min_action_confidence)
         self.degraded_backlog_threshold = max(1, int(degraded_backlog_threshold or 1))
         self.degraded_supervisor_error_threshold = max(1, int(degraded_supervisor_error_threshold or 1))
@@ -72,6 +74,7 @@ class AutonomyActionController:
             "cooldown_blocked": 0,
             "unknown_blocked": 0,
             "quality_blocked": 0,
+            "quality_penalty_applied": 0,
             "degraded_blocked": 0,
             "audit_writes": 0,
             "audit_write_failures": 0,
@@ -85,6 +88,13 @@ class AutonomyActionController:
         value = str(policy or "balanced").strip().lower()
         if value not in {"balanced", "conservative"}:
             return "balanced"
+        return value
+
+    @staticmethod
+    def _normalize_environment_profile(profile: str) -> str:
+        value = str(profile or "dev").strip().lower()
+        if value not in {"dev", "staging", "prod"}:
+            return "dev"
         return value
 
     @staticmethod
@@ -151,6 +161,49 @@ class AutonomyActionController:
             return self._default_confidence_for_action(action)
         parsed = self._clamp_confidence(raw_confidence)
         return parsed
+
+    def _context_penalty(self, runtime_snapshot: Any) -> float:
+        snapshot = runtime_snapshot if isinstance(runtime_snapshot, dict) else {}
+        total_penalty = 0.0
+
+        queue = snapshot.get("queue") if isinstance(snapshot.get("queue"), dict) else {}
+        backlog_threshold = max(1, self.degraded_backlog_threshold)
+        outbound_size = int(queue.get("outbound_size", 0) or 0)
+        dead_letter_size = int(queue.get("dead_letter_size", 0) or 0)
+        backlog = max(0, outbound_size) + max(0, dead_letter_size)
+        backlog_pressure = min(1.0, float(backlog) / float(backlog_threshold))
+        total_penalty += 0.35 * backlog_pressure
+
+        supervisor = snapshot.get("supervisor") if isinstance(snapshot.get("supervisor"), dict) else {}
+        incident_count = int(supervisor.get("incident_count", 0) or 0)
+        consecutive_errors = int(supervisor.get("consecutive_error_count", 0) or 0)
+        incident_pressure = min(1.0, float(max(0, incident_count)) / 2.0)
+        error_pressure = min(1.0, float(max(0, consecutive_errors)) / float(max(1, self.degraded_supervisor_error_threshold)))
+        total_penalty += 0.25 * ((0.6 * incident_pressure) + (0.4 * error_pressure))
+
+        channels = snapshot.get("channels") if isinstance(snapshot.get("channels"), dict) else {}
+        enabled_raw = channels.get("enabled_count")
+        running_raw = channels.get("running_count")
+        if enabled_raw is not None and running_raw is not None:
+            enabled_count = max(0, int(enabled_raw or 0))
+            running_count = max(0, int(running_raw or 0))
+            if enabled_count > 0:
+                healthy_ratio = min(1.0, float(running_count) / float(enabled_count))
+                total_penalty += 0.15 * (1.0 - healthy_ratio)
+
+        provider = snapshot.get("provider") if isinstance(snapshot.get("provider"), dict) else {}
+        if bool(provider.get("circuit_open", False)):
+            total_penalty += 0.2
+
+        heartbeat = snapshot.get("heartbeat") if isinstance(snapshot.get("heartbeat"), dict) else {}
+        if heartbeat.get("running") is not None and not bool(heartbeat.get("running", False)):
+            total_penalty += 0.1
+
+        cron = snapshot.get("cron") if isinstance(snapshot.get("cron"), dict) else {}
+        if cron.get("running") is not None and not bool(cron.get("running", False)):
+            total_penalty += 0.1
+
+        return self._clamp_confidence(total_penalty)
 
     def _detect_degraded(self, runtime_snapshot: Any) -> tuple[bool, str, dict[str, int]]:
         snapshot = runtime_snapshot if isinstance(runtime_snapshot, dict) else {}
@@ -289,7 +342,9 @@ class AutonomyActionController:
             run_succeeded = 0
             run_failed = 0
             run_blocked = 0
+            quality_rows: list[dict[str, float]] = []
             degraded, degraded_reason, degraded_details = self._detect_degraded(runtime_snapshot)
+            context_penalty = self._context_penalty(runtime_snapshot)
 
             actions, parse_error = self._parse_actions(raw_text)
             if parse_error:
@@ -299,13 +354,23 @@ class AutonomyActionController:
             for index, row in enumerate(actions):
                 action = str(row.get("action", "") or "").strip()
                 args = self._clean_args(row.get("args"))
-                confidence = self._action_confidence(action, row.get("confidence"))
+                base_confidence = self._action_confidence(action, row.get("confidence"))
+                effective_confidence = self._clamp_confidence(base_confidence - context_penalty)
                 if not action:
                     continue
+                quality_rows.append(
+                    {
+                        "base": base_confidence,
+                        "penalty": context_penalty,
+                        "effective": effective_confidence,
+                    }
+                )
                 run_proposed += 1
                 self._totals["proposed"] += 1
                 action_row = self._per_action_row(action)
                 action_row["proposed"] += 1
+                if context_penalty > 0.0:
+                    self._totals["quality_penalty_applied"] += 1
 
                 if index >= self.max_actions_per_run:
                     self._totals["blocked"] += 1
@@ -317,7 +382,10 @@ class AutonomyActionController:
                             "status": "blocked",
                             "reason": "max_actions_per_run",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                         }
                     )
                     continue
@@ -333,7 +401,10 @@ class AutonomyActionController:
                             "status": "blocked",
                             "reason": "unknown_or_denylisted",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                         }
                     )
                     continue
@@ -349,14 +420,17 @@ class AutonomyActionController:
                             "status": "blocked",
                             "reason": "degraded_runtime",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                             "degraded_reason": degraded_reason,
                             "degraded": dict(degraded_details),
                         }
                     )
                     continue
 
-                if confidence < self.min_action_confidence:
+                if action != "diagnostics_snapshot" and effective_confidence < self.min_action_confidence:
                     self._totals["blocked"] += 1
                     self._totals["quality_blocked"] += 1
                     run_blocked += 1
@@ -367,7 +441,10 @@ class AutonomyActionController:
                             "status": "blocked",
                             "reason": "quality_gate",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                             "min_action_confidence": self.min_action_confidence,
                         }
                     )
@@ -386,7 +463,10 @@ class AutonomyActionController:
                             "status": "blocked",
                             "reason": "rate_limited",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                         }
                     )
                     continue
@@ -404,7 +484,10 @@ class AutonomyActionController:
                             "status": "blocked",
                             "reason": "cooldown",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                         }
                     )
                     continue
@@ -429,7 +512,10 @@ class AutonomyActionController:
                             "status": "failed",
                             "reason": "executor_missing",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                         }
                     )
                     continue
@@ -453,7 +539,10 @@ class AutonomyActionController:
                             "action": action,
                             "status": "succeeded",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                             "result_excerpt": self._excerpt(result),
                         }
                     )
@@ -466,7 +555,10 @@ class AutonomyActionController:
                             "action": action,
                             "status": "failed",
                             "args": dict(args),
-                            "confidence": confidence,
+                            "confidence": effective_confidence,
+                            "base_confidence": base_confidence,
+                            "context_penalty": context_penalty,
+                            "effective_confidence": effective_confidence,
                             "error": self._excerpt(exc),
                         }
                     )
@@ -503,6 +595,27 @@ class AutonomyActionController:
             }
             persisted_rows = recent_rows + [run_summary_row]
 
+            quality_summary = {
+                "count": len(quality_rows),
+                "avg_base_confidence": 0.0,
+                "avg_context_penalty": 0.0,
+                "avg_effective_confidence": 0.0,
+                "max_context_penalty": 0.0,
+                "max_base_confidence": 0.0,
+                "max_effective_confidence": 0.0,
+            }
+            if quality_rows:
+                row_count = float(len(quality_rows))
+                sum_base = sum(row["base"] for row in quality_rows)
+                sum_penalty = sum(row["penalty"] for row in quality_rows)
+                sum_effective = sum(row["effective"] for row in quality_rows)
+                quality_summary["avg_base_confidence"] = sum_base / row_count
+                quality_summary["avg_context_penalty"] = sum_penalty / row_count
+                quality_summary["avg_effective_confidence"] = sum_effective / row_count
+                quality_summary["max_context_penalty"] = max(row["penalty"] for row in quality_rows)
+                quality_summary["max_base_confidence"] = max(row["base"] for row in quality_rows)
+                quality_summary["max_effective_confidence"] = max(row["effective"] for row in quality_rows)
+
             self._append_recent_audits(persisted_rows)
             self._persist_audits(persisted_rows)
 
@@ -518,6 +631,7 @@ class AutonomyActionController:
                 "degraded": degraded,
                 "degraded_reason": degraded_reason,
                 "degraded_details": dict(degraded_details),
+                "quality": quality_summary,
                 "audits": run_audits,
             }
             return self.status()
@@ -572,6 +686,7 @@ class AutonomyActionController:
         return {
             "max_actions_per_run": self.max_actions_per_run,
             "policy": self.policy,
+            "environment_profile": self.environment_profile,
             "min_action_confidence": self.min_action_confidence,
             "degraded_backlog_threshold": self.degraded_backlog_threshold,
             "degraded_supervisor_error_threshold": self.degraded_supervisor_error_threshold,

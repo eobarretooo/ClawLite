@@ -459,6 +459,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         action_rate_limit_per_hour=cfg.gateway.autonomy.action_rate_limit_per_hour,
         max_replay_limit=cfg.gateway.autonomy.max_replay_limit,
         policy=cfg.gateway.autonomy.action_policy,
+        environment_profile=cfg.gateway.autonomy.environment_profile,
         min_action_confidence=cfg.gateway.autonomy.min_action_confidence,
         degraded_backlog_threshold=cfg.gateway.autonomy.degraded_backlog_threshold,
         degraded_supervisor_error_threshold=cfg.gateway.autonomy.degraded_supervisor_error_threshold,
@@ -536,6 +537,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def _autonomy_snapshot() -> dict[str, Any]:
         queue = runtime.bus.stats()
         supervisor = runtime.supervisor.status() if runtime.supervisor is not None else {}
+        provider_diag = runtime.engine.diagnostics().get("provider", {})
+        heartbeat_status = runtime.heartbeat.status()
+        cron_status = runtime.cron.status()
         channels_status = runtime.channels.status()
         running_count = 0
         for row in channels_status.values():
@@ -547,6 +551,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "channels": {
                 "enabled_count": len(cfg.channels.enabled_names()),
                 "running_count": running_count,
+            },
+            "provider": {
+                "circuit_open": _provider_circuit_open(provider_diag),
+            },
+            "heartbeat": {
+                "running": bool(heartbeat_status.get("running", False)),
+            },
+            "cron": {
+                "running": bool(cron_status.get("running", False)),
             },
         }
 

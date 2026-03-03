@@ -99,6 +99,7 @@ class GatewayAutonomyConfig:
     action_rate_limit_per_hour: int = 20
     max_replay_limit: int = 50
     action_policy: str = "balanced"
+    environment_profile: str = "dev"
     min_action_confidence: float = 0.55
     degraded_backlog_threshold: int = 300
     degraded_supervisor_error_threshold: int = 3
@@ -108,13 +109,24 @@ class GatewayAutonomyConfig:
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> GatewayAutonomyConfig:
         data = dict(raw or {})
+        if "environmentProfile" in data:
+            environment_profile_raw = data.get("environmentProfile")
+        else:
+            environment_profile_raw = data.get("environment_profile", "dev")
+        environment_profile = str(environment_profile_raw or "dev").strip().lower()
+        if environment_profile not in {"dev", "staging", "prod"}:
+            environment_profile = "dev"
+
+        policy_explicit = "actionPolicy" in data or "action_policy" in data
         if "actionPolicy" in data:
             policy_raw = data.get("actionPolicy")
+        elif "action_policy" in data:
+            policy_raw = data.get("action_policy")
         else:
-            policy_raw = data.get("action_policy", "balanced")
-        policy = str(policy_raw or "balanced").strip().lower()
+            policy_raw = "conservative" if environment_profile == "prod" else "balanced"
+        policy = str(policy_raw or ("conservative" if environment_profile == "prod" else "balanced")).strip().lower()
         if policy not in {"balanced", "conservative"}:
-            policy = "balanced"
+            policy = "conservative" if environment_profile == "prod" and not policy_explicit else "balanced"
 
         conservative_defaults: dict[str, Any] = {
             "action_cooldown_s": 300.0,
@@ -123,14 +135,33 @@ class GatewayAutonomyConfig:
             "degraded_backlog_threshold": 150,
             "degraded_supervisor_error_threshold": 1,
         }
+        staging_defaults: dict[str, Any] = {
+            "action_cooldown_s": 180.0,
+            "action_rate_limit_per_hour": 14,
+            "min_action_confidence": 0.65,
+            "degraded_backlog_threshold": 220,
+            "degraded_supervisor_error_threshold": 2,
+        }
+
+        profile_defaults: dict[str, Any]
+        if environment_profile == "prod":
+            profile_defaults = conservative_defaults
+        elif environment_profile == "staging":
+            profile_defaults = staging_defaults
+        else:
+            profile_defaults = {}
+
+        if policy == "conservative":
+            for key, value in conservative_defaults.items():
+                profile_defaults.setdefault(key, value)
 
         def _raw_with_alias(snake: str, camel: str, default: Any) -> Any:
             if camel in data:
                 return data.get(camel)
             if snake in data:
                 return data.get(snake)
-            if policy == "conservative" and snake in conservative_defaults:
-                return conservative_defaults[snake]
+            if snake in profile_defaults:
+                return profile_defaults[snake]
             return default
 
         if "intervalS" in data:
@@ -189,18 +220,6 @@ class GatewayAutonomyConfig:
         degraded_backlog_threshold = max(1, int(degraded_backlog_threshold_raw or 300))
         degraded_supervisor_error_threshold = max(1, int(degraded_supervisor_error_threshold_raw or 3))
 
-        if policy == "conservative":
-            if action_cooldown_s == 120.0:
-                action_cooldown_s = 300.0
-            if action_rate_limit_per_hour == 20:
-                action_rate_limit_per_hour = 8
-            if min_action_confidence == 0.55:
-                min_action_confidence = 0.75
-            if degraded_backlog_threshold == 300:
-                degraded_backlog_threshold = 150
-            if degraded_supervisor_error_threshold == 3:
-                degraded_supervisor_error_threshold = 1
-
         return cls(
             enabled=bool(data.get("enabled", False)),
             interval_s=max(1, int(interval_raw or 900)),
@@ -213,6 +232,7 @@ class GatewayAutonomyConfig:
             action_rate_limit_per_hour=action_rate_limit_per_hour,
             max_replay_limit=max(1, int(max_replay_limit_raw or 50)),
             action_policy=policy,
+            environment_profile=environment_profile,
             min_action_confidence=min_action_confidence,
             degraded_backlog_threshold=degraded_backlog_threshold,
             degraded_supervisor_error_threshold=degraded_supervisor_error_threshold,

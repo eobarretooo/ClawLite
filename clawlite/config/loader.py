@@ -188,9 +188,7 @@ def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
 def load_config(path: str | Path | None = None, *, strict: bool | None = None) -> AppConfig:
     target = Path(path) if path else DEFAULT_CONFIG_PATH
     file_cfg = _migrate_config(_read_file(target))
-    defaults = AppConfig().to_dict()
-    merged = _deep_merge(defaults, file_cfg)
-    merged = _deep_merge(merged, _env_overrides(include_model=path is None))
+    merged = _deep_merge(file_cfg, _env_overrides(include_model=path is None))
     strict_mode = strict if strict is not None else _strict_mode_enabled()
     if strict_mode:
         _validate_config_keys(merged)
