@@ -33,6 +33,20 @@ class CronService:
         self._task: asyncio.Task[Any] | None = None
         self._on_job: JobCallback | None = None
         self.default_timezone = self._normalize_timezone(default_timezone)
+        self._diag: dict[str, int | str] = {
+            "load_attempts": 0,
+            "load_success": 0,
+            "load_failures": 0,
+            "save_attempts": 0,
+            "save_retries": 0,
+            "save_failures": 0,
+            "save_success": 0,
+            "job_success_count": 0,
+            "job_failure_count": 0,
+            "schedule_error_count": 0,
+            "last_load_error": "",
+            "last_save_error": "",
+        }
         self._load()
 
     @staticmethod
@@ -45,13 +59,22 @@ class CronService:
         return candidate
 
     def _load(self) -> None:
+        self._diag["load_attempts"] = int(self._diag.get("load_attempts", 0) or 0) + 1
         if not self.path.exists():
+            self._diag["load_success"] = int(self._diag.get("load_success", 0) or 0) + 1
+            self._diag["last_load_error"] = ""
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as exc:
+            self._diag["load_failures"] = int(self._diag.get("load_failures", 0) or 0) + 1
+            self._diag["last_load_error"] = str(exc)
+            bind_event("cron.state").error("cron load failed path={} error={}", self.path, exc)
             return
         if not isinstance(data, list):
+            self._diag["load_failures"] = int(self._diag.get("load_failures", 0) or 0) + 1
+            self._diag["last_load_error"] = "invalid_payload"
+            bind_event("cron.state").error("cron load failed path={} error=invalid_payload", self.path)
             return
         for row in data:
             try:
@@ -67,16 +90,45 @@ class CronService:
                     enabled=bool(row.get("enabled", True)),
                     next_run_iso=str(row.get("next_run_iso", "")),
                     last_run_iso=str(row.get("last_run_iso", "")),
+                    last_status=str(row.get("last_status", "idle") or "idle"),
+                    last_error=str(row.get("last_error", "") or ""),
+                    consecutive_failures=int(row.get("consecutive_failures", 0) or 0),
+                    run_count=int(row.get("run_count", 0) or 0),
                 )
             except Exception:
                 continue
             self._jobs[job.id] = job
+        self._diag["load_success"] = int(self._diag.get("load_success", 0) or 0) + 1
+        self._diag["last_load_error"] = ""
         if self._jobs:
             logger.info("cron jobs loaded count={} path={}", len(self._jobs), self.path)
 
     def _save(self) -> None:
         items = [asdict(job) for job in self._jobs.values()]
-        self.path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(items, ensure_ascii=False, indent=2)
+        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
+        for attempt in range(2):
+            self._diag["save_attempts"] = int(self._diag.get("save_attempts", 0) or 0) + 1
+            if attempt > 0:
+                self._diag["save_retries"] = int(self._diag.get("save_retries", 0) or 0) + 1
+            try:
+                tmp_path.write_text(payload, encoding="utf-8")
+                tmp_path.replace(self.path)
+            except OSError as exc:
+                self._diag["save_failures"] = int(self._diag.get("save_failures", 0) or 0) + 1
+                self._diag["last_save_error"] = str(exc)
+                bind_event("cron.state").error("cron save failed attempt={} path={} error={}", attempt + 1, self.path, exc)
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
+                if attempt == 0:
+                    continue
+                return
+            self._diag["save_success"] = int(self._diag.get("save_success", 0) or 0) + 1
+            self._diag["last_save_error"] = ""
+            return
 
     @staticmethod
     def _now() -> datetime:
@@ -136,7 +188,33 @@ class CronService:
             "jobs": len(self._jobs),
             "store_path": str(self.path),
             "default_timezone": self.default_timezone,
+            "load_attempts": int(self._diag.get("load_attempts", 0) or 0),
+            "load_success": int(self._diag.get("load_success", 0) or 0),
+            "load_failures": int(self._diag.get("load_failures", 0) or 0),
+            "save_attempts": int(self._diag.get("save_attempts", 0) or 0),
+            "save_retries": int(self._diag.get("save_retries", 0) or 0),
+            "save_failures": int(self._diag.get("save_failures", 0) or 0),
+            "save_success": int(self._diag.get("save_success", 0) or 0),
+            "job_success_count": int(self._diag.get("job_success_count", 0) or 0),
+            "job_failure_count": int(self._diag.get("job_failure_count", 0) or 0),
+            "schedule_error_count": int(self._diag.get("schedule_error_count", 0) or 0),
+            "last_load_error": str(self._diag.get("last_load_error", "") or ""),
+            "last_save_error": str(self._diag.get("last_save_error", "") or ""),
         }
+
+    def _mark_schedule_error(self, job: CronJob, exc: Exception) -> None:
+        job.last_status = "schedule_error"
+        job.last_error = str(exc)
+        job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+        self._diag["schedule_error_count"] = int(self._diag.get("schedule_error_count", 0) or 0) + 1
+        bind_event("cron.job", session=job.session_id).error("cron schedule error id={} error={}", job.id, exc)
+
+    @staticmethod
+    def _normalize_datetime(value: str) -> datetime:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
 
     async def _loop(self) -> None:
         while True:
@@ -146,27 +224,60 @@ class CronService:
                 if not job.enabled:
                     continue
                 if not job.next_run_iso:
-                    next_dt = self._compute_next(job.schedule, now)
+                    try:
+                        next_dt = self._compute_next(job.schedule, now)
+                    except Exception as exc:
+                        self._mark_schedule_error(job, exc)
+                        changed = True
+                        continue
                     job.next_run_iso = next_dt.isoformat() if next_dt else ""
                     changed = True
                 if not job.next_run_iso:
                     continue
-                next_run = datetime.fromisoformat(job.next_run_iso)
-                if next_run.tzinfo is None:
-                    next_run = next_run.replace(tzinfo=timezone.utc)
+                try:
+                    next_run = self._normalize_datetime(job.next_run_iso)
+                except ValueError as exc:
+                    self._mark_schedule_error(job, exc)
+                    job.next_run_iso = ""
+                    changed = True
+                    continue
                 if next_run > now:
                     continue
+                callback_failed = False
                 if self._on_job is not None:
                     logger.info("cron job executing id={} session={} name={}", job.id, job.session_id, job.name)
+                    job.run_count = int(job.run_count or 0) + 1
                     try:
                         await self._on_job(job)
                         logger.info("cron job executed id={} session={}", job.id, job.session_id)
+                        job.last_status = "success"
+                        job.last_error = ""
+                        job.consecutive_failures = 0
+                        self._diag["job_success_count"] = int(self._diag.get("job_success_count", 0) or 0) + 1
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
+                        callback_failed = True
+                        job.last_status = "failed"
+                        job.last_error = str(exc)
+                        job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+                        self._diag["job_failure_count"] = int(self._diag.get("job_failure_count", 0) or 0) + 1
                         logger.error("cron job failed id={} session={} error={}", job.id, job.session_id, exc)
+                if callback_failed:
+                    try:
+                        after_failed = self._compute_next(job.schedule, now)
+                        job.next_run_iso = after_failed.isoformat() if after_failed else ""
+                    except Exception as exc:
+                        self._mark_schedule_error(job, exc)
+                        job.next_run_iso = ""
+                    changed = True
+                    continue
                 job.last_run_iso = now.isoformat()
-                after = self._compute_next(job.schedule, now)
+                try:
+                    after = self._compute_next(job.schedule, now)
+                except Exception as exc:
+                    self._mark_schedule_error(job, exc)
+                    after = None
                 # one-shot jobs (at) disable after first run
                 if job.schedule.kind == "at":
                     job.enabled = False
@@ -257,10 +368,27 @@ class CronService:
         callback = on_job or self._on_job
         if callback is None:
             raise RuntimeError("cron_job_callback_missing")
-        out = await callback(job)
+        job.run_count = int(job.run_count or 0) + 1
+        try:
+            out = await callback(job)
+            job.last_status = "success"
+            job.last_error = ""
+            job.consecutive_failures = 0
+            self._diag["job_success_count"] = int(self._diag.get("job_success_count", 0) or 0) + 1
+        except Exception as exc:
+            job.last_status = "failed"
+            job.last_error = str(exc)
+            job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+            self._diag["job_failure_count"] = int(self._diag.get("job_failure_count", 0) or 0) + 1
+            self._save()
+            raise
         now = self._now()
         job.last_run_iso = now.isoformat()
-        after = self._compute_next(job.schedule, now)
+        try:
+            after = self._compute_next(job.schedule, now)
+        except Exception as exc:
+            self._mark_schedule_error(job, exc)
+            after = None
         if job.schedule.kind == "at":
             job.enabled = False
             job.next_run_iso = ""

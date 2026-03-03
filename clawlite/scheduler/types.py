@@ -36,3 +36,7 @@ class CronJob:
     enabled: bool = True
     next_run_iso: str = ""
     last_run_iso: str = ""
+    last_status: str = "idle"
+    last_error: str = ""
+    consecutive_failures: int = 0
+    run_count: int = 0

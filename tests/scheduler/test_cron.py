@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -99,5 +100,112 @@ def test_cron_service_timezone_validation_and_next_run(tmp_path: Path) -> None:
         )
         at_row = [item for item in service.list_jobs(session_id="s1") if item["id"] == at_id][0]
         assert at_row["next_run_iso"].startswith("2030-01-01T15:00:00")
+
+    asyncio.run(_scenario())
+
+
+def test_cron_loop_survives_callback_failure_and_tracks_job_health(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        service = CronService(tmp_path / "cron.json")
+        completed = asyncio.Event()
+        call_count = 0
+
+        async def _on_job(job):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("callback failed")
+            completed.set()
+            return "ok"
+
+        job_id = await service.add_job(session_id="s1", expression="every 1", prompt="ping")
+        await service.start(_on_job)
+        await asyncio.wait_for(completed.wait(), timeout=3.0)
+
+        status_running = service.status()
+        job = service.get_job(job_id)
+        assert status_running["running"] is True
+        assert job is not None
+        assert job.run_count >= 2
+        assert job.last_status == "success"
+        assert job.consecutive_failures == 0
+        assert status_running["job_failure_count"] >= 1
+        assert status_running["job_success_count"] >= 1
+
+        await service.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_cron_schedule_failure_isolated_per_job(monkeypatch, tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        service = CronService(tmp_path / "cron.json")
+        ok_ran = asyncio.Event()
+
+        async def _on_job(job):
+            if job.name == "ok":
+                ok_ran.set()
+            return "ok"
+
+        bad_job_id = await service.add_job(session_id="s1", expression="every 9", prompt="bad", name="bad")
+        await service.add_job(session_id="s1", expression="every 1", prompt="ok", name="ok")
+        bad_job = service.get_job(bad_job_id)
+        assert bad_job is not None
+        bad_job.next_run_iso = ""
+
+        original_compute_next = service._compute_next
+
+        def _compute_next_with_failure(schedule, now):
+            if schedule.kind == "every" and int(schedule.every_seconds or 0) == 9:
+                raise ValueError("schedule exploded")
+            return original_compute_next(schedule, now)
+
+        monkeypatch.setattr(service, "_compute_next", _compute_next_with_failure)
+
+        await service.start(_on_job)
+        await asyncio.wait_for(ok_ran.wait(), timeout=3.0)
+        bad_job = service.get_job(bad_job_id)
+        status = service.status()
+
+        assert status["running"] is True
+        assert status["schedule_error_count"] >= 1
+        assert bad_job is not None
+        assert bad_job.last_status == "schedule_error"
+        assert bad_job.consecutive_failures >= 1
+        assert "schedule exploded" in bad_job.last_error
+
+        await service.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_cron_save_retry_diagnostics_and_persisted_store(monkeypatch, tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = tmp_path / "cron.json"
+        service = CronService(store)
+
+        original_replace = Path.replace
+        calls = {"count": 0}
+
+        def _flaky_replace(self: Path, target: Path) -> Path:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise OSError("replace failed once")
+            return original_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _flaky_replace)
+
+        job_id = await service.add_job(session_id="s1", expression="every 60", prompt="persist me")
+        status = service.status()
+        assert status["save_retries"] >= 1
+        assert status["save_failures"] >= 1
+        assert status["save_success"] >= 1
+
+        rows = json.loads(store.read_text(encoding="utf-8"))
+        assert any(str(row.get("id", "")) == job_id for row in rows)
+
+        reloaded = CronService(store)
+        listed = reloaded.list_jobs(session_id="s1")
+        assert listed and listed[0]["id"] == job_id
 
     asyncio.run(_scenario())

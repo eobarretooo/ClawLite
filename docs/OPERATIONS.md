@@ -100,3 +100,12 @@ pytest -q tests
 - `send_auth_breaker_open` + open/close counters: expected state is `send_auth_breaker_open=false`; investigate immediately if it stays true after cooldown, or if `send_auth_breaker_open_count` keeps increasing without matching `send_auth_breaker_close_count` recovery.
 - `typing_auth_breaker_open` + `typing_ttl_stop_count`: periodic `typing_ttl_stop_count` increments are expected (TTL cap reached); investigate if `typing_auth_breaker_open=true` persists, or if TTL stops spike with user-visible typing issues.
 - `reconnect_count`: short bursts during upstream incidents are expected; investigate if reconnect bursts continue after provider/network recovery window, or if reconnect growth correlates with delayed/missed update handling.
+
+## Scheduler reliability runbook checks
+
+- Heartbeat (`/v1/diagnostics.heartbeat`): monitor `trigger_counts` (`startup`/`interval`/`now`) and `reason_counts`; no growth for long periods indicates a stalled loop.
+- Heartbeat persistence: check `state_save_retries`, `state_save_failures`, `state_save_success`, and `state_last_error`; transient retries with ongoing success are acceptable, sustained failures are incident-level storage degradation.
+- Heartbeat tick health: `consecutive_error_count` should return to `0` after recovery; sustained growth indicates recurring tick execution faults.
+- Cron service (`/v1/diagnostics.cron`): monitor `save_*` and `load_*` counters plus `last_save_error`/`last_load_error`; occasional retry is transient, continuous failures indicate filesystem/permission incident.
+- Cron execution health: track `job_success_count`, `job_failure_count`, and `schedule_error_count`; spikes in `schedule_error_count` usually indicate invalid schedules/timezone problems or compute regressions.
+- Cron per-job health (`/v1/cron/list`): use `last_status`, `last_error`, `consecutive_failures`, and `run_count`; incident signal is repeated failures without recovery on affected jobs.

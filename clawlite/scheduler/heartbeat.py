@@ -100,6 +100,14 @@ class HeartbeatService:
             "run_count": 0,
             "skip_count": 0,
             "error_count": 0,
+            "consecutive_error_count": 0,
+            "trigger_counts": {"startup": 0, "interval": 0, "now": 0},
+            "reason_counts": {},
+            "state_save_attempts": 0,
+            "state_save_retries": 0,
+            "state_save_failures": 0,
+            "state_save_success": 0,
+            "state_last_error": "",
         }
         self._load_state()
 
@@ -119,7 +127,30 @@ class HeartbeatService:
         self._state.update(payload)
 
     def _save_state(self) -> None:
-        self.state_path.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(self._state, ensure_ascii=False, indent=2)
+        tmp_path = self.state_path.with_name(f"{self.state_path.name}.tmp")
+        for attempt in range(2):
+            self._state["state_save_attempts"] = int(self._state.get("state_save_attempts", 0) or 0) + 1
+            if attempt > 0:
+                self._state["state_save_retries"] = int(self._state.get("state_save_retries", 0) or 0) + 1
+            try:
+                tmp_path.write_text(payload, encoding="utf-8")
+                tmp_path.replace(self.state_path)
+            except OSError as exc:
+                self._state["state_save_failures"] = int(self._state.get("state_save_failures", 0) or 0) + 1
+                self._state["state_last_error"] = str(exc)
+                bind_event("heartbeat.state").error("heartbeat state save failed attempt={} error={}", attempt + 1, exc)
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
+                if attempt == 0:
+                    continue
+                return
+            self._state["state_save_success"] = int(self._state.get("state_save_success", 0) or 0) + 1
+            self._state["state_last_error"] = ""
+            return
 
     @property
     def last_decision(self) -> HeartbeatDecision:
@@ -133,16 +164,23 @@ class HeartbeatService:
         self._state["last_tick_iso"] = now_iso
         self._state["last_trigger"] = trigger
         self._state["ticks"] = int(self._state.get("ticks", 0) or 0) + 1
+        trigger_counts = self._state.get("trigger_counts")
+        if not isinstance(trigger_counts, dict):
+            trigger_counts = {}
+            self._state["trigger_counts"] = trigger_counts
+        trigger_counts[trigger] = int(trigger_counts.get(trigger, 0) or 0) + 1
         decision = HeartbeatDecision(action="skip", reason="unknown")
         async with self._tick_lock:
             try:
                 bind_event("heartbeat.tick").debug("heartbeat tick trigger={}", trigger)
                 result = await on_tick()
                 decision = HeartbeatDecision.from_result(result, ack_max_chars=self.ack_max_chars)
+                self._state["consecutive_error_count"] = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._state["error_count"] = int(self._state.get("error_count", 0) or 0) + 1
+                self._state["consecutive_error_count"] = int(self._state.get("consecutive_error_count", 0) or 0) + 1
                 self._state["last_error"] = str(exc)
                 decision = HeartbeatDecision(action="skip", reason="tick_error")
                 bind_event("heartbeat.tick").error("heartbeat error={}", exc)
@@ -152,6 +190,11 @@ class HeartbeatService:
             "reason": decision.reason,
             "text": decision.text,
         }
+        reason_counts = self._state.get("reason_counts")
+        if not isinstance(reason_counts, dict):
+            reason_counts = {}
+            self._state["reason_counts"] = reason_counts
+        reason_counts[decision.reason] = int(reason_counts.get(decision.reason, 0) or 0) + 1
         if decision.action == "run":
             self._state["run_count"] = int(self._state.get("run_count", 0) or 0) + 1
             self._state["last_run_iso"] = now_iso
@@ -243,5 +286,13 @@ class HeartbeatService:
             "run_count": int(self._state.get("run_count", 0) or 0),
             "skip_count": int(self._state.get("skip_count", 0) or 0),
             "error_count": int(self._state.get("error_count", 0) or 0),
+            "consecutive_error_count": int(self._state.get("consecutive_error_count", 0) or 0),
+            "trigger_counts": dict(self._state.get("trigger_counts", {}) or {}),
+            "reason_counts": dict(self._state.get("reason_counts", {}) or {}),
+            "state_save_attempts": int(self._state.get("state_save_attempts", 0) or 0),
+            "state_save_retries": int(self._state.get("state_save_retries", 0) or 0),
+            "state_save_failures": int(self._state.get("state_save_failures", 0) or 0),
+            "state_save_success": int(self._state.get("state_save_success", 0) or 0),
+            "state_last_error": str(self._state.get("state_last_error", "") or ""),
             "last_error": str(self._state.get("last_error", "") or ""),
         }
