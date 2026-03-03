@@ -63,12 +63,37 @@ class GatewayDiagnosticsConfig:
 
 
 @dataclass(slots=True)
+class GatewaySupervisorConfig:
+    enabled: bool = True
+    interval_s: int = 20
+    cooldown_s: int = 30
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> GatewaySupervisorConfig:
+        data = dict(raw or {})
+        if "intervalS" in data:
+            interval_raw = data.get("intervalS")
+        else:
+            interval_raw = data.get("interval_s", 20)
+        if "cooldownS" in data:
+            cooldown_raw = data.get("cooldownS")
+        else:
+            cooldown_raw = data.get("cooldown_s", 30)
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            interval_s=max(1, int(interval_raw or 20)),
+            cooldown_s=max(0, int(cooldown_raw or 30)),
+        )
+
+
+@dataclass(slots=True)
 class GatewayConfig:
     host: str = "127.0.0.1"
     port: int = 8787
     heartbeat: GatewayHeartbeatConfig = field(default_factory=GatewayHeartbeatConfig)
     auth: GatewayAuthConfig = field(default_factory=GatewayAuthConfig)
     diagnostics: GatewayDiagnosticsConfig = field(default_factory=GatewayDiagnosticsConfig)
+    supervisor: GatewaySupervisorConfig = field(default_factory=GatewaySupervisorConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> GatewayConfig:
@@ -79,6 +104,7 @@ class GatewayConfig:
             heartbeat=GatewayHeartbeatConfig.from_dict(dict(data.get("heartbeat") or {})),
             auth=GatewayAuthConfig.from_dict(dict(data.get("auth") or {})),
             diagnostics=GatewayDiagnosticsConfig.from_dict(dict(data.get("diagnostics") or {})),
+            supervisor=GatewaySupervisorConfig.from_dict(dict(data.get("supervisor") or {})),
         )
 
 

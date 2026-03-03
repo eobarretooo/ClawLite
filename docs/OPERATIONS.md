@@ -110,6 +110,14 @@ pytest -q tests
 - Cron execution health: track `job_success_count`, `job_failure_count`, and `schedule_error_count`; spikes in `schedule_error_count` usually indicate invalid schedules/timezone problems or compute regressions.
 - Cron per-job health (`/v1/cron/list`): use `last_status`, `last_error`, `consecutive_failures`, and `run_count`; incident signal is repeated failures without recovery on affected jobs.
 
+## Runtime supervisor runbook checks
+
+- In `/v1/diagnostics.supervisor`, validate loop liveness: `running=true` and `ticks` keeps increasing.
+- Monitor incident pressure: sustained growth in `incident_count` and `component_incidents` indicates recurring subsystem instability.
+- Monitor recovery behavior: `recovery_attempts` should correlate with incidents; repeated growth in `recovery_failures` means failed restart paths.
+- Check cooldown protection: growth in `recovery_skipped_cooldown` during incidents is expected anti-storm behavior; persistent high growth means unresolved component failures.
+- Inspect `last_incident`, `cooldown_active`, `last_error`, and `consecutive_error_count` for current fault context and supervisor health.
+
 ## Tool I/O reliability checks
 
 - In `/v1/diagnostics` with `gateway.diagnostics.include_config=true`, monitor `environment.engine.tools.total.failures`; sustained growth signals tool-layer instability.

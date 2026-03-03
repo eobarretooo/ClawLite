@@ -21,6 +21,7 @@ from clawlite.core.memory import MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.providers import build_provider, detect_provider_name
+from clawlite.runtime.supervisor import RuntimeSupervisor, SupervisorIncident
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
@@ -70,6 +71,7 @@ class DiagnosticsResponse(BaseModel):
     channels: dict[str, Any]
     cron: dict[str, Any]
     heartbeat: dict[str, Any]
+    supervisor: dict[str, Any] = {}
     environment: dict[str, Any] = {}
 
 
@@ -82,6 +84,7 @@ class RuntimeContainer:
     cron: CronService
     heartbeat: HeartbeatService
     workspace: WorkspaceLoader
+    supervisor: RuntimeSupervisor | None = None
 
 
 @dataclass(slots=True)
@@ -97,6 +100,7 @@ class GatewayLifecycleState:
                 "channels": {"enabled": True, "running": False, "last_error": ""},
                 "cron": {"enabled": True, "running": False, "last_error": ""},
                 "heartbeat": {"enabled": True, "running": False, "last_error": ""},
+                "supervisor": {"enabled": True, "running": False, "last_error": ""},
                 "engine": {"enabled": True, "running": True, "last_error": ""},
             }
 
@@ -432,6 +436,72 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         bind_event("gateway.auth").warning("gateway running on non-loopback host without auth host={}", cfg.gateway.host)
     lifecycle = GatewayLifecycleState()
     lifecycle.components["heartbeat"]["enabled"] = bool(cfg.gateway.heartbeat.enabled)
+    lifecycle.components["supervisor"]["enabled"] = bool(cfg.gateway.supervisor.enabled)
+
+    def _provider_circuit_open(payload: Any) -> bool:
+        if isinstance(payload, dict):
+            if bool(payload.get("circuit_open", False)):
+                return True
+            for value in payload.values():
+                if _provider_circuit_open(value):
+                    return True
+        elif isinstance(payload, list):
+            for value in payload:
+                if _provider_circuit_open(value):
+                    return True
+        return False
+
+    async def _supervisor_incidents() -> list[SupervisorIncident]:
+        incidents: list[SupervisorIncident] = []
+        if cfg.gateway.heartbeat.enabled:
+            heartbeat_status = runtime.heartbeat.status()
+            if not bool(heartbeat_status.get("running", False)):
+                incidents.append(SupervisorIncident(component="heartbeat", reason="heartbeat_down", recoverable=True))
+
+        cron_status = runtime.cron.status()
+        if not bool(cron_status.get("running", False)):
+            incidents.append(SupervisorIncident(component="cron", reason="cron_down", recoverable=True))
+
+        channels_status = runtime.channels.status()
+        for name in cfg.channels.enabled_names():
+            row = channels_status.get(name)
+            component = f"channel:{name}"
+            if row is None:
+                incidents.append(SupervisorIncident(component=component, reason="channel_missing", recoverable=True))
+                continue
+            if not bool(row.get("running", False)):
+                incidents.append(SupervisorIncident(component=component, reason="channel_down", recoverable=True))
+
+        provider_diag = runtime.engine.diagnostics().get("provider", {})
+        if _provider_circuit_open(provider_diag):
+            incidents.append(SupervisorIncident(component="provider", reason="circuit_open", recoverable=False))
+        return incidents
+
+    async def _supervisor_recover(component: str, reason: str) -> bool:
+        bind_event("supervisor.recovery").warning("supervisor recovery component={} reason={}", component, reason)
+        if component == "heartbeat" and cfg.gateway.heartbeat.enabled:
+            await runtime.heartbeat.stop()
+            await runtime.heartbeat.start(lambda: _run_heartbeat(runtime))
+            lifecycle.mark_component("heartbeat", running=True)
+            return True
+        if component == "cron":
+            await runtime.cron.stop()
+            await runtime.cron.start(lambda job: _route_cron_job(runtime, job))
+            lifecycle.mark_component("cron", running=True)
+            return True
+        if component.startswith("channel:"):
+            await runtime.channels.stop()
+            await runtime.channels.start(cfg.to_dict())
+            lifecycle.mark_component("channels", running=True)
+            return True
+        return False
+
+    runtime.supervisor = RuntimeSupervisor(
+        interval_s=cfg.gateway.supervisor.interval_s,
+        cooldown_s=cfg.gateway.supervisor.cooldown_s,
+        incident_checks=_supervisor_incidents,
+        recover=_supervisor_recover,
+    )
 
     def _control_plane_payload() -> ControlPlaneResponse:
         return ControlPlaneResponse(
@@ -455,6 +525,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             ("channels", runtime.channels.start, runtime.channels.stop, True),
             ("cron", runtime.cron.start, runtime.cron.stop, True),
             ("heartbeat", runtime.heartbeat.start, runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
+            ("supervisor", runtime.supervisor.start if runtime.supervisor else None, runtime.supervisor.stop if runtime.supervisor else None, bool(cfg.gateway.supervisor.enabled and runtime.supervisor is not None)),
         ]
 
         for name, start_fn, stop_fn, enabled in steps:
@@ -468,6 +539,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     await start_fn(cfg.to_dict())
                 elif name == "cron":
                     await start_fn(lambda job: _route_cron_job(runtime, job))
+                elif name == "supervisor":
+                    await start_fn()
                 else:
                     await start_fn(lambda: _run_heartbeat(runtime))
                 lifecycle.mark_component(name, running=True)
@@ -489,6 +562,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     async def _stop_subsystems() -> None:
         steps: list[tuple[str, Any, bool]] = [
+            ("supervisor", runtime.supervisor.stop if runtime.supervisor else None, bool(cfg.gateway.supervisor.enabled and runtime.supervisor is not None)),
             ("heartbeat", runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
             ("cron", runtime.cron.stop, True),
             ("channels", runtime.channels.stop, True),
@@ -627,6 +701,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             channels=runtime.channels.status(),
             cron=runtime.cron.status(),
             heartbeat=runtime.heartbeat.status(),
+            supervisor=runtime.supervisor.status() if runtime.supervisor is not None else {},
             environment=environment,
         )
 

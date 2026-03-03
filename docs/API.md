@@ -44,6 +44,7 @@ Example response:
     "channels": {"enabled": true, "running": true, "last_error": ""},
     "cron": {"enabled": true, "running": true, "last_error": ""},
     "heartbeat": {"enabled": true, "running": true, "last_error": ""},
+    "supervisor": {"enabled": true, "running": true, "last_error": ""},
     "engine": {"enabled": true, "running": true, "last_error": ""}
   },
   "auth": {
@@ -74,6 +75,8 @@ When `gateway.diagnostics.include_config=true`, `environment` may include additi
 
 Provider telemetry keys are additive and may include: `requests`, `successes`, `retries`, `timeouts`, `network_errors`, `http_errors`, `auth_errors`, `rate_limit_errors`, `server_errors`, `circuit_open`, `circuit_open_count`, `circuit_close_count`, `consecutive_failures`, `last_error`, `last_status_code`.
 
+Supervisor telemetry is additive under `supervisor` and may include: `ticks`, `incident_count`, `recovery_attempts`, `recovery_success`, `recovery_failures`, `recovery_skipped_cooldown`, `component_incidents`, `last_incident`, `last_recovery_at`, `last_error`, `consecutive_error_count`, and `cooldown_active`.
+
 Example response:
 
 ```json
@@ -91,6 +94,7 @@ Example response:
   "channels": {},
   "cron": {},
   "heartbeat": {},
+  "supervisor": {},
   "environment": {}
 }
 ```

@@ -26,6 +26,7 @@ Unlike heavier alternatives, ClawLite is intentionally compact: around **4.2k li
 - 🛡️ **Telegram reliability mechanisms**: retry/backoff with jitter, auth circuit breaker for 401/403, typing keepalive during processing with a separate typing auth circuit breaker, formatting fallback, and safe offset commit only after successful processing.
 - 🧩 **Skills via `SKILL.md`** with autoload and executable `command/script` actions.
 - 🗓️ **Autonomous scheduling** with Cron jobs and heartbeat loops.
+- 🧭 **Runtime supervisor** for health checks and bounded self-recovery with cooldown protections.
 - 🗂️ **Persistent memory + sessions** stored under `~/.clawlite/state`.
 - 🔌 **Multi-provider LLM support** (Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, custom OpenAI-compatible endpoints).
 - 🧯 **Provider reliability controls**: bounded retry/backoff (+ jitter), provider circuit breaker, additive provider diagnostics, and optional fallback model failover for retryable failures.
@@ -230,6 +231,7 @@ clawlite/
   - Tool I/O reliability hardening landed: additive tool execution telemetry in engine diagnostics, deterministic `exec` invalid-syntax/truncation safeguards, and safer MCP timeout/network/HTTP/invalid-response handling with bounded retry.
   - Provider reliability hardening landed: fail-soft retry taxonomy (429 non-quota + 5xx + network/timeout), Retry-After support, provider circuit breaker telemetry, and optional one-hop fallback model failover.
   - Scheduler is active with both Cron jobs and Heartbeat loop, plus CLI/API controls.
+  - Gateway runtime supervisor is active with additive health telemetry and bounded auto-recovery checks for heartbeat/cron/channel runtime health, plus cooldown-based restart-storm protection.
   - Scheduler reliability telemetry hardening landed: heartbeat/cron now expose additive durability counters, trigger/reason/job health signals, and isolate transient persistence/schedule/job failures without crashing runtime loops.
   - Provider routing is active for Gemini, OpenAI, OpenRouter, Groq, DeepSeek, Anthropic routing, Codex, and custom OpenAI-compatible endpoints.
   - Core tools and workspace templates are live: shell/files/web/cron/message/skills/subagent tools and `IDENTITY`, `SOUL`, `AGENTS`, `TOOLS`, `USER`, `HEARTBEAT`, `BOOTSTRAP`, `memory/MEMORY`.
@@ -237,7 +239,7 @@ clawlite/
   - Telegram reliability is improved with long-run soak/recovery validation coverage, but not yet a guaranteed zero-error operation under all network/provider conditions.
   - Typing keepalive cadence/TTL tuning and richer Telegram formatting consistency still need more production validation.
   - Most non-Telegram channels are still skeleton adapters.
-  - 24/7 autonomous self-improvement loops are in progress, not complete.
+  - 24/7 supervision/recovery bootstrap is active, but full autonomous self-improvement loops remain in progress.
 
 ## 🛣️ Roadmap
 - **P0 Reliability and Core Completion (highest priority)**

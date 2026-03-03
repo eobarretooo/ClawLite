@@ -40,6 +40,11 @@
     "heartbeat": {
       "enabled": true,
       "interval_s": 1800
+    },
+    "supervisor": {
+      "enabled": true,
+      "interval_s": 20,
+      "cooldown_s": 30
     }
   },
   "scheduler": {

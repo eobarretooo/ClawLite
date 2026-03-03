@@ -174,6 +174,11 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "channels" in payload
         assert "cron" in payload
         assert "heartbeat" in payload
+        assert "supervisor" in payload
+        assert "ticks" in payload["supervisor"]
+        assert "incident_count" in payload["supervisor"]
+        assert "recovery_attempts" in payload["supervisor"]
+        assert payload["supervisor"]["ticks"] >= 0
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
         assert "engine" in payload["environment"]
         assert "persistence" in payload["environment"]["engine"]

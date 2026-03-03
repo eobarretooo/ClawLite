@@ -258,6 +258,28 @@ def test_load_config_gateway_auth_and_diagnostics_env_overrides(tmp_path: Path, 
     assert cfg.gateway.diagnostics.require_auth is False
 
 
+def test_load_config_gateway_supervisor_parses_snake_and_camel(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "gateway": {
+                    "supervisor": {
+                        "enabled": True,
+                        "intervalS": 15,
+                        "cooldown_s": 45,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(path)
+    assert cfg.gateway.supervisor.enabled is True
+    assert cfg.gateway.supervisor.interval_s == 15
+    assert cfg.gateway.supervisor.cooldown_s == 45
+
+
 def test_load_config_tool_loop_detection_settings(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(

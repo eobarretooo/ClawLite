@@ -17,6 +17,7 @@
 - Achieve 24/7 Linux operation with supervision and automatic recovery
 - Improve proactive delivery through channels with minimum observability
 - Strengthen long-term memory and per-session context recovery
+- P1 progress: runtime supervisor bootstrap landed in gateway lifecycle with additive diagnostics, bounded per-component cooldown recovery, and incident/recovery counters for heartbeat, cron, channels, and provider circuit-open observability.
 
 ## P2 — Ecosystem
 

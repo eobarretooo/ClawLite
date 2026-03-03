@@ -11,6 +11,7 @@ Main fields (summary):
 - `gateway.auth` (API auth control)
 - `gateway.diagnostics` (exposure and protection of `/v1/diagnostics`)
 - `gateway.heartbeat` (enable/disable and interval for gateway heartbeat)
+- `gateway.supervisor` (runtime health checks + bounded auto-recovery loop)
 - `scheduler.timezone` (timezone for cron)
 - `channels` (telegram/discord/slack/whatsapp + extras)
 
@@ -55,6 +56,11 @@ Note: provider-specific key variables (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `
     "heartbeat": {
       "enabled": true,
       "interval_s": 1800
+    },
+    "supervisor": {
+      "enabled": true,
+      "interval_s": 20,
+      "cooldown_s": 30
     }
   }
 }
@@ -67,6 +73,13 @@ Compatibility: if legacy `gateway.token` exists, the loader migrates it to `gate
 - Current preference: `gateway.heartbeat.interval_s`.
 - Legacy field: `scheduler.heartbeat_interval_seconds`.
 - If `gateway.heartbeat.interval_s` is not explicitly set, the loader uses the legacy value from `scheduler`.
+
+## Runtime supervisor
+
+- `gateway.supervisor.enabled` enables the 24/7 health supervisor loop.
+- `gateway.supervisor.interval_s` controls supervisor tick cadence.
+- `gateway.supervisor.cooldown_s` applies per-component cooldown before another recovery attempt.
+- Snake case and camelCase are accepted (`interval_s` / `intervalS`, `cooldown_s` / `cooldownS`).
 
 ## Automatic provider resolution
 
