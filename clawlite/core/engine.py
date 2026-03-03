@@ -242,6 +242,23 @@ class AgentEngine:
             },
             "last_error": "",
         }
+        self._session_recovery_diagnostics: dict[str, int | str] = {
+            "attempts": 0,
+            "hits": 0,
+            "last_error": "",
+        }
+
+    @staticmethod
+    def _dedupe_memory_snippets(snippets: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for snippet in snippets:
+            clean = str(snippet or "").strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            deduped.append(clean)
+        return deduped
 
     def _persistence_operation_metrics(self, operation: str) -> dict[str, int]:
         operations = self._persistence_diagnostics.setdefault("operations", {})
@@ -278,6 +295,7 @@ class AgentEngine:
         session_store_diagnostics: dict[str, Any] = {}
         tool_diagnostics: dict[str, Any] = {}
         provider_diagnostics: dict[str, Any] = {}
+        memory_store_diagnostics: dict[str, Any] = {}
         diagnostics_fn = getattr(self.sessions, "diagnostics", None)
         if callable(diagnostics_fn):
             try:
@@ -302,6 +320,14 @@ class AgentEngine:
                     provider_diagnostics = dict(raw)
             except Exception:
                 provider_diagnostics = {}
+        memory_diagnostics_fn = getattr(self.memory, "diagnostics", None)
+        if callable(memory_diagnostics_fn):
+            try:
+                raw = memory_diagnostics_fn()
+                if isinstance(raw, dict):
+                    memory_store_diagnostics = dict(raw)
+            except Exception:
+                memory_store_diagnostics = {}
         operations: dict[str, Any] = {}
         for name, values in dict(self._persistence_diagnostics.get("operations", {})).items():
             if isinstance(values, dict):
@@ -321,7 +347,14 @@ class AgentEngine:
                 "last_error": str(self._persistence_diagnostics.get("last_error", "")),
             },
             "session_store": session_store_diagnostics,
+            "session_recovery": {
+                "attempts": int(self._session_recovery_diagnostics.get("attempts", 0)),
+                "hits": int(self._session_recovery_diagnostics.get("hits", 0)),
+                "last_error": str(self._session_recovery_diagnostics.get("last_error", "")),
+            },
         }
+        if callable(memory_diagnostics_fn):
+            payload["memory_store"] = memory_store_diagnostics
         if callable(tool_diagnostics_fn):
             payload["tools"] = tool_diagnostics
         if provider_diagnostics:
@@ -674,7 +707,23 @@ class AgentEngine:
         budget = self._resolve_turn_budget(turn_budget)
         progress_counter = [0]
         history = self.sessions.read(session_id, limit=20)
+        recovered_memories: list[str] = []
+        if not history:
+            recover_session_context = getattr(self.memory, "recover_session_context", None)
+            if callable(recover_session_context):
+                self._session_recovery_diagnostics["attempts"] = int(self._session_recovery_diagnostics["attempts"]) + 1
+                try:
+                    recovered = recover_session_context(session_id, limit=4)
+                    if isinstance(recovered, list):
+                        recovered_memories = [str(item).strip() for item in recovered if str(item).strip()]
+                    if recovered_memories:
+                        self._session_recovery_diagnostics["hits"] = int(self._session_recovery_diagnostics["hits"]) + 1
+                    self._session_recovery_diagnostics["last_error"] = ""
+                except Exception as exc:
+                    self._session_recovery_diagnostics["last_error"] = str(exc)
+                    run_log.warning("session memory recovery failed session={} error={}", session_id, exc)
         memories = [row.text for row in self.memory.search(user_text, limit=6)]
+        memories = self._dedupe_memory_snippets(recovered_memories + memories)
         skills = self.skills_loader.render_for_prompt()
         always_names = [item.name for item in self.skills_loader.always_on()]
         skills_context = self.skills_loader.load_skills_for_context(always_names)

@@ -238,3 +238,82 @@ def test_memory_search_prefers_promoted_curated_fact(tmp_path: Path) -> None:
     assert found
     assert found[0].source.startswith("curated:")
     assert "utc-3" in found[0].text.lower()
+
+
+def test_memory_history_read_tolerates_corrupt_lines_and_repairs_file(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    valid_a = {
+        "id": "r1",
+        "text": "remember alpha",
+        "source": "session:a",
+        "created_at": "2026-03-03T00:00:00+00:00",
+    }
+    valid_b = {
+        "id": "r2",
+        "text": "remember beta",
+        "source": "session:b",
+        "created_at": "2026-03-03T00:00:01+00:00",
+    }
+    store.history_path.write_text(
+        "\n".join([json.dumps(valid_a), "{not-json", json.dumps(valid_b)]) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = store.all()
+
+    assert [row.text for row in rows] == ["remember alpha", "remember beta"]
+    repaired_lines = [line for line in store.history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(repaired_lines) == 2
+    diag = store.diagnostics()
+    assert diag["history_read_corrupt_lines"] == 1
+    assert diag["history_repaired_files"] == 1
+
+
+def test_memory_consolidate_diagnostics_track_writes_and_dedup_hits(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    messages = [
+        {"role": "user", "content": "remember that I prefer concise output"},
+        {"role": "assistant", "content": "noted concise output preference"},
+    ]
+
+    assert store.consolidate(messages, source="session:a") is not None
+    assert store.consolidate(messages, source="session:a") is None
+    assert store.consolidate(messages, source="session:b") is not None
+
+    diag = store.diagnostics()
+    assert diag["consolidate_writes"] == 2
+    assert diag["consolidate_dedup_hits"] == 1
+
+
+def test_memory_recover_session_context_uses_history_then_curated_fallback(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.add("session direct context", source="abc")
+    store.curated_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "facts": [
+                    {
+                        "id": "f1",
+                        "text": "curated fallback context",
+                        "source": "curated:session:abc",
+                        "created_at": "2026-03-03T00:00:02+00:00",
+                        "last_seen_at": "2026-03-03T00:00:02+00:00",
+                        "mentions": 1,
+                        "session_count": 1,
+                        "sessions": ["session:abc"],
+                        "importance": 1.0,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snippets = store.recover_session_context("abc", limit=4)
+
+    assert snippets == ["session direct context", "curated fallback context"]
+    diag = store.diagnostics()
+    assert diag["session_recovery_attempts"] == 1
+    assert diag["session_recovery_hits"] == 1

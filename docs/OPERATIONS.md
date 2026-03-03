@@ -104,6 +104,9 @@ pytest -q tests
 - After recovery, monitor subsequent turns to confirm session append and memory consolidation are succeeding again.
 - In `/v1/diagnostics` (`gateway.diagnostics.include_config=true`), verify `environment.engine.persistence` counters: `attempts`, `retries`, `failures`, `success`, and per-operation totals.
 - For session file integrity, verify `environment.engine.session_store.read_corrupt_lines` and `read_repaired_files`; growth indicates malformed JSONL lines were detected and best-effort repaired.
+- For memory history durability/recovery, verify `environment.engine.memory_store.history_read_corrupt_lines` and `history_repaired_files`; growth indicates malformed memory JSONL lines were tolerated and repaired.
+- For memory consolidation behavior, verify `environment.engine.memory_store.consolidate_writes` and `consolidate_dedup_hits` to confirm checkpoint writes and per-source dedup activity.
+- For per-session context recovery behavior, verify `environment.engine.session_recovery.attempts`/`hits` and `environment.engine.memory_store.session_recovery_attempts`/`session_recovery_hits`; rising attempts with low hits indicates missing recoverable context.
 - Investigate sustained growth in `append_failures` or repeated retries as degraded storage signal (disk I/O, permissions, or transient filesystem instability).
 
 ## Telegram reliability runbook checks

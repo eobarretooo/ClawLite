@@ -80,6 +80,15 @@ class MemoryStore:
             self._ensure_file(self.curated_path, default='{"version": 2, "facts": []}\n')
         self.checkpoints_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_file(self.checkpoints_path, default="{}\n")
+        self._diagnostics: dict[str, int | str] = {
+            "history_read_corrupt_lines": 0,
+            "history_repaired_files": 0,
+            "consolidate_writes": 0,
+            "consolidate_dedup_hits": 0,
+            "session_recovery_attempts": 0,
+            "session_recovery_hits": 0,
+            "last_error": "",
+        }
 
     @staticmethod
     def _ensure_file(path: Path, *, default: str) -> None:
@@ -422,27 +431,58 @@ class MemoryStore:
         self._prune_history()
         return row
 
-    def all(self) -> list[MemoryRecord]:
+    def _read_history_records(self) -> list[MemoryRecord]:
         out: list[MemoryRecord] = []
+        valid_lines: list[str] = []
+        corrupt_lines = 0
         with self._locked_file(self.history_path, "r", exclusive=False) as fh:
             lines = fh.read().splitlines()
         for line in lines:
-            line = line.strip()
-            if not line:
+            raw = line.strip()
+            if not raw:
                 continue
             try:
-                payload = json.loads(line)
+                payload = json.loads(raw)
             except json.JSONDecodeError:
+                corrupt_lines += 1
+                continue
+            if not isinstance(payload, dict):
+                corrupt_lines += 1
+                continue
+            valid_lines.append(raw)
+            text = str(payload.get("text", "")).strip()
+            if not text:
                 continue
             out.append(
                 MemoryRecord(
                     id=str(payload.get("id", "")),
-                    text=str(payload.get("text", "")).strip(),
+                    text=text,
                     source=str(payload.get("source", "unknown")),
                     created_at=str(payload.get("created_at", "")),
                 )
             )
-        return [item for item in out if item.text]
+
+        if corrupt_lines:
+            self._diagnostics["history_read_corrupt_lines"] = int(self._diagnostics["history_read_corrupt_lines"]) + corrupt_lines
+            self._repair_history_file(valid_lines)
+
+        return out
+
+    def _repair_history_file(self, valid_lines: list[str]) -> None:
+        try:
+            rewritten = "\n".join(valid_lines)
+            if rewritten:
+                rewritten = f"{rewritten}\n"
+            with self._locked_file(self.history_path, "w", exclusive=True) as fh:
+                fh.write(rewritten)
+                fh.flush()
+            self._diagnostics["history_repaired_files"] = int(self._diagnostics["history_repaired_files"]) + 1
+            self._diagnostics["last_error"] = ""
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+    def all(self) -> list[MemoryRecord]:
+        return self._read_history_records()
 
     def curated(self) -> list[MemoryRecord]:
         rows = self._read_curated_facts()
@@ -538,10 +578,12 @@ class MemoryStore:
                 global_signatures = {}
 
             if source_signatures.get(source) == signature:
+                self._diagnostics["consolidate_dedup_hits"] = int(self._diagnostics["consolidate_dedup_hits"]) + 1
                 return None
 
             summary = "\n".join(summary_lines)
             row = self.add(summary, source=source)
+            self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
             now_iso = datetime.now(timezone.utc).isoformat()
             source_signatures[source] = signature
@@ -598,6 +640,67 @@ class MemoryStore:
             curated_candidates.append((role.strip().lower(), value.strip()))
         self._curate_candidates(curated_candidates, source=source, repeated_count=repeated_count)
         return row
+
+    def recover_session_context(self, session_id: str, *, limit: int = 4) -> list[str]:
+        self._diagnostics["session_recovery_attempts"] = int(self._diagnostics["session_recovery_attempts"]) + 1
+        bounded_limit = max(1, int(limit or 1))
+        clean_session_id = str(session_id or "").strip()
+        normalized_targets = {
+            clean_session_id,
+            f"session:{clean_session_id}" if clean_session_id else "",
+        }
+        normalized_targets.discard("")
+        normalized_session_targets = {
+            self._source_session_key(clean_session_id),
+            self._source_session_key(f"session:{clean_session_id}"),
+        }
+
+        picked: list[str] = []
+        seen: set[str] = set()
+
+        history_rows = self._read_history_records()
+        for row in reversed(history_rows):
+            if row.source not in normalized_targets:
+                continue
+            snippet = row.text.strip()
+            if not snippet or snippet in seen:
+                continue
+            seen.add(snippet)
+            picked.append(snippet)
+            if len(picked) >= bounded_limit:
+                break
+
+        if len(picked) < bounded_limit:
+            for fact in self._read_curated_facts():
+                sessions = fact.get("sessions", [])
+                if not isinstance(sessions, list):
+                    continue
+                normalized_sessions = {self._source_session_key(str(item or "")) for item in sessions}
+                if not normalized_sessions.intersection(normalized_session_targets):
+                    continue
+                snippet = str(fact.get("text", "")).strip()
+                if not snippet or snippet in seen:
+                    continue
+                seen.add(snippet)
+                picked.append(snippet)
+                if len(picked) >= bounded_limit:
+                    break
+
+        if picked:
+            self._diagnostics["session_recovery_hits"] = int(self._diagnostics["session_recovery_hits"]) + 1
+
+        return picked
+
+    def diagnostics(self) -> dict[str, int | str]:
+        return {
+            "history_read_corrupt_lines": int(self._diagnostics["history_read_corrupt_lines"]),
+            "history_repaired_files": int(self._diagnostics["history_repaired_files"]),
+            "consolidate_writes": int(self._diagnostics["consolidate_writes"]),
+            "consolidate_dedup_hits": int(self._diagnostics["consolidate_dedup_hits"]),
+            "session_recovery_attempts": int(self._diagnostics["session_recovery_attempts"]),
+            "session_recovery_hits": int(self._diagnostics["session_recovery_hits"]),
+            "last_error": str(self._diagnostics["last_error"]),
+        }
 
 
 # Backward-compatible API expected by legacy CLI.

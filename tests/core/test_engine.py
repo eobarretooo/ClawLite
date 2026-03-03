@@ -134,7 +134,11 @@ class FakeErrorProvider:
 
 
 class FakeOneShotProvider:
+    def __init__(self) -> None:
+        self.snapshots: list[list[dict[str, Any]]] = []
+
     async def complete(self, *, messages, tools):
+        self.snapshots.append(messages)
         return ProviderResult(text="ok", tool_calls=[], model="fake/model")
 
     def diagnostics(self):
@@ -170,6 +174,30 @@ class FakeMemoryStore:
     def consolidate(self, messages: list[dict[str, str]], *, source: str) -> None:
         if self.fail_consolidate:
             raise RuntimeError("consolidate failed")
+
+
+class FakeRecoveryMemoryStore(FakeMemoryStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.recovery_calls: list[tuple[str, int]] = []
+
+    def search(self, query: str, limit: int = 6) -> list[_MemoryRow]:
+        return [_MemoryRow("normal context"), _MemoryRow("recovered context")]
+
+    def recover_session_context(self, session_id: str, *, limit: int = 4) -> list[str]:
+        self.recovery_calls.append((session_id, limit))
+        return ["recovered context", "session checkpoint context"]
+
+    def diagnostics(self) -> dict[str, int | str]:
+        return {
+            "history_read_corrupt_lines": 0,
+            "history_repaired_files": 0,
+            "consolidate_writes": 0,
+            "consolidate_dedup_hits": 0,
+            "session_recovery_attempts": len(self.recovery_calls),
+            "session_recovery_hits": len(self.recovery_calls),
+            "last_error": "",
+        }
 
 
 class FlakySessionStore:
@@ -505,6 +533,49 @@ def test_engine_persistence_failures_still_emit_turn_completed() -> None:
 
         assert out.text == "ok"
         assert "turn_completed" in stages
+
+    asyncio.run(_scenario())
+
+
+def test_engine_recovers_context_from_memory_when_session_history_empty() -> None:
+    async def _scenario() -> None:
+        provider = FakeOneShotProvider()
+        sessions = FakeSessionStore()
+        memory = FakeRecoveryMemoryStore()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), sessions=sessions, memory=memory)
+
+        out = await engine.run(session_id="cli:recover", user_text="hello")
+
+        assert out.text == "ok"
+        assert memory.recovery_calls == [("cli:recover", 4)]
+        first_call_messages = provider.snapshots[0]
+        memory_rows = [row for row in first_call_messages if row.get("role") == "system" and "[Memory]" in str(row.get("content", ""))]
+        assert len(memory_rows) == 1
+        memory_text = str(memory_rows[0].get("content", ""))
+        assert "recovered context" in memory_text
+        assert "session checkpoint context" in memory_text
+        assert "normal context" in memory_text
+        assert memory_text.count("recovered context") == 1
+
+    asyncio.run(_scenario())
+
+
+def test_engine_diagnostics_include_session_recovery_and_memory_store() -> None:
+    async def _scenario() -> None:
+        provider = FakeOneShotProvider()
+        sessions = FakeSessionStore()
+        memory = FakeRecoveryMemoryStore()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), sessions=sessions, memory=memory)
+
+        out = await engine.run(session_id="cli:diag-recover", user_text="hello")
+
+        assert out.text == "ok"
+        diag = engine.diagnostics()
+        assert "session_recovery" in diag
+        assert diag["session_recovery"]["attempts"] == 1
+        assert diag["session_recovery"]["hits"] == 1
+        assert "memory_store" in diag
+        assert diag["memory_store"]["session_recovery_attempts"] == 1
 
     asyncio.run(_scenario())
 
