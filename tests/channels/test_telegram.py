@@ -1150,6 +1150,169 @@ def test_telegram_send_soak_retries_grow_predictably_without_breaker_open() -> N
     asyncio.run(_scenario())
 
 
+def test_telegram_send_mixed_chaos_chunking_retry_after_timeout_then_success() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "send_retry_attempts": 4,
+                "send_backoff_base_s": 0.01,
+                "send_backoff_max_s": 0.01,
+                "send_backoff_jitter": 0.0,
+                "send_circuit_failure_threshold": 2,
+            }
+        )
+        text = ("A" * 4000) + ("B" * 128)
+        chunks = split_message(text)
+        assert len(chunks) == 2
+
+        class FormattingError(RuntimeError):
+            status_code = 400
+
+        class RetryAfterError(RuntimeError):
+            status_code = 429
+
+            def __init__(self, retry_after: float) -> None:
+                super().__init__("too many requests")
+                self.retry_after = retry_after
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+                self.successful_chunks: list[str] = []
+                self._chunk_attempts: dict[int, int] = {0: 0, 1: 0}
+
+            async def send_message(self, **kwargs):
+                self.calls.append(kwargs)
+                chunk_idx = 0 if kwargs["text"] == chunks[0] else 1
+                self._chunk_attempts[chunk_idx] += 1
+                attempt = self._chunk_attempts[chunk_idx]
+
+                if chunk_idx == 0:
+                    if attempt == 1 and kwargs.get("parse_mode") == "HTML":
+                        raise FormattingError("can't parse entities")
+                    if attempt == 2:
+                        raise TimeoutError("timed out")
+                else:
+                    if attempt == 1:
+                        raise RetryAfterError(0.25)
+
+                self.successful_chunks.append(kwargs["text"])
+                return True
+
+        bot = FakeBot()
+        channel.bot = bot
+
+        sleep_mock = AsyncMock()
+        with patch("clawlite.channels.telegram.asyncio.sleep", new=sleep_mock):
+            out = await channel.send(target="42", text=text)
+
+        assert out == "telegram:sent:2"
+        assert bot.successful_chunks == chunks
+        assert bot._chunk_attempts == {0: 3, 1: 2}
+
+        first_chunk_calls = [call for call in bot.calls if call["text"] == chunks[0]]
+        assert first_chunk_calls[0]["parse_mode"] == "HTML"
+        assert first_chunk_calls[1]["parse_mode"] is None
+
+        signals = channel.signals()
+        assert signals["send_retry_count"] == 2
+        assert signals["send_retry_after_count"] == 1
+        assert signals["send_auth_breaker_open"] is False
+        assert signals["send_auth_breaker_open_count"] == 0
+        assert signals["send_auth_breaker_close_count"] == 0
+
+        sleep_delays = [call.args[0] for call in sleep_mock.await_args_list]
+        assert len(sleep_delays) == 2
+        assert 0.0 < sleep_delays[0] <= 0.02
+        assert sleep_delays[1] == 0.25
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_updates() -> None:
+    async def _scenario() -> None:
+        emitted: list[str] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            del session_id, user_id, metadata
+            emitted.append(text)
+
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "poll_interval_s": 0.01,
+                "reconnect_initial_s": 0.01,
+                "reconnect_max_s": 0.02,
+            },
+            on_message=_on_message,
+        )
+        saved_offsets: list[int] = []
+        channel._save_offset = lambda: saved_offsets.append(channel._offset)  # type: ignore[method-assign]
+
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="private")
+
+        def _update(update_id: int, text: str):
+            msg = SimpleNamespace(
+                text=text,
+                caption=None,
+                chat_id=42,
+                from_user=user,
+                message_id=10 + update_id,
+                chat=chat,
+                date=None,
+                edit_date=None,
+                reply_to_message=None,
+            )
+            return SimpleNamespace(update_id=update_id, message=msg, edited_message=None, effective_message=msg)
+
+        updates = [
+            _update(100, "u100"),
+            _update(101, "u101"),
+            _update(102, "u102"),
+        ]
+
+        class FailingBot:
+            async def get_updates(self, *, offset, timeout, allowed_updates):
+                del offset, timeout, allowed_updates
+                raise TimeoutError("timed out")
+
+        class StableBot:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def get_updates(self, *, offset, timeout, allowed_updates):
+                del offset, timeout, allowed_updates
+                self.calls += 1
+                if self.calls == 1:
+                    return [updates[0], updates[1]]
+                if self.calls == 2:
+                    return [updates[2]]
+                channel._running = False
+                return []
+
+        bot_factory = Mock(side_effect=[FailingBot(), FailingBot(), FailingBot(), StableBot()])
+        fake_module = SimpleNamespace(Bot=bot_factory)
+
+        channel._running = True
+        with patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()), patch.dict(
+            sys.modules, {"telegram": fake_module}
+        ):
+            await channel._poll_loop()
+
+        signals = channel.signals()
+        assert emitted == ["u100", "u101", "u102"]
+        assert channel._offset == 103
+        assert saved_offsets == [101, 102, 103]
+        assert channel._connected is True
+        assert signals["reconnect_count"] == 3
+        assert signals["send_auth_breaker_open"] is False
+        assert signals["typing_auth_breaker_open"] is False
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_send_auth_breaker_close_count_tracks_natural_cooldown() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(

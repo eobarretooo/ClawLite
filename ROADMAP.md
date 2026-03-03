@@ -5,7 +5,7 @@
 - Consolidate a single agent execution flow (CLI + channels + gateway)
 - Expand scheduler integration test coverage (cron/heartbeat)
 - Harden input validation in channels and tools with external I/O
-- Telegram reliability hardening in progress: deterministic soak/recovery tests now cover repeated polling reconnects and outbound transient retry cycles; continue runtime tuning for near-100% stability.
+- Telegram reliability hardening in progress: deterministic soak/recovery tests cover repeated polling reconnects, outbound transient retry cycles, and mixed-failure chaos/recovery matrix cases (chunking + formatting fallback + 429 retry-after + timeout before success); continue runtime tuning for near-100% stability.
 
 ## P1 — Operational autonomy
 

@@ -83,3 +83,10 @@ pytest -q tests
 - Auth breaker: verify `send_auth_breaker_open` is false during steady state; inspect `send_auth_breaker_open_count` and `send_auth_breaker_close_count` for transition history.
 - Typing TTL: track `typing_ttl_stop_count` growth to confirm keepalive loops are naturally capped.
 - Reconnect behavior: monitor `reconnect_count`; short bursts are expected during transient provider/network issues.
+
+### Telegram alert thresholds
+
+- `send_retry_count` / `send_retry_after_count`: occasional growth during provider or network turbulence is expected; investigate when both counters climb continuously for several minutes under normal traffic, or when `send_retry_after_count` dominates (rate-limit pressure).
+- `send_auth_breaker_open` + open/close counters: expected state is `send_auth_breaker_open=false`; investigate immediately if it stays true after cooldown, or if `send_auth_breaker_open_count` keeps increasing without matching `send_auth_breaker_close_count` recovery.
+- `typing_auth_breaker_open` + `typing_ttl_stop_count`: periodic `typing_ttl_stop_count` increments are expected (TTL cap reached); investigate if `typing_auth_breaker_open=true` persists, or if TTL stops spike with user-visible typing issues.
+- `reconnect_count`: short bursts during upstream incidents are expected; investigate if reconnect bursts continue after provider/network recovery window, or if reconnect growth correlates with delayed/missed update handling.
