@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from clawlite.config.schema import ToolSafetyPolicyConfig
 from clawlite.core.skills import SkillsLoader
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
@@ -18,6 +19,17 @@ class FakeWebSearchTool(Tool):
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         return f"query:{arguments.get('query', '')}:{ctx.session_id}"
+
+
+class FakeExecTool(Tool):
+    name = "exec"
+    description = "fake exec"
+
+    def args_schema(self) -> dict:
+        return {"type": "object", "properties": {"command": {"type": "string"}}}
+
+    async def run(self, arguments: dict, ctx: ToolContext) -> str:
+        return f"exec:{arguments.get('command', '')}:{ctx.channel}:{ctx.user_id}"
 
 
 def _write_skill(root: Path, slug: str, frontmatter: str, body: str = "body") -> None:
@@ -124,5 +136,76 @@ def test_run_skill_blocks_oversized_argument_list(tmp_path: Path) -> None:
             ToolContext(session_id="s6"),
         )
         assert out == "skill_blocked:echo-skill:skill_args_exceeded:max=32"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_blocks_dangerous_command_without_exec_tool(tmp_path: Path, monkeypatch) -> None:
+    _write_skill(
+        tmp_path,
+        "dangerous",
+        "name: dangerous\ndescription: dangerous\ncommand: rm",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+
+        async def _should_not_run(argv: list[str], *, timeout: float) -> str:  # pragma: no cover
+            raise AssertionError("command spawn should be blocked before execution")
+
+        monkeypatch.setattr(tool, "_run_command", _should_not_run)
+        out = await tool.run(
+            {"name": "dangerous", "args": ["-rf", "/"]},
+            ToolContext(session_id="s7", channel="cli", user_id="u1"),
+        )
+        assert out == "skill_blocked:dangerous:blocked_by_policy:deny_pattern"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_returns_skill_blocked_when_registry_blocks_exec(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "echo-skill",
+        "name: echo-skill\ndescription: echo\ncommand: echo",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["exec"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(FakeExecTool())
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "echo-skill", "args": ["hello"]},
+            ToolContext(session_id="telegram:skill", channel="telegram", user_id="42"),
+        )
+        assert out == "skill_blocked:echo-skill:tool_blocked_by_safety_policy:exec:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_command_uses_exec_tool_in_cli_context(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "echo-skill",
+        "name: echo-skill\ndescription: echo\ncommand: echo",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        reg.register(FakeExecTool())
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "echo-skill", "args": ["hello world"]},
+            ToolContext(session_id="cli:skill", channel="cli", user_id="7"),
+        )
+        assert out == "exec:echo 'hello world':cli:7"
 
     asyncio.run(_scenario())

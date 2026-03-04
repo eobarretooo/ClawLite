@@ -874,7 +874,7 @@ class ToolLoopDetectionConfig:
 @dataclass(slots=True)
 class ToolSafetyPolicyConfig:
     enabled: bool = True
-    risky_tools: list[str] = field(default_factory=lambda: ["exec", "web_fetch", "web_search", "mcp"])
+    risky_tools: list[str] = field(default_factory=lambda: ["exec", "run_skill", "web_fetch", "web_search", "mcp"])
     blocked_channels: list[str] = field(default_factory=lambda: ["telegram", "discord", "slack", "whatsapp"])
     allowed_channels: list[str] = field(default_factory=list)
 
@@ -890,7 +890,7 @@ class ToolSafetyPolicyConfig:
         if "riskyTools" in data:
             risky_raw = data.get("riskyTools")
         else:
-            risky_raw = data.get("risky_tools", ["exec", "web_fetch", "web_search", "mcp"])
+            risky_raw = data.get("risky_tools", ["exec", "run_skill", "web_fetch", "web_search", "mcp"])
         if "blockedChannels" in data:
             blocked_raw = data.get("blockedChannels")
         else:

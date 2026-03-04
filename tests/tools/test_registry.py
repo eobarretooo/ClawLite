@@ -29,6 +29,17 @@ class ExecLikeTool(Tool):
         return f"channel={ctx.channel};user={ctx.user_id}"
 
 
+class RunSkillLikeTool(Tool):
+    name = "run_skill"
+    description = "run skill"
+
+    def args_schema(self) -> dict:
+        return {"type": "object", "properties": {"name": {"type": "string"}}}
+
+    async def run(self, arguments: dict, ctx: ToolContext) -> str:
+        return f"skill={arguments.get('name', '')}"
+
+
 def test_tool_registry_execute() -> None:
     async def _scenario() -> None:
         reg = ToolRegistry()
@@ -65,5 +76,18 @@ def test_tool_registry_allows_risky_tools_for_cli_channel() -> None:
         reg.register(ExecLikeTool())
         out = await reg.execute("exec", {"command": "id"}, session_id="cli:1", channel="cli", user_id="1")
         assert out == "channel=cli;user=1"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_default_safety_blocks_run_skill_for_telegram() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        reg.register(RunSkillLikeTool())
+        try:
+            await reg.execute("run_skill", {"name": "echo"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected safety policy block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:run_skill:telegram"
 
     asyncio.run(_scenario())

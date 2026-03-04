@@ -49,6 +49,9 @@
 - ToolRegistry now applies a centralized per-channel policy for risky tools
   (`exec`, `web_fetch`, `web_search`, `mcp`) with deterministic error
   `tool_blocked_by_safety_policy:<tool>:<channel>`.
+- Skills safety parity increment: `run_skill` entrou na policy de risco por canal;
+  skills command-bound agora passam por `exec` (com fallback local guardado pelas
+  mesmas regras) e retornam marker deterministico `skill_blocked:*` em bloqueios.
 - Discord/Slack/WhatsApp now have active outbound sending with `httpx`
   (no inbound loops in this increment).
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import shlex
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -17,6 +18,7 @@ import httpx
 
 from clawlite.core.skills import SkillsLoader
 from clawlite.tools.base import Tool, ToolContext
+from clawlite.tools.exec import ExecTool
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logging import bind_event, setup_logging
 
@@ -102,6 +104,39 @@ class SkillTool(Tool):
         stderr = err.decode("utf-8", errors="ignore").strip()
         return f"exit={process.returncode}\nstdout={stdout}\nstderr={stderr}"
 
+    @staticmethod
+    def _join_command(argv: list[str]) -> str:
+        if not argv:
+            return ""
+        return shlex.join(argv)
+
+    async def _run_command_via_exec_tool(self, *, spec_name: str, argv: list[str], timeout: float, ctx: ToolContext) -> str:
+        command = self._join_command(argv)
+        if not command:
+            raise ValueError("empty command")
+        try:
+            return await self.registry.execute(
+                "exec",
+                {"command": command, "timeout": timeout},
+                session_id=ctx.session_id,
+                channel=ctx.channel,
+                user_id=ctx.user_id,
+            )
+        except RuntimeError as exc:
+            expected = f"tool_blocked_by_safety_policy:exec:{ctx.channel}"
+            if str(exc) == expected:
+                return f"skill_blocked:{spec_name}:{expected}"
+            raise
+
+    async def _run_command_with_local_fallback(self, *, spec_name: str, argv: list[str], timeout: float) -> str:
+        command = self._join_command(argv)
+        if not command:
+            raise ValueError("empty command")
+        guard = ExecTool()._guard_command(command, argv, Path.cwd().resolve())
+        if guard:
+            return f"skill_blocked:{spec_name}:{guard}"
+        return await self._run_command(argv, timeout=timeout)
+
     async def _run_weather(self, arguments: dict[str, Any]) -> str:
         location = str(arguments.get("location") or arguments.get("input") or "").strip()
         if not location:
@@ -161,7 +196,9 @@ class SkillTool(Tool):
         if spec.execution_kind == "command":
             argv = [*spec.execution_argv, *extra_args]
             log.info("running skill command skill={}", spec.name)
-            return await self._run_command(argv, timeout=timeout)
+            if self.registry.get("exec") is not None:
+                return await self._run_command_via_exec_tool(spec_name=spec.name, argv=argv, timeout=timeout, ctx=ctx)
+            return await self._run_command_with_local_fallback(spec_name=spec.name, argv=argv, timeout=timeout)
 
         if spec.execution_kind == "script":
             log.info("running skill script skill={} script={}", spec.name, spec.execution_target)
