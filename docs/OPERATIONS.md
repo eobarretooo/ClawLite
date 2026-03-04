@@ -58,6 +58,8 @@ Notas:
 - `channels_delivery.recent` lista outcomes por mensagem (mais recente primeiro), incluindo `send_result` e `receipt` seguro de canais como Telegram (`message_ids`, `last_message_id`, `chunks`, `chat_id`).
 - Telegram tambem ingere eventos `callback_query`; contadores operacionais podem ser inspecionados em `engine.channels.telegram_signals` (ex.: `callback_query_received_count`, `callback_query_blocked_count`, `callback_query_ack_error_count`).
 - Telegram tambem ingere `message_reaction` com politica `reaction_notifications=off|own|all`; acompanhe `message_reaction_received_count`, `message_reaction_blocked_count`, `message_reaction_ignored_bot_count` e `message_reaction_emitted_count` em `engine.channels.telegram_signals`.
+- Autorizacao de ingress Telegram agora e sensivel a contexto (DM, grupo, topico) para `message/channel_post`, `callback_query` e `message_reaction`, com politica por contexto e `group_overrides` por chat/topico.
+- Contadores agregados de decisao de politica ficam em `engine.channels.telegram_signals`: `policy_allowed_count` e `policy_blocked_count`.
 - Telegram ingere tambem updates de canal `channel_post` e `edited_channel_post` (polling e webhook) pelo mesmo pipeline inbound.
 - Tool `message` suporta `metadata` e `buttons` para inline keyboard do Telegram via `_telegram_inline_keyboard`.
 - `/v1/diagnostics` e `/api/diagnostics` incluem `engine.turn_metrics` com contadores por turno (`turns_total`, `turns_success`, `turns_provider_errors`, `turns_cancelled`), `tool_calls_executed`, buckets de latencia e ultimo resultado/modelo.

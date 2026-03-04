@@ -31,6 +31,360 @@ def test_telegram_allow_from_blocks_not_listed() -> None:
     assert not channel._is_allowed_sender("777", "guest")
 
 
+def test_telegram_dm_policy_disabled_blocks_private_message() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "dm_policy": "disabled"},
+            on_message=_on_message,
+        )
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        message = SimpleNamespace(
+            text="hello",
+            caption=None,
+            chat_id=42,
+            from_user=user,
+            message_id=10,
+            chat=SimpleNamespace(type="private"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert emitted == []
+        signals = channel.signals()
+        assert signals["policy_blocked_count"] == 1
+        assert signals["policy_allowed_count"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_dm_allowlist_policy_allows_listed_user_and_blocks_others() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "dm_policy": "allowlist", "dm_allow_from": ["123", "@owner"]},
+            on_message=_on_message,
+        )
+        allowed_message = SimpleNamespace(
+            text="allowed",
+            caption=None,
+            chat_id=11,
+            from_user=SimpleNamespace(id=123, username="owner", first_name="Owner", language_code="en"),
+            message_id=10,
+            chat=SimpleNamespace(type="private"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        blocked_message = SimpleNamespace(
+            text="blocked",
+            caption=None,
+            chat_id=12,
+            from_user=SimpleNamespace(id=999, username="guest", first_name="Guest", language_code="en"),
+            message_id=11,
+            chat=SimpleNamespace(type="private"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+
+        await channel._handle_update(
+            SimpleNamespace(update_id=101, message=allowed_message, edited_message=None, effective_message=allowed_message)
+        )
+        await channel._handle_update(
+            SimpleNamespace(update_id=102, message=blocked_message, edited_message=None, effective_message=blocked_message)
+        )
+
+        assert len(emitted) == 1
+        assert emitted[0][1] == "123"
+        signals = channel.signals()
+        assert signals["policy_allowed_count"] == 1
+        assert signals["policy_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_group_policy_disabled_blocks_group_message() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "group_policy": "disabled"},
+            on_message=_on_message,
+        )
+        message = SimpleNamespace(
+            text="group",
+            caption=None,
+            chat_id=-1001,
+            from_user=SimpleNamespace(id=55, username="alice", first_name="Alice", language_code="en"),
+            message_id=10,
+            chat=SimpleNamespace(type="group"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+
+        processed = await channel._handle_update(
+            SimpleNamespace(update_id=103, message=message, edited_message=None, effective_message=message)
+        )
+
+        assert processed is True
+        assert emitted == []
+        assert channel.signals()["policy_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_nonlisted() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "topic_policy": "allowlist", "topic_allow_from": ["@alice"]},
+            on_message=_on_message,
+        )
+        allowed_message = SimpleNamespace(
+            text="thread allowed",
+            caption=None,
+            chat_id=-1002,
+            message_thread_id=7,
+            from_user=SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en"),
+            message_id=20,
+            chat=SimpleNamespace(type="supergroup"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        blocked_message = SimpleNamespace(
+            text="thread blocked",
+            caption=None,
+            chat_id=-1002,
+            message_thread_id=7,
+            from_user=SimpleNamespace(id=2, username="bob", first_name="Bob", language_code="en"),
+            message_id=21,
+            chat=SimpleNamespace(type="supergroup"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+
+        await channel._handle_update(
+            SimpleNamespace(update_id=104, message=allowed_message, edited_message=None, effective_message=allowed_message)
+        )
+        await channel._handle_update(
+            SimpleNamespace(update_id=105, message=blocked_message, edited_message=None, effective_message=blocked_message)
+        )
+
+        assert len(emitted) == 1
+        assert emitted[0][1] == "1"
+        signals = channel.signals()
+        assert signals["policy_allowed_count"] == 1
+        assert signals["policy_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "group_policy": "disabled",
+                "topic_policy": "disabled",
+                "group_overrides": {
+                    "-1009": {
+                        "policy": "open",
+                        "topics": {
+                            "7": {
+                                "policy": "allowlist",
+                                "allow_from": ["@alice"],
+                            }
+                        },
+                    }
+                },
+            },
+            on_message=_on_message,
+        )
+        group_message = SimpleNamespace(
+            text="group override open",
+            caption=None,
+            chat_id=-1009,
+            from_user=SimpleNamespace(id=22, username="guest", first_name="Guest", language_code="en"),
+            message_id=31,
+            chat=SimpleNamespace(type="group"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        topic_allowed_message = SimpleNamespace(
+            text="topic allowed",
+            caption=None,
+            chat_id=-1009,
+            message_thread_id=7,
+            from_user=SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en"),
+            message_id=32,
+            chat=SimpleNamespace(type="supergroup"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        topic_blocked_message = SimpleNamespace(
+            text="topic blocked",
+            caption=None,
+            chat_id=-1009,
+            message_thread_id=7,
+            from_user=SimpleNamespace(id=2, username="bob", first_name="Bob", language_code="en"),
+            message_id=33,
+            chat=SimpleNamespace(type="supergroup"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+
+        await channel._handle_update(
+            SimpleNamespace(update_id=106, message=group_message, edited_message=None, effective_message=group_message)
+        )
+        await channel._handle_update(
+            SimpleNamespace(
+                update_id=107,
+                message=topic_allowed_message,
+                edited_message=None,
+                effective_message=topic_allowed_message,
+            )
+        )
+        await channel._handle_update(
+            SimpleNamespace(
+                update_id=108,
+                message=topic_blocked_message,
+                edited_message=None,
+                effective_message=topic_blocked_message,
+            )
+        )
+
+        assert len(emitted) == 2
+        assert [entry[2] for entry in emitted] == ["group override open", "topic allowed"]
+        signals = channel.signals()
+        assert signals["policy_allowed_count"] == 2
+        assert signals["policy_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_callback_query_policy_blocked_when_context_denies() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "group_policy": "disabled"},
+            on_message=_on_message,
+        )
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.acks: list[dict] = []
+
+            async def answer_callback_query(self, **kwargs):
+                self.acks.append(kwargs)
+                return True
+
+        bot = FakeBot()
+        channel.bot = bot
+        callback_query = SimpleNamespace(
+            id="cq-policy",
+            data="action:block",
+            chat_instance="inst",
+            from_user=SimpleNamespace(id=9, username="guest"),
+            message=SimpleNamespace(
+                message_id=70,
+                chat=SimpleNamespace(id=-10010, type="group"),
+                chat_id=-10010,
+            ),
+        )
+
+        processed = await channel._handle_update(
+            SimpleNamespace(
+                update_id=109,
+                callback_query=callback_query,
+                message=None,
+                edited_message=None,
+                effective_message=None,
+            )
+        )
+
+        assert processed is True
+        assert emitted == []
+        assert len(bot.acks) == 1
+        signals = channel.signals()
+        assert signals["callback_query_blocked_count"] == 1
+        assert signals["policy_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_message_reaction_policy_blocked_when_context_denies() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "reaction_notifications": "all", "group_policy": "disabled"},
+            on_message=_on_message,
+        )
+        update = SimpleNamespace(
+            update_id=110,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=-10011, type="group"),
+                message_id=99,
+                user=SimpleNamespace(id=9, username="guest", is_bot=False),
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="🔥")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert emitted == []
+        signals = channel.signals()
+        assert signals["message_reaction_blocked_count"] == 1
+        assert signals["policy_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_drop_pending_updates_on_startup() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token", "drop_pending_updates": True})

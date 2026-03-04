@@ -183,6 +183,38 @@ In `channels.telegram`, besides `enabled` and `token`, the most used operational
 - `typing_circuit_cooldown_s` (cooldown while typing auth circuit is open)
 - `reaction_notifications` (`off|own|all`, default `own`; `own` only forwards reactions for messages sent by this bot instance)
 - `reaction_own_cache_limit` (max cached `(chat_id,message_id)` keys used by `reaction_notifications=own`, default `4096`)
+- `dm_policy`, `group_policy`, `topic_policy` (`open|allowlist|disabled`; invalid values default to `open`)
+- `dm_allow_from`, `group_allow_from`, `topic_allow_from` (per-context allowlists used when matching `*_policy=allowlist`)
+- `group_overrides` (per-chat policy override map; supports per-topic overrides by `message_thread_id`)
+
+Context-aware Telegram access policy:
+- Base routing: `private -> dm_*`, non-private without thread -> `group_*`, non-private with thread -> `topic_*`.
+- `allowlist` is fail-closed when its active allowlist is empty.
+- Legacy global `allow_from` remains active as an additional guard in every context.
+- Snake case and camelCase are accepted for new keys (`dm_policy`/`dmPolicy`, `group_policy`/`groupPolicy`, `topic_policy`/`topicPolicy`, `dm_allow_from`/`dmAllowFrom`, `group_allow_from`/`groupAllowFrom`, `topic_allow_from`/`topicAllowFrom`, `group_overrides`/`groupOverrides`).
+
+`group_overrides` shape example:
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "group_overrides": {
+        "-100123456": {
+          "policy": "open",
+          "allow_from": ["@owner"],
+          "topics": {
+            "42": {
+              "policy": "allowlist",
+              "allow_from": ["@alice", "123456789"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 Webhook notes:
 - Webhook activates when `mode=webhook` or `webhook_enabled=true` and both `webhook_url` + `webhook_secret` are configured.

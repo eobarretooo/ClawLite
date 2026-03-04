@@ -484,10 +484,24 @@ class TelegramChannelConfig(BaseChannelConfig):
     typing_circuit_cooldown_s: float = 60.0
     reaction_notifications: str = "own"
     reaction_own_cache_limit: int = 4096
+    dm_policy: str = "open"
+    group_policy: str = "open"
+    topic_policy: str = "open"
+    dm_allow_from: list[str] = field(default_factory=list)
+    group_allow_from: list[str] = field(default_factory=list)
+    topic_allow_from: list[str] = field(default_factory=list)
+    group_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> TelegramChannelConfig:
         data = dict(raw or {})
+        group_overrides_raw = data.get("group_overrides", data.get("groupOverrides", {}))
+        group_overrides: dict[str, dict[str, Any]] = {}
+        if isinstance(group_overrides_raw, dict):
+            for key, value in group_overrides_raw.items():
+                if not isinstance(value, dict):
+                    continue
+                group_overrides[str(key)] = dict(value)
         return cls(
             enabled=bool(data.get("enabled", False)),
             allow_from=cls._allow_from(data),
@@ -523,6 +537,13 @@ class TelegramChannelConfig(BaseChannelConfig):
                 1,
                 int(data.get("reaction_own_cache_limit", data.get("reactionOwnCacheLimit", 4096)) or 4096),
             ),
+            dm_policy=str(data.get("dm_policy", data.get("dmPolicy", "open")) or "open"),
+            group_policy=str(data.get("group_policy", data.get("groupPolicy", "open")) or "open"),
+            topic_policy=str(data.get("topic_policy", data.get("topicPolicy", "open")) or "open"),
+            dm_allow_from=cls._allow_from({"allow_from": data.get("dm_allow_from", data.get("dmAllowFrom", []))}),
+            group_allow_from=cls._allow_from({"allow_from": data.get("group_allow_from", data.get("groupAllowFrom", []))}),
+            topic_allow_from=cls._allow_from({"allow_from": data.get("topic_allow_from", data.get("topicAllowFrom", []))}),
+            group_overrides=group_overrides,
         )
 
 

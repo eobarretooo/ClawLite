@@ -18,7 +18,7 @@ from typing import Any
 from loguru import logger
 
 from clawlite.channels.base import BaseChannel, cancel_task
-from clawlite.config.schema import ChannelConfig
+from clawlite.config.schema import TelegramChannelConfig
 from clawlite.utils.logging import setup_logging
 
 MAX_MESSAGE_LEN = 4000
@@ -308,8 +308,20 @@ class TelegramChannel(BaseChannel):
         token = str(config.get("token", "")).strip()
         if not token:
             raise ValueError("telegram token is required")
+        telegram_config = TelegramChannelConfig.from_dict(config)
         self.token = token
-        self.allow_from = ChannelConfig.from_dict(config).allow_from
+        self.allow_from = telegram_config.allow_from
+        self.dm_policy = self._normalize_access_policy(telegram_config.dm_policy)
+        self.group_policy = self._normalize_access_policy(telegram_config.group_policy)
+        self.topic_policy = self._normalize_access_policy(telegram_config.topic_policy)
+        self.dm_allow_from = self._normalize_allow_from_values(telegram_config.dm_allow_from)
+        self.group_allow_from = self._normalize_allow_from_values(telegram_config.group_allow_from)
+        self.topic_allow_from = self._normalize_allow_from_values(telegram_config.topic_allow_from)
+        self.group_overrides = {
+            str(key): dict(value)
+            for key, value in telegram_config.group_overrides.items()
+            if isinstance(value, dict)
+        }
         self.bot: Any | None = None
         self.mode = self._normalize_mode(str(config.get("mode", "polling") or "polling"))
         self.webhook_enabled = bool(config.get("webhook_enabled", config.get("webhookEnabled", False)))
@@ -399,6 +411,8 @@ class TelegramChannel(BaseChannel):
             "message_reaction_ignored_bot_count": 0,
             "message_reaction_blocked_count": 0,
             "message_reaction_emitted_count": 0,
+            "policy_blocked_count": 0,
+            "policy_allowed_count": 0,
         }
         self._send_auth_breaker_seen_open = False
         self._typing_auth_breaker_seen_open = False
@@ -796,13 +810,122 @@ class TelegramChannel(BaseChannel):
         if not self.allow_from:
             return True
         allowed = {item.strip() for item in self.allow_from if item.strip()}
-        candidates = {str(user_id).strip()}
-        if username:
-            uname = username.strip()
-            if uname:
-                candidates.add(uname)
-                candidates.add(f"@{uname}")
+        candidates = self._sender_candidates(user_id=user_id, username=username)
         return any(candidate in allowed for candidate in candidates)
+
+    @staticmethod
+    def _normalize_access_policy(value: Any) -> str:
+        policy = str(value or "open").strip().lower()
+        if policy not in {"open", "allowlist", "disabled"}:
+            return "open"
+        return policy
+
+    @staticmethod
+    def _sender_candidates(*, user_id: Any, username: str = "") -> set[str]:
+        candidates = {str(user_id).strip()}
+        uname = str(username or "").strip()
+        if uname:
+            candidates.add(uname)
+            candidates.add(f"@{uname}")
+        return {item for item in candidates if item}
+
+    @staticmethod
+    def _normalize_allow_from_values(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        out: list[str] = []
+        for item in raw:
+            value = str(item).strip()
+            if value:
+                out.append(value)
+        return out
+
+    def _is_authorized_context(
+        self,
+        *,
+        chat_type: str,
+        chat_id: str,
+        message_thread_id: int | None,
+        user_id: str,
+        username: str,
+    ) -> bool:
+        if not self._is_allowed_sender(user_id, username):
+            return False
+
+        normalized_chat_type = str(chat_type or "").strip().lower()
+        normalized_chat_id = str(chat_id or "").strip()
+        normalized_thread_id = self._coerce_thread_id(message_thread_id)
+
+        if normalized_chat_type == "private":
+            active_policy = self.dm_policy
+            active_allow_from = list(self.dm_allow_from)
+        elif normalized_thread_id is None:
+            active_policy = self.group_policy
+            active_allow_from = list(self.group_allow_from)
+        else:
+            active_policy = self.topic_policy
+            active_allow_from = list(self.topic_allow_from)
+
+        if normalized_chat_type != "private":
+            group_override = self.group_overrides.get(normalized_chat_id)
+            if isinstance(group_override, dict):
+                group_policy = group_override.get("policy")
+                if group_policy is not None:
+                    active_policy = self._normalize_access_policy(group_policy)
+                if "allow_from" in group_override or "allowFrom" in group_override:
+                    group_allow_from_raw = group_override.get("allow_from", group_override.get("allowFrom", []))
+                    active_allow_from = self._normalize_allow_from_values(group_allow_from_raw)
+
+                if normalized_thread_id is not None:
+                    topics = group_override.get("topics")
+                    if isinstance(topics, dict):
+                        topic_override = topics.get(str(normalized_thread_id))
+                        if isinstance(topic_override, dict):
+                            topic_policy = topic_override.get("policy")
+                            if topic_policy is not None:
+                                active_policy = self._normalize_access_policy(topic_policy)
+                            if "allow_from" in topic_override or "allowFrom" in topic_override:
+                                topic_allow_from_raw = topic_override.get(
+                                    "allow_from",
+                                    topic_override.get("allowFrom", []),
+                                )
+                                active_allow_from = self._normalize_allow_from_values(topic_allow_from_raw)
+
+        active_policy = self._normalize_access_policy(active_policy)
+        if active_policy == "disabled":
+            return False
+        if active_policy == "open":
+            return True
+
+        if not active_allow_from:
+            return False
+        allowed = {item.strip() for item in active_allow_from if item.strip()}
+        if not allowed:
+            return False
+        candidates = self._sender_candidates(user_id=user_id, username=username)
+        return any(candidate in allowed for candidate in candidates)
+
+    def _authorize_inbound_context(
+        self,
+        *,
+        chat_type: str,
+        chat_id: str,
+        message_thread_id: int | None,
+        user_id: str,
+        username: str,
+    ) -> bool:
+        allowed = self._is_authorized_context(
+            chat_type=chat_type,
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+            user_id=user_id,
+            username=username,
+        )
+        if allowed:
+            self._signals["policy_allowed_count"] += 1
+        else:
+            self._signals["policy_blocked_count"] += 1
+        return allowed
 
     def _offset_path(self) -> Path:
         key = hashlib.sha256(self.token.encode("utf-8")).hexdigest()[:16]
@@ -875,6 +998,7 @@ class TelegramChannel(BaseChannel):
             callback_text = callback_data.strip() or "[telegram callback_query]"
             callback_message = getattr(callback_query, "message", None)
             callback_message_chat = getattr(callback_message, "chat", None)
+            callback_chat_type = str(getattr(callback_message_chat, "type", "") or "")
             callback_chat_id = str(
                 getattr(callback_message, "chat_id", "")
                 or getattr(callback_message_chat, "id", "")
@@ -887,6 +1011,7 @@ class TelegramChannel(BaseChannel):
             callback_from_user = getattr(callback_query, "from_user", None)
             callback_user_id = str(getattr(callback_from_user, "id", "") or callback_chat_id)
             callback_username = str(getattr(callback_from_user, "username", "") or "").strip()
+            callback_thread_id = self._coerce_thread_id(getattr(callback_message, "message_thread_id", None))
 
             if self.bot is not None and callback_query_id and hasattr(self.bot, "answer_callback_query"):
                 try:
@@ -900,7 +1025,13 @@ class TelegramChannel(BaseChannel):
                         exc,
                     )
 
-            if not self._is_allowed_sender(callback_user_id, callback_username):
+            if not self._authorize_inbound_context(
+                chat_type=callback_chat_type,
+                chat_id=callback_chat_id,
+                message_thread_id=callback_thread_id,
+                user_id=callback_user_id,
+                username=callback_username,
+            ):
                 self._signals["callback_query_blocked_count"] += 1
                 logger.debug(
                     "telegram callback_query blocked user={} chat={} id={}",
@@ -931,7 +1062,6 @@ class TelegramChannel(BaseChannel):
             if callback_message_id_int > 0:
                 metadata["message_id"] = callback_message_id_int
 
-            callback_thread_id = self._coerce_thread_id(getattr(callback_message, "message_thread_id", None))
             if callback_thread_id is not None:
                 metadata["message_thread_id"] = callback_thread_id
 
@@ -954,6 +1084,7 @@ class TelegramChannel(BaseChannel):
         if message_reaction is not None:
             self._signals["message_reaction_received_count"] += 1
             reaction_chat = getattr(message_reaction, "chat", None)
+            reaction_chat_type = str(getattr(reaction_chat, "type", "") or "")
             chat_id = str(
                 getattr(message_reaction, "chat_id", "")
                 or getattr(reaction_chat, "id", "")
@@ -970,6 +1101,7 @@ class TelegramChannel(BaseChannel):
             reactor = getattr(message_reaction, "user", None) or getattr(message_reaction, "from_user", None)
             reactor_user_id = str(getattr(reactor, "id", "") or chat_id)
             reactor_username = str(getattr(reactor, "username", "") or "").strip()
+            reaction_thread_id = self._coerce_thread_id(getattr(message_reaction, "message_thread_id", None))
             if bool(getattr(reactor, "is_bot", False)):
                 self._signals["message_reaction_ignored_bot_count"] += 1
                 return True
@@ -983,7 +1115,13 @@ class TelegramChannel(BaseChannel):
                     self._signals["message_reaction_blocked_count"] += 1
                     return True
 
-            if not self._is_allowed_sender(reactor_user_id, reactor_username):
+            if not self._authorize_inbound_context(
+                chat_type=reaction_chat_type,
+                chat_id=chat_id,
+                message_thread_id=reaction_thread_id,
+                user_id=reactor_user_id,
+                username=reactor_username,
+            ):
                 self._signals["message_reaction_blocked_count"] += 1
                 return True
 
@@ -1011,6 +1149,8 @@ class TelegramChannel(BaseChannel):
                 "update_id": int(getattr(item, "update_id", 0) or 0),
                 "text": reaction_text,
             }
+            if reaction_thread_id is not None:
+                metadata["message_thread_id"] = reaction_thread_id
             await self.emit(
                 session_id=session_id,
                 user_id=reactor_user_id,
@@ -1049,9 +1189,17 @@ class TelegramChannel(BaseChannel):
         if not chat_id:
             return True
         user = getattr(message, "from_user", None)
+        chat = getattr(message, "chat", None)
+        chat_type = str(getattr(chat, "type", "") or "")
         user_id = str(getattr(user, "id", "") or chat_id)
         username = str(getattr(user, "username", "") or "").strip()
-        if not self._is_allowed_sender(user_id, username):
+        if not self._authorize_inbound_context(
+            chat_type=chat_type,
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+            user_id=user_id,
+            username=username,
+        ):
             logger.debug("telegram inbound blocked user={} chat={}", user_id, chat_id)
             return True
 

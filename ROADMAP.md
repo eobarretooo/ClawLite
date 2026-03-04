@@ -87,6 +87,7 @@
 - Telegram parity increment: webhook runtime mode now active with secret-token validation on configurable webhook endpoint and safe fallback to polling when webhook activation fails.
 - Telegram parity increment: inbound channel updates (`channel_post`, `edited_channel_post`) now flow end-to-end in polling and webhook using the existing Telegram message pipeline.
 - Telegram parity increment: inbound `message_reaction` now supports policy gating (`off|own|all`) with own-message cache filtering, safe metadata routing, and dedicated reaction counters.
+- Telegram parity increment: context-aware ingress authorization delivered (`dm_policy`, `group_policy`, `topic_policy`, per-context allowlists, and `group_overrides` with topic-level overrides) across message, callback_query, and message_reaction paths.
 
 ### FUTURE (Scale + polish)
 
