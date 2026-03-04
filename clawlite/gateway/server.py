@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +41,9 @@ from clawlite.workspace.loader import WorkspaceLoader
 setup_logging()
 
 
+GATEWAY_CONTRACT_VERSION = "2026-03-04"
+
+
 class ChatRequest(BaseModel):
     session_id: str
     text: str
@@ -59,12 +64,17 @@ class CronAddRequest(BaseModel):
 class ControlPlaneResponse(BaseModel):
     ready: bool
     phase: str
+    contract_version: str
+    server_time: str
     components: dict[str, Any]
     auth: dict[str, Any]
 
 
 class DiagnosticsResponse(BaseModel):
     schema_version: str
+    contract_version: str
+    generated_at: str
+    uptime_s: int
     control_plane: ControlPlaneResponse
     queue: dict[str, int]
     channels: dict[str, Any]
@@ -466,12 +476,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     if auth_guard.mode == "off" and not GatewayAuthGuard._is_loopback(cfg.gateway.host):
         bind_event("gateway.auth").warning("gateway running on non-loopback host without auth host={}", cfg.gateway.host)
     lifecycle = GatewayLifecycleState()
+    started_monotonic = time.monotonic()
     lifecycle.components["heartbeat"]["enabled"] = bool(cfg.gateway.heartbeat.enabled)
 
-    def _control_plane_payload() -> ControlPlaneResponse:
+    def _utc_now_iso() -> str:
+        return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+    def _control_plane_payload(server_time: str | None = None) -> ControlPlaneResponse:
+        now = server_time or _utc_now_iso()
         return ControlPlaneResponse(
             ready=bool(lifecycle.ready),
             phase=str(lifecycle.phase),
+            contract_version=GATEWAY_CONTRACT_VERSION,
+            server_time=now,
             components=dict(lifecycle.components),
             auth={
                 "posture": auth_guard.posture(),
@@ -568,9 +585,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail
         if isinstance(detail, str):
-            payload: dict[str, Any] = {"error": detail, "status": exc.status_code}
+            payload: dict[str, Any] = {"error": detail, "status": exc.status_code, "code": detail}
         else:
-            payload = {"error": "http_error", "status": exc.status_code, "detail": detail}
+            payload = {"error": "http_error", "status": exc.status_code, "code": "http_error", "detail": detail}
         return JSONResponse(status_code=exc.status_code, content=payload)
 
     def _provider_error_payload(exc: RuntimeError) -> tuple[int, str]:
@@ -647,11 +664,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def api_status(request: Request) -> ControlPlaneResponse:
         return await _status_handler(request)
 
-    @app.get("/v1/diagnostics", response_model=DiagnosticsResponse)
-    async def diagnostics(request: Request) -> DiagnosticsResponse:
+    async def _diagnostics_handler(request: Request) -> DiagnosticsResponse:
         if not cfg.gateway.diagnostics.enabled:
             raise HTTPException(status_code=404, detail="diagnostics_disabled")
         auth_guard.check_http(request=request, scope="diagnostics", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        generated_at = _utc_now_iso()
         environment: dict[str, Any] = {}
         if cfg.gateway.diagnostics.include_config:
             environment = {
@@ -661,13 +678,24 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             }
         return DiagnosticsResponse(
             schema_version="2026-03-02",
-            control_plane=_control_plane_payload(),
+            contract_version=GATEWAY_CONTRACT_VERSION,
+            generated_at=generated_at,
+            uptime_s=max(0, int(time.monotonic() - started_monotonic)),
+            control_plane=_control_plane_payload(generated_at),
             queue=runtime.bus.stats(),
             channels=runtime.channels.status(),
             cron=runtime.cron.status(),
             heartbeat=runtime.heartbeat.status(),
             environment=environment,
         )
+
+    @app.get("/v1/diagnostics", response_model=DiagnosticsResponse)
+    async def diagnostics(request: Request) -> DiagnosticsResponse:
+        return await _diagnostics_handler(request)
+
+    @app.get("/api/diagnostics", response_model=DiagnosticsResponse)
+    async def api_diagnostics(request: Request) -> DiagnosticsResponse:
+        return await _diagnostics_handler(request)
 
     @app.post("/v1/control/heartbeat/trigger")
     async def trigger_heartbeat(request: Request) -> dict[str, Any]:

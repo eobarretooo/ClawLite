@@ -158,20 +158,25 @@ def test_gateway_auth_required_for_control_plane(tmp_path: Path) -> None:
         unauthorized = client.get("/v1/status")
         assert unauthorized.status_code == 401
         assert unauthorized.json()["error"] == "gateway_auth_required"
+        assert unauthorized.json()["code"] == "gateway_auth_required"
 
         unauthorized_alias = client.get("/api/status")
         assert unauthorized_alias.status_code == 401
         assert unauthorized_alias.json()["error"] == "gateway_auth_required"
+        assert unauthorized_alias.json()["code"] == "gateway_auth_required"
 
         unauthorized_token = client.get("/api/token")
         assert unauthorized_token.status_code == 401
         assert unauthorized_token.json()["error"] == "gateway_auth_required"
+        assert unauthorized_token.json()["code"] == "gateway_auth_required"
 
         ok = client.get("/v1/status", headers={"Authorization": "Bearer secret-token"})
         assert ok.status_code == 200
         payload = ok.json()
         assert payload["ready"] is True
         assert payload["auth"]["posture"] == "strict"
+        assert payload["contract_version"] == "2026-03-04"
+        assert isinstance(payload["server_time"], str) and payload["server_time"]
 
         ok_alias = client.get("/api/status", headers={"Authorization": "Bearer secret-token"})
         assert ok_alias.status_code == 200
@@ -338,17 +343,37 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
     with TestClient(app) as client:
         unauthorized = client.get("/v1/diagnostics")
         assert unauthorized.status_code == 401
+        assert unauthorized.json()["code"] == "gateway_auth_required"
+
+        unauthorized_alias = client.get("/api/diagnostics")
+        assert unauthorized_alias.status_code == 401
+        assert unauthorized_alias.json()["code"] == "gateway_auth_required"
 
         response = client.get("/v1/diagnostics", headers={"Authorization": "Bearer diag-token"})
         assert response.status_code == 200
         payload = response.json()
         assert payload["schema_version"] == "2026-03-02"
+        assert payload["contract_version"] == "2026-03-04"
+        assert isinstance(payload["generated_at"], str) and payload["generated_at"]
+        assert isinstance(payload["uptime_s"], int)
+        assert payload["uptime_s"] >= 0
         assert "control_plane" in payload
+        assert payload["control_plane"]["contract_version"] == "2026-03-04"
         assert "queue" in payload
         assert "channels" in payload
         assert "cron" in payload
         assert "heartbeat" in payload
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
+
+        alias = client.get("/api/diagnostics", headers={"Authorization": "Bearer diag-token"})
+        assert alias.status_code == 200
+        alias_payload = alias.json()
+        assert set(alias_payload.keys()) == set(payload.keys())
+        assert alias_payload["schema_version"] == payload["schema_version"]
+        assert alias_payload["contract_version"] == payload["contract_version"]
+        assert alias_payload["environment"] == payload["environment"]
+        assert set(alias_payload["control_plane"].keys()) == set(payload["control_plane"].keys())
+        assert alias_payload["control_plane"]["contract_version"] == payload["control_plane"]["contract_version"]
 
     cfg_disabled = AppConfig(
         workspace_path=str(tmp_path / "workspace2"),
@@ -362,6 +387,12 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         disabled = client.get("/v1/diagnostics")
         assert disabled.status_code == 404
         assert disabled.json()["error"] == "diagnostics_disabled"
+        assert disabled.json()["code"] == "diagnostics_disabled"
+
+        disabled_alias = client.get("/api/diagnostics")
+        assert disabled_alias.status_code == 404
+        assert disabled_alias.json()["error"] == "diagnostics_disabled"
+        assert disabled_alias.json()["code"] == "diagnostics_disabled"
 
 
 def test_gateway_startup_rollback_when_subsystem_fails(tmp_path: Path) -> None:
@@ -531,3 +562,4 @@ def test_gateway_heartbeat_trigger_disabled_guard(tmp_path: Path) -> None:
         payload = response.json()
         assert payload["error"] == "heartbeat_disabled"
         assert payload["status"] == 409
+        assert payload["code"] == "heartbeat_disabled"

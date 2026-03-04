@@ -30,7 +30,22 @@ Alias compatível: `POST /api/message` (mesma request/response e mesma política
 
 Estado do control-plane do gateway.
 
+Campos de contrato estavel:
+- `contract_version`: versao do contrato HTTP do gateway.
+- `server_time`: timestamp UTC ISO-8601 gerado no servidor.
+
 Alias compatível: `GET /api/status` (mesmo payload e mesma política de autenticação).
+
+## `GET /v1/diagnostics`
+
+Snapshot operacional do gateway para debug e operacao.
+
+Campos baseline de contrato:
+- `generated_at`: timestamp UTC ISO-8601 da geracao do snapshot.
+- `uptime_s`: uptime do processo do gateway em segundos.
+- `contract_version`: versao estavel do contrato HTTP do gateway.
+
+Alias compatível: `GET /api/diagnostics` (mesmo payload e mesma política de autenticação).
 
 ## `GET /api/token`
 
@@ -78,3 +93,10 @@ Payload por mensagem:
 ```
 
 Alias compatível: `WS /ws` (mesmo comportamento, incluindo autenticação).
+
+## Envelope de erro HTTP
+
+Para erros HTTP, o gateway retorna envelope estavel com:
+- `error`
+- `status`
+- `code` (quando `error` for string, `code` repete esse valor)
