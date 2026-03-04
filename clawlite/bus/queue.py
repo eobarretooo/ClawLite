@@ -47,6 +47,36 @@ class MessageQueue:
         age = (datetime.now(timezone.utc) - oldest).total_seconds()
         return max(0.0, age)
 
+    def _dead_letter_recent(self, limit: int = 10) -> list[dict[str, Any]]:
+        bounded_limit = max(0, int(limit or 0))
+        if bounded_limit == 0:
+            return []
+
+        snapshot = list(getattr(self._dead_letter, "_queue", []))
+        indexed = list(enumerate(snapshot))
+        indexed.sort(key=lambda item: (str(getattr(item[1], "created_at", "")), item[0]), reverse=True)
+
+        recent: list[dict[str, Any]] = []
+        for _, event in indexed[:bounded_limit]:
+            metadata = getattr(event, "metadata", {})
+            replayed = False
+            if isinstance(metadata, dict):
+                replayed = bool(metadata.get("_replayed_from_dead_letter", False))
+            recent.append(
+                {
+                    "channel": str(getattr(event, "channel", "")),
+                    "session_id": str(getattr(event, "session_id", "")),
+                    "attempt": int(getattr(event, "attempt", 0) or 0),
+                    "max_attempts": int(getattr(event, "max_attempts", 0) or 0),
+                    "retryable": bool(getattr(event, "retryable", False)),
+                    "dead_letter_reason": str(getattr(event, "dead_letter_reason", "")),
+                    "last_error": str(getattr(event, "last_error", "")),
+                    "created_at": str(getattr(event, "created_at", "")),
+                    "replayed_from_dead_letter": replayed,
+                }
+            )
+        return recent
+
     async def publish_inbound(self, event: InboundEvent) -> None:
         await self._inbound.put(event)
         self._inbound_published += 1
@@ -231,6 +261,7 @@ class MessageQueue:
             "dead_letter_replay_skipped": self._dead_letter_replay_skipped,
             "dead_letter_replay_dropped": self._dead_letter_replay_dropped,
             "dead_letter_reason_counts": dict(sorted(self._dead_letter_reason_counts.items())),
+            "dead_letter_recent": self._dead_letter_recent(),
             "topics": sum(len(v) for v in self._topics.values()),
             "stop_sessions": len(self._stop_events),
         }

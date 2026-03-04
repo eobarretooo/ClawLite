@@ -54,6 +54,7 @@ Notas:
 - `/v1/diagnostics` e `/api/diagnostics` incluem `http` com contadores de requisicoes em memoria (`total_requests`, `in_flight`, `by_method`, `by_path`, `by_status`, `latency_ms`).
 - `/v1/diagnostics` e `/api/diagnostics` incluem `engine.turn_metrics` com contadores por turno (`turns_total`, `turns_success`, `turns_provider_errors`, `turns_cancelled`), `tool_calls_executed`, buckets de latencia e ultimo resultado/modelo.
 - Telemetria de provider/failover inclui classificacao de erro (`last_error_class`, `error_class_counts`, `last_primary_error_class`, `last_fallback_error_class`) para diagnostico operacional.
+- `queue.dead_letter_recent` expoe snapshots por mensagem (sem `text`) para inspecionar outcomes de fallback/dead-letter em ordem mais recente primeiro.
 
 ## Bootstrap one-shot lifecycle
 

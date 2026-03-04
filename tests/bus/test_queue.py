@@ -191,3 +191,56 @@ def test_message_queue_dead_letter_replay_filters_dry_run_marker_and_bounds() ->
         assert stats["dead_letter_size"] == 3
 
     asyncio.run(_scenario())
+
+
+def test_message_queue_dead_letter_recent_snapshot_is_bounded_ordered_and_sanitized() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue(maxsize=32)
+        for idx in range(12):
+            await bus.publish_dead_letter(
+                OutboundEvent(
+                    channel="telegram",
+                    session_id=f"s{idx}",
+                    target="u1",
+                    text=f"secret-{idx}",
+                    metadata={"_replayed_from_dead_letter": idx == 11, "opaque": "keep-internal"},
+                    attempt=idx + 1,
+                    max_attempts=12,
+                    retryable=bool(idx % 2),
+                    dead_lettered=True,
+                    dead_letter_reason="send_failed",
+                    last_error=f"error-{idx}",
+                    created_at=f"2026-03-04T00:00:{idx:02d}+00:00",
+                )
+            )
+
+        stats = bus.stats()
+        assert "dead_letter_recent" in stats
+        recent = stats["dead_letter_recent"]
+        assert isinstance(recent, list)
+        assert len(recent) == 10
+
+        expected_keys = {
+            "channel",
+            "session_id",
+            "attempt",
+            "max_attempts",
+            "retryable",
+            "dead_letter_reason",
+            "last_error",
+            "created_at",
+            "replayed_from_dead_letter",
+        }
+        for row in recent:
+            assert set(row.keys()) == expected_keys
+            assert "text" not in row
+
+        created = [row["created_at"] for row in recent]
+        assert created == sorted(created, reverse=True)
+        assert recent[0]["session_id"] == "s11"
+        assert recent[0]["replayed_from_dead_letter"] is True
+        assert recent[-1]["session_id"] == "s2"
+
+        assert bus.stats()["dead_letter_recent"] == recent
+
+    asyncio.run(_scenario())

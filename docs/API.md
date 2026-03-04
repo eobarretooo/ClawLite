@@ -66,7 +66,7 @@ Example response:
 
 Channel diagnostics returned via health/diagnostics use additive maps and may include per-channel `signals` entries.
 
-Queue diagnostics are additive and may include delivery/dead-letter observability fields: `inbound_published`, `outbound_enqueued`, `outbound_dropped`, `dead_letter_enqueued`, `dead_letter_replayed`, `dead_letter_replay_attempts`, `dead_letter_replay_skipped`, `dead_letter_replay_dropped`, `dead_letter_reason_counts`, and best-effort oldest-age gauges (`outbound_oldest_age_s`, `dead_letter_oldest_age_s`).
+Queue diagnostics are additive and may include delivery/dead-letter observability fields: `inbound_published`, `outbound_enqueued`, `outbound_dropped`, `dead_letter_enqueued`, `dead_letter_replayed`, `dead_letter_replay_attempts`, `dead_letter_replay_skipped`, `dead_letter_replay_dropped`, `dead_letter_reason_counts`, bounded per-message dead-letter snapshots in `dead_letter_recent`, and best-effort oldest-age gauges (`outbound_oldest_age_s`, `dead_letter_oldest_age_s`).
 
 Scheduler diagnostics/status payloads are additive and include reliability telemetry:
 - `heartbeat` may include trigger/reason counters, state-save counters, `consecutive_error_count`, and `state_last_error`.
@@ -116,6 +116,7 @@ Example response:
     "dead_letter_replay_skipped": 0,
     "dead_letter_replay_dropped": 0,
     "dead_letter_reason_counts": {},
+    "dead_letter_recent": [],
     "topics": 0,
     "stop_sessions": 0
   },

@@ -78,6 +78,7 @@
 - Structured provider error-class telemetry added for diagnostics (`last_error_class`, `error_class_counts`, failover primary/fallback error classes and retryable/non-retryable primary failure counters).
 - Turn-level structured observability added to diagnostics (`engine.turn_metrics`) with outcome counters, tool-call totals, latency buckets, and latest turn model/outcome.
 - Provider/config CLI capability expanded with deterministic `clawlite provider use` (safe provider/model switch + fallback set/clear) and structured `rc` semantics.
+- Per-message fallback observability added via queue dead-letter snapshots (`queue.dead_letter_recent`) in gateway diagnostics for safe operator inspection.
 
 ### FUTURE (Scale + polish)
 

@@ -491,6 +491,8 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "control_plane" in payload
         assert payload["control_plane"]["contract_version"] == "2026-03-04"
         assert "queue" in payload
+        assert "dead_letter_recent" in payload["queue"]
+        assert isinstance(payload["queue"]["dead_letter_recent"], list)
         assert "channels" in payload
         assert "cron" in payload
         assert "heartbeat" in payload
