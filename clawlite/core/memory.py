@@ -267,9 +267,17 @@ class MemoryStore:
         else:
             derived_home = Path.home() / ".clawlite" / "memory"
         self.memory_home = derived_home
-        self.profile_path = self.memory_home / "profile.json"
+        self.resources_path = self.memory_home / "resources"
+        self.items_path = self.memory_home / "items"
+        self.categories_path = self.memory_home / "categories"
+        self.embeddings_home = self.memory_home / "embeddings"
+        self.emotional_path = self.memory_home / "emotional"
         self.privacy_path = self.memory_home / "privacy.json"
         self.versions_path = self.memory_home / "versions"
+        self.users_path = self.memory_home / "users"
+        self.shared_path = self.memory_home / "shared"
+        self.profile_path = self.emotional_path / "profile.json"
+        self._legacy_profile_path = self.memory_home / "profile.json"
 
         if curated_path:
             self.curated_path = Path(curated_path)
@@ -283,10 +291,11 @@ class MemoryStore:
         else:
             self.checkpoints_path = self.history_path.with_name("memory_checkpoints.json")
 
+        self._embeddings_path_explicit = bool(embeddings_path)
         if embeddings_path:
             self.embeddings_path = Path(embeddings_path)
         else:
-            self.embeddings_path = self.history_path.with_name("embeddings.jsonl")
+            self.embeddings_path = self.embeddings_home / "embeddings.jsonl"
 
         self.semantic_enabled = bool(semantic_enabled)
         self.memory_auto_categorize = bool(memory_auto_categorize)
@@ -294,7 +303,23 @@ class MemoryStore:
 
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         self.memory_home.mkdir(parents=True, exist_ok=True)
+        self.resources_path.mkdir(parents=True, exist_ok=True)
+        self.items_path.mkdir(parents=True, exist_ok=True)
+        self.categories_path.mkdir(parents=True, exist_ok=True)
+        self.embeddings_home.mkdir(parents=True, exist_ok=True)
+        self.emotional_path.mkdir(parents=True, exist_ok=True)
         self.versions_path.mkdir(parents=True, exist_ok=True)
+        self.users_path.mkdir(parents=True, exist_ok=True)
+        self.shared_path.mkdir(parents=True, exist_ok=True)
+
+        if (not self.profile_path.exists()) and self._legacy_profile_path.exists():
+            self.profile_path.write_text(self._legacy_profile_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        if (not self._embeddings_path_explicit) and (not self.embeddings_path.exists()):
+            legacy_embeddings_path = self.history_path.parent / "embeddings.jsonl"
+            if legacy_embeddings_path != self.embeddings_path and legacy_embeddings_path.exists():
+                self.embeddings_path.write_text(legacy_embeddings_path.read_text(encoding="utf-8"), encoding="utf-8")
+
         self._ensure_file(self.history_path, default="")
         if self.curated_path is not None:
             self.curated_path.parent.mkdir(parents=True, exist_ok=True)

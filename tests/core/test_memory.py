@@ -31,6 +31,50 @@ def test_memory_home_derivation_uses_state_sibling_mapping_and_keeps_local_behav
     assert local_store.memory_home == local_history.parent / "memory"
 
 
+def test_memory_scaffolds_hierarchical_home_directories_and_new_default_paths(tmp_path: Path) -> None:
+    store = MemoryStore(history_path=tmp_path / ".clawlite" / "state" / "memory.jsonl")
+
+    assert (store.memory_home / "resources").exists()
+    assert (store.memory_home / "items").exists()
+    assert (store.memory_home / "categories").exists()
+    assert (store.memory_home / "embeddings").exists()
+    assert (store.memory_home / "emotional").exists()
+    assert (store.memory_home / "versions").exists()
+    assert (store.memory_home / "users").exists()
+    assert (store.memory_home / "shared").exists()
+    assert store.profile_path == store.memory_home / "emotional" / "profile.json"
+    assert store.privacy_path == store.memory_home / "privacy.json"
+    assert store.embeddings_path == store.memory_home / "embeddings" / "embeddings.jsonl"
+
+
+def test_memory_migrates_legacy_profile_to_emotional_profile_path(tmp_path: Path) -> None:
+    history_path = tmp_path / ".clawlite" / "state" / "memory.jsonl"
+    memory_home = tmp_path / ".clawlite" / "memory"
+    memory_home.mkdir(parents=True, exist_ok=True)
+    legacy_profile = memory_home / "profile.json"
+    legacy_profile.write_text(json.dumps({"timezone": "America/Sao_Paulo"}) + "\n", encoding="utf-8")
+
+    store = MemoryStore(history_path=history_path)
+    profile = json.loads(store.profile_path.read_text(encoding="utf-8"))
+    assert profile["timezone"] == "America/Sao_Paulo"
+
+
+def test_memory_migrates_legacy_state_embeddings_when_new_path_missing(tmp_path: Path) -> None:
+    history_path = tmp_path / ".clawlite" / "state" / "memory.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_embeddings = history_path.parent / "embeddings.jsonl"
+    legacy_embeddings.write_text(
+        json.dumps({"id": "e1", "embedding": [0.1, 0.9], "created_at": "2026-03-01T00:00:00+00:00", "source": "seed"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    store = MemoryStore(history_path=history_path)
+    lines = [line for line in store.embeddings_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["id"] == "e1"
+
+
 def test_memory_semantic_add_writes_embedding_file_when_enabled(tmp_path: Path, monkeypatch) -> None:
     def _fake_embedding(self: MemoryStore, text: str) -> list[float] | None:
         assert text
