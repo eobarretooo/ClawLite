@@ -21,6 +21,7 @@ from clawlite.config.loader import load_config
 from clawlite.config.schema import AppConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings
 from clawlite.core.memory import MemoryStore
+from clawlite.core.memory_monitor import MemoryMonitor
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.providers import build_provider, detect_provider_name
@@ -251,6 +252,7 @@ class RuntimeContainer:
     cron: CronService
     heartbeat: HeartbeatService
     workspace: WorkspaceLoader
+    memory_monitor: MemoryMonitor | None = None
 
 
 @dataclass(slots=True)
@@ -550,7 +552,11 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         memory_auto_categorize=bool(
             getattr(config.agents.defaults.memory, "auto_categorize", config.agents.defaults.memory_auto_categorize)
         ),
+        emotional_tracking=bool(
+            getattr(config.agents.defaults.memory, "emotional_tracking", False)
+        ),
     )
+    memory_monitor = MemoryMonitor(memory)
     tools.register(MemoryRecallTool(memory))
     tools.register(MemoryLearnTool(memory))
     tools.register(MemoryForgetTool(memory))
@@ -597,6 +603,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         cron=cron,
         heartbeat=heartbeat,
         workspace=workspace,
+        memory_monitor=memory_monitor,
     )
 
 
@@ -625,7 +632,56 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
     bind_event("heartbeat.tick", session="heartbeat:system").debug("heartbeat callback running")
     result = await runtime.engine.run(session_id=session_id, user_text=heartbeat_prompt)
     bind_event("heartbeat.tick", session="heartbeat:system").debug("heartbeat callback completed")
-    return HeartbeatDecision.from_result(result.text)
+    decision = HeartbeatDecision.from_result(result.text)
+
+    monitor = getattr(runtime, "memory_monitor", None)
+    channels = getattr(runtime, "channels", None)
+    if monitor is not None and channels is not None:
+        try:
+            suggestions = await monitor.scan()
+        except Exception as exc:
+            bind_event("heartbeat.memory", session="heartbeat:system").warning("memory monitor scan failed error={}", exc)
+        else:
+            for suggestion in suggestions:
+                try:
+                    priority = float(getattr(suggestion, "priority", 0.0) or 0.0)
+                except Exception:
+                    priority = 0.0
+                if priority < 0.7:
+                    continue
+                metadata = {
+                    "source": "memory_monitor",
+                    "suggestion_id": suggestion.suggestion_id,
+                    "trigger": suggestion.trigger,
+                    "priority": priority,
+                    **dict(getattr(suggestion, "metadata", {}) or {}),
+                }
+                try:
+                    await channels.send(
+                        channel=suggestion.channel,
+                        target=suggestion.target,
+                        text=suggestion.text,
+                        metadata=metadata,
+                    )
+                except Exception as exc:
+                    bind_event("heartbeat.memory", session="heartbeat:system").warning(
+                        "memory suggestion delivery failed suggestion_id={} channel={} target={} error={}",
+                        suggestion.suggestion_id,
+                        suggestion.channel,
+                        suggestion.target,
+                        exc,
+                    )
+                    continue
+                try:
+                    monitor.mark_delivered(suggestion.suggestion_id)
+                except Exception as exc:
+                    bind_event("heartbeat.memory", session="heartbeat:system").warning(
+                        "memory suggestion mark_delivered failed suggestion_id={} error={}",
+                        suggestion.suggestion_id,
+                        exc,
+                    )
+
+    return decision
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:

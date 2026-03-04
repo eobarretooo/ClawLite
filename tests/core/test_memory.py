@@ -21,6 +21,16 @@ def test_memory_store_add_and_search(tmp_path: Path) -> None:
     assert "python" in found[0].text.lower()
 
 
+def test_memory_home_derivation_uses_state_sibling_mapping_and_keeps_local_behavior(tmp_path: Path) -> None:
+    state_history = tmp_path / ".clawlite" / "state" / "memory.jsonl"
+    state_store = MemoryStore(history_path=state_history)
+    assert state_store.memory_home == state_history.parent.parent / "memory"
+
+    local_history = tmp_path / "session" / "memory.jsonl"
+    local_store = MemoryStore(history_path=local_history)
+    assert local_store.memory_home == local_history.parent / "memory"
+
+
 def test_memory_semantic_add_writes_embedding_file_when_enabled(tmp_path: Path, monkeypatch) -> None:
     def _fake_embedding(self: MemoryStore, text: str) -> list[float] | None:
         assert text
@@ -694,3 +704,57 @@ def test_memory_async_retrieve_rag_and_llm_fallback(tmp_path: Path, monkeypatch)
         assert llm["metadata"]["fallback_to_rag"] is True
 
     asyncio.run(_scenario())
+
+
+def test_memory_memorize_skips_when_privacy_pattern_matches(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        result = await store.memorize(text="meu token secreto e abc123", source="session:privacy")
+        assert result["status"] == "skipped"
+        assert result["record"] is None
+        assert store.all() == []
+
+    asyncio.run(_scenario())
+
+
+def test_memory_profile_auto_update_from_preferences_timezone_and_topics(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.memorize(text="prefiro respostas curtas e moro em Sao Paulo", source="session:profile")
+        await store.memorize(text="gosto de viagens internacionais", source="session:profile")
+        await store.memorize(text="planejando viagens longas em 2026", source="session:profile")
+
+        profile = json.loads(store.profile_path.read_text(encoding="utf-8"))
+        assert profile["response_length_preference"] == "curto"
+        assert profile["timezone"] == "America/Sao_Paulo"
+        assert "viagens" in profile["interests"]
+
+    asyncio.run(_scenario())
+
+
+def test_memory_emotional_tracking_flag_controls_add_tone_detection(tmp_path: Path) -> None:
+    disabled_store = MemoryStore(tmp_path / "disabled.jsonl")
+    disabled_row = disabled_store.add("estou triste e ansioso com o prazo", source="user")
+    assert disabled_row.emotional_tone == "neutral"
+
+    enabled_store = MemoryStore(tmp_path / "enabled.jsonl", emotional_tracking=True)
+    enabled_row = enabled_store.add("estou triste e ansioso com o prazo", source="user")
+    assert enabled_row.emotional_tone == "negative"
+
+
+def test_memory_snapshot_rollback_and_diff(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    first = store.add("baseline memory", source="session:a")
+    snap_a = store.snapshot("before")
+
+    second = store.add("new memory after snapshot", source="session:b")
+    snap_b = store.snapshot("after")
+
+    delta = store.diff(snap_a, snap_b)
+    assert delta["counts"]["added"] == 1
+    assert second.id in delta["added"]
+
+    store.rollback(snap_a)
+    ids_after_rollback = {row.id for row in store.all()}
+    assert first.id in ids_after_rollback
+    assert second.id not in ids_after_rollback

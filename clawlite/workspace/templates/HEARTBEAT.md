@@ -10,6 +10,8 @@ Use this file to define periodic checks for the heartbeat loop.
 ## Suggested checklist
 - Check overdue cron jobs and pending reminders.
 - Check urgent inbox/alerts if tools are available.
+- Verify proactive memory suggestions from MemoryMonitor.
+- Deliver only memory suggestions with priority >= 0.7 via the configured channel/target.
 - Report only meaningful changes.
 
 Keep this file short to reduce token usage.

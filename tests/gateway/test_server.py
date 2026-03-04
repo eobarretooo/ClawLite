@@ -13,6 +13,7 @@ from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 
 from clawlite.config.schema import AppConfig, SchedulerConfig
+from clawlite.core.memory_monitor import MemorySuggestion
 from clawlite.gateway.server import _run_heartbeat, create_app
 from clawlite.providers.base import LLMResult
 from clawlite.scheduler.heartbeat import HeartbeatDecision
@@ -253,6 +254,18 @@ def test_gateway_runtime_passes_memory_window_to_engine(tmp_path: Path) -> None:
     assert app.state.runtime.engine.memory_window == 33
 
 
+def test_gateway_runtime_passes_emotional_tracking_to_memory_store(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"emotional_tracking": True}}},
+        channels={},
+    )
+    app = create_app(cfg)
+    assert app.state.runtime.engine.memory.emotional_tracking is True
+
+
 def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
@@ -355,6 +368,111 @@ def test_run_heartbeat_contract_runs_on_actionable_output() -> None:
         decision = await _run_heartbeat(runtime)
         assert decision.action == "run"
         assert decision.reason == "actionable_response"
+
+    asyncio.run(_scenario())
+
+
+def test_run_heartbeat_sends_high_priority_memory_suggestions() -> None:
+    class _Engine:
+        async def run(self, *, session_id: str, user_text: str):
+            return SimpleNamespace(text="HEARTBEAT_OK")
+
+    class _Monitor:
+        def __init__(self) -> None:
+            self.delivered: list[str] = []
+
+        async def scan(self):
+            return [
+                MemorySuggestion(
+                    text="Upcoming birthday in 2 day(s): Ana",
+                    priority=0.8,
+                    trigger="upcoming_event",
+                    channel="telegram",
+                    target="chat42",
+                    metadata={"days_until": 2},
+                ),
+                MemorySuggestion(
+                    text="Pattern detected: docs appeared 4 times",
+                    priority=0.4,
+                    trigger="pattern",
+                    channel="cli",
+                    target="default",
+                ),
+            ]
+
+        def mark_delivered(self, suggestion_id: str) -> bool:
+            self.delivered.append(suggestion_id)
+            return True
+
+    async def _scenario() -> None:
+        monitor = _Monitor()
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels, memory_monitor=monitor)
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "skip"
+        channels.send.assert_awaited_once()
+        send_kwargs = channels.send.await_args.kwargs
+        assert send_kwargs["channel"] == "telegram"
+        assert send_kwargs["target"] == "chat42"
+        assert send_kwargs["metadata"]["priority"] == 0.8
+        assert send_kwargs["metadata"]["trigger"] == "upcoming_event"
+        assert len(monitor.delivered) == 1
+
+    asyncio.run(_scenario())
+
+
+def test_run_heartbeat_skips_low_priority_suggestions() -> None:
+    class _Engine:
+        async def run(self, *, session_id: str, user_text: str):
+            return SimpleNamespace(text="Alert: review now")
+
+    class _Monitor:
+        async def scan(self):
+            return [
+                MemorySuggestion(
+                    text="Pattern detected: docs appeared 4 times",
+                    priority=0.69,
+                    trigger="pattern",
+                    channel="cli",
+                    target="default",
+                )
+            ]
+
+        def mark_delivered(self, suggestion_id: str) -> bool:
+            return False
+
+    async def _scenario() -> None:
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels, memory_monitor=_Monitor())
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "run"
+        channels.send.assert_not_awaited()
+
+    asyncio.run(_scenario())
+
+
+def test_run_heartbeat_monitor_fail_soft_does_not_break_decision() -> None:
+    class _Engine:
+        async def run(self, *, session_id: str, user_text: str):
+            return SimpleNamespace(text="HEARTBEAT_OK")
+
+    class _Monitor:
+        async def scan(self):
+            raise RuntimeError("monitor failed")
+
+        def mark_delivered(self, suggestion_id: str) -> bool:
+            return False
+
+    async def _scenario() -> None:
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels, memory_monitor=_Monitor())
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "skip"
+        assert decision.reason == "heartbeat_ok"
+        channels.send.assert_not_awaited()
 
     asyncio.run(_scenario())
 

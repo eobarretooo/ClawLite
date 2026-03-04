@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 import hashlib
 import math
 import re
@@ -28,6 +29,37 @@ TRIVIAL_RE = re.compile(
 CURATION_HINT_RE = re.compile(
     r"\b(remember|memory|prefer|preference|timezone|time zone|name|project|deadline|important|always|never|avoid|do not|don't|cannot|can't|must|language|stack)\b",
     re.IGNORECASE,
+)
+EMOTIONAL_MARKERS: dict[str, tuple[str, ...]] = {
+    "positive": ("feliz", "animado", "grato", "happy", "excited", "awesome", "otimo", "great"),
+    "negative": ("triste", "ansioso", "irritado", "chateado", "sad", "angry", "stressed", "frustrated"),
+    "urgent": ("urgente", "asap", "imediato", "agora", "critical", "critico", "prazo"),
+    "calm": ("calmo", "tranquilo", "relaxado", "peaceful", "serene"),
+}
+PROFILE_TOPIC_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "uma",
+        "com",
+        "para",
+        "você",
+        "voce",
+        "meu",
+        "minha",
+        "about",
+        "from",
+        "your",
+        "you",
+        "sobre",
+        "prefiro",
+        "respostas",
+        "resposta",
+    }
 )
 
 try:
@@ -217,10 +249,26 @@ class MemoryStore:
         split_layers: bool = True,
         semantic_enabled: bool = False,
         memory_auto_categorize: bool = False,
+        emotional_tracking: bool = False,
+        memory_home: str | Path | None = None,
     ) -> None:
         base_history = Path(history_path) if history_path else (Path(db_path) if db_path else (Path.home() / ".clawlite" / "state" / "memory.jsonl"))
         self.path = base_history  # Backward-compatible alias.
         self.history_path = base_history
+        if memory_home:
+            derived_home = Path(memory_home)
+        elif db_path is not None or history_path is not None:
+            history_parent = self.history_path.parent
+            if history_parent.name == "state":
+                derived_home = history_parent.parent / "memory"
+            else:
+                derived_home = history_parent / "memory"
+        else:
+            derived_home = Path.home() / ".clawlite" / "memory"
+        self.memory_home = derived_home
+        self.profile_path = self.memory_home / "profile.json"
+        self.privacy_path = self.memory_home / "privacy.json"
+        self.versions_path = self.memory_home / "versions"
 
         if curated_path:
             self.curated_path = Path(curated_path)
@@ -241,8 +289,11 @@ class MemoryStore:
 
         self.semantic_enabled = bool(semantic_enabled)
         self.memory_auto_categorize = bool(memory_auto_categorize)
+        self.emotional_tracking = bool(emotional_tracking)
 
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
+        self.memory_home.mkdir(parents=True, exist_ok=True)
+        self.versions_path.mkdir(parents=True, exist_ok=True)
         self._ensure_file(self.history_path, default="")
         if self.curated_path is not None:
             self.curated_path.parent.mkdir(parents=True, exist_ok=True)
@@ -251,6 +302,8 @@ class MemoryStore:
         self._ensure_file(self.checkpoints_path, default="{}\n")
         self.embeddings_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_file(self.embeddings_path, default="")
+        self._ensure_json_file(self.profile_path, self._default_profile())
+        self._ensure_json_file(self.privacy_path, self._default_privacy())
         self._diagnostics: dict[str, int | str] = {
             "history_read_corrupt_lines": 0,
             "history_repaired_files": 0,
@@ -266,6 +319,66 @@ class MemoryStore:
         if path.exists():
             return
         path.write_text(default, encoding="utf-8")
+
+    @staticmethod
+    def _utcnow_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @classmethod
+    def _default_profile(cls) -> dict[str, Any]:
+        now_iso = cls._utcnow_iso()
+        return {
+            "communication_style": "balanced",
+            "response_length_preference": "normal",
+            "timezone": "UTC",
+            "language": "pt-BR",
+            "emotional_baseline": "neutral",
+            "interests": [],
+            "recurring_patterns": {},
+            "upcoming_events": [],
+            "learned_at": now_iso,
+            "updated_at": now_iso,
+        }
+
+    @staticmethod
+    def _default_privacy() -> dict[str, Any]:
+        return {
+            "never_memorize_patterns": ["senha", "cpf", "cartão", "token", "api_key"],
+            "ephemeral_categories": ["context"],
+            "ephemeral_ttl_days": 7,
+            "encrypted_categories": [],
+            "audit_log": True,
+        }
+
+    @classmethod
+    def _ensure_json_file(cls, path: Path, default_payload: dict[str, Any]) -> None:
+        if path.exists():
+            try:
+                raw = path.read_text(encoding="utf-8").strip()
+                if raw:
+                    payload = json.loads(raw)
+                    if isinstance(payload, dict):
+                        return
+            except Exception:
+                pass
+        path.write_text(json.dumps(default_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _load_json_dict(path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+            if not raw:
+                return dict(fallback)
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+        return dict(fallback)
+
+    @staticmethod
+    def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     @contextmanager
     def _locked_file(self, path: Path, mode: str, *, exclusive: bool):
@@ -720,6 +833,140 @@ class MemoryStore:
             return by_llm
         return self._heuristic_category(text, source)
 
+    @staticmethod
+    def _detect_emotional_tone(text: str) -> str:
+        clean = str(text or "").lower()
+        if not clean:
+            return "neutral"
+        best_label = "neutral"
+        best_score = 0
+        for label, markers in EMOTIONAL_MARKERS.items():
+            score = sum(1 for marker in markers if marker in clean)
+            if score > best_score:
+                best_score = score
+                best_label = label
+        return best_label
+
+    @staticmethod
+    def _guidance_label_from_tone(tone: str) -> str:
+        clean = str(tone or "").strip().lower()
+        if clean in {"frustrated", "negative", "urgent"}:
+            return "frustrated"
+        if clean in {"excited", "positive"}:
+            return "excited"
+        return "neutral"
+
+    def emotion_guidance(self, user_text: str, *, session_id: str = "") -> str:
+        if not self.emotional_tracking:
+            return ""
+
+        current_tone = self._detect_emotional_tone(user_text)
+        guidance_label = self._guidance_label_from_tone(current_tone)
+        if guidance_label == "neutral":
+            profile = self._load_json_dict(self.profile_path, self._default_profile())
+            baseline = str(profile.get("emotional_baseline", "neutral") or "neutral")
+            guidance_label = self._guidance_label_from_tone(baseline)
+
+        if guidance_label == "frustrated":
+            return "User seems frustrated. Be more empathetic and brief."
+        if guidance_label == "excited":
+            return "User is excited. Match the energy appropriately."
+        return ""
+
+    @staticmethod
+    def _extract_timezone(text: str) -> str | None:
+        clean = str(text or "").lower()
+        if not clean:
+            return None
+        offset_match = re.search(r"\butc\s*([+-]\d{1,2})\b", clean)
+        if offset_match:
+            return f"UTC{offset_match.group(1)}"
+        if "sao paulo" in clean or "são paulo" in clean or re.search(r"\bsp\b", clean):
+            return "America/Sao_Paulo"
+        return None
+
+    @classmethod
+    def _extract_topics(cls, text: str) -> list[str]:
+        topics: list[str] = []
+        for token in cls._tokens(text):
+            if len(token) < 4:
+                continue
+            if token in PROFILE_TOPIC_STOPWORDS:
+                continue
+            if token.isdigit():
+                continue
+            if token not in topics:
+                topics.append(token)
+        return topics[:8]
+
+    def _privacy_allows_memorize(self, text: str) -> bool:
+        privacy = self._load_json_dict(self.privacy_path, self._default_privacy())
+        patterns = privacy.get("never_memorize_patterns", [])
+        if not isinstance(patterns, list):
+            patterns = []
+        lowered = str(text or "").lower()
+        for item in patterns:
+            pattern = str(item or "").strip().lower()
+            if pattern and pattern in lowered:
+                return False
+        return True
+
+    def _update_profile_from_text(self, text: str) -> None:
+        clean = str(text or "").strip()
+        if not clean:
+            return
+        profile = self._load_json_dict(self.profile_path, self._default_profile())
+        changed = False
+        lowered = clean.lower()
+
+        if "prefiro respostas curtas" in lowered:
+            if profile.get("response_length_preference") != "curto":
+                profile["response_length_preference"] = "curto"
+                changed = True
+
+        timezone_value = self._extract_timezone(clean)
+        if timezone_value and profile.get("timezone") != timezone_value:
+            profile["timezone"] = timezone_value
+            changed = True
+
+        topics = self._extract_topics(clean)
+        recurring_patterns = dict(profile.get("recurring_patterns", {}))
+        if not isinstance(recurring_patterns, dict):
+            recurring_patterns = {}
+        interests = list(profile.get("interests", []))
+        if not isinstance(interests, list):
+            interests = []
+
+        for topic in topics:
+            topic_data = recurring_patterns.get(topic, {})
+            if not isinstance(topic_data, dict):
+                topic_data = {}
+            previous_count = int(topic_data.get("count", 0) or 0)
+            topic_data["count"] = previous_count + 1
+            topic_data["last_seen"] = self._utcnow_iso()
+            recurring_patterns[topic] = topic_data
+            if topic_data["count"] >= 2 and topic not in interests:
+                interests.append(topic)
+                changed = True
+
+        if recurring_patterns != profile.get("recurring_patterns"):
+            profile["recurring_patterns"] = recurring_patterns
+            changed = True
+        if interests != profile.get("interests"):
+            profile["interests"] = interests
+            changed = True
+
+        baseline = self._detect_emotional_tone(clean)
+        if baseline != "neutral" and profile.get("emotional_baseline") != baseline:
+            profile["emotional_baseline"] = baseline
+            changed = True
+
+        if changed:
+            if not str(profile.get("learned_at", "")).strip():
+                profile["learned_at"] = self._utcnow_iso()
+            profile["updated_at"] = self._utcnow_iso()
+            self._write_json_dict(self.profile_path, profile)
+
     def _curated_rank(self, row: dict[str, object]) -> tuple[float, int, int, datetime, datetime, str, str]:
         importance = float(row.get("importance", 0.0))
         mentions = int(row.get("mentions", 0))
@@ -920,6 +1167,7 @@ class MemoryStore:
             created_at=datetime.now(timezone.utc).isoformat(),
             category=self._categorize_memory(clean, source),
             layer=MemoryLayer.ITEM.value,
+            emotional_tone=self._detect_emotional_tone(clean) if self.emotional_tracking else "neutral",
         )
         with self._locked_file(self.history_path, "a", exclusive=True) as fh:
             fh.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
@@ -1007,15 +1255,22 @@ class MemoryStore:
         source: str = "session",
     ) -> dict[str, Any]:
         if messages is not None:
+            joined_text = "\n".join(str(item.get("content", "") or "") for item in messages if isinstance(item, dict))
+            if joined_text and not self._privacy_allows_memorize(joined_text):
+                return {"status": "skipped", "mode": "consolidate", "record": None}
             record = await asyncio.to_thread(self.consolidate, messages, source=source)
             if record is None:
                 return {"status": "skipped", "mode": "consolidate", "record": None}
+            self._update_profile_from_text(record.text)
             return {"status": "ok", "mode": "consolidate", "record": asdict(record)}
 
         clean = str(text or "").strip()
         if not clean:
             raise ValueError("text or messages is required")
+        if not self._privacy_allows_memorize(clean):
+            return {"status": "skipped", "mode": "add", "record": None}
         record = await asyncio.to_thread(self.add, clean, source=source)
+        self._update_profile_from_text(clean)
         return {"status": "ok", "mode": "add", "record": asdict(record)}
 
     @staticmethod
@@ -1475,6 +1730,127 @@ class MemoryStore:
             "curated_deleted": curated_deleted,
             "embeddings_deleted": embeddings_deleted,
             "deleted_count": len(deleted_ids),
+        }
+
+    def export_payload(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "exported_at": self._utcnow_iso(),
+            "history": [asdict(row) for row in self.all()],
+            "curated": [asdict(row) for row in self.curated()],
+            "checkpoints": self._parse_checkpoints(self.checkpoints_path.read_text(encoding="utf-8")),
+            "profile": self._load_json_dict(self.profile_path, self._default_profile()),
+            "privacy": self._load_json_dict(self.privacy_path, self._default_privacy()),
+        }
+
+    def import_payload(self, payload: dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        history_rows = payload.get("history", [])
+        curated_rows = payload.get("curated", [])
+        checkpoints = payload.get("checkpoints", {})
+        profile = payload.get("profile", {})
+        privacy = payload.get("privacy", {})
+
+        history_lines: list[str] = []
+        if isinstance(history_rows, list):
+            for row in history_rows:
+                if not isinstance(row, dict):
+                    continue
+                parsed = self._record_from_payload(row)
+                if parsed is None:
+                    continue
+                history_lines.append(json.dumps(asdict(parsed), ensure_ascii=False))
+        with self._locked_file(self.history_path, "w", exclusive=True) as fh:
+            if history_lines:
+                fh.write("\n".join(history_lines) + "\n")
+            fh.flush()
+
+        if self.curated_path is not None and isinstance(curated_rows, list):
+            facts = []
+            for row in curated_rows:
+                if isinstance(row, dict):
+                    facts.append(row)
+            self._write_curated_facts(facts)
+
+        if isinstance(checkpoints, dict):
+            with self._locked_file(self.checkpoints_path, "w", exclusive=True) as fh:
+                fh.write(self._format_checkpoints(checkpoints))
+                fh.flush()
+
+        if isinstance(profile, dict):
+            merged_profile = self._default_profile()
+            merged_profile.update(profile)
+            self._write_json_dict(self.profile_path, merged_profile)
+
+        if isinstance(privacy, dict):
+            merged_privacy = self._default_privacy()
+            merged_privacy.update(privacy)
+            self._write_json_dict(self.privacy_path, merged_privacy)
+
+    def snapshot(self, tag: str = "") -> str:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        safe_tag = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(tag or "").strip()).strip("-")
+        version_id = f"{stamp}-{safe_tag}" if safe_tag else stamp
+        version_path = self.versions_path / f"{version_id}.json.gz"
+        payload = self.export_payload()
+        with gzip.open(version_path, "wt", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        return version_id
+
+    def rollback(self, version_id: str) -> None:
+        clean = str(version_id or "").strip()
+        if not clean:
+            return
+        version_path = self.versions_path / f"{clean}.json.gz"
+        if not version_path.exists():
+            raise FileNotFoundError(str(version_path))
+        with gzip.open(version_path, "rt", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        self.import_payload(payload if isinstance(payload, dict) else {})
+
+    def diff(self, version_a: str, version_b: str) -> dict[str, Any]:
+        def _load_version(version_id: str) -> dict[str, Any]:
+            path = self.versions_path / f"{version_id}.json.gz"
+            if not path.exists():
+                return {}
+            with gzip.open(path, "rt", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            return payload if isinstance(payload, dict) else {}
+
+        left = _load_version(version_a)
+        right = _load_version(version_b)
+
+        left_history = {
+            str(item.get("id", "")): str(item.get("text", ""))
+            for item in left.get("history", [])
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        }
+        right_history = {
+            str(item.get("id", "")): str(item.get("text", ""))
+            for item in right.get("history", [])
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        }
+        left_ids = set(left_history.keys())
+        right_ids = set(right_history.keys())
+        added_ids = sorted(right_ids - left_ids)
+        removed_ids = sorted(left_ids - right_ids)
+        changed_ids = sorted(
+            row_id for row_id in left_ids.intersection(right_ids) if left_history.get(row_id) != right_history.get(row_id)
+        )
+
+        return {
+            "added": {row_id: right_history[row_id] for row_id in added_ids},
+            "removed": {row_id: left_history[row_id] for row_id in removed_ids},
+            "changed": {
+                row_id: {"from": left_history[row_id], "to": right_history[row_id]}
+                for row_id in changed_ids
+            },
+            "counts": {
+                "added": len(added_ids),
+                "removed": len(removed_ids),
+                "changed": len(changed_ids),
+            },
         }
 
     def analysis_stats(self) -> dict[str, Any]:
