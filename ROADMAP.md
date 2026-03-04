@@ -76,6 +76,7 @@
 - Strict CLI config preflight added via `clawlite validate config` with structured JSON and deterministic exit semantics (`0` ok, `2` invalid/parse/validation).
 - Prompt/memory pipeline now injects session-aware recovery snippets when retrieval returns no hits, preserving fail-soft turn execution.
 - Structured provider error-class telemetry added for diagnostics (`last_error_class`, `error_class_counts`, failover primary/fallback error classes and retryable/non-retryable primary failure counters).
+- Turn-level structured observability added to diagnostics (`engine.turn_metrics`) with outcome counters, tool-call totals, latency buckets, and latest turn model/outcome.
 
 ### FUTURE (Scale + polish)
 

@@ -499,6 +499,7 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "engine" in payload
         assert "http" in payload
         assert "retrieval_metrics" in payload["engine"]
+        assert "turn_metrics" in payload["engine"]
         assert "provider" in payload["engine"]
         retrieval = payload["engine"]["retrieval_metrics"]
         assert set(retrieval.keys()) == {
@@ -509,6 +510,23 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
             "latency_buckets",
             "last_route",
             "last_query",
+        }
+        turn_metrics = payload["engine"]["turn_metrics"]
+        assert set(turn_metrics.keys()) == {
+            "turns_total",
+            "turns_success",
+            "turns_provider_errors",
+            "turns_cancelled",
+            "tool_calls_executed",
+            "latency_buckets",
+            "last_outcome",
+            "last_model",
+        }
+        assert set(turn_metrics["latency_buckets"].keys()) == {
+            "lt_1s",
+            "1_3s",
+            "3_10s",
+            "gte_10s",
         }
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
 

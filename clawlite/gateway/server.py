@@ -924,6 +924,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             }
         engine_payload: dict[str, Any] = {
             "retrieval_metrics": runtime.engine.retrieval_metrics_snapshot(),
+            "turn_metrics": runtime.engine.turn_metrics_snapshot(),
         }
         if cfg.gateway.diagnostics.include_provider_telemetry:
             engine_payload["provider"] = _provider_telemetry_snapshot(runtime.engine.provider)

@@ -319,6 +319,19 @@ class AgentEngine:
         }
         self._retrieval_last_route = self._MEMORY_ROUTE_NO_RETRIEVE
         self._retrieval_last_query = ""
+        self._turns_total = 0
+        self._turns_success = 0
+        self._turns_provider_errors = 0
+        self._turns_cancelled = 0
+        self._tool_calls_executed = 0
+        self._turn_latency_buckets: dict[str, int] = {
+            "lt_1s": 0,
+            "1_3s": 0,
+            "3_10s": 0,
+            "gte_10s": 0,
+        }
+        self._turn_last_outcome = ""
+        self._turn_last_model = ""
 
     @classmethod
     def _sanitize_retrieval_query(cls, query: str) -> str:
@@ -378,6 +391,51 @@ class AgentEngine:
             },
             "last_route": str(self._retrieval_last_route),
             "last_query": str(self._retrieval_last_query),
+        }
+
+    def _record_turn_latency(self, elapsed_ms: float) -> None:
+        value = max(0.0, float(elapsed_ms))
+        if value < 1000.0:
+            bucket = "lt_1s"
+        elif value < 3000.0:
+            bucket = "1_3s"
+        elif value < 10000.0:
+            bucket = "3_10s"
+        else:
+            bucket = "gte_10s"
+        self._turn_latency_buckets[bucket] = int(self._turn_latency_buckets.get(bucket, 0)) + 1
+
+    def _record_turn_metrics(self, *, outcome: str, model: str, latency_ms: float, tool_calls_executed: int) -> None:
+        normalized = "success"
+        if outcome in {"success", "provider_error", "cancelled"}:
+            normalized = outcome
+        self._turns_total += 1
+        if normalized == "provider_error":
+            self._turns_provider_errors += 1
+        elif normalized == "cancelled":
+            self._turns_cancelled += 1
+        else:
+            self._turns_success += 1
+        self._tool_calls_executed += max(0, int(tool_calls_executed))
+        self._record_turn_latency(latency_ms)
+        self._turn_last_outcome = normalized
+        self._turn_last_model = str(model or "")
+
+    def turn_metrics_snapshot(self) -> dict[str, Any]:
+        return {
+            "turns_total": int(self._turns_total),
+            "turns_success": int(self._turns_success),
+            "turns_provider_errors": int(self._turns_provider_errors),
+            "turns_cancelled": int(self._turns_cancelled),
+            "tool_calls_executed": int(self._tool_calls_executed),
+            "latency_buckets": {
+                "lt_1s": int(self._turn_latency_buckets.get("lt_1s", 0)),
+                "1_3s": int(self._turn_latency_buckets.get("1_3s", 0)),
+                "3_10s": int(self._turn_latency_buckets.get("3_10s", 0)),
+                "gte_10s": int(self._turn_latency_buckets.get("gte_10s", 0)),
+            },
+            "last_outcome": str(self._turn_last_outcome),
+            "last_model": str(self._turn_last_model),
         }
 
     async def _complete_provider(
@@ -858,6 +916,7 @@ class AgentEngine:
         runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
         run_log = bind_event("agent.loop", session=session_id, channel=runtime_channel or "-")
         run_log.info("processing message chars={}", len(user_text))
+        turn_started_at = time.perf_counter()
         budget = self._resolve_turn_budget(turn_budget)
         progress_counter = [0]
         history = self.sessions.read(session_id, limit=self.memory_window)
@@ -891,7 +950,9 @@ class AgentEngine:
 
         final = ProviderResult(text="", tool_calls=[], model="engine/fallback")
         graceful_error = False
+        turn_outcome = "success"
         tool_calls_used = 0
+        tool_calls_executed = 0
         iteration = 0
         resolved_reasoning_effort = self._resolve_reasoning_effort(user_text, self.reasoning_effort_default)
         tool_history: list[_ToolExecutionRecord] = []
@@ -932,6 +993,7 @@ class AgentEngine:
                     model="engine/fallback",
                 )
                 graceful_error = True
+                turn_outcome = "provider_error"
                 await self._emit_progress(
                     progress_hook=progress_hook,
                     event=ProgressEvent(
@@ -1061,6 +1123,7 @@ class AgentEngine:
                     except Exception as exc:
                         bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).error("execution failed call_id={} error={}", call_id, exc)
                         tool_result = f"tool_error:{name}:{exc}"
+                    tool_calls_executed += 1
 
                     normalized_result, was_truncated = self._truncate_tool_result(
                         tool_result,
@@ -1133,6 +1196,7 @@ class AgentEngine:
         else:
             run_log.info("skipping assistant persistence after provider failure")
         if final.model == "engine/stop":
+            turn_outcome = "cancelled"
             await self._emit_progress(
                 progress_hook=progress_hook,
                 event=ProgressEvent(stage="turn_cancelled", session_id=session_id, iteration=iteration, message=final.text),
@@ -1147,5 +1211,12 @@ class AgentEngine:
                 limit=budget.max_progress_events or 1,
             )
         self.clear_stop(session_id)
+        turn_latency_ms = (time.perf_counter() - turn_started_at) * 1000.0
+        self._record_turn_metrics(
+            outcome=turn_outcome,
+            model=final.model,
+            latency_ms=turn_latency_ms,
+            tool_calls_executed=tool_calls_executed,
+        )
         run_log.info("response generated model={} chars={}", final.model, len(final.text))
         return final

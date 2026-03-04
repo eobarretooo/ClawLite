@@ -271,6 +271,13 @@ def test_engine_runs_tool_roundtrip() -> None:
         )
         out = await engine.run(session_id="abc", user_text="say hi")
         assert out.text == "final answer"
+        metrics = engine.turn_metrics_snapshot()
+        assert metrics["turns_total"] == 1
+        assert metrics["turns_success"] == 1
+        assert metrics["turns_provider_errors"] == 0
+        assert metrics["turns_cancelled"] == 0
+        assert metrics["last_outcome"] == "success"
+        assert metrics["last_model"] == "fake/model"
 
     asyncio.run(_scenario())
 
@@ -686,6 +693,13 @@ def test_engine_respects_stop_event_before_provider_call() -> None:
         assert out.model == "engine/stop"
         assert "stopped" in out.text.lower()
         assert provider.called is False
+        metrics = engine.turn_metrics_snapshot()
+        assert metrics["turns_total"] == 1
+        assert metrics["turns_cancelled"] == 1
+        assert metrics["turns_provider_errors"] == 0
+        assert metrics["turns_success"] == 0
+        assert metrics["last_outcome"] == "cancelled"
+        assert metrics["last_model"] == "engine/stop"
 
     asyncio.run(_scenario())
 
@@ -750,6 +764,24 @@ def test_engine_handles_typed_provider_errors() -> None:
         text = out.text.lower()
         assert "sorry" in text
         assert "network" in text
+        metrics = engine.turn_metrics_snapshot()
+        assert metrics["turns_total"] == 1
+        assert metrics["turns_provider_errors"] == 1
+        assert metrics["turns_success"] == 0
+        assert metrics["turns_cancelled"] == 0
+        assert metrics["last_outcome"] == "provider_error"
+        assert metrics["last_model"] == "engine/fallback"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_turn_metrics_counts_executed_tool_calls() -> None:
+    async def _scenario() -> None:
+        engine = AgentEngine(provider=FakeProvider(), tools=FakeTools())
+        out = await engine.run(session_id="cli:tool-metrics", user_text="hello")
+        assert out.text == "final answer"
+        metrics = engine.turn_metrics_snapshot()
+        assert metrics["tool_calls_executed"] == 1
 
     asyncio.run(_scenario())
 
