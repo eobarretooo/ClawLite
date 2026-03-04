@@ -72,6 +72,7 @@
 - Codex auth UX hardened: typed `auth.providers.openai_codex`, deterministic `openai-codex/*` provider path, CLI login/status/logout, and explicit auth guidance on failures.
 - Workspace/bootstrap lifecycle aligned as one-shot with persisted `bootstrap-state.json`, runtime auto-completion on successful user turns, and operator visibility in gateway/CLI diagnostics.
 - Structured HTTP gateway telemetry added to diagnostics (`http`) with in-memory request counters by method/path/status and latency aggregates.
+- Strict CLI config preflight added via `clawlite validate config` with structured JSON and deterministic exit semantics (`0` ok, `2` invalid/parse/validation).
 
 ### FUTURE (Scale + polish)
 

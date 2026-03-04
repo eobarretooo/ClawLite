@@ -18,6 +18,12 @@ bash scripts/smoke_test.sh
 pytest -q tests
 ```
 
+Preflight de config estrita (falha com rc=2 em chave invalida/erro de parse):
+
+```bash
+clawlite validate config
+```
+
 ## Verificar saúde
 
 ```bash

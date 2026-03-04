@@ -169,6 +169,33 @@ def cmd_validate_onboarding(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok", False) else 2
 
 
+def cmd_validate_config(args: argparse.Namespace) -> int:
+    config_path = str(args.config) if args.config else str(DEFAULT_CONFIG_PATH)
+    try:
+        cfg = load_config(args.config, strict=True)
+    except Exception as exc:
+        _print_json(
+            {
+                "ok": False,
+                "strict": True,
+                "config_path": config_path,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            }
+        )
+        return 2
+
+    _print_json(
+        {
+            "ok": True,
+            "strict": True,
+            "config_path": config_path,
+            "provider_model": cfg.agents.defaults.model,
+        }
+    )
+    return 0
+
+
 def cmd_diagnostics(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     config_path = str(args.config) if args.config else str(DEFAULT_CONFIG_PATH)
@@ -390,6 +417,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate_onboarding = validate_sub.add_parser("onboarding", help="Validate workspace onboarding templates")
     p_validate_onboarding.add_argument("--fix", action="store_true", help="Generate missing workspace templates")
     p_validate_onboarding.set_defaults(handler=cmd_validate_onboarding)
+
+    p_validate_config = validate_sub.add_parser("config", help="Validate config structure with strict key checks")
+    p_validate_config.set_defaults(handler=cmd_validate_config)
 
     p_provider = sub.add_parser("provider", help="Provider auth lifecycle commands")
     provider_sub = p_provider.add_subparsers(dest="provider_command", required=True)

@@ -147,7 +147,7 @@ Core commands:
 - `clawlite status`
 - `clawlite status` (includes `bootstrap_pending` and `bootstrap_last_status`)
 - `clawlite onboard`
-- `clawlite validate provider|channels|onboarding [--fix]`
+- `clawlite validate provider|channels|onboarding|config [--fix]`
 - `clawlite provider login openai-codex [--access-token ...] [--account-id ...] [--set-model] [--no-interactive]`
 - `clawlite provider status [openai-codex]`
 - `clawlite provider logout [openai-codex]`

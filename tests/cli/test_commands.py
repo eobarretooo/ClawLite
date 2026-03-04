@@ -248,6 +248,69 @@ def test_cli_non_runtime_validate_and_diagnostics_do_not_import_gateway(tmp_path
     assert "clawlite.gateway.server" not in sys.modules
 
 
+def test_cli_validate_config_ok_strict(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "validate", "config"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["strict"] is True
+    assert payload["provider_model"] == "openai/gpt-4o-mini"
+
+
+def test_cli_validate_config_invalid_key_returns_rc2(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "invalid_top_level": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "validate", "config"])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["strict"] is True
+    assert "invalid config keys" in payload["error"]
+
+
+def test_cli_validate_config_does_not_import_gateway_runtime(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc = main(["--config", str(config_path), "validate", "config"])
+    assert rc == 0
+    assert "clawlite.gateway.server" not in sys.modules
+    capsys.readouterr()
+
+
 def test_cli_validate_channels_slack_bot_only_is_ok_with_warning(tmp_path: Path, capsys) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
