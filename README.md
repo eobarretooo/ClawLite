@@ -216,6 +216,12 @@ Current priorities are tracked in [`ROADMAP.md`](ROADMAP.md):
 - P1: operational autonomy and reliability
 - P2: ecosystem and operator experience
 
+## Acknowledgements
+ClawLite is informed by ideas and design inspiration from the following projects:
+- [OpenClaw](https://github.com/openclaw/openclaw)
+- [memU](https://github.com/NevaMind-AI/memU)
+- [nanobot](https://github.com/HKUDS/nanobot)
+
 ## Contributing and License
 - Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Issues: <https://github.com/eobarretooo/ClawLite/issues>
