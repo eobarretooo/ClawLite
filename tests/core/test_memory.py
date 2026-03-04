@@ -812,3 +812,79 @@ def test_memory_snapshot_rollback_and_diff(tmp_path: Path) -> None:
     ids_after_rollback = {row.id for row in store.all()}
     assert first.id in ids_after_rollback
     assert second.id not in ids_after_rollback
+
+
+def test_memory_memorize_add_persists_resource_item_and_category_layers(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl", memory_auto_categorize=False)
+        result = await store.memorize(text="remember this layered memory", source="session:layers")
+
+        assert result["status"] == "ok"
+        record_id = str(result["record"]["id"])
+        category = str(result["record"]["category"])
+
+        resource_files = list(store.resources_path.glob("conv_*.jsonl"))
+        assert resource_files
+        resource_rows: list[dict[str, object]] = []
+        for path in resource_files:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    resource_rows.append(json.loads(line))
+        assert any(str(row.get("id")) == record_id for row in resource_rows)
+
+        item_payload = json.loads(store._item_file_path(category).read_text(encoding="utf-8"))
+        assert any(str(item.get("id", "")) == record_id for item in item_payload.get("items", []))
+
+        category_md = store._category_file_path(category).read_text(encoding="utf-8")
+        assert "Total items" in category_md
+        assert record_id in category_md
+
+    asyncio.run(_scenario())
+
+
+def test_memory_memorize_consolidate_persists_joined_resource_and_category_summary(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        result = await store.memorize(
+            messages=[
+                {"role": "user", "content": "remember my timezone is UTC-3"},
+                {"role": "assistant", "content": "noted timezone UTC-3 preference"},
+            ],
+            source="session:consolidate-layers",
+        )
+
+        assert result["status"] == "ok"
+        record_id = str(result["record"]["id"])
+        resource_files = list(store.resources_path.glob("conv_*.jsonl"))
+        rows: list[dict[str, object]] = []
+        for path in resource_files:
+            rows.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+        persisted = next(row for row in rows if str(row.get("id")) == record_id)
+        assert "user:" in str(persisted.get("text", ""))
+        assert "assistant:" in str(persisted.get("text", ""))
+
+        category = str(result["record"]["category"])
+        category_md = store._category_file_path(category).read_text(encoding="utf-8")
+        assert "Top Sources" in category_md
+        assert "Recent Items" in category_md
+
+    asyncio.run(_scenario())
+
+
+def test_memory_delete_by_prefixes_prunes_layer_files_and_backend_index(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    keep = store.add("keep layer row", source="session:keep")
+    drop = store.add("drop layer row", source="session:drop")
+
+    deleted = store.delete_by_prefixes([drop.id[:8]], limit=1)
+
+    assert deleted["deleted_count"] == 1
+    assert int(deleted["backend_deleted"]) >= 1
+    keep_item_payload = json.loads(store._item_file_path(keep.category).read_text(encoding="utf-8"))
+    item_ids = {str(row.get("id", "")) for row in keep_item_payload.get("items", []) if isinstance(row, dict)}
+    assert keep.id in item_ids
+    assert drop.id not in item_ids
+
+    backend_rows = store.backend.fetch_layer_records(layer="item", limit=10)
+    backend_ids = {str(row.get("record_id", "")) for row in backend_rows}
+    assert drop.id not in backend_ids

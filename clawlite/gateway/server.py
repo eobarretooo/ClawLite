@@ -568,6 +568,8 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         emotional_tracking=bool(
             getattr(config.agents.defaults.memory, "emotional_tracking", False)
         ),
+        memory_backend_name=str(config.agents.defaults.memory.backend or "sqlite"),
+        memory_backend_url=str(config.agents.defaults.memory.pgvector_url or ""),
     )
     memory_monitor = MemoryMonitor(memory) if bool(getattr(config.agents.defaults.memory, "proactive", False)) else None
     tools.register(MemoryRecallTool(memory))

@@ -17,6 +17,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
 
+from clawlite.core.memory_backend import MemoryBackend, resolve_memory_backend
+
 try:
     from rank_bm25 import BM25Okapi
 except Exception:  # pragma: no cover
@@ -252,6 +254,8 @@ class MemoryStore:
         memory_auto_categorize: bool = False,
         emotional_tracking: bool = False,
         memory_home: str | Path | None = None,
+        memory_backend_name: str = "sqlite",
+        memory_backend_url: str = "",
     ) -> None:
         base_history = Path(history_path) if history_path else (Path(db_path) if db_path else (Path.home() / ".clawlite" / "state" / "memory.jsonl"))
         self.path = base_history  # Backward-compatible alias.
@@ -300,6 +304,12 @@ class MemoryStore:
         self.semantic_enabled = bool(semantic_enabled)
         self.memory_auto_categorize = bool(memory_auto_categorize)
         self.emotional_tracking = bool(emotional_tracking)
+        self.memory_backend_name = str(memory_backend_name or "sqlite").strip().lower() or "sqlite"
+        self.memory_backend_url = str(memory_backend_url or "")
+        self.backend: MemoryBackend = resolve_memory_backend(
+            backend_name=self.memory_backend_name,
+            pgvector_url=self.memory_backend_url,
+        )
 
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         self.memory_home.mkdir(parents=True, exist_ok=True)
@@ -330,6 +340,10 @@ class MemoryStore:
         self._ensure_file(self.embeddings_path, default="")
         self._ensure_json_file(self.profile_path, self._default_profile())
         self._ensure_json_file(self.privacy_path, self._default_privacy())
+        try:
+            self.backend.initialize(self.memory_home)
+        except Exception:
+            pass
         self._diagnostics: dict[str, int | str] = {
             "history_read_corrupt_lines": 0,
             "history_repaired_files": 0,
@@ -1195,7 +1209,192 @@ class MemoryStore:
             return True
         return cls._recency_score(created_at) >= cls._TEMPORAL_RECENCY_RELEVANCE_MIN
 
-    def add(self, text: str, *, source: str = "user") -> MemoryRecord:
+    @staticmethod
+    def _safe_category_slug(category: str) -> str:
+        clean = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(category or "context").strip().lower()).strip("_")
+        return clean or "context"
+
+    def _resource_file_path_for_timestamp(self, stamp: str) -> Path:
+        parsed = self._parse_iso_timestamp(stamp)
+        if parsed.year <= 1:
+            parsed = datetime.now(timezone.utc)
+        date_part = parsed.strftime("%Y_%m_%d")
+        return self.resources_path / f"conv_{date_part}.jsonl"
+
+    def _item_file_path(self, category: str) -> Path:
+        return self.items_path / f"{self._safe_category_slug(category)}.json"
+
+    def _category_file_path(self, category: str) -> Path:
+        return self.categories_path / f"{self._safe_category_slug(category)}.md"
+
+    def _append_resource_layer(self, *, record: MemoryRecord, raw_text: str) -> None:
+        payload = {
+            "id": str(record.id or ""),
+            "text": str(raw_text or "").strip(),
+            "source": str(record.source or ""),
+            "category": str(record.category or "context"),
+            "created_at": str(record.created_at or ""),
+            "layer": MemoryLayer.RESOURCE.value,
+        }
+        if not payload["id"] or not payload["text"]:
+            return
+        resource_file = self._resource_file_path_for_timestamp(payload["created_at"])
+        self._ensure_file(resource_file, default="")
+        with self._locked_file(resource_file, "a", exclusive=True) as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            fh.flush()
+        try:
+            self.backend.upsert_layer_record(
+                layer=MemoryLayer.RESOURCE.value,
+                record_id=payload["id"],
+                payload=payload,
+                category=payload["category"],
+                created_at=payload["created_at"],
+                updated_at=payload["created_at"],
+            )
+        except Exception:
+            pass
+
+    def _load_category_items(self, category: str) -> list[dict[str, Any]]:
+        item_path = self._item_file_path(category)
+        if not item_path.exists():
+            return []
+        try:
+            payload = json.loads(item_path.read_text(encoding="utf-8") or "{}")
+        except Exception:
+            return []
+        if not isinstance(payload, dict):
+            return []
+        rows = payload.get("items", [])
+        if not isinstance(rows, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("id", "")).strip():
+                out.append(row)
+        return out
+
+    def _write_category_items(self, category: str, rows: list[dict[str, Any]]) -> None:
+        item_path = self._item_file_path(category)
+        item_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 1,
+            "category": str(category or "context"),
+            "updated_at": self._utcnow_iso(),
+            "items": rows,
+        }
+        item_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _update_category_summary_file(self, category: str) -> None:
+        rows = self._load_category_items(category)
+        category_path = self._category_file_path(category)
+        category_path.parent.mkdir(parents=True, exist_ok=True)
+        now_iso = self._utcnow_iso()
+        sources: Counter[str] = Counter()
+        for row in rows:
+            sources[str(row.get("source", "unknown") or "unknown")] += 1
+        top_sources = [
+            f"- {source}: {count}"
+            for source, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))[:5]
+        ]
+        recent_lines = [
+            f"- {str(row.get('id', '') or '')}: {str(row.get('text', '') or '').strip()[:160]}"
+            for row in rows[-5:]
+        ]
+        body = [
+            f"# Category: {category}",
+            "",
+            f"Updated: {now_iso}",
+            f"Total items: {len(rows)}",
+            "",
+            "## Top Sources",
+            *(top_sources or ["- none"]),
+            "",
+            "## Recent Items",
+            *(recent_lines or ["- none"]),
+            "",
+        ]
+        category_path.write_text("\n".join(body), encoding="utf-8")
+
+    def _upsert_item_layer(self, record: MemoryRecord) -> None:
+        category = str(record.category or "context")
+        rows = self._load_category_items(category)
+        row_payload = self._serialize_hit(record)
+        updated_rows: list[dict[str, Any]] = []
+        found = False
+        for row in rows:
+            if str(row.get("id", "")).strip() == record.id:
+                updated_rows.append(row_payload)
+                found = True
+            else:
+                updated_rows.append(row)
+        if not found:
+            updated_rows.append(row_payload)
+        self._write_category_items(category, updated_rows)
+        self._update_category_summary_file(category)
+        category_path = self._category_file_path(category)
+        now_iso = self._utcnow_iso()
+        try:
+            self.backend.upsert_layer_record(
+                layer=MemoryLayer.ITEM.value,
+                record_id=str(record.id),
+                payload=row_payload,
+                category=category,
+                created_at=str(record.created_at or ""),
+                updated_at=str(record.updated_at or record.created_at or ""),
+            )
+            self.backend.upsert_layer_record(
+                layer=MemoryLayer.CATEGORY.value,
+                record_id=str(record.id),
+                payload={
+                    "category": category,
+                    "path": str(category_path),
+                    "updated_at": now_iso,
+                    "total_items": len(updated_rows),
+                },
+                category=category,
+                created_at=str(record.created_at or now_iso),
+                updated_at=now_iso,
+            )
+        except Exception:
+            pass
+
+    def _persist_layer_artifacts(self, record: MemoryRecord, *, raw_resource_text: str) -> None:
+        self._append_resource_layer(record=record, raw_text=raw_resource_text)
+        self._upsert_item_layer(record)
+
+    def _prune_item_and_category_layers(self, record_ids: set[str]) -> int:
+        if not record_ids:
+            return 0
+        deleted = 0
+        for item_file in self.items_path.glob("*.json"):
+            try:
+                payload = json.loads(item_file.read_text(encoding="utf-8") or "{}")
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            category = str(payload.get("category", item_file.stem) or item_file.stem)
+            rows = payload.get("items", [])
+            if not isinstance(rows, list):
+                continue
+            kept: list[dict[str, Any]] = []
+            removed_here = 0
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row_id = str(row.get("id", "")).strip()
+                if row_id and row_id in record_ids:
+                    removed_here += 1
+                    continue
+                kept.append(row)
+            if removed_here > 0:
+                deleted += removed_here
+                self._write_category_items(category, kept)
+                self._update_category_summary_file(category)
+        return deleted
+
+    def add(self, text: str, *, source: str = "user", raw_resource_text: str | None = None) -> MemoryRecord:
         clean = text.strip()
         if not clean:
             raise ValueError("memory text must not be empty")
@@ -1211,6 +1410,10 @@ class MemoryStore:
         with self._locked_file(self.history_path, "a", exclusive=True) as fh:
             fh.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
             fh.flush()
+        try:
+            self._persist_layer_artifacts(record=row, raw_resource_text=str(raw_resource_text or clean))
+        except Exception:
+            pass
         embedding = self._generate_embedding(clean)
         if embedding is not None:
             try:
@@ -1505,6 +1708,17 @@ class MemoryStore:
         if not lines:
             return None
 
+        source_lines: list[str] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", "")).strip().lower()
+            content = " ".join(str(msg.get("content", "") or "").split())
+            if role not in {"user", "assistant"} or not content:
+                continue
+            source_lines.append(f"{role}: {content}")
+        resource_text = "\n".join(source_lines).strip()
+
         summary_lines = lines[-6:]
         signature = self._chunk_signature(summary_lines)
 
@@ -1527,7 +1741,7 @@ class MemoryStore:
                 return None
 
             summary = "\n".join(summary_lines)
-            row = self.add(summary, source=source)
+            row = self.add(summary, source=source, raw_resource_text=(resource_text or summary))
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -1677,6 +1891,8 @@ class MemoryStore:
                 "history_deleted": 0,
                 "curated_deleted": 0,
                 "embeddings_deleted": 0,
+                "layer_deleted": 0,
+                "backend_deleted": 0,
                 "deleted_count": 0,
             }
 
@@ -1705,6 +1921,8 @@ class MemoryStore:
                 "history_deleted": 0,
                 "curated_deleted": 0,
                 "embeddings_deleted": 0,
+                "layer_deleted": 0,
+                "backend_deleted": 0,
                 "deleted_count": 0,
             }
 
@@ -1712,6 +1930,8 @@ class MemoryStore:
         history_deleted = 0
         curated_deleted = 0
         embeddings_deleted = 0
+        backend_deleted = 0
+        layer_deleted = 0
 
         try:
             with self._locked_file(self.history_path, "r+", exclusive=True) as fh:
@@ -1762,12 +1982,24 @@ class MemoryStore:
         except Exception as exc:
             self._diagnostics["last_error"] = str(exc)
 
+        try:
+            layer_deleted = self._prune_item_and_category_layers(selected_lookup)
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+        try:
+            backend_deleted = int(self.backend.delete_layer_records(selected_lookup) or 0)
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
         deleted_ids = [rid for rid in selected_ids if rid in selected_lookup]
         return {
             "deleted_ids": deleted_ids,
             "history_deleted": history_deleted,
             "curated_deleted": curated_deleted,
             "embeddings_deleted": embeddings_deleted,
+            "layer_deleted": layer_deleted,
+            "backend_deleted": backend_deleted,
             "deleted_count": len(deleted_ids),
         }
 

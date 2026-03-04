@@ -981,6 +981,8 @@ def _build_memory_store(config: AppConfig) -> MemoryStore:
         db_path=Path(config.state_path).expanduser() / "memory.jsonl",
         semantic_enabled=semantic_enabled,
         memory_auto_categorize=auto_categorize,
+        memory_backend_name=str(config.agents.defaults.memory.backend or "sqlite"),
+        memory_backend_url=str(config.agents.defaults.memory.pgvector_url or ""),
     )
 
 
