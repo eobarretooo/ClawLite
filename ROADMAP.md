@@ -1,29 +1,29 @@
 # ClawLite Roadmap
 
-## P0 — Estabilidade do núcleo
+## P0 — Core stability
 
-- Consolidar fluxo único de execução do agente (CLI + canais + gateway)
-- Expandir cobertura de testes de integração do scheduler (cron/heartbeat)
-- Endurecer validação de entrada em canais e tools com I/O externo
+- Consolidate a single agent execution flow (CLI + channels + gateway)
+- Expand scheduler integration test coverage (cron/heartbeat)
+- Harden input validation in channels and tools with external I/O
 
-## P1 — Autonomia operacional
+## P1 — Operational autonomy
 
-- Fechar operação 24/7 em Linux com supervisão e recuperação automática
-- Melhorar entrega proativa por canais com observabilidade mínima
-- Fortalecer memória de longo prazo e recuperação de contexto por sessão
+- Close 24/7 Linux operations with supervision and automatic recovery
+- Improve proactive channel delivery with minimum observability
+- Strengthen long-term memory and per-session context recovery
 
-## P2 — Ecossistema
+## P2 — Ecosystem
 
-- Melhorar experiência de skills do usuário (discovery, execução, diagnóstico)
-- Evoluir integração MCP e providers especializados
-- Publicar guias de operação e release mais objetivos para deploy pessoal
+- Improve user skills experience (discovery, execution, diagnostics)
+- Evolve MCP integration and specialized providers
+- Publish more objective operations and release guides for personal deploys
 
-## Critério mínimo por release
+## Minimum release criteria
 
-1. `pytest -q` passando
-2. CLI principal sem regressão (`start`, `run`, `onboard`, `cron`, `skills`)
-3. API principal funcionando (`/health`, `/v1/chat`, `/v1/cron/*`)
-4. Documentação alinhada com o comportamento real
+1. `pytest -q` passing
+2. Main CLI without regressions (`start`, `run`, `onboard`, `cron`, `skills`)
+3. Main API working (`/health`, `/v1/chat`, `/v1/cron/*`)
+4. Documentation aligned with real behavior
 
 ## ClawLite Parity Roadmap (nanobot + OpenClaw)
 
@@ -32,16 +32,16 @@
 - [x] Enforce stronger tool safety policy for exec, web, and mcp.
 - [x] Align gateway with production-grade contract.
 - [x] Upgrade heartbeat to HEARTBEAT_OK + persisted check state.
-- Progresso 2026-03-04: camada de compatibilidade do gateway entregue (`/api/status`, `/api/message`, `/api/token`, `/ws`, `/`).
-- Progresso 2026-03-04: auth do gateway agora aplica hardening automatico (`off` -> `required`) em host nao-loopback quando token esta configurado; fallback de env legado `CLAWLITE_GATEWAY_TOKEN` suportado.
-- Progresso 2026-03-04: contrato HTTP do gateway estabilizado com metadata (`contract_version`, `server_time`, `generated_at`, `uptime_s`), envelope de erro com `code`, e alias `/api/diagnostics` com paridade de `/v1/diagnostics`.
-- Progresso 2026-03-04: heartbeat agora persiste check-state explícito com migração backward-compatible e escrita atômica fail-soft.
-- Progresso 2026-03-04: ToolRegistry agora aplica política centralizada por canal para tools de risco (`exec`, `web_fetch`, `web_search`, `mcp`) com erro determinístico `tool_blocked_by_safety_policy:<tool>:<channel>`.
-- Progresso 2026-03-04: Discord/Slack/WhatsApp agora têm envio outbound ativo com `httpx` (sem loops inbound neste incremento).
+- Progress 2026-03-04: gateway compatibility layer delivered (`/api/status`, `/api/message`, `/api/token`, `/ws`, `/`).
+- Progress 2026-03-04: gateway auth now applies automatic hardening (`off` -> `required`) on non-loopback hosts when a token is configured; legacy env fallback `CLAWLITE_GATEWAY_TOKEN` is supported.
+- Progress 2026-03-04: gateway HTTP contract stabilized with metadata (`contract_version`, `server_time`, `generated_at`, `uptime_s`), error envelope with `code`, and alias `/api/diagnostics` with parity to `/v1/diagnostics`.
+- Progress 2026-03-04: heartbeat now persists explicit check-state with backward-compatible migration and fail-soft atomic write.
+- Progress 2026-03-04: ToolRegistry now applies a centralized per-channel policy for risky tools (`exec`, `web_fetch`, `web_search`, `mcp`) with deterministic error `tool_blocked_by_safety_policy:<tool>:<channel>`.
+- Progress 2026-03-04: Discord/Slack/WhatsApp now have active outbound sending with `httpx` (no inbound loops in this increment).
 
 ### NEXT (Operational maturity)
 - [ ] Improve prompt/memory pipeline.
-- Progresso 2026-03-04: `agents.defaults.memory_window` conectado ponta-a-ponta (config -> gateway runtime -> engine -> `sessions.read(limit=...)`) com visibilidade em `clawlite status` e `clawlite diagnostics`.
+- Progress 2026-03-04: `agents.defaults.memory_window` connected end-to-end (config -> gateway runtime -> engine -> `sessions.read(limit=...)`) with visibility in `clawlite status` and `clawlite diagnostics`.
 - [ ] Expand provider + config capability.
 - [ ] Align workspace/bootstrap/templates with runtime lifecycle.
 - [ ] Expand CLI operations.
@@ -52,26 +52,26 @@
 - [ ] Memory/session retention and compaction.
 - [ ] Multi-channel concurrency optimization.
 
-## Plano do usuário — objetivos "100%" (execução integrada)
+## User plan — "100%" goals (integrated execution)
 
-### Mapeamento prático
-- **Telegram 100% (typing, formatting, robust delivery)** — **Status: parcial** (`P1` + `FUTURE`, paridade `NEXT`)  
-  Critério 100%: typing indicator em tempo real, formatação consistente Markdown/HTML segura, retries com backoff + idempotência, confirmação de entrega e fallback de erro observável por mensagem.
-- **Core 100% (Memory, Agents, Heartbeat, Soul, Tools, User) com autonomia nível OpenClaw** — **Status: parcial** (`P0` + `P1`, paridade `NOW`/`NEXT`)  
-  Critério 100%: heartbeat estável 24/7 com estado persistido, memória curta+longa com recuperação por sessão, loop de agente proativo sem intervenção manual, políticas de tools por canal já aplicadas e fluxo usuário-sessão auditável ponta a ponta.
-- **Providers 100% (robust API handling)** — **Status: parcial** (`P1` + `P2`, paridade `NEXT`)  
-  Critério 100%: timeouts/retries/circuit-breaker por provider, classificação determinística de erros (auth, quota, rate, transient, fatal), fallback configurável entre providers e testes de integração cobrindo falhas reais.
-- **Skills 100%** — **Status: parcial** (`P2`, paridade `NEXT`)  
-  Critério 100%: discovery confiável, execução isolada com diagnóstico claro, contratos de entrada/saída validados e cobertura de testes para skills críticas.
-- **Autonomy 100%** — **Status: parcial** (`P1`, paridade `NEXT`)  
-  Critério 100%: operação contínua sem operador, recuperação automática após falha, decisões proativas com limites de segurança e observabilidade mínima para incidentes.
-- **Subagents 100%** — **Status: parcial** (`FUTURE`)  
-  Critério 100%: orquestração de subagentes com roteamento por tarefa, isolamento de contexto, controle de concorrência e síntese final consistente no agente principal.
-- **Futuro: memória avançada + modo sem aprovação (notificação-only) + self-improvement** — **Status: ausente** (`FUTURE`)  
-  Critério 100%: memória semântica com compactação/retensão, política operacional `no-approval` com trilha de auditoria e notificações passivas, e ciclo de auto-melhoria orientado por métricas sem quebrar guardrails de segurança.
+### Practical mapping
+- **Telegram 100% (typing, formatting, robust delivery)** — **Status: partial** (`P1` + `FUTURE`, parity `NEXT`)  
+  100% criterion: real-time typing indicator, consistent safe Markdown/HTML formatting, retries with backoff + idempotency, delivery confirmation, and observable per-message error fallback.
+- **Core 100% (Memory, Agents, Heartbeat, Soul, Tools, User) with OpenClaw-level autonomy** — **Status: partial** (`P0` + `P1`, parity `NOW`/`NEXT`)  
+  100% criterion: stable 24/7 heartbeat with persisted state, short+long memory with per-session recovery, proactive agent loop without manual intervention, per-channel tool policies already applied, and end-to-end auditable user-session flow.
+- **Providers 100% (robust API handling)** — **Status: partial** (`P1` + `P2`, parity `NEXT`)  
+  100% criterion: timeouts/retries/circuit-breaker per provider, deterministic error classification (auth, quota, rate, transient, fatal), configurable fallback between providers, and integration tests covering real failures.
+- **Skills 100%** — **Status: partial** (`P2`, parity `NEXT`)  
+  100% criterion: reliable discovery, isolated execution with clear diagnostics, validated input/output contracts, and test coverage for critical skills.
+- **Autonomy 100%** — **Status: partial** (`P1`, parity `NEXT`)  
+  100% criterion: continuous operation without an operator, automatic post-failure recovery, proactive decisions with safety limits, and minimum incident observability.
+- **Subagents 100%** — **Status: partial** (`FUTURE`)  
+  100% criterion: subagent orchestration with task-based routing, context isolation, concurrency control, and consistent final synthesis in the main agent.
+- **Future: advanced memory + no-approval mode (notification-only) + self-improvement** — **Status: missing** (`FUTURE`)  
+  100% criterion: semantic memory with compaction/retention, `no-approval` operational policy with audit trail and passive notifications, and a metrics-driven self-improvement cycle without breaking safety guardrails.
 
-### Ordem de execução sugerida (curta)
-1. Fechar `P0` do core e estabilizar operação 24/7 (`P1`) para base de autonomia.
-2. Completar Telegram + providers robustos para confiabilidade de canal e inferência.
-3. Consolidar skills e autonomia proativa com observabilidade estruturada.
-4. Entrar em `FUTURE` com subagentes, memória avançada e modo `no-approval` com notificação-only.
+### Suggested execution order (short)
+1. Close core `P0` and stabilize 24/7 operations (`P1`) as the autonomy foundation.
+2. Complete Telegram + robust providers for channel and inference reliability.
+3. Consolidate skills and proactive autonomy with structured observability.
+4. Move into `FUTURE` with subagents, advanced memory, and `no-approval` mode with notification-only.
