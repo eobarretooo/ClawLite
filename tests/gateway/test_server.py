@@ -393,7 +393,7 @@ def test_gateway_auth_auto_hardening_emits_log_event(tmp_path: Path) -> None:
         logger.remove(sink_id)
 
     joined = "\n".join(rows)
-    assert "gateway.auth" in joined
+    assert "[gateway.auth]" in joined.lower()
     assert "gateway auth auto-hardened" in joined
 
 

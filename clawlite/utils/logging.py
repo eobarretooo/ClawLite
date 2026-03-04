@@ -6,18 +6,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from clawlite.utils.logger import render_loguru_message
+from clawlite.utils.logger import render_loguru_message, sidebar_text_lines
 
 _LOGGING_CONFIGURED = False
 _DEFAULT_EXTRA = {"event": "-", "session": "-", "channel": "-", "tool": "-", "run": "-"}
-_ANSI_RESET = "\x1b[0m"
-_LEVEL_COLOR = {
-    "DEBUG": "\x1b[34m",
-    "INFO": "\x1b[32m",
-    "WARNING": "\x1b[33m",
-    "ERROR": "\x1b[31m",
-    "CRITICAL": "\x1b[31m",
-}
 
 
 def _patch_record(record: dict) -> None:
@@ -38,26 +30,6 @@ def _truthy(value: str | None, *, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def _event_color(event: str) -> str | None:
-    if event == "agent.loop":
-        return "\x1b[36m"
-    if event.startswith("channel."):
-        return "\x1b[35m"
-    if event.startswith("tool."):
-        return "\x1b[37m"
-    if event.startswith("scheduler."):
-        return "\x1b[34m"
-    if event.startswith("gateway."):
-        return "\x1b[32m"
-    return None
-
-
-def _colorize(text: str, color: str | None, *, enable_color: bool) -> str:
-    if not enable_color or not color:
-        return text
-    return f"{color}{text}{_ANSI_RESET}"
-
-
 def _escape_braces(text: str) -> str:
     return text.replace("{", "{{").replace("}", "}}")
 
@@ -73,28 +45,29 @@ def _stderr_supports_color() -> bool:
 
 def _make_text_formatter(*, enable_color: bool):
     def _formatter(record: dict) -> str:
-        extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
-        event = str(extra.get("event", "-") or "-")
-        timestamp = record["time"].strftime("%Y-%m-%d %H:%M:%S")
-        level_name = str(record["level"].name)
-        level = _colorize(level_name, _LEVEL_COLOR.get(level_name), enable_color=enable_color)
-        module = str(record.get("name") or "-")
-        colored_event = _colorize(event, _event_color(event), enable_color=enable_color)
-        message = str(record.get("message", ""))
-        exception = record.get("exception")
-        exception_text = f"\n{exception}" if exception else ""
-        safe_level = _escape_braces(level)
-        safe_event = _escape_braces(colored_event)
-        safe_module = _escape_braces(module)
-        safe_message = _escape_braces(message)
-        safe_exception = _escape_braces(exception_text)
-        return f"{timestamp} | {safe_level} | {safe_event} | {safe_module} | {safe_message}{safe_exception}\n"
+        lines = sidebar_text_lines(record, enable_color=enable_color)
+        escaped = [_escape_braces(line) for line in lines]
+        return "\n".join(escaped) + "\n"
 
     return _formatter
 
 
 def _text_format(record: dict) -> str:
     return _make_text_formatter(enable_color=False)(record)
+
+
+def _is_clawlite_record(record: dict) -> bool:
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+    event = str(extra.get("event", "-") or "-")
+    name = str(record.get("name") or "")
+    return event != "-" or name.startswith("clawlite")
+
+
+def _runtime_filter(record: dict) -> bool:
+    level_no = int(getattr(record.get("level"), "no", 20))
+    if level_no <= 10 and not _is_clawlite_record(record):
+        return False
+    return True
 
 
 def setup_logging(level: str | None = None) -> None:
@@ -118,6 +91,7 @@ def setup_logging(level: str | None = None) -> None:
                 sys.stderr,
                 level=resolved_level,
                 format="{message}",
+                filter=_runtime_filter,
                 enqueue=False,
                 backtrace=False,
                 diagnose=False,
@@ -127,6 +101,7 @@ def setup_logging(level: str | None = None) -> None:
             base_logger.add(
                 render_loguru_message,
                 level=resolved_level,
+                filter=_runtime_filter,
                 enqueue=False,
                 backtrace=False,
                 diagnose=False,
@@ -140,6 +115,7 @@ def setup_logging(level: str | None = None) -> None:
             str(path),
             level=resolved_level,
             format=_text_format if log_format != "json" else "{message}",
+            filter=_runtime_filter,
             enqueue=True,
             backtrace=False,
             diagnose=False,

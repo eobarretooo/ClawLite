@@ -27,13 +27,10 @@ def test_plain_logger_uses_default_extra_fields(monkeypatch) -> None:
     logger.remove(sink_id)
 
     assert rows
-    line = rows[0]
-    parts = line.strip().split(" | ", 4)
-    assert len(parts) == 5
-    assert parts[1] == "INFO"
-    assert parts[2] == "-"
-    assert parts[3].endswith("test_logging")
-    assert parts[4] == "plain log line"
+    line = rows[0].strip()
+    assert line.startswith("[")
+    assert "] ┃ [" in line
+    assert line.endswith(": plain log line")
 
 
 def test_cron_and_telegram_plain_logger_calls_work(monkeypatch, tmp_path: Path) -> None:
@@ -61,7 +58,7 @@ def test_cron_and_telegram_plain_logger_calls_work(monkeypatch, tmp_path: Path) 
     logger.remove(sink_id)
 
     joined = "\n".join(rows)
-    assert " | - | " in joined
+    assert " ┃ [" in joined
     assert "cron service started" in joined
     assert "telegram channel starting" in joined
 
@@ -77,7 +74,7 @@ def test_logger_patcher_backfills_missing_extra_fields(monkeypatch) -> None:
     logger.remove(sink_id)
 
     assert rows
-    assert " | - | " in rows[0]
+    assert " ┃ [" in rows[0]
 
 
 def test_text_formatter_applies_level_and_event_colors() -> None:
@@ -92,8 +89,8 @@ def test_text_formatter_applies_level_and_event_colors() -> None:
     }
 
     line = formatter(record)
-    assert "\x1b[32mINFO\x1b[0m" in line
-    assert "\x1b[36magent.loop\x1b[0m" in line
+    assert "\x1b[36m┃\x1b[0m" in line
+    assert "[Agent.Loop]" in line
 
 
 def test_text_formatter_handles_braces_in_message_and_exception(monkeypatch) -> None:
