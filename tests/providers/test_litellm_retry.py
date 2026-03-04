@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -209,3 +210,22 @@ def test_litellm_provider_passes_reasoning_effort_for_openai() -> None:
         assert payload["reasoning_effort"] == "high"
 
     asyncio.run(_scenario())
+
+
+def test_litellm_provider_diagnostics_contract_and_secret_safety() -> None:
+    provider = LiteLLMProvider(
+        base_url="https://api.example/v1",
+        api_key="sk-secret-123456",
+        model="gpt-test",
+        provider_name="openai",
+    )
+    diag = provider.diagnostics()
+    assert diag["provider"] == "litellm"
+    assert diag["provider_name"] == "openai"
+    assert diag["model"] == "gpt-test"
+    assert isinstance(diag["counters"], dict)
+    assert "requests" in diag["counters"]
+    encoded = json.dumps(diag).lower()
+    assert "api_key" not in encoded
+    assert "access_token" not in encoded
+    assert "sk-secret-123456" not in encoded

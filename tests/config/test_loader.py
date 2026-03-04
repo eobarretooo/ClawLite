@@ -331,3 +331,32 @@ def test_load_config_agent_defaults_session_retention_messages_camel_case(tmp_pa
 
     cfg = load_config(path)
     assert cfg.agents.defaults.session_retention_messages == 654
+
+
+def test_load_config_gateway_diagnostics_include_provider_telemetry_snake_and_camel(tmp_path: Path) -> None:
+    path_snake = tmp_path / "snake.json"
+    path_snake.write_text(
+        json.dumps({"gateway": {"diagnostics": {"include_provider_telemetry": False}}}),
+        encoding="utf-8",
+    )
+    cfg_snake = load_config(path_snake)
+    assert cfg_snake.gateway.diagnostics.include_provider_telemetry is False
+
+    path_camel = tmp_path / "camel.json"
+    path_camel.write_text(
+        json.dumps({"gateway": {"diagnostics": {"includeProviderTelemetry": False}}}),
+        encoding="utf-8",
+    )
+    cfg_camel = load_config(path_camel)
+    assert cfg_camel.gateway.diagnostics.include_provider_telemetry is False
+
+
+def test_load_config_gateway_diagnostics_include_provider_telemetry_env_override(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"gateway": {"diagnostics": {"include_provider_telemetry": True}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_GATEWAY_DIAGNOSTICS_INCLUDE_PROVIDER_TELEMETRY", "false")
+    cfg = load_config(path)
+    assert cfg.gateway.diagnostics.include_provider_telemetry is False

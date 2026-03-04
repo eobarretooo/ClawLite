@@ -30,6 +30,44 @@ class FailingProvider:
         raise RuntimeError(self.message)
 
 
+class ProviderWithDiagnostics:
+    async def complete(self, *, messages, tools):
+        return LLMResult(text="pong", model="fake/test", tool_calls=[], metadata={})
+
+    def diagnostics(self) -> dict[str, object]:
+        return {
+            "provider": "fake_provider",
+            "model": "fake/test",
+            "counters": {"requests": 12, "successes": 11},
+        }
+
+
+class ProviderWithUnsafeDiagnostics:
+    async def complete(self, *, messages, tools):
+        return LLMResult(text="pong", model="fake/test", tool_calls=[], metadata={})
+
+    def diagnostics(self) -> dict[str, object]:
+        return {
+            "provider": "fake_provider",
+            "model": "fake/test",
+            "api_key": "top-level-secret",
+            "token_count": 999,
+            "nested": {
+                "access_token": "nested-secret",
+                "safe": "ok",
+                "deep": [
+                    {"authorization": "Bearer should-not-leak", "value": "retained"},
+                    {"meta": {"credentials": "cred-secret", "message": "still-safe"}},
+                ],
+            },
+            "items": [
+                {"auth_header": "dont-leak", "status": "clean"},
+                {"credential_type": "token", "note": "keep-note"},
+            ],
+            "counters": {"requests": 3, "successes": 2},
+        }
+
+
 def test_gateway_chat_endpoint(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
@@ -377,6 +415,7 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "heartbeat" in payload
         assert "engine" in payload
         assert "retrieval_metrics" in payload["engine"]
+        assert "provider" in payload["engine"]
         retrieval = payload["engine"]["retrieval_metrics"]
         assert set(retrieval.keys()) == {
             "route_counts",
@@ -418,6 +457,116 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert disabled_alias.status_code == 404
         assert disabled_alias.json()["error"] == "diagnostics_disabled"
         assert disabled_alias.json()["code"] == "diagnostics_disabled"
+
+
+def test_gateway_diagnostics_include_provider_telemetry_when_enabled(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {
+                "enabled": True,
+                "require_auth": False,
+                "include_provider_telemetry": True,
+            },
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = ProviderWithDiagnostics()
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+        assert "provider" in payload["engine"]
+        assert payload["engine"]["provider"]["provider"] == "fake_provider"
+
+        alias_payload = client.get("/api/diagnostics").json()
+        assert alias_payload["engine"]["provider"] == payload["engine"]["provider"]
+
+
+def test_gateway_diagnostics_provider_telemetry_sanitizes_nested_secrets(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {
+                "enabled": True,
+                "require_auth": False,
+                "include_provider_telemetry": True,
+            },
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = ProviderWithUnsafeDiagnostics()
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+        provider_payload = payload["engine"]["provider"]
+        rendered = json.dumps(provider_payload)
+
+        forbidden_keys = [
+            "api_key",
+            "access_token",
+            "token",
+            "authorization",
+            "auth",
+            "credential",
+            "credentials",
+            "secret",
+            "password",
+        ]
+        for marker in forbidden_keys:
+            assert f'"{marker}"' not in rendered
+
+        for secret in [
+            "top-level-secret",
+            "nested-secret",
+            "Bearer should-not-leak",
+            "cred-secret",
+            "dont-leak",
+        ]:
+            assert secret not in rendered
+
+        assert provider_payload["provider"] == "fake_provider"
+        assert provider_payload["model"] == "fake/test"
+        assert provider_payload["diagnostics_available"] is True
+        assert provider_payload["nested"]["safe"] == "ok"
+        assert provider_payload["nested"]["deep"][0]["value"] == "retained"
+        assert provider_payload["nested"]["deep"][1]["meta"]["message"] == "still-safe"
+        assert provider_payload["items"][0]["status"] == "clean"
+        assert provider_payload["items"][1]["note"] == "keep-note"
+
+
+def test_gateway_diagnostics_omits_provider_telemetry_when_disabled(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {
+                "enabled": True,
+                "require_auth": False,
+                "include_provider_telemetry": False,
+            },
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = ProviderWithDiagnostics()
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+        assert "provider" not in payload["engine"]
+
+        alias_payload = client.get("/api/diagnostics").json()
+        assert "provider" not in alias_payload["engine"]
+        assert alias_payload["engine"] == payload["engine"]
 
 
 def test_gateway_startup_rollback_when_subsystem_fails(tmp_path: Path) -> None:

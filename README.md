@@ -123,7 +123,7 @@ Base URL (default): `http://127.0.0.1:8787`
 - `POST /v1/chat`: chat execution.
 - `WS /v1/ws`: WebSocket chat.
 - `GET /v1/status`: control-plane status + auth posture.
-- `GET /v1/diagnostics`: operational diagnostics snapshot (includes `engine.retrieval_metrics`).
+- `GET /v1/diagnostics`: operational diagnostics snapshot (includes `engine.retrieval_metrics` and optional `engine.provider` telemetry).
 - `POST /v1/control/*`: heartbeat/autonomy/dead-letter control endpoints.
 - `POST /v1/cron/add`, `GET /v1/cron/list`, `DELETE /v1/cron/{job_id}`: scheduler API.
 

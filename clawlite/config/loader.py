@@ -126,6 +126,14 @@ def _validate_config_keys(config: dict[str, Any]) -> None:
 
 
 def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
+    bool_tokens = {"1", "true", "yes", "on", "0", "false", "no", "off"}
+
+    def _parse_bool(value: str) -> bool | None:
+        token = str(value or "").strip().lower()
+        if token not in bool_tokens:
+            return None
+        return token in {"1", "true", "yes", "on"}
+
     out: dict[str, Any] = {}
     if include_model:
         model = os.getenv("CLAWLITE_MODEL", "").strip()
@@ -159,31 +167,19 @@ def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
         auth_token = os.getenv("CLAWLITE_GATEWAY_TOKEN", "").strip()
     if auth_token:
         out.setdefault("gateway", {}).setdefault("auth", {})["token"] = auth_token
-    auth_allow_loopback = os.getenv("CLAWLITE_GATEWAY_AUTH_ALLOW_LOOPBACK", "").strip().lower()
-    if auth_allow_loopback in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
-        out.setdefault("gateway", {}).setdefault("auth", {})["allow_loopback_without_auth"] = auth_allow_loopback in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+    auth_allow_loopback = _parse_bool(os.getenv("CLAWLITE_GATEWAY_AUTH_ALLOW_LOOPBACK", ""))
+    if auth_allow_loopback is not None:
+        out.setdefault("gateway", {}).setdefault("auth", {})["allow_loopback_without_auth"] = auth_allow_loopback
 
-    diag_enabled = os.getenv("CLAWLITE_GATEWAY_DIAGNOSTICS_ENABLED", "").strip().lower()
-    if diag_enabled in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
-        out.setdefault("gateway", {}).setdefault("diagnostics", {})["enabled"] = diag_enabled in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-    diag_auth = os.getenv("CLAWLITE_GATEWAY_DIAGNOSTICS_REQUIRE_AUTH", "").strip().lower()
-    if diag_auth in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
-        out.setdefault("gateway", {}).setdefault("diagnostics", {})["require_auth"] = diag_auth in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+    diag_enabled = _parse_bool(os.getenv("CLAWLITE_GATEWAY_DIAGNOSTICS_ENABLED", ""))
+    if diag_enabled is not None:
+        out.setdefault("gateway", {}).setdefault("diagnostics", {})["enabled"] = diag_enabled
+    diag_auth = _parse_bool(os.getenv("CLAWLITE_GATEWAY_DIAGNOSTICS_REQUIRE_AUTH", ""))
+    if diag_auth is not None:
+        out.setdefault("gateway", {}).setdefault("diagnostics", {})["require_auth"] = diag_auth
+    diag_provider_telemetry = _parse_bool(os.getenv("CLAWLITE_GATEWAY_DIAGNOSTICS_INCLUDE_PROVIDER_TELEMETRY", ""))
+    if diag_provider_telemetry is not None:
+        out.setdefault("gateway", {}).setdefault("diagnostics", {})["include_provider_telemetry"] = diag_provider_telemetry
     return out
 
 

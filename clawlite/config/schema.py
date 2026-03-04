@@ -51,6 +51,7 @@ class GatewayDiagnosticsConfig:
     enabled: bool = True
     require_auth: bool = True
     include_config: bool = False
+    include_provider_telemetry: bool = True
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> GatewayDiagnosticsConfig:
@@ -59,6 +60,9 @@ class GatewayDiagnosticsConfig:
             enabled=bool(data.get("enabled", True)),
             require_auth=bool(data.get("require_auth", data.get("requireAuth", True))),
             include_config=bool(data.get("include_config", data.get("includeConfig", False))),
+            include_provider_telemetry=bool(
+                data.get("include_provider_telemetry", data.get("includeProviderTelemetry", True))
+            ),
         )
 
 

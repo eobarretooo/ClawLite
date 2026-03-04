@@ -116,6 +116,67 @@ def _mask_secret(value: str, *, keep: int = 4) -> str:
     return f"{'*' * max(3, len(token) - keep)}{token[-keep:]}"
 
 
+_SENSITIVE_KEY_MARKERS: tuple[str, ...] = (
+    "api_key",
+    "access_token",
+    "token",
+    "authorization",
+    "auth",
+    "credential",
+    "credentials",
+    "secret",
+    "password",
+)
+
+
+def _is_sensitive_telemetry_key(key: Any) -> bool:
+    value = str(key or "").strip().lower()
+    if not value:
+        return False
+    return any(marker in value for marker in _SENSITIVE_KEY_MARKERS)
+
+
+def _sanitize_telemetry_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, nested in value.items():
+            if _is_sensitive_telemetry_key(key):
+                continue
+            sanitized[str(key)] = _sanitize_telemetry_payload(nested)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_telemetry_payload(item) for item in value]
+    return value
+
+
+def _provider_telemetry_snapshot(provider: Any) -> dict[str, Any]:
+    minimal: dict[str, Any] = {
+        "provider": str(getattr(provider, "provider_name", provider.__class__.__name__.lower()) or provider.__class__.__name__.lower()),
+        "model": str(getattr(provider, "model", "") or ""),
+        "diagnostics_available": False,
+        "counters": {},
+    }
+    diagnostics_fn = getattr(provider, "diagnostics", None)
+    if not callable(diagnostics_fn):
+        return minimal
+    try:
+        raw = diagnostics_fn()
+    except Exception:
+        return minimal
+    if not isinstance(raw, dict):
+        return minimal
+
+    telemetry = _sanitize_telemetry_payload(raw)
+    if not isinstance(telemetry, dict):
+        return minimal
+    telemetry.setdefault("provider", minimal["provider"])
+    telemetry.setdefault("model", minimal["model"])
+    telemetry["diagnostics_available"] = True
+    if not isinstance(telemetry.get("counters"), dict):
+        telemetry["counters"] = {}
+    return telemetry
+
+
 @dataclass(slots=True)
 class RuntimeContainer:
     config: AppConfig
@@ -686,6 +747,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "state_path": cfg.state_path,
                 "provider_model": cfg.agents.defaults.model,
             }
+        engine_payload: dict[str, Any] = {
+            "retrieval_metrics": runtime.engine.retrieval_metrics_snapshot(),
+        }
+        if cfg.gateway.diagnostics.include_provider_telemetry:
+            engine_payload["provider"] = _provider_telemetry_snapshot(runtime.engine.provider)
         return DiagnosticsResponse(
             schema_version="2026-03-02",
             contract_version=GATEWAY_CONTRACT_VERSION,
@@ -696,7 +762,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             channels=runtime.channels.status(),
             cron=runtime.cron.status(),
             heartbeat=runtime.heartbeat.status(),
-            engine={"retrieval_metrics": runtime.engine.retrieval_metrics_snapshot()},
+            engine=engine_payload,
             environment=environment,
         )
 

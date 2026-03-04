@@ -29,6 +29,7 @@ Main fields (summary):
 - `CLAWLITE_GATEWAY_AUTH_ALLOW_LOOPBACK` (`true/false`)
 - `CLAWLITE_GATEWAY_DIAGNOSTICS_ENABLED` (`true/false`)
 - `CLAWLITE_GATEWAY_DIAGNOSTICS_REQUIRE_AUTH` (`true/false`)
+- `CLAWLITE_GATEWAY_DIAGNOSTICS_INCLUDE_PROVIDER_TELEMETRY` (`true/false`)
 
 Note: provider-specific key variables (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, etc.) are still valid for provider credential resolution.
 
@@ -52,7 +53,8 @@ Note: provider-specific key variables (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `
     "diagnostics": {
       "enabled": true,
       "require_auth": true,
-      "include_config": false
+      "include_config": false,
+      "include_provider_telemetry": true
     },
     "heartbeat": {
       "enabled": true,

@@ -62,10 +62,17 @@ class CodexProvider(LLMProvider):
         }
 
     def diagnostics(self) -> dict[str, Any]:
-        payload = dict(self._diagnostics)
-        payload["consecutive_failures"] = int(self._consecutive_failures)
-        payload["circuit_open"] = bool(self._circuit_open_until > time.monotonic())
-        return payload
+        counters = dict(self._diagnostics)
+        counters["consecutive_failures"] = int(self._consecutive_failures)
+        counters["circuit_open"] = bool(self._circuit_open_until > time.monotonic())
+        return {
+            "provider": "codex",
+            "provider_name": "openai_codex",
+            "model": self.model,
+            "transport": "openai_compatible",
+            "counters": counters,
+            **counters,
+        }
 
     def _check_circuit(self) -> str | None:
         now = time.monotonic()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -128,3 +129,16 @@ def test_codex_provider_passes_reasoning_effort() -> None:
         assert payload["reasoning_effort"] == "medium"
 
     asyncio.run(_scenario())
+
+
+def test_codex_provider_diagnostics_contract_and_secret_safety() -> None:
+    provider = CodexProvider(model="codex-5.3", access_token="token-secret-xyz", account_id="org-abc")
+    diag = provider.diagnostics()
+    assert diag["provider"] == "codex"
+    assert diag["provider_name"] == "openai_codex"
+    assert diag["model"] == "codex-5.3"
+    assert isinstance(diag["counters"], dict)
+    assert "requests" in diag["counters"]
+    encoded = json.dumps(diag).lower()
+    assert "access_token" not in encoded
+    assert "token-secret-xyz" not in encoded

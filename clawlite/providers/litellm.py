@@ -80,10 +80,17 @@ class LiteLLMProvider(LLMProvider):
         }
 
     def diagnostics(self) -> dict[str, Any]:
-        payload = dict(self._diagnostics)
-        payload["consecutive_failures"] = int(self._consecutive_failures)
-        payload["circuit_open"] = bool(self._circuit_open_until > time.monotonic())
-        return payload
+        counters = dict(self._diagnostics)
+        counters["consecutive_failures"] = int(self._consecutive_failures)
+        counters["circuit_open"] = bool(self._circuit_open_until > time.monotonic())
+        return {
+            "provider": "litellm",
+            "provider_name": self.provider_name,
+            "model": self.model,
+            "transport": "openai_compatible" if self.openai_compatible else "native",
+            "counters": counters,
+            **counters,
+        }
 
     def _record_success(self) -> None:
         self._diagnostics["successes"] = int(self._diagnostics["successes"]) + 1

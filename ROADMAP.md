@@ -68,6 +68,7 @@
 - Retrieval observability delivered in runtime diagnostics (`engine.retrieval_metrics`)
   plus deterministic operator command `clawlite memory eval` for synthetic
   retrieval regression checks.
+- Provider telemetry visibility added to gateway diagnostics (`engine.provider`) with config/env control and secret-safe provider contracts.
 
 ### FUTURE (Scale + polish)
 

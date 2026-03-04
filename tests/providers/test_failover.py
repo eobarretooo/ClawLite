@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from clawlite.providers.base import LLMResult
 from clawlite.providers.failover import FailoverProvider
@@ -20,6 +21,14 @@ class _Provider:
 
     def get_default_model(self) -> str:
         return "test/model"
+
+    def diagnostics(self) -> dict[str, object]:
+        return {
+            "provider": "test",
+            "model": "test/model",
+            "token": "raw-secret-token",
+            "counters": {"requests": self.calls},
+        }
 
 
 def test_failover_provider_uses_fallback_for_retryable_primary_failure() -> None:
@@ -78,3 +87,20 @@ def test_failover_provider_tracks_fallback_failures() -> None:
         assert diag["fallback_failures"] == 1
 
     asyncio.run(_scenario())
+
+
+def test_failover_provider_diagnostics_contract_and_secret_safety() -> None:
+    primary = _Provider(result="p")
+    fallback = _Provider(result="f")
+    provider = FailoverProvider(primary=primary, fallback=fallback, fallback_model="openai/gpt-4.1-mini")
+    diag = provider.diagnostics()
+    assert diag["provider"] == "failover"
+    assert diag["provider_name"] == "failover"
+    assert diag["fallback_model"] == "openai/gpt-4.1-mini"
+    assert isinstance(diag["counters"], dict)
+    assert "primary" in diag
+    assert "fallback" in diag
+    assert "token" not in diag["primary"]
+    assert "token" not in diag["fallback"]
+    encoded = json.dumps(diag).lower()
+    assert "raw-secret-token" not in encoded
