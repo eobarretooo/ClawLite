@@ -132,7 +132,7 @@ def test_codex_provider_passes_reasoning_effort() -> None:
 
 
 def test_codex_provider_diagnostics_contract_and_secret_safety() -> None:
-    provider = CodexProvider(model="codex-5.3", access_token="token-secret-xyz", account_id="org-abc")
+    provider = CodexProvider(model="codex-5.3", access_token="test_access_token_value", account_id="org-abc")
     diag = provider.diagnostics()
     assert diag["provider"] == "codex"
     assert diag["provider_name"] == "openai_codex"
@@ -141,4 +141,4 @@ def test_codex_provider_diagnostics_contract_and_secret_safety() -> None:
     assert "requests" in diag["counters"]
     encoded = json.dumps(diag).lower()
     assert "access_token" not in encoded
-    assert "token-secret-xyz" not in encoded
+    assert "test_access_token_value" not in encoded

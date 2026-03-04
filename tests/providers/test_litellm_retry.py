@@ -215,7 +215,7 @@ def test_litellm_provider_passes_reasoning_effort_for_openai() -> None:
 def test_litellm_provider_diagnostics_contract_and_secret_safety() -> None:
     provider = LiteLLMProvider(
         base_url="https://api.example/v1",
-        api_key="sk-secret-123456",
+        api_key="test_api_key_value",
         model="gpt-test",
         provider_name="openai",
     )
@@ -228,4 +228,4 @@ def test_litellm_provider_diagnostics_contract_and_secret_safety() -> None:
     encoded = json.dumps(diag).lower()
     assert "api_key" not in encoded
     assert "access_token" not in encoded
-    assert "sk-secret-123456" not in encoded
+    assert "test_api_key_value" not in encoded

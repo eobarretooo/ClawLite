@@ -26,7 +26,7 @@ class _Provider:
         return {
             "provider": "test",
             "model": "test/model",
-            "token": "raw-secret-token",
+            "token": "test_token_value",
             "counters": {"requests": self.calls},
         }
 
@@ -103,4 +103,4 @@ def test_failover_provider_diagnostics_contract_and_secret_safety() -> None:
     assert "token" not in diag["primary"]
     assert "token" not in diag["fallback"]
     encoded = json.dumps(diag).lower()
-    assert "raw-secret-token" not in encoded
+    assert "test_token_value" not in encoded
