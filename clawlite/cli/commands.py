@@ -9,6 +9,7 @@ from clawlite import __version__
 from clawlite.cli.ops import channels_validation
 from clawlite.cli.ops import diagnostics_snapshot
 from clawlite.cli.ops import fetch_gateway_diagnostics
+from clawlite.cli.ops import memory_eval_snapshot
 from clawlite.cli.ops import memory_doctor_snapshot
 from clawlite.cli.ops import onboarding_validation
 from clawlite.cli.ops import provider_validation
@@ -148,6 +149,13 @@ def cmd_diagnostics(args: argparse.Namespace) -> int:
 def cmd_memory_doctor(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     payload = memory_doctor_snapshot(cfg, repair=bool(args.repair))
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_memory_eval(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_eval_snapshot(cfg, limit=int(args.limit))
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
 
@@ -353,6 +361,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_memory_doctor = memory_sub.add_parser("doctor", help="Emit memory diagnostics snapshot")
     p_memory_doctor.add_argument("--repair", action="store_true", help="Trigger safe history repair before reporting")
     p_memory_doctor.set_defaults(handler=cmd_memory_doctor)
+
+    p_memory_eval = memory_sub.add_parser("eval", help="Run deterministic synthetic memory retrieval evaluation")
+    p_memory_eval.add_argument("--limit", type=int, default=5, help="Top-k retrieval limit per synthetic query")
+    p_memory_eval.set_defaults(handler=cmd_memory_eval)
 
     p_cron = sub.add_parser("cron", help="Manage scheduled jobs")
     cron_sub = p_cron.add_subparsers(dest="cron_command", required=True)

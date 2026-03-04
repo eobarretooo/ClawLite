@@ -5,6 +5,7 @@ import hashlib
 import json
 import inspect
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -183,6 +184,7 @@ class AgentEngine:
     _MEMORY_ROUTE_NO_RETRIEVE = "NO_RETRIEVE"
     _MEMORY_ROUTE_RETRIEVE = "RETRIEVE"
     _MEMORY_ROUTE_NEXT_QUERY = "NEXT_QUERY"
+    _MEMORY_QUERY_MAX_METRICS_CHARS = 160
     _MEMORY_TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
     _MEMORY_TRIVIAL_RE = re.compile(
         r"^(ok|okay|kk|thanks|thank you|got it|noted|done|cool|yes|no|right|understood|hi|hello|hey)[.!?]*$",
@@ -301,6 +303,82 @@ class AgentEngine:
         self._stop_requests: set[str] = set()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_locks_guard = asyncio.Lock()
+        self._retrieval_route_counts: dict[str, int] = {
+            self._MEMORY_ROUTE_NO_RETRIEVE: 0,
+            self._MEMORY_ROUTE_RETRIEVE: 0,
+            self._MEMORY_ROUTE_NEXT_QUERY: 0,
+        }
+        self._retrieval_attempts = 0
+        self._retrieval_hits = 0
+        self._retrieval_rewrites = 0
+        self._retrieval_latency_buckets: dict[str, int] = {
+            "lt_10ms": 0,
+            "10_50ms": 0,
+            "50_200ms": 0,
+            "gte_200ms": 0,
+        }
+        self._retrieval_last_route = self._MEMORY_ROUTE_NO_RETRIEVE
+        self._retrieval_last_query = ""
+
+    @classmethod
+    def _sanitize_retrieval_query(cls, query: str) -> str:
+        compact = " ".join(str(query or "").split()).strip()
+        if len(compact) <= cls._MEMORY_QUERY_MAX_METRICS_CHARS:
+            return compact
+        suffix = "..."
+        keep = max(0, cls._MEMORY_QUERY_MAX_METRICS_CHARS - len(suffix))
+        return f"{compact[:keep]}{suffix}"
+
+    def _record_retrieval_latency(self, elapsed_ms: float) -> None:
+        value = max(0.0, float(elapsed_ms))
+        if value < 10.0:
+            bucket = "lt_10ms"
+        elif value < 50.0:
+            bucket = "10_50ms"
+        elif value < 200.0:
+            bucket = "50_200ms"
+        else:
+            bucket = "gte_200ms"
+        self._retrieval_latency_buckets[bucket] = int(self._retrieval_latency_buckets.get(bucket, 0)) + 1
+
+    def _record_retrieval_metrics(
+        self,
+        *,
+        route: str,
+        query: str,
+        attempts: int,
+        hits: int,
+        rewrites: int,
+    ) -> None:
+        normalized_route = str(route or self._MEMORY_ROUTE_NO_RETRIEVE)
+        if normalized_route not in self._retrieval_route_counts:
+            normalized_route = self._MEMORY_ROUTE_NO_RETRIEVE
+        self._retrieval_route_counts[normalized_route] = int(self._retrieval_route_counts.get(normalized_route, 0)) + 1
+        self._retrieval_attempts += max(0, int(attempts))
+        self._retrieval_hits += max(0, int(hits))
+        self._retrieval_rewrites += max(0, int(rewrites))
+        self._retrieval_last_route = normalized_route
+        self._retrieval_last_query = self._sanitize_retrieval_query(query)
+
+    def retrieval_metrics_snapshot(self) -> dict[str, Any]:
+        return {
+            "route_counts": {
+                self._MEMORY_ROUTE_NO_RETRIEVE: int(self._retrieval_route_counts.get(self._MEMORY_ROUTE_NO_RETRIEVE, 0)),
+                self._MEMORY_ROUTE_RETRIEVE: int(self._retrieval_route_counts.get(self._MEMORY_ROUTE_RETRIEVE, 0)),
+                self._MEMORY_ROUTE_NEXT_QUERY: int(self._retrieval_route_counts.get(self._MEMORY_ROUTE_NEXT_QUERY, 0)),
+            },
+            "retrieval_attempts": int(self._retrieval_attempts),
+            "retrieval_hits": int(self._retrieval_hits),
+            "retrieval_rewrites": int(self._retrieval_rewrites),
+            "latency_buckets": {
+                "lt_10ms": int(self._retrieval_latency_buckets.get("lt_10ms", 0)),
+                "10_50ms": int(self._retrieval_latency_buckets.get("10_50ms", 0)),
+                "50_200ms": int(self._retrieval_latency_buckets.get("50_200ms", 0)),
+                "gte_200ms": int(self._retrieval_latency_buckets.get("gte_200ms", 0)),
+            },
+            "last_route": str(self._retrieval_last_route),
+            "last_query": str(self._retrieval_last_query),
+        }
 
     async def _complete_provider(
         self,
@@ -511,14 +589,29 @@ class AgentEngine:
     def _plan_memory_snippets(self, *, user_text: str, run_log: Any) -> list[str]:
         route = self._MEMORY_ROUTE_NO_RETRIEVE
         selected_query = ""
+        attempts = 0
+        hits = 0
+        rewrites = 0
         try:
             if not self._is_memory_retrieval_candidate(user_text):
                 run_log.debug("memory planner route={} query=- rows=0", route)
+                self._record_retrieval_metrics(
+                    route=route,
+                    query=selected_query,
+                    attempts=attempts,
+                    hits=hits,
+                    rewrites=rewrites,
+                )
                 return []
 
             route = self._MEMORY_ROUTE_RETRIEVE
             selected_query = " ".join(str(user_text or "").split()).strip()
+            started = time.perf_counter()
             first_rows = self.memory.search(selected_query, limit=6)
+            attempts += 1
+            self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
+            if first_rows:
+                hits += 1
             selected_rows = first_rows
 
             if not self._memory_result_sufficient(selected_query, first_rows):
@@ -526,14 +619,33 @@ class AgentEngine:
                 if rewritten:
                     route = self._MEMORY_ROUTE_NEXT_QUERY
                     selected_query = rewritten
+                    rewrites += 1
+                    started = time.perf_counter()
                     second_rows = self.memory.search(rewritten, limit=6)
+                    attempts += 1
+                    self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
                     if second_rows:
+                        hits += 1
                         selected_rows = second_rows
 
             run_log.debug("memory planner route={} query={} rows={}", route, selected_query or "-", len(selected_rows))
+            self._record_retrieval_metrics(
+                route=route,
+                query=selected_query,
+                attempts=attempts,
+                hits=hits,
+                rewrites=rewrites,
+            )
             return [self._format_memory_snippet(row) for row in selected_rows]
         except Exception as exc:
             run_log.warning("memory planner failed route={} query={} error={}", route, selected_query or "-", exc)
+            self._record_retrieval_metrics(
+                route=route,
+                query=selected_query,
+                attempts=attempts,
+                hits=hits,
+                rewrites=rewrites,
+            )
             return []
 
     def request_stop(self, session_id: str) -> bool:

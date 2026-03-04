@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -305,6 +306,115 @@ def fetch_gateway_diagnostics(*, gateway_url: str, timeout: float = 3.0, token: 
                     "error": str(exc),
                 }
     return out
+
+
+def memory_eval_snapshot(config: AppConfig, limit: int = 5) -> dict[str, Any]:
+    del config
+    top_k = max(1, int(limit or 1))
+    corpus: list[dict[str, str]] = [
+        {
+            "id": "mem_tz_001",
+            "text": "User timezone is America/Sao_Paulo and prefers morning updates.",
+            "source": "seed:profile",
+            "created_at": "2026-03-01T08:00:00+00:00",
+        },
+        {
+            "id": "mem_deploy_001",
+            "text": "Deployment schedule is Friday at 17:00 UTC for production.",
+            "source": "seed:ops",
+            "created_at": "2026-03-01T09:00:00+00:00",
+        },
+        {
+            "id": "mem_stack_001",
+            "text": "Project stack uses Python FastAPI pytest and uvicorn.",
+            "source": "seed:project",
+            "created_at": "2026-03-01T10:00:00+00:00",
+        },
+        {
+            "id": "mem_food_001",
+            "text": "Remember grocery list includes banana bread coffee and eggs.",
+            "source": "seed:personal",
+            "created_at": "2026-03-01T11:00:00+00:00",
+        },
+        {
+            "id": "mem_lang_001",
+            "text": "User prefers Portuguese answers for operational updates.",
+            "source": "seed:profile",
+            "created_at": "2026-03-01T12:00:00+00:00",
+        },
+    ]
+    cases: list[dict[str, Any]] = [
+        {
+            "name": "timezone_preference",
+            "query": "what is my timezone preference",
+            "expected_ids": ["mem_tz_001"],
+        },
+        {
+            "name": "deployment_schedule",
+            "query": "when do we deploy on friday",
+            "expected_ids": ["mem_deploy_001"],
+        },
+        {
+            "name": "project_stack",
+            "query": "what stack do we use for project",
+            "expected_ids": ["mem_stack_001"],
+        },
+        {
+            "name": "grocery_memory",
+            "query": "remember grocery list",
+            "expected_ids": ["mem_food_001"],
+        },
+        {
+            "name": "language_preference",
+            "query": "what language do i prefer",
+            "expected_ids": ["mem_lang_001"],
+        },
+    ]
+
+    with tempfile.TemporaryDirectory(prefix="clawlite-memory-eval-") as temp_dir:
+        base = Path(temp_dir)
+        history_path = base / "memory.jsonl"
+        curated_path = base / "memory_curated.json"
+        checkpoints_path = base / "memory_checkpoints.json"
+        store = MemoryStore(
+            db_path=history_path,
+            curated_path=curated_path,
+            checkpoints_path=checkpoints_path,
+        )
+        history_lines = [
+            json.dumps(row, ensure_ascii=False, sort_keys=True)
+            for row in corpus
+        ]
+        history_path.write_text("\n".join(history_lines) + "\n", encoding="utf-8")
+
+        details: list[dict[str, Any]] = []
+        passed = 0
+        for case in cases:
+            rows = store.search(str(case["query"]), limit=top_k)
+            top_ids = [str(row.id) for row in rows[:top_k]]
+            expected_ids = [str(item) for item in list(case["expected_ids"])]
+            hit = bool(set(top_ids).intersection(expected_ids))
+            if hit:
+                passed += 1
+            details.append(
+                {
+                    "name": str(case["name"]),
+                    "query": str(case["query"]),
+                    "expected_ids": expected_ids,
+                    "top_ids": top_ids,
+                    "hit": hit,
+                }
+            )
+
+    total_cases = len(cases)
+    failed = total_cases - passed
+    return {
+        "ok": failed == 0,
+        "cases": total_cases,
+        "passed": passed,
+        "failed": failed,
+        "details": details,
+    }
 
 
 def _file_stat(path: Path) -> dict[str, Any]:

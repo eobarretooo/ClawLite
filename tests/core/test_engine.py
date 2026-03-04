@@ -4,11 +4,13 @@ from dataclasses import dataclass
 import asyncio
 from typing import Any
 
+import clawlite.core.engine as engine_module
 from clawlite.config.schema import ToolSafetyPolicyConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings, ProviderResult, ToolCall, TurnBudget
 from clawlite.core.memory import MemoryRecord
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
+from clawlite.utils.logging import bind_event
 
 
 class FakeProvider:
@@ -483,6 +485,110 @@ def test_engine_memory_planner_next_query_rewrites_when_temporal_intent_lacks_te
         assert memory.search_calls == [original_query, rewritten_query]
 
     asyncio.run(_scenario())
+
+
+def test_engine_retrieval_metrics_counts_routes_attempts_hits_and_rewrites() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        retrieve_query = "what is my timezone preference"
+        original_next_query = "what did we decide about deployment schedule yesterday"
+        rewritten_next_query = "did decide about deployment schedule yesterday"
+        memory = FakePlannerMemory(
+            {
+                retrieve_query: [
+                    MemoryRecord(
+                        id="route-retrieve-1",
+                        text="Timezone is America/Sao_Paulo.",
+                        source="session:cli:tz",
+                        created_at="2026-03-04T12:00:00+00:00",
+                    )
+                ],
+                original_next_query: [
+                    MemoryRecord(
+                        id="route-next-a",
+                        text="Unrelated reminder.",
+                        source="session:cli:ops",
+                        created_at="2026-03-04T12:01:00+00:00",
+                    )
+                ],
+                rewritten_next_query: [
+                    MemoryRecord(
+                        id="route-next-b",
+                        text="Deployment schedule: Friday 17:00 UTC.",
+                        source="session:cli:ops",
+                        created_at="2026-03-04T12:02:00+00:00",
+                    )
+                ],
+            }
+        )
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out_no_retrieve = await engine.run(session_id="cli:metrics:no", user_text="ok")
+        out_retrieve = await engine.run(session_id="cli:metrics:retrieve", user_text=retrieve_query)
+        out_next_query = await engine.run(session_id="cli:metrics:next", user_text=original_next_query)
+
+        assert out_no_retrieve.text == "ok"
+        assert out_retrieve.text == "ok"
+        assert out_next_query.text == "ok"
+
+        snapshot = engine.retrieval_metrics_snapshot()
+        assert snapshot["route_counts"] == {
+            "NO_RETRIEVE": 1,
+            "RETRIEVE": 1,
+            "NEXT_QUERY": 1,
+        }
+        assert snapshot["retrieval_attempts"] == 3
+        assert snapshot["retrieval_hits"] == 3
+        assert snapshot["retrieval_rewrites"] == 1
+        assert snapshot["last_route"] == "NEXT_QUERY"
+        assert snapshot["last_query"] == rewritten_next_query
+
+    asyncio.run(_scenario())
+
+
+def test_engine_retrieval_metrics_latency_buckets_accounting(monkeypatch) -> None:
+    provider = FakePromptCaptureProvider()
+    queries = {
+        "what is my timezone preference": "lat-1",
+        "when is deployment schedule today?": "lat-2",
+        "what stack does project use?": "lat-3",
+        "remember grocery list details": "lat-4",
+    }
+    memory = FakePlannerMemory(
+        {
+            query: [
+                MemoryRecord(
+                    id=row_id,
+                    text=f"Row for {query}",
+                    source="session:cli:latency",
+                    created_at="2026-03-04T12:00:00+00:00",
+                )
+            ]
+            for query, row_id in queries.items()
+        }
+    )
+    engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+    sequence = iter([0.0, 0.005, 1.0, 1.02, 2.0, 2.12, 3.0, 3.25])
+
+    def _fake_perf_counter() -> float:
+        return float(next(sequence))
+
+    monkeypatch.setattr(engine_module.time, "perf_counter", _fake_perf_counter)
+
+    run_log = bind_event("tests.engine.latency")
+    for query in queries:
+        snippets = engine._plan_memory_snippets(user_text=query, run_log=run_log)
+        assert snippets
+
+    snapshot = engine.retrieval_metrics_snapshot()
+    assert snapshot["retrieval_attempts"] == 4
+    assert snapshot["latency_buckets"] == {
+        "lt_10ms": 1,
+        "10_50ms": 1,
+        "50_200ms": 1,
+        "gte_200ms": 1,
+    }
 
 
 def test_engine_respects_stop_event_before_provider_call() -> None:

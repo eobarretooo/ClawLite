@@ -357,3 +357,46 @@ def test_cli_memory_doctor_does_not_import_gateway_runtime(tmp_path: Path, capsy
     assert rc == 0
     assert "clawlite.gateway.server" not in sys.modules
     capsys.readouterr()
+
+
+def test_cli_memory_eval_outputs_json_summary(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory", "eval", "--limit", "3"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["cases"] == 5
+    assert payload["passed"] == 5
+    assert payload["failed"] == 0
+    assert len(payload["details"]) == payload["cases"]
+
+
+def test_cli_memory_eval_does_not_import_gateway_runtime(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc = main(["--config", str(config_path), "memory", "eval"])
+    assert rc == 0
+    assert "clawlite.gateway.server" not in sys.modules
+    capsys.readouterr()

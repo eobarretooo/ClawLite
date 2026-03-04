@@ -44,6 +44,19 @@ Notas:
 - `/v1/status` e `/api/status` expõem `contract_version` e `server_time`.
 - `/v1/diagnostics` e `/api/diagnostics` expõem `generated_at`, `uptime_s` e `contract_version`.
 
+## Retrieval observability + eval
+
+```bash
+curl -sS http://127.0.0.1:8787/api/diagnostics | python -m json.tool
+clawlite memory eval --limit 5
+```
+
+Checagens rápidas:
+- `engine.retrieval_metrics.route_counts` mostra rotas `NO_RETRIEVE/RETRIEVE/NEXT_QUERY`.
+- `engine.retrieval_metrics.retrieval_attempts/hits/rewrites` mostram volume e rewrites do planner.
+- `engine.retrieval_metrics.latency_buckets` mostra distribuição de latência do path de busca.
+- `clawlite memory eval` retorna JSON determinístico (`ok`, `cases`, `passed`, `failed`, `details`).
+
 ## Cron manual
 
 ```bash

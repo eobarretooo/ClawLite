@@ -81,6 +81,7 @@ class DiagnosticsResponse(BaseModel):
     channels: dict[str, Any]
     cron: dict[str, Any]
     heartbeat: dict[str, Any]
+    engine: dict[str, Any] = {}
     environment: dict[str, Any] = {}
 
 
@@ -695,6 +696,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             channels=runtime.channels.status(),
             cron=runtime.cron.status(),
             heartbeat=runtime.heartbeat.status(),
+            engine={"retrieval_metrics": runtime.engine.retrieval_metrics_snapshot()},
             environment=environment,
         )
 

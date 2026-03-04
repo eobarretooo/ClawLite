@@ -21,7 +21,7 @@ The same core engine powers CLI, gateway, scheduler, and channel workflows for a
 - Unified runtime for CLI, HTTP API, WebSocket, scheduler, and channels.
 - Telegram inbound support with allowlist and resilient polling.
 - Active outbound adapters for Discord, Slack, and WhatsApp.
-- Memory tooling for learn/recall/forget/analyze plus `clawlite memory doctor` diagnostics and safe repair path.
+- Memory tooling for learn/recall/forget/analyze plus `clawlite memory doctor` diagnostics, deterministic `clawlite memory eval`, and safe repair path.
 - Scheduler with cron jobs and heartbeat loop (`HEARTBEAT_OK` contract + persisted heartbeat state).
 - Session controls including `agents.defaults.memory_window` and `agents.defaults.session_retention_messages`.
 - Gateway compatibility aliases aligned with OpenClaw-style surface.
@@ -123,7 +123,7 @@ Base URL (default): `http://127.0.0.1:8787`
 - `POST /v1/chat`: chat execution.
 - `WS /v1/ws`: WebSocket chat.
 - `GET /v1/status`: control-plane status + auth posture.
-- `GET /v1/diagnostics`: operational diagnostics snapshot.
+- `GET /v1/diagnostics`: operational diagnostics snapshot (includes `engine.retrieval_metrics`).
 - `POST /v1/control/*`: heartbeat/autonomy/dead-letter control endpoints.
 - `POST /v1/cron/add`, `GET /v1/cron/list`, `DELETE /v1/cron/{job_id}`: scheduler API.
 
@@ -146,6 +146,7 @@ Core commands:
 - `clawlite validate provider|channels|onboarding [--fix]`
 - `clawlite diagnostics [--gateway-url ...]`
 - `clawlite memory doctor [--repair]`
+- `clawlite memory eval [--limit N]`
 - `clawlite cron add|list|remove|enable|disable|run ...`
 - `clawlite skills list|show ...`
 

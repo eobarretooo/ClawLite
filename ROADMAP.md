@@ -65,6 +65,9 @@
 - `agents.defaults.memory_window` connected end-to-end
   (config -> gateway runtime -> engine -> `sessions.read(limit=...)`) with
   visibility in `clawlite status` and `clawlite diagnostics`.
+- Retrieval observability delivered in runtime diagnostics (`engine.retrieval_metrics`)
+  plus deterministic operator command `clawlite memory eval` for synthetic
+  retrieval regression checks.
 
 ### FUTURE (Scale + polish)
 

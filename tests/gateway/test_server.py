@@ -375,6 +375,18 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "channels" in payload
         assert "cron" in payload
         assert "heartbeat" in payload
+        assert "engine" in payload
+        assert "retrieval_metrics" in payload["engine"]
+        retrieval = payload["engine"]["retrieval_metrics"]
+        assert set(retrieval.keys()) == {
+            "route_counts",
+            "retrieval_attempts",
+            "retrieval_hits",
+            "retrieval_rewrites",
+            "latency_buckets",
+            "last_route",
+            "last_query",
+        }
         assert payload["environment"]["workspace_path"] == str(tmp_path / "workspace")
 
         alias = client.get("/api/diagnostics", headers={"Authorization": "Bearer diag-token"})
@@ -384,6 +396,7 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert alias_payload["schema_version"] == payload["schema_version"]
         assert alias_payload["contract_version"] == payload["contract_version"]
         assert alias_payload["environment"] == payload["environment"]
+        assert alias_payload["engine"] == payload["engine"]
         assert set(alias_payload["control_plane"].keys()) == set(payload["control_plane"].keys())
         assert alias_payload["control_plane"]["contract_version"] == payload["control_plane"]["contract_version"]
 
