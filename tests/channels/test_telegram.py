@@ -445,6 +445,40 @@ def test_telegram_send_supports_message_thread_id_from_target() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_send_populates_delivery_receipt_for_chunked_send() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(config={"token": "x:token"})
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+                self.message_id = 100
+
+            async def send_message(self, **kwargs):
+                self.calls.append(kwargs)
+                self.message_id += 1
+                return SimpleNamespace(message_id=self.message_id)
+
+        bot = FakeBot()
+        channel.bot = bot
+        text = ("A" * 4000) + ("B" * 20)
+        metadata: dict[str, object] = {"message_thread_id": 9}
+
+        out = await channel.send(target="42", text=text, metadata=metadata)
+
+        assert out == "telegram:sent:2"
+        receipt = metadata.get("_delivery_receipt")
+        assert isinstance(receipt, dict)
+        assert receipt["channel"] == "telegram"
+        assert receipt["chat_id"] == "42"
+        assert receipt["message_thread_id"] == 9
+        assert receipt["chunks"] == 2
+        assert receipt["message_ids"] == [101, 102]
+        assert receipt["last_message_id"] == 102
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_send_retries_without_thread_kwarg_on_old_library() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})

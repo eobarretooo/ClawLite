@@ -611,6 +611,84 @@ def test_channel_manager_suppresses_duplicate_outbound_with_explicit_idempotency
     asyncio.run(_scenario())
 
 
+def test_channel_manager_delivery_diagnostics_recent_tracks_outcomes_newest_first_and_bounded() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("fake", FakeChannel)
+        await mgr.start(
+            {
+                "channels": {
+                    "send_max_attempts": 1,
+                    "delivery_recent_limit": 2,
+                    "delivery_idempotency_ttl_s": 900,
+                    "fake": {"enabled": True},
+                }
+            }
+        )
+
+        ok_event = OutboundEvent(
+            channel="fake",
+            session_id="fake:recent",
+            target="recent",
+            text="ok",
+            metadata={"_delivery_idempotency_key": "recent-key"},
+        )
+        dup_event = OutboundEvent(
+            channel="fake",
+            session_id="fake:recent",
+            target="recent",
+            text="ok",
+            metadata={"_delivery_idempotency_key": "recent-key"},
+        )
+        fail_event = OutboundEvent(
+            channel="fake",
+            session_id="fake:recent",
+            target="recent",
+            text="fail",
+            metadata={"_delivery_idempotency_key": "recent-fail-key"},
+        )
+
+        await mgr._publish_and_send(event=ok_event)
+        diagnostics_after_confirmed = mgr.delivery_diagnostics()
+        assert diagnostics_after_confirmed["recent"][0]["outcome"] == "delivery_confirmed"
+
+        await mgr._publish_and_send(event=dup_event)
+        diagnostics_after_suppressed = mgr.delivery_diagnostics()
+        assert diagnostics_after_suppressed["recent"][0]["outcome"] == "idempotency_suppressed"
+        assert diagnostics_after_suppressed["recent"][1]["outcome"] == "delivery_confirmed"
+
+        fake = mgr._channels["fake"]
+        fake.fail_first_n = 999
+        await mgr._publish_and_send(event=fail_event)
+
+        diagnostics = mgr.delivery_diagnostics()
+        recent = diagnostics["recent"]
+        assert len(recent) == 2
+        assert [entry["outcome"] for entry in recent] == ["delivery_failed_final", "idempotency_suppressed"]
+
+        newest = recent[0]
+        assert newest["channel"] == "fake"
+        assert newest["session_id"] == "fake:recent"
+        assert newest["target"] == "recent"
+        assert newest["attempt"] == 1
+        assert newest["max_attempts"] == 1
+        assert newest["idempotency_key"] == "recent-fail-key"
+        assert newest["dead_letter_reason"] == "send_failed"
+        assert newest["last_error"]
+        assert newest["receipt"] is None
+        assert newest["send_result"] == ""
+        assert newest["replayed_from_dead_letter"] is False
+
+        suppressed = recent[1]
+        assert suppressed["outcome"] == "idempotency_suppressed"
+        assert suppressed["idempotency_key"] == "recent-key"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
 def test_channel_manager_replay_dead_letters_updates_replay_counters() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()

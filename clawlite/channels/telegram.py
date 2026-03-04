@@ -819,8 +819,9 @@ class TelegramChannel(BaseChannel):
         chat_id, target_thread_id = self._parse_target(str(target))
         if not chat_id:
             raise ValueError("telegram target(chat_id) is required")
-        metadata = dict(metadata or {})
-        message_thread_id = self._coerce_thread_id(metadata.get("message_thread_id", target_thread_id))
+        caller_metadata = metadata if isinstance(metadata, dict) else None
+        metadata_payload = dict(caller_metadata or {})
+        message_thread_id = self._coerce_thread_id(metadata_payload.get("message_thread_id", target_thread_id))
         await self._stop_typing_keepalive(chat_id=chat_id, message_thread_id=message_thread_id)
         if self.bot is None:
             from telegram import Bot
@@ -828,11 +829,23 @@ class TelegramChannel(BaseChannel):
             self.bot = Bot(token=self.token)
         chunks = split_message(text)
         policy = self._send_retry_policy.normalized()
-        reply_to_message_id = metadata.get("reply_to_message_id", metadata.get("message_id"))
+        reply_to_message_id = metadata_payload.get("reply_to_message_id", metadata_payload.get("message_id"))
         try:
             reply_to_message_id = int(reply_to_message_id) if reply_to_message_id is not None else None
         except (TypeError, ValueError):
             reply_to_message_id = None
+        message_ids: list[int] = []
+
+        def _remember_message_id(result: Any) -> None:
+            if result is None:
+                return
+            raw_message_id = getattr(result, "message_id", None)
+            try:
+                message_id = int(raw_message_id)
+            except (TypeError, ValueError):
+                return
+            if message_id > 0:
+                message_ids.append(message_id)
 
         for idx, chunk in enumerate(chunks, start=1):
             html_payload = markdown_to_telegram_html(chunk)
@@ -853,16 +866,17 @@ class TelegramChannel(BaseChannel):
                     }
                     if message_thread_id is not None:
                         payload["message_thread_id"] = message_thread_id
-                    await asyncio.wait_for(
+                    send_result = await asyncio.wait_for(
                         self.bot.send_message(**payload),
                         timeout=max(1.0, float(self.send_timeout_s)),
                     )
+                    _remember_message_id(send_result)
                     self._on_send_auth_success()
                     break
                 except TypeError as exc:
                     if message_thread_id is None or "message_thread_id" not in str(exc):
                         raise
-                    await asyncio.wait_for(
+                    send_result = await asyncio.wait_for(
                         self.bot.send_message(
                             chat_id=chat_id,
                             text=payload_text,
@@ -871,6 +885,7 @@ class TelegramChannel(BaseChannel):
                         ),
                         timeout=max(1.0, float(self.send_timeout_s)),
                     )
+                    _remember_message_id(send_result)
                     self._on_send_auth_success()
                     break
                 except Exception as exc:
@@ -904,5 +919,16 @@ class TelegramChannel(BaseChannel):
                         self._signals["send_retry_after_count"] += 1
                     if delay_s > 0:
                         await asyncio.sleep(delay_s)
+        if caller_metadata is not None:
+            receipt: dict[str, Any] = {
+                "channel": "telegram",
+                "chat_id": chat_id,
+                "chunks": len(chunks),
+                "message_ids": list(message_ids),
+                "last_message_id": message_ids[-1] if message_ids else 0,
+            }
+            if message_thread_id is not None:
+                receipt["message_thread_id"] = message_thread_id
+            caller_metadata["_delivery_receipt"] = receipt
         logger.info("telegram outbound sent chat={} chunks={} chars={}", chat_id, len(chunks), len(text))
         return f"telegram:sent:{len(chunks)}"

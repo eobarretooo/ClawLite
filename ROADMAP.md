@@ -81,6 +81,7 @@
 - Per-message fallback observability added via queue dead-letter snapshots (`queue.dead_letter_recent`) in gateway diagnostics for safe operator inspection.
 - Channel delivery manager counters are now exposed in gateway diagnostics as `channels_delivery` (`total` + `per_channel`).
 - Outbound delivery now includes bounded idempotency suppression with explicit confirmation/final-failure visibility (`delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`).
+- Telegram outbound now captures per-message delivery receipts (`message_ids`, `last_message_id`) and channel delivery diagnostics include bounded per-message outcome snapshots via `channels_delivery.recent`.
 
 ### FUTURE (Scale + polish)
 

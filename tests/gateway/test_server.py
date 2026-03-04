@@ -496,7 +496,8 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "channels" in payload
         assert "channels_delivery" in payload
         channels_delivery = payload["channels_delivery"]
-        assert set(channels_delivery.keys()) >= {"total", "per_channel"}
+        assert set(channels_delivery.keys()) >= {"total", "per_channel", "recent"}
+        assert isinstance(channels_delivery["recent"], list)
         assert set(channels_delivery["total"].keys()) >= {
             "attempts",
             "success",

@@ -81,6 +81,8 @@ class ChannelManager:
         self._send_retry_max_backoff_s = 4.0
         self._delivery_idempotency_ttl_s = 900.0
         self._delivery_idempotency_max_entries = 2048
+        self._delivery_recent_limit = 50
+        self._delivery_recent: deque[dict[str, Any]] = deque(maxlen=self._delivery_recent_limit)
         self._delivery_idempotency_cache: dict[str, float] = {}
         self._delivery_idempotency_order: deque[tuple[str, float]] = deque()
         self._dispatch_slots = asyncio.Semaphore(self._dispatcher_max_concurrency)
@@ -129,6 +131,58 @@ class ChannelManager:
         self._delivery_total[key] = self._delivery_total.get(key, 0) + amount
         row = self._ensure_delivery_channel(channel)
         row[key] = row.get(key, 0) + amount
+
+    def _set_delivery_recent_limit(self, limit: int) -> None:
+        bounded = max(1, int(limit))
+        if bounded == self._delivery_recent_limit:
+            return
+        recent_tail = list(self._delivery_recent)[-bounded:]
+        self._delivery_recent_limit = bounded
+        self._delivery_recent = deque(recent_tail, maxlen=bounded)
+
+    @staticmethod
+    def _delivery_metadata_value(metadata: Any, key: str, default: Any = "") -> Any:
+        if not isinstance(metadata, dict):
+            return default
+        return metadata.get(key, default)
+
+    def _record_delivery_recent(
+        self,
+        *,
+        event: OutboundEvent,
+        outcome: str,
+        idempotency_key: str,
+        send_result: str = "",
+        receipt: Any = None,
+        dead_letter_reason: str = "",
+        last_error: str = "",
+    ) -> None:
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        replayed_from_dead_letter = bool(self._delivery_metadata_value(metadata, "_replayed_from_dead_letter", False))
+        safe_receipt: dict[str, Any] | None = None
+        if isinstance(receipt, dict):
+            safe_receipt = dict(receipt)
+        elif isinstance(metadata, dict):
+            from_metadata = metadata.get("_delivery_receipt")
+            if isinstance(from_metadata, dict):
+                safe_receipt = dict(from_metadata)
+
+        entry: dict[str, Any] = {
+            "channel": str(event.channel),
+            "session_id": str(event.session_id),
+            "target": str(event.target),
+            "attempt": int(getattr(event, "attempt", 0) or 0),
+            "max_attempts": int(getattr(event, "max_attempts", 0) or 0),
+            "outcome": str(outcome),
+            "idempotency_key": str(idempotency_key),
+            "created_at": str(getattr(event, "created_at", "") or ""),
+            "dead_letter_reason": str(dead_letter_reason or ""),
+            "last_error": str(last_error or ""),
+            "receipt": safe_receipt,
+            "send_result": str(send_result or ""),
+            "replayed_from_dead_letter": replayed_from_dead_letter,
+        }
+        self._delivery_recent.append(entry)
 
     @staticmethod
     def _derive_delivery_idempotency_key(event: OutboundEvent) -> str:
@@ -306,12 +360,7 @@ class ChannelManager:
         event, idempotency_key = self._ensure_delivery_idempotency_key(event)
         if self._is_delivery_idempotency_suppressed(idempotency_key):
             self._inc_delivery(channel=event.channel, key="idempotency_suppressed")
-            bind_event("channel.send", session=event.session_id, channel=event.channel).info(
-                "dispatch suppressed duplicate target={} key={}",
-                event.target,
-                idempotency_key,
-            )
-            return replace(
+            suppressed_event = replace(
                 event,
                 attempt=0,
                 max_attempts=max_attempts,
@@ -320,6 +369,17 @@ class ChannelManager:
                 dead_letter_reason="",
                 last_error="",
             )
+            self._record_delivery_recent(
+                event=suppressed_event,
+                outcome="idempotency_suppressed",
+                idempotency_key=idempotency_key,
+            )
+            bind_event("channel.send", session=event.session_id, channel=event.channel).info(
+                "dispatch suppressed duplicate target={} key={}",
+                event.target,
+                idempotency_key,
+            )
+            return suppressed_event
         for attempt in range(1, max_attempts + 1):
             attempt_event = replace(
                 event,
@@ -333,10 +393,16 @@ class ChannelManager:
             await self.bus.publish_outbound(attempt_event)
             self._inc_delivery(channel=event.channel, key="attempts")
             try:
-                await channel.send(target=event.target, text=event.text, metadata=event.metadata)
+                send_result = await channel.send(target=event.target, text=event.text, metadata=event.metadata)
                 self._inc_delivery(channel=event.channel, key="success")
                 self._inc_delivery(channel=event.channel, key="delivery_confirmed")
                 self._remember_delivery_idempotency(idempotency_key)
+                self._record_delivery_recent(
+                    event=attempt_event,
+                    outcome="delivery_confirmed",
+                    idempotency_key=idempotency_key,
+                    send_result=send_result,
+                )
                 bind_event("channel.send", session=event.session_id, channel=event.channel).info(
                     "dispatch sent target={} attempt={}/{}",
                     event.target,
@@ -373,6 +439,13 @@ class ChannelManager:
         await self.bus.publish_dead_letter(dead)
         self._inc_delivery(channel=event.channel, key="dead_lettered")
         self._inc_delivery(channel=event.channel, key="delivery_failed_final")
+        self._record_delivery_recent(
+            event=dead,
+            outcome="delivery_failed_final",
+            idempotency_key=idempotency_key,
+            dead_letter_reason=dead.dead_letter_reason,
+            last_error=dead.last_error,
+        )
         bind_event("channel.send", session=event.session_id, channel=event.channel).error(
             "dispatch dead-letter target={} attempts={} error={}",
             event.target,
@@ -398,6 +471,14 @@ class ChannelManager:
             await self.bus.publish_dead_letter(dead)
             self._inc_delivery(channel=event.channel, key="dead_lettered")
             self._inc_delivery(channel=event.channel, key="delivery_failed_final")
+            _, idempotency_key = self._ensure_delivery_idempotency_key(event)
+            self._record_delivery_recent(
+                event=dead,
+                outcome="delivery_failed_final",
+                idempotency_key=idempotency_key,
+                dead_letter_reason=dead.dead_letter_reason,
+                last_error=dead.last_error,
+            )
             return
         if not self._delivery_allowed(channel=channel, event=event):
             self._inc_delivery(channel=event.channel, key="policy_dropped")
@@ -438,6 +519,7 @@ class ChannelManager:
         return {
             "total": dict(self._delivery_total),
             "per_channel": {name: dict(row) for name, row in sorted(self._delivery_per_channel.items())},
+            "recent": list(reversed(self._delivery_recent)),
         }
 
     async def _handle_stop(self, event: InboundEvent) -> None:
@@ -635,6 +717,12 @@ class ChannelManager:
                 or 2048
             ),
         )
+        delivery_recent_limit = channels_cfg.get("delivery_recent_limit", channels_cfg.get("deliveryRecentLimit", 50))
+        try:
+            parsed_recent_limit = int(delivery_recent_limit or 50)
+        except (TypeError, ValueError):
+            parsed_recent_limit = 50
+        self._set_delivery_recent_limit(parsed_recent_limit)
         self._prune_delivery_idempotency_cache()
         self._reset_dispatch_controls()
 
