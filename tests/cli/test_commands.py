@@ -234,3 +234,32 @@ def test_cli_non_runtime_validate_and_diagnostics_do_not_import_gateway(tmp_path
     rc_diag = main(["--config", str(config_path), "diagnostics", "--no-validation"])
     assert rc_diag == 0
     assert "clawlite.gateway.server" not in sys.modules
+
+
+def test_cli_validate_channels_slack_bot_only_is_ok_with_warning(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "channels": {
+                    "slack": {
+                        "enabled": True,
+                        "bot_token": "xoxb-test",
+                        "app_token": "",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc_channels = main(["--config", str(config_path), "validate", "channels"])
+    assert rc_channels == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    slack_row = next(row for row in payload["channels"] if row["channel"] == "slack")
+    assert slack_row["status"] == "warning"
+    assert slack_row["warnings"] == ["app_token"]

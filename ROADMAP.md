@@ -28,7 +28,7 @@
 ## ClawLite Parity Roadmap (nanobot + OpenClaw)
 
 ### NOW (Critical parity)
-- [ ] Replace passive channel stubs with active adapters for Discord, Slack, and WhatsApp.
+- [x] Replace passive channel stubs with active outbound adapters for Discord, Slack, and WhatsApp.
 - [x] Enforce stronger tool safety policy for exec, web, and mcp.
 - [ ] Align gateway with production-grade contract.
 - [x] Upgrade heartbeat to HEARTBEAT_OK + persisted check state.
@@ -36,6 +36,7 @@
 - Progresso 2026-03-04: auth do gateway agora aplica hardening automatico (`off` -> `required`) em host nao-loopback quando token esta configurado; fallback de env legado `CLAWLITE_GATEWAY_TOKEN` suportado.
 - Progresso 2026-03-04: heartbeat agora persiste check-state explícito com migração backward-compatible e escrita atômica fail-soft.
 - Progresso 2026-03-04: ToolRegistry agora aplica política centralizada por canal para tools de risco (`exec`, `web_fetch`, `web_search`, `mcp`) com erro determinístico `tool_blocked_by_safety_policy:<tool>:<channel>`.
+- Progresso 2026-03-04: Discord/Slack/WhatsApp agora têm envio outbound ativo com `httpx` (sem loops inbound neste incremento).
 
 ### NEXT (Operational maturity)
 - [ ] Improve prompt/memory pipeline.

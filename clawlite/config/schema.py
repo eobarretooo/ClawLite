@@ -215,6 +215,8 @@ class TelegramChannelConfig(BaseChannelConfig):
 @dataclass(slots=True)
 class DiscordChannelConfig(BaseChannelConfig):
     token: str = ""
+    api_base: str = "https://discord.com/api/v10"
+    timeout_s: float = 10.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> DiscordChannelConfig:
@@ -223,6 +225,8 @@ class DiscordChannelConfig(BaseChannelConfig):
             enabled=bool(data.get("enabled", False)),
             allow_from=cls._allow_from(data),
             token=str(data.get("token", "") or ""),
+            api_base=str(data.get("api_base", data.get("apiBase", "https://discord.com/api/v10")) or "https://discord.com/api/v10"),
+            timeout_s=max(0.1, float(data.get("timeout_s", data.get("timeoutS", 10.0)) or 10.0)),
         )
 
 
@@ -230,6 +234,8 @@ class DiscordChannelConfig(BaseChannelConfig):
 class SlackChannelConfig(BaseChannelConfig):
     bot_token: str = ""
     app_token: str = ""
+    api_base: str = "https://slack.com/api"
+    timeout_s: float = 10.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> SlackChannelConfig:
@@ -239,6 +245,8 @@ class SlackChannelConfig(BaseChannelConfig):
             allow_from=cls._allow_from(data),
             bot_token=str(data.get("bot_token", data.get("botToken", "")) or ""),
             app_token=str(data.get("app_token", data.get("appToken", "")) or ""),
+            api_base=str(data.get("api_base", data.get("apiBase", "https://slack.com/api")) or "https://slack.com/api"),
+            timeout_s=max(0.1, float(data.get("timeout_s", data.get("timeoutS", 10.0)) or 10.0)),
         )
 
 
@@ -246,6 +254,7 @@ class SlackChannelConfig(BaseChannelConfig):
 class WhatsAppChannelConfig(BaseChannelConfig):
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""
+    timeout_s: float = 10.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> WhatsAppChannelConfig:
@@ -255,6 +264,7 @@ class WhatsAppChannelConfig(BaseChannelConfig):
             allow_from=cls._allow_from(data),
             bridge_url=str(data.get("bridge_url", data.get("bridgeUrl", "ws://localhost:3001")) or "ws://localhost:3001"),
             bridge_token=str(data.get("bridge_token", data.get("bridgeToken", "")) or ""),
+            timeout_s=max(0.1, float(data.get("timeout_s", data.get("timeoutS", 10.0)) or 10.0)),
         )
 
 

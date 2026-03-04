@@ -127,7 +127,7 @@ def channels_validation(config: AppConfig) -> dict[str, Any]:
     builtins: list[tuple[str, dict[str, Any], list[str], list[str]]] = [
         ("telegram", {"token": channels.telegram.token, "allow_from": channels.telegram.allow_from}, ["token"], ["allow_from"]),
         ("discord", {"token": channels.discord.token}, ["token"], []),
-        ("slack", {"bot_token": channels.slack.bot_token, "app_token": channels.slack.app_token}, ["bot_token", "app_token"], []),
+        ("slack", {"bot_token": channels.slack.bot_token, "app_token": channels.slack.app_token}, ["bot_token"], ["app_token"]),
         ("whatsapp", {"bridge_url": channels.whatsapp.bridge_url}, ["bridge_url"], []),
     ]
 

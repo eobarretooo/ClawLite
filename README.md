@@ -19,6 +19,7 @@ Unlike heavier alternatives, ClawLite is intentionally compact: around **4.2k li
 ## ✨ Main Features
 - 🧠 **Unified agent engine** for CLI, HTTP API, WebSocket, scheduler, and channels.
 - 💬 **Telegram-first channel support** with allowlist validation and long-message chunking.
+- 📤 **Outbound-active adapters** for Discord, Slack, and WhatsApp over HTTP APIs.
 - 🧩 **Skills via `SKILL.md`** with autoload and executable `command/script` actions.
 - 🗓️ **Autonomous scheduling** with Cron jobs and heartbeat loops.
 - 🗂️ **Persistent memory + sessions** stored under `~/.clawlite/state`.
@@ -122,9 +123,9 @@ Tool safety defaults (channel-aware, additive over tool-level guards):
 | Channel | Status | Notes |
 |---|---|---|
 | Telegram | ✅ Implemented | Polling, reconnection/backoff, allowlist, chunked outbound |
-| Discord | ⚠️ Skeleton | Passive adapter placeholder |
-| Slack | ⚠️ Skeleton | Passive adapter placeholder |
-| WhatsApp | ⚠️ Skeleton | Passive adapter placeholder |
+| Discord | ✅ Outbound active | REST send implemented; inbound parity is future work |
+| Slack | ✅ Outbound active | `chat.postMessage` outbound implemented; inbound parity is future work |
+| WhatsApp | ✅ Outbound active | Bridge `/send` outbound implemented; inbound parity is future work |
 | Signal | ⚠️ Skeleton | Passive adapter placeholder |
 | Google Chat | ⚠️ Skeleton | Passive adapter placeholder |
 | Email | ⚠️ Skeleton | Passive adapter placeholder |
