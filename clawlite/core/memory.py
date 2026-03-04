@@ -5,11 +5,12 @@ import hashlib
 import math
 import re
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 try:
     from rank_bm25 import BM25Okapi
@@ -833,6 +834,172 @@ class MemoryStore:
             "session_recovery_attempts": int(self._diagnostics["session_recovery_attempts"]),
             "session_recovery_hits": int(self._diagnostics["session_recovery_hits"]),
             "last_error": str(self._diagnostics["last_error"]),
+        }
+
+    @staticmethod
+    def _normalize_prefix(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        if clean.startswith("mem:"):
+            clean = clean[4:]
+        return clean
+
+    @classmethod
+    def _match_prefixes(cls, value: str, prefixes: set[str]) -> bool:
+        normalized = cls._normalize_prefix(value)
+        if not normalized:
+            return False
+        return any(normalized.startswith(prefix) for prefix in prefixes)
+
+    @staticmethod
+    def _record_sort_key(row: MemoryRecord) -> tuple[datetime, str]:
+        return (MemoryStore._parse_iso_timestamp(str(row.created_at or "")), str(row.id or ""))
+
+    def delete_by_prefixes(self, prefixes: Iterable[str], *, limit: int | None = None) -> dict[str, int | list[str]]:
+        clean_prefixes = {
+            self._normalize_prefix(prefix)
+            for prefix in prefixes
+            if self._normalize_prefix(prefix)
+        }
+        if not clean_prefixes:
+            return {
+                "deleted_ids": [],
+                "history_deleted": 0,
+                "curated_deleted": 0,
+                "deleted_count": 0,
+            }
+
+        bounded_limit = max(1, int(limit)) if limit is not None else None
+        history_rows = self._read_history_records()
+        curated_rows = self.curated()
+        combined = history_rows + curated_rows
+        combined.sort(key=self._record_sort_key, reverse=True)
+
+        selected_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for row in combined:
+            row_id = str(row.id or "").strip()
+            if not row_id or row_id in seen_ids:
+                continue
+            if not self._match_prefixes(row_id, clean_prefixes):
+                continue
+            seen_ids.add(row_id)
+            selected_ids.append(row_id)
+            if bounded_limit is not None and len(selected_ids) >= bounded_limit:
+                break
+
+        if not selected_ids:
+            return {
+                "deleted_ids": [],
+                "history_deleted": 0,
+                "curated_deleted": 0,
+                "deleted_count": 0,
+            }
+
+        selected_lookup = set(selected_ids)
+        history_deleted = 0
+        curated_deleted = 0
+
+        try:
+            with self._locked_file(self.history_path, "r+", exclusive=True) as fh:
+                lines = fh.read().splitlines()
+                kept_lines: list[str] = []
+                for line in lines:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError:
+                        kept_lines.append(raw)
+                        continue
+                    if not isinstance(payload, dict):
+                        kept_lines.append(raw)
+                        continue
+                    row_id = str(payload.get("id", "")).strip()
+                    if row_id and row_id in selected_lookup:
+                        history_deleted += 1
+                        continue
+                    kept_lines.append(raw)
+
+                fh.seek(0)
+                fh.truncate()
+                if kept_lines:
+                    fh.write("\n".join(kept_lines) + "\n")
+                fh.flush()
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+        if self.curated_path is not None:
+            try:
+                facts = self._read_curated_facts()
+                kept_facts: list[dict[str, object]] = []
+                for fact in facts:
+                    row_id = str(fact.get("id", "")).strip()
+                    if row_id and row_id in selected_lookup:
+                        curated_deleted += 1
+                        continue
+                    kept_facts.append(fact)
+                self._write_curated_facts(kept_facts)
+            except Exception as exc:
+                self._diagnostics["last_error"] = str(exc)
+
+        deleted_ids = [rid for rid in selected_ids if rid in selected_lookup]
+        return {
+            "deleted_ids": deleted_ids,
+            "history_deleted": history_deleted,
+            "curated_deleted": curated_deleted,
+            "deleted_count": len(deleted_ids),
+        }
+
+    def analysis_stats(self) -> dict[str, Any]:
+        history_rows = self.all()
+        curated_rows = self.curated()
+        combined = history_rows + curated_rows
+
+        now = datetime.now(timezone.utc)
+        cutoff_24h = now.timestamp() - (24 * 3600)
+        cutoff_7d = now.timestamp() - (7 * 24 * 3600)
+        cutoff_30d = now.timestamp() - (30 * 24 * 3600)
+
+        last_24h = 0
+        last_7d = 0
+        last_30d = 0
+        temporal_marked_count = 0
+        sources: Counter[str] = Counter()
+
+        for row in combined:
+            text = str(row.text or "")
+            created_at = self._parse_iso_timestamp(str(row.created_at or ""))
+            created_ts = created_at.timestamp() if created_at.year > 1 else 0.0
+
+            if created_ts >= cutoff_24h:
+                last_24h += 1
+            if created_ts >= cutoff_7d:
+                last_7d += 1
+            if created_ts >= cutoff_30d:
+                last_30d += 1
+            if self._memory_has_temporal_markers(text):
+                temporal_marked_count += 1
+            sources[str(row.source or "unknown")] += 1
+
+        top_sources = [
+            {"source": source, "count": count}
+            for source, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))[:8]
+        ]
+
+        return {
+            "counts": {
+                "history": len(history_rows),
+                "curated": len(curated_rows),
+                "total": len(combined),
+            },
+            "recent": {
+                "last_24h": last_24h,
+                "last_7d": last_7d,
+                "last_30d": last_30d,
+            },
+            "temporal_marked_count": temporal_marked_count,
+            "top_sources": top_sources,
         }
 
 

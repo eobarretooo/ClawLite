@@ -7,7 +7,7 @@ import pytest
 
 from clawlite.core.memory import MemoryStore
 from clawlite.tools.base import ToolContext
-from clawlite.tools.memory import MemoryLearnTool, MemoryRecallTool
+from clawlite.tools.memory import MemoryAnalyzeTool, MemoryForgetTool, MemoryLearnTool, MemoryRecallTool
 
 
 def test_memory_learn_success(tmp_path) -> None:
@@ -88,5 +88,95 @@ def test_memory_recall_limit_clamp(tmp_path) -> None:
 
         lower = json.loads(await tool.run({"query": "alpha", "limit": 0}, ToolContext(session_id="s1")))
         assert lower["count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_memory_forget_requires_selector(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        tool = MemoryForgetTool(store)
+        with pytest.raises(ValueError, match="selector is required"):
+            await tool.run({}, ToolContext(session_id="s1"))
+
+    asyncio.run(_scenario())
+
+
+def test_memory_forget_dry_run_returns_candidates_without_deletion(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        row = store.add("remember alpha preference", source="seed:1")
+        tool = MemoryForgetTool(store)
+
+        payload = json.loads(
+            await tool.run({"ref": f"mem:{row.id[:8]}", "dry_run": True}, ToolContext(session_id="s1"))
+        )
+        assert payload["status"] == "ok"
+        assert payload["deleted_count"] == 0
+        assert payload["history_deleted"] == 0
+        assert payload["curated_deleted"] == 0
+        assert payload["refs"] == [f"mem:{row.id[:8]}"]
+        assert len(store.all()) == 1
+
+    asyncio.run(_scenario())
+
+
+def test_memory_forget_by_ref_deletes_from_history(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        keep = store.add("keep me", source="seed:keep")
+        drop = store.add("delete me", source="seed:drop")
+        tool = MemoryForgetTool(store)
+
+        payload = json.loads(await tool.run({"ref": f"mem:{drop.id[:8]}"}, ToolContext(session_id="s1")))
+        assert payload["status"] == "ok"
+        assert payload["deleted_count"] == 1
+        assert payload["history_deleted"] == 1
+        remaining_ids = {row.id for row in store.all()}
+        assert drop.id not in remaining_ids
+        assert keep.id in remaining_ids
+
+    asyncio.run(_scenario())
+
+
+def test_memory_forget_by_query_enforces_min_length(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        tool = MemoryForgetTool(store)
+        with pytest.raises(ValueError, match="query must be at least 3 characters"):
+            await tool.run({"query": "ab"}, ToolContext(session_id="s1"))
+
+    asyncio.run(_scenario())
+
+
+def test_memory_analyze_base_stats_fields(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        store.add("today deadline for project alpha", source="seed:temporal")
+        store.add("plain reference note", source="seed:plain")
+        tool = MemoryAnalyzeTool(store)
+
+        payload = json.loads(await tool.run({}, ToolContext(session_id="s1")))
+        assert payload["status"] == "ok"
+        assert payload["counts"]["history"] == 2
+        assert payload["counts"]["total"] >= payload["counts"]["history"]
+        assert set(payload["recent"].keys()) == {"last_24h", "last_7d", "last_30d"}
+        assert "temporal_marked_count" in payload
+        assert isinstance(payload["top_sources"], list)
+
+    asyncio.run(_scenario())
+
+
+def test_memory_analyze_query_returns_matches_with_refs(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        row = store.add("python memory match example", source="seed:test")
+        tool = MemoryAnalyzeTool(store)
+
+        payload = json.loads(await tool.run({"query": "python", "limit": 3}, ToolContext(session_id="s1")))
+        assert payload["status"] == "ok"
+        assert payload["query"] == "python"
+        assert payload["matches"]
+        assert payload["matches"][0]["ref"] == f"mem:{row.id[:8]}"
 
     asyncio.run(_scenario())

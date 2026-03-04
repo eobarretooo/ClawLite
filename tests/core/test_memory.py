@@ -386,3 +386,85 @@ def test_memory_recover_session_context_uses_history_then_curated_fallback(tmp_p
     diag = store.diagnostics()
     assert diag["session_recovery_attempts"] == 1
     assert diag["session_recovery_hits"] == 1
+
+
+def test_memory_delete_by_prefixes_removes_from_history_and_curated(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    keep = store.add("keep history row", source="session:keep")
+    drop_history = store.add("drop history row", source="session:drop")
+    store.curated_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "facts": [
+                    {
+                        "id": "curdrop001",
+                        "text": "drop curated row",
+                        "source": "curated:session:drop",
+                        "created_at": "2026-03-03T00:00:01+00:00",
+                        "last_seen_at": "2026-03-03T00:00:01+00:00",
+                        "mentions": 1,
+                        "session_count": 1,
+                        "sessions": ["session:drop"],
+                        "importance": 1.0,
+                    },
+                    {
+                        "id": "curkeep01",
+                        "text": "keep curated row",
+                        "source": "curated:session:keep",
+                        "created_at": "2026-03-03T00:00:02+00:00",
+                        "last_seen_at": "2026-03-03T00:00:02+00:00",
+                        "mentions": 1,
+                        "session_count": 1,
+                        "sessions": ["session:keep"],
+                        "importance": 1.0,
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    deleted = store.delete_by_prefixes([drop_history.id[:8], "curdrop"], limit=10)
+
+    assert deleted["deleted_count"] == 2
+    assert deleted["history_deleted"] == 1
+    assert deleted["curated_deleted"] == 1
+    history_ids = {row.id for row in store.all()}
+    curated_ids = {row.id for row in store.curated()}
+    assert keep.id in history_ids
+    assert drop_history.id not in history_ids
+    assert "curkeep01" in curated_ids
+    assert "curdrop001" not in curated_ids
+
+
+def test_memory_delete_by_prefixes_is_limit_bounded_and_keeps_repair_behavior(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    old = {
+        "id": "aaa11111drop",
+        "text": "old row",
+        "source": "seed",
+        "created_at": "2026-03-01T00:00:00+00:00",
+    }
+    new = {
+        "id": "bbb22222drop",
+        "text": "new row",
+        "source": "seed",
+        "created_at": "2026-03-02T00:00:00+00:00",
+    }
+    store.history_path.write_text(
+        "\n".join([json.dumps(old), "{invalid", json.dumps(new)]) + "\n",
+        encoding="utf-8",
+    )
+
+    deleted = store.delete_by_prefixes(["bbb"], limit=1)
+
+    assert deleted["deleted_count"] == 1
+    assert deleted["history_deleted"] == 1
+    lines = store.history_path.read_text(encoding="utf-8").splitlines()
+    assert "{invalid" not in lines
+    kept_payloads = [json.loads(line) for line in lines if line.startswith("{") and '"id"' in line]
+    kept_ids = {item["id"] for item in kept_payloads}
+    assert "aaa11111drop" in kept_ids
+    assert "bbb22222drop" not in kept_ids

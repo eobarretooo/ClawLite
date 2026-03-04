@@ -134,6 +134,7 @@
 - Progress (2026-03-04): added `memory_learn` + `memory_recall` tools and prompt memory snippets now carry `mem:<id8>` provenance with source markers.
 - Progress (2026-03-04): AgentEngine now uses deterministic retrieval planner routes (`NO_RETRIEVE` / `RETRIEVE` / `NEXT_QUERY`) with fail-soft fallback.
 - Progress (2026-03-04): retrieval ranking now adds bounded temporal awareness (recency/decay + temporal-intent marker boost) and planner sufficiency requires temporal relevance before accepting first-pass hits.
+- Progress (2026-03-04): added guarded deterministic memory control/inspection tools `memory_forget` and `memory_analyze` (selector/query validation, bounded delete limit, compact stats + refs).
 
 ### Vision and differentiation
 - Build **ClawMemory** as a proactive memory engine that adapts ideas from
