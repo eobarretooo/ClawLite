@@ -98,6 +98,9 @@
   - 100% criterion: real-time typing indicator, consistent safe Markdown/HTML
     formatting, retries with backoff + idempotency, delivery confirmation, and
     observable per-message error fallback.
+  - OpenClaw adaptation target: parity for access policy enforcement,
+    callback/reaction updates, webhook runtime behavior, full action surface,
+    and explicit delivery confirmations.
 
 - **Core 100% (Memory, Agents, Heartbeat, Soul, Tools, User) with OpenClaw-level autonomy**
   - **Status: partial** (`P0` + `P1`, parity `NOW`/`NEXT`)
