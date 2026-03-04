@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -338,3 +339,112 @@ def test_gateway_shutdown_isolation_continues_after_stop_errors(tmp_path: Path) 
 
     assert markers["cron_stop"] is True
     assert markers["channels_stop"] is True
+
+
+def test_gateway_cron_endpoints_roundtrip(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={"heartbeat": {"enabled": False}},
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/cron/add",
+            json={
+                "session_id": "cli:cron",
+                "expression": "every 60",
+                "prompt": "Run cron check",
+                "name": "roundtrip-cron",
+            },
+        )
+        assert created.status_code == 200
+        created_payload = created.json()
+        assert created_payload["ok"] is True
+        assert created_payload["status"] == "created"
+        job_id = created_payload["id"]
+        assert isinstance(job_id, str) and job_id
+
+        listed = client.get("/v1/cron/list", params={"session_id": "cli:cron"})
+        assert listed.status_code == 200
+        jobs = listed.json()["jobs"]
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job["id"] == job_id
+        assert job["name"] == "roundtrip-cron"
+        assert job["session_id"] == "cli:cron"
+        assert job["expression"] == "every 60"
+        assert job["timezone"] == "UTC"
+        assert job["enabled"] is True
+        assert isinstance(job["next_run_iso"], str) and job["next_run_iso"]
+        assert job["payload"]["prompt"] == "Run cron check"
+
+        deleted = client.delete(f"/v1/cron/{job_id}")
+        assert deleted.status_code == 200
+        deleted_payload = deleted.json()
+        assert deleted_payload["ok"] is True
+        assert deleted_payload["status"] == "removed"
+
+        listed_empty = client.get("/v1/cron/list", params={"session_id": "cli:cron"})
+        assert listed_empty.status_code == 200
+        assert listed_empty.json()["jobs"] == []
+
+
+def test_gateway_heartbeat_trigger_contract_updates_state(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={"heartbeat": {"enabled": True, "interval_s": 9999}},
+        channels={},
+    )
+    app = create_app(cfg)
+
+    calls: list[tuple[str, str]] = []
+
+    async def _run(*, session_id: str, user_text: str):
+        calls.append((session_id, user_text))
+        return SimpleNamespace(text="HEARTBEAT_OK", model="fake/test")
+
+    app.state.runtime.engine.run = _run
+    state_path = Path(app.state.runtime.heartbeat.state_path)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/heartbeat/trigger")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["decision"]["action"] == "skip"
+        assert payload["decision"]["reason"] == "heartbeat_ok"
+
+    assert calls
+    assert any(session_id == "heartbeat:system" for session_id, _ in calls)
+    assert state_path.exists()
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_action"] == "skip"
+    assert state["last_reason"] == "heartbeat_ok"
+    assert state["last_decision"]["action"] == "skip"
+    assert state["last_decision"]["reason"] == "heartbeat_ok"
+    assert state["skip_count"] >= 1
+
+
+def test_gateway_heartbeat_trigger_disabled_guard(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={"heartbeat": {"enabled": False}},
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/heartbeat/trigger")
+        assert response.status_code == 409
+        payload = response.json()
+        assert payload["error"] == "heartbeat_disabled"
+        assert payload["status"] == 409
