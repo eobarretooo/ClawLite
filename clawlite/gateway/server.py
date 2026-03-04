@@ -21,6 +21,7 @@ from clawlite.config.loader import load_config
 from clawlite.config.schema import AppConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings
 from clawlite.core.memory import MemoryStore
+from clawlite.core.memory_backend import resolve_memory_backend
 from clawlite.core.memory_monitor import MemoryMonitor
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
@@ -77,6 +78,7 @@ class ControlPlaneResponse(BaseModel):
     server_time: str
     components: dict[str, Any]
     auth: dict[str, Any]
+    memory_proactive_enabled: bool = False
 
 
 class DiagnosticsResponse(BaseModel):
@@ -544,6 +546,17 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         root=Path(config.state_path) / "sessions",
         max_messages_per_session=config.agents.defaults.session_retention_messages,
     )
+    memory_backend = resolve_memory_backend(
+        backend_name=str(config.agents.defaults.memory.backend or "sqlite"),
+        pgvector_url=str(config.agents.defaults.memory.pgvector_url or ""),
+    )
+    if memory_backend.name == "pgvector" and not memory_backend.is_supported():
+        raise RuntimeError(
+            "memory backend 'pgvector' is not supported in this runtime: configure "
+            "agents.defaults.memory.pgvector_url with postgres:// or postgresql://, "
+            "or use backend=sqlite"
+        )
+
     memory = MemoryStore(
         db_path=Path(config.state_path) / "memory.jsonl",
         semantic_enabled=bool(
@@ -556,7 +569,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
             getattr(config.agents.defaults.memory, "emotional_tracking", False)
         ),
     )
-    memory_monitor = MemoryMonitor(memory)
+    memory_monitor = MemoryMonitor(memory) if bool(getattr(config.agents.defaults.memory, "proactive", False)) else None
     tools.register(MemoryRecallTool(memory))
     tools.register(MemoryLearnTool(memory))
     tools.register(MemoryForgetTool(memory))
@@ -794,6 +807,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "header_name": auth_guard.header_name,
                 "query_param": auth_guard.query_param,
             },
+            memory_proactive_enabled=bool(runtime.memory_monitor is not None),
         )
 
     async def _start_subsystems() -> None:

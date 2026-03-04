@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from clawlite.config.schema import AppConfig, SchedulerConfig
 from clawlite.core.memory_monitor import MemorySuggestion
-from clawlite.gateway.server import _run_heartbeat, create_app
+from clawlite.gateway.server import _run_heartbeat, build_runtime, create_app
 from clawlite.providers.base import LLMResult
 from clawlite.scheduler.heartbeat import HeartbeatDecision
 from clawlite.utils import logging as logging_utils
@@ -264,6 +264,85 @@ def test_gateway_runtime_passes_emotional_tracking_to_memory_store(tmp_path: Pat
     )
     app = create_app(cfg)
     assert app.state.runtime.engine.memory.emotional_tracking is True
+
+
+def test_gateway_runtime_accepts_sqlite_memory_backend(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"backend": "sqlite"}}},
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+    assert runtime.engine.memory is not None
+
+
+def test_gateway_runtime_rejects_pgvector_backend_without_url(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"backend": "pgvector", "pgvector_url": ""}}},
+        channels={},
+    )
+    with pytest.raises(RuntimeError, match="memory backend 'pgvector'"):
+        build_runtime(cfg)
+
+
+def test_gateway_runtime_rejects_pgvector_backend_with_invalid_url(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"backend": "pgvector", "pgvector_url": "sqlite:///tmp.db"}}},
+        channels={},
+    )
+    with pytest.raises(RuntimeError, match="postgres://"):
+        build_runtime(cfg)
+
+
+def test_gateway_runtime_disables_memory_monitor_when_proactive_false(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"proactive": False}}},
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+    assert runtime.memory_monitor is None
+
+
+def test_run_heartbeat_skips_suggestions_when_memory_monitor_missing() -> None:
+    class _Engine:
+        async def run(self, *, session_id: str, user_text: str):
+            return SimpleNamespace(text="HEARTBEAT_OK")
+
+    async def _scenario() -> None:
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels, memory_monitor=None)
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "skip"
+        assert decision.reason == "heartbeat_ok"
+        channels.send.assert_not_awaited()
+
+    asyncio.run(_scenario())
+
+
+def test_gateway_status_exposes_memory_proactive_enabled_flag(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"proactive": False}}},
+        channels={},
+    )
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        payload = client.get("/v1/status").json()
+        assert payload["memory_proactive_enabled"] is False
 
 
 def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:

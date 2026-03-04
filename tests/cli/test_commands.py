@@ -422,6 +422,71 @@ def test_cli_memory_doctor_outputs_expected_keys(tmp_path: Path, capsys) -> None
     assert set(payload["schema"].keys()) == {"curated", "checkpoints"}
 
 
+def test_cli_memory_without_subcommand_returns_overview(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "agents": {"defaults": {"memory": {"proactive": True}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert set(payload["counts"].keys()) == {"history", "curated", "total"}
+    assert "semantic_coverage" in payload
+    assert payload["proactive_enabled"] is True
+    assert "paths" in payload
+
+
+def test_cli_memory_version_lists_snapshot_ids_desc(tmp_path: Path, capsys) -> None:
+    state_path = tmp_path / "state"
+    state_path.mkdir(parents=True, exist_ok=True)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    history_path = state_path / "memory.jsonl"
+    history_path.write_text(
+        json.dumps(
+            {
+                "id": "mem-1",
+                "text": "baseline",
+                "source": "seed",
+                "created_at": "2026-03-04T00:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config", str(config_path), "memory", "snapshot", "--tag", "a"]) == 0
+    capsys.readouterr()
+    assert main(["--config", str(config_path), "memory", "snapshot", "--tag", "b"]) == 0
+    capsys.readouterr()
+
+    rc = main(["--config", str(config_path), "memory", "version"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["count"] == len(payload["versions"])
+    assert payload["versions"] == sorted(payload["versions"], reverse=True)
+
+
 def test_cli_memory_doctor_repair_handles_corrupt_history_line(tmp_path: Path, capsys) -> None:
     state_path = tmp_path / "state"
     state_path.mkdir(parents=True, exist_ok=True)

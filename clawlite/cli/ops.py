@@ -910,6 +910,66 @@ def memory_doctor_snapshot(config: AppConfig, repair: bool = False) -> dict[str,
     return payload
 
 
+def memory_overview_snapshot(config: AppConfig) -> dict[str, Any]:
+    try:
+        store = _build_memory_store(config)
+        history_count = len(store.all())
+        curated_count = len(store.curated())
+        total_count = history_count + curated_count
+        embedding_rows = 0
+        try:
+            embedding_rows = len(store._read_embeddings_map())
+        except Exception:
+            embedding_rows = 0
+
+        semantic_coverage = 0.0
+        if total_count > 0:
+            semantic_coverage = round(min(1.0, float(embedding_rows) / float(total_count)), 4)
+
+        return {
+            "ok": True,
+            "counts": {
+                "history": history_count,
+                "curated": curated_count,
+                "total": total_count,
+            },
+            "semantic_coverage": semantic_coverage,
+            "proactive_enabled": bool(getattr(config.agents.defaults.memory, "proactive", False)),
+            "paths": {
+                "memory_home": str(store.memory_home),
+                "history": str(store.history_path),
+                "curated": str(store.curated_path) if store.curated_path is not None else "",
+                "embeddings": str(store.embeddings_path),
+                "versions": str(store.versions_path),
+            },
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
+def memory_version_snapshot(config: AppConfig) -> dict[str, Any]:
+    try:
+        store = _build_memory_store(config)
+        version_ids = sorted(
+            [path.stem.replace(".json", "") for path in store.versions_path.glob("*.json.gz") if path.is_file()],
+            reverse=True,
+        )
+        return {
+            "ok": True,
+            "count": len(version_ids),
+            "versions": version_ids,
+            "path": str(store.versions_path),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
 def _build_memory_store(config: AppConfig) -> MemoryStore:
     semantic_enabled = bool(
         getattr(config.agents.defaults.memory, "semantic_search", config.agents.defaults.semantic_memory)

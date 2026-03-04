@@ -12,11 +12,13 @@ from clawlite.cli.ops import fetch_gateway_diagnostics
 from clawlite.cli.ops import memory_eval_snapshot
 from clawlite.cli.ops import memory_export_snapshot
 from clawlite.cli.ops import memory_import_snapshot
+from clawlite.cli.ops import memory_overview_snapshot
 from clawlite.cli.ops import memory_privacy_snapshot
 from clawlite.cli.ops import memory_profile_snapshot
 from clawlite.cli.ops import memory_snapshot_create
 from clawlite.cli.ops import memory_snapshot_rollback
 from clawlite.cli.ops import memory_suggest_snapshot
+from clawlite.cli.ops import memory_version_snapshot
 from clawlite.cli.ops import memory_doctor_snapshot
 from clawlite.cli.ops import onboarding_validation
 from clawlite.cli.ops import provider_validation
@@ -261,6 +263,13 @@ def cmd_memory_doctor(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok", False) else 2
 
 
+def cmd_memory_overview(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_overview_snapshot(cfg)
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
 def cmd_memory_eval(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     payload = memory_eval_snapshot(cfg, limit=int(args.limit))
@@ -285,6 +294,13 @@ def cmd_memory_suggest(args: argparse.Namespace) -> int:
 def cmd_memory_snapshot(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     payload = memory_snapshot_create(cfg, tag=str(args.tag or ""))
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_memory_version(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_version_snapshot(cfg)
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
 
@@ -548,7 +564,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_diagnostics.set_defaults(handler=cmd_diagnostics)
 
     p_memory = sub.add_parser("memory", help="Memory inspection and maintenance")
-    memory_sub = p_memory.add_subparsers(dest="memory_command", required=True)
+    memory_sub = p_memory.add_subparsers(dest="memory_command", required=False)
+    p_memory.set_defaults(handler=cmd_memory_overview)
 
     p_memory_doctor = memory_sub.add_parser("doctor", help="Emit memory diagnostics snapshot")
     p_memory_doctor.add_argument("--repair", action="store_true", help="Trigger safe history repair before reporting")
@@ -568,6 +585,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_memory_snapshot = memory_sub.add_parser("snapshot", help="Create memory snapshot version")
     p_memory_snapshot.add_argument("--tag", default="", help="Optional tag to append to snapshot id")
     p_memory_snapshot.set_defaults(handler=cmd_memory_snapshot)
+
+    p_memory_version = memory_sub.add_parser("version", help="List available memory snapshot ids")
+    p_memory_version.set_defaults(handler=cmd_memory_version)
 
     p_memory_rollback = memory_sub.add_parser("rollback", help="Rollback memory state to snapshot id")
     p_memory_rollback.add_argument("id")
