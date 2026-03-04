@@ -176,6 +176,8 @@ Heartbeat interval is controlled by:
 }
 ```
 
+Heartbeat check-state is persisted in `workspace/memory/heartbeat-state.json` on every tick, including `last_check_iso`, `last_action`, `last_reason`, `last_ok_iso`, and `last_actionable_iso` (plus optional bounded actionable excerpt).
+
 ## 🐳 Docker
 No official image is published yet. You can run ClawLite in a Python container:
 

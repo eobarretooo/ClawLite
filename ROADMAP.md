@@ -31,8 +31,9 @@
 - [ ] Replace passive channel stubs with active adapters for Discord, Slack, and WhatsApp.
 - [ ] Enforce stronger tool safety policy for exec, web, and mcp.
 - [ ] Align gateway with production-grade contract.
-- [ ] Upgrade heartbeat to HEARTBEAT_OK + persisted check state.
+- [x] Upgrade heartbeat to HEARTBEAT_OK + persisted check state.
 - Progresso 2026-03-04: camada de compatibilidade do gateway entregue (`/api/status`, `/api/message`, `/api/token`, `/ws`, `/`).
+- Progresso 2026-03-04: heartbeat agora persiste check-state explícito com migração backward-compatible e escrita atômica fail-soft.
 
 ### NEXT (Operational maturity)
 - [ ] Improve prompt/memory pipeline.

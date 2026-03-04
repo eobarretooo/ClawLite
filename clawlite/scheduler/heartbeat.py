@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +13,7 @@ from clawlite.utils.logging import bind_event, setup_logging
 
 HEARTBEAT_TOKEN = "HEARTBEAT_OK"
 DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300
+DEFAULT_ACTIONABLE_EXCERPT_MAX_CHARS = 240
 
 
 @dataclass(slots=True)
@@ -77,9 +80,11 @@ class HeartbeatService:
         *,
         state_path: str | Path | None = None,
         ack_max_chars: int = DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+        actionable_excerpt_max_chars: int = DEFAULT_ACTIONABLE_EXCERPT_MAX_CHARS,
     ) -> None:
         self.interval_seconds = max(5, int(interval_seconds))
         self.ack_max_chars = max(0, int(ack_max_chars))
+        self.actionable_excerpt_max_chars = max(0, int(actionable_excerpt_max_chars))
         self.state_path = Path(state_path) if state_path is not None else (Path.home() / ".clawlite" / "state" / "heartbeat-state.json")
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self._task: asyncio.Task[Any] | None = None
@@ -95,6 +100,11 @@ class HeartbeatService:
             "last_decision": {"action": "skip", "reason": "not_started", "text": ""},
             "last_run_iso": "",
             "last_skip_iso": "",
+            "last_check_iso": "",
+            "last_action": "skip",
+            "last_reason": "not_started",
+            "last_ok_iso": "",
+            "last_actionable_iso": "",
             "last_error": "",
             "ticks": 0,
             "run_count": 0,
@@ -116,10 +126,93 @@ class HeartbeatService:
             return
         if not isinstance(payload, dict):
             return
-        self._state.update(payload)
+        self._state = self._migrate_state(payload)
+
+    def _migrate_state(self, payload: dict[str, Any]) -> dict[str, Any]:
+        state = dict(self._state)
+        state.update(payload)
+
+        legacy_flat: dict[str, Any] = {}
+        for key in ("action", "reason", "text"):
+            if key in payload:
+                legacy_flat[key] = payload.get(key)
+
+        raw_decision = payload.get("last_decision")
+        if isinstance(raw_decision, dict):
+            decision = HeartbeatDecision.from_result(raw_decision)
+        elif legacy_flat:
+            decision = HeartbeatDecision.from_result(legacy_flat)
+        else:
+            action = str(state.get("last_action", "") or "").strip().lower()
+            reason = str(state.get("last_reason", "") or "").strip()
+            text = str(state.get("last_actionable_excerpt", "") or "").strip()
+            seed = {
+                "action": action if action in {"run", "skip"} else "skip",
+                "reason": reason or "not_started",
+                "text": text,
+            }
+            decision = HeartbeatDecision.from_result(seed)
+
+        state["last_decision"] = {
+            "action": decision.action,
+            "reason": decision.reason,
+            "text": decision.text,
+        }
+        loaded_action = str(payload.get("last_action", "") or "").strip().lower()
+        state["last_action"] = loaded_action if loaded_action in {"run", "skip"} else decision.action
+        state["last_reason"] = str(payload.get("last_reason", "") or decision.reason)
+        state["last_check_iso"] = str(payload.get("last_check_iso", "") or state.get("last_tick_iso", "") or "")
+
+        if decision.reason == "heartbeat_ok" and not str(state.get("last_ok_iso", "") or ""):
+            state["last_ok_iso"] = str(state.get("last_skip_iso", "") or state.get("last_check_iso", "") or "")
+        else:
+            state["last_ok_iso"] = str(state.get("last_ok_iso", "") or "")
+
+        if decision.action == "run" and not str(state.get("last_actionable_iso", "") or ""):
+            state["last_actionable_iso"] = str(state.get("last_run_iso", "") or state.get("last_check_iso", "") or "")
+        else:
+            state["last_actionable_iso"] = str(state.get("last_actionable_iso", "") or "")
+
+        excerpt = str(state.get("last_actionable_excerpt", "") or decision.text or "").strip()
+        if excerpt:
+            state["last_actionable_excerpt"] = self._bound_excerpt(excerpt)
+        elif "last_actionable_excerpt" in state:
+            state.pop("last_actionable_excerpt", None)
+        return state
+
+    def _bound_excerpt(self, text: str) -> str:
+        if self.actionable_excerpt_max_chars <= 0:
+            return ""
+        value = text.strip()
+        if len(value) <= self.actionable_excerpt_max_chars:
+            return value
+        return value[: self.actionable_excerpt_max_chars]
 
     def _save_state(self) -> None:
-        self.state_path.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(self._state, ensure_ascii=False, indent=2)
+        tmp_path: Path | None = None
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(self.state_path.parent),
+                prefix=f".{self.state_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+                tmp_path = Path(handle.name)
+            os.replace(str(tmp_path), str(self.state_path))
+        except Exception as exc:
+            bind_event("heartbeat.state").error("heartbeat save_state_failed path={} error={}", self.state_path, exc)
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     @property
     def last_decision(self) -> HeartbeatDecision:
@@ -152,9 +245,20 @@ class HeartbeatService:
             "reason": decision.reason,
             "text": decision.text,
         }
+        self._state["last_check_iso"] = now_iso
+        self._state["last_action"] = decision.action
+        self._state["last_reason"] = decision.reason
+        if decision.reason == "heartbeat_ok":
+            self._state["last_ok_iso"] = now_iso
         if decision.action == "run":
             self._state["run_count"] = int(self._state.get("run_count", 0) or 0) + 1
             self._state["last_run_iso"] = now_iso
+            self._state["last_actionable_iso"] = now_iso
+            excerpt = self._bound_excerpt(decision.text)
+            if excerpt:
+                self._state["last_actionable_excerpt"] = excerpt
+            else:
+                self._state.pop("last_actionable_excerpt", None)
             bind_event("heartbeat.tick").info("heartbeat run reason={}", decision.reason)
         else:
             self._state["skip_count"] = int(self._state.get("skip_count", 0) or 0) + 1

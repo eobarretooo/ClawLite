@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import clawlite.scheduler.heartbeat as heartbeat_module
 from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 
 
@@ -113,3 +114,116 @@ def test_next_trigger_source_handles_builtin_timeout(monkeypatch) -> None:
         assert trigger == "interval"
 
     asyncio.run(_scenario())
+
+
+def test_loads_legacy_flat_state_schema(tmp_path: Path) -> None:
+    state_file = tmp_path / "heartbeat-state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "version": 0,
+                "last_tick_iso": "2026-01-01T00:00:00+00:00",
+                "action": "run",
+                "reason": "legacy_reason",
+                "text": "legacy actionable",
+                "ticks": 7,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    hb = HeartbeatService(state_path=state_file)
+
+    assert hb.last_decision.action == "run"
+    assert hb.last_decision.reason == "legacy_reason"
+    assert hb.last_decision.text == "legacy actionable"
+    assert hb._state["last_action"] == "run"
+    assert hb._state["last_reason"] == "legacy_reason"
+    assert hb._state["last_check_iso"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_preserves_unknown_state_keys_on_save(tmp_path: Path) -> None:
+    async def _scenario(state_file: Path) -> None:
+        state_file.write_text(
+            json.dumps(
+                {
+                    "last_decision": {"action": "skip", "reason": "not_started", "text": ""},
+                    "external_key": {"keep": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        async def _tick() -> HeartbeatDecision:
+            return HeartbeatDecision(action="skip", reason="heartbeat_ok")
+
+        hb = HeartbeatService(state_path=state_file)
+        await hb.trigger_now(_tick)
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+        assert payload["external_key"] == {"keep": True}
+
+    asyncio.run(_scenario(tmp_path / "heartbeat-state.json"))
+
+
+def test_heartbeat_ok_updates_check_state(tmp_path: Path) -> None:
+    async def _scenario(state_file: Path) -> None:
+        async def _tick() -> str:
+            return "HEARTBEAT_OK all clear"
+
+        hb = HeartbeatService(state_path=state_file)
+        decision = await hb.trigger_now(_tick)
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+
+        assert decision.action == "skip"
+        assert decision.reason == "heartbeat_ok"
+        assert payload["last_action"] == "skip"
+        assert payload["last_reason"] == "heartbeat_ok"
+        assert payload["last_check_iso"]
+        assert payload["last_ok_iso"] == payload["last_check_iso"]
+
+    asyncio.run(_scenario(tmp_path / "heartbeat-state.json"))
+
+
+def test_actionable_response_updates_check_state(tmp_path: Path) -> None:
+    async def _scenario(state_file: Path) -> None:
+        async def _tick() -> HeartbeatDecision:
+            return HeartbeatDecision(
+                action="run",
+                reason="actionable_response",
+                text="Deploy hotfix and notify operators immediately.",
+            )
+
+        hb = HeartbeatService(state_path=state_file, actionable_excerpt_max_chars=12)
+        decision = await hb.trigger_now(_tick)
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+
+        assert decision.action == "run"
+        assert payload["last_action"] == "run"
+        assert payload["last_reason"] == "actionable_response"
+        assert payload["last_actionable_iso"] == payload["last_check_iso"]
+        assert payload["last_actionable_excerpt"] == "Deploy hotfi"
+
+    asyncio.run(_scenario(tmp_path / "heartbeat-state.json"))
+
+
+def test_save_state_atomic_replace_fail_soft(tmp_path: Path, monkeypatch) -> None:
+    state_file = tmp_path / "heartbeat-state.json"
+    state_file.write_text(json.dumps({"external": "original"}), encoding="utf-8")
+    hb = HeartbeatService(state_path=state_file)
+    hb._state["ticks"] = 42
+
+    calls: list[tuple[str, str]] = []
+
+    def _replace_fail(src: str, dst: str) -> None:
+        calls.append((src, dst))
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(heartbeat_module.os, "replace", _replace_fail)
+
+    hb._save_state()
+
+    assert calls
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    assert payload["external"] == "original"
+    leftovers = list(state_file.parent.glob(f".{state_file.name}.*.tmp"))
+    assert leftovers == []
