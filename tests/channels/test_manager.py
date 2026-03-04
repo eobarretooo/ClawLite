@@ -539,12 +539,72 @@ def test_channel_manager_delivery_counters_track_success_failure_and_dead_letter
         assert channel_delivery["success"] == 0
         assert channel_delivery["failures"] == 2
         assert channel_delivery["dead_lettered"] == 1
+        assert channel_delivery["delivery_confirmed"] == 0
+        assert channel_delivery["delivery_failed_final"] == 1
+        assert channel_delivery["idempotency_suppressed"] == 0
 
         diagnostics = mgr.delivery_diagnostics()
         assert diagnostics["total"]["attempts"] == 2
         assert diagnostics["total"]["failures"] == 2
         assert diagnostics["total"]["dead_lettered"] == 1
+        assert diagnostics["total"]["delivery_confirmed"] == 0
+        assert diagnostics["total"]["delivery_failed_final"] == 1
+        assert diagnostics["total"]["idempotency_suppressed"] == 0
         assert diagnostics["per_channel"]["fake"]["dead_lettered"] == 1
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_suppresses_duplicate_outbound_with_explicit_idempotency_key() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("fake", FakeChannel)
+        await mgr.start(
+            {
+                "channels": {
+                    "delivery_idempotency_ttl_s": 900,
+                    "delivery_idempotency_max_entries": 32,
+                    "fake": {"enabled": True},
+                }
+            }
+        )
+
+        fake = mgr._channels["fake"]
+        key = "explicit-dedupe-key"
+        first = OutboundEvent(
+            channel="fake",
+            session_id="fake:idem",
+            target="idem",
+            text="hello",
+            metadata={"_delivery_idempotency_key": key},
+        )
+        second = OutboundEvent(
+            channel="fake",
+            session_id="fake:idem",
+            target="idem",
+            text="hello",
+            metadata={"_delivery_idempotency_key": key},
+        )
+
+        await mgr._publish_and_send(event=first)
+        await mgr._publish_and_send(event=second)
+
+        assert len(fake.sent) == 1
+        assert fake.sent[0][2]["_delivery_idempotency_key"] == key
+
+        delivery = mgr.status()["fake"]["delivery"]
+        assert delivery["attempts"] == 1
+        assert delivery["success"] == 1
+        assert delivery["delivery_confirmed"] == 1
+        assert delivery["idempotency_suppressed"] == 1
+        assert delivery["delivery_failed_final"] == 0
+
+        diagnostics = mgr.delivery_diagnostics()
+        assert diagnostics["total"]["idempotency_suppressed"] == 1
+        assert diagnostics["total"]["delivery_confirmed"] == 1
 
         await mgr.stop()
 

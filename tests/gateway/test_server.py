@@ -505,6 +505,9 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
             "replayed",
             "channel_unavailable",
             "policy_dropped",
+            "delivery_confirmed",
+            "delivery_failed_final",
+            "idempotency_suppressed",
         }
         assert "cron" in payload
         assert "heartbeat" in payload

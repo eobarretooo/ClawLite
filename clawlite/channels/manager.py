@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import contextvars
+import time
+from collections import deque
 from dataclasses import replace
 from typing import Any
 
@@ -76,6 +79,10 @@ class ChannelManager:
         self._send_max_attempts = 3
         self._send_retry_backoff_s = 0.5
         self._send_retry_max_backoff_s = 4.0
+        self._delivery_idempotency_ttl_s = 900.0
+        self._delivery_idempotency_max_entries = 2048
+        self._delivery_idempotency_cache: dict[str, float] = {}
+        self._delivery_idempotency_order: deque[tuple[str, float]] = deque()
         self._dispatch_slots = asyncio.Semaphore(self._dispatcher_max_concurrency)
         self._session_slots: dict[str, asyncio.Semaphore] = {}
         self._dispatch_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
@@ -90,6 +97,9 @@ class ChannelManager:
             "replayed": 0,
             "channel_unavailable": 0,
             "policy_dropped": 0,
+            "delivery_confirmed": 0,
+            "delivery_failed_final": 0,
+            "idempotency_suppressed": 0,
         }
         self._delivery_per_channel: dict[str, dict[str, int]] = {}
 
@@ -105,6 +115,9 @@ class ChannelManager:
                 "replayed": 0,
                 "channel_unavailable": 0,
                 "policy_dropped": 0,
+                "delivery_confirmed": 0,
+                "delivery_failed_final": 0,
+                "idempotency_suppressed": 0,
             }
             self._delivery_per_channel[name] = row
         return row
@@ -116,6 +129,68 @@ class ChannelManager:
         self._delivery_total[key] = self._delivery_total.get(key, 0) + amount
         row = self._ensure_delivery_channel(channel)
         row[key] = row.get(key, 0) + amount
+
+    @staticmethod
+    def _derive_delivery_idempotency_key(event: OutboundEvent) -> str:
+        payload = "\n".join(
+            [
+                str(event.channel),
+                str(event.session_id),
+                str(event.target),
+                str(event.text),
+                str(event.created_at),
+            ]
+        )
+        return f"dlv:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+
+    def _ensure_delivery_idempotency_key(self, event: OutboundEvent) -> tuple[OutboundEvent, str]:
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        explicit = str(metadata.get("_delivery_idempotency_key", "")).strip()
+        if explicit:
+            return event, explicit
+        key = self._derive_delivery_idempotency_key(event)
+        next_metadata = dict(metadata)
+        next_metadata["_delivery_idempotency_key"] = key
+        return replace(event, metadata=next_metadata), key
+
+    def _prune_delivery_idempotency_cache(self, *, now: float | None = None) -> None:
+        if self._delivery_idempotency_max_entries <= 0:
+            self._delivery_idempotency_cache.clear()
+            self._delivery_idempotency_order.clear()
+            return
+
+        current = time.monotonic() if now is None else now
+        while self._delivery_idempotency_order:
+            key, expiry = self._delivery_idempotency_order[0]
+            if expiry > current:
+                break
+            self._delivery_idempotency_order.popleft()
+            if self._delivery_idempotency_cache.get(key) == expiry:
+                self._delivery_idempotency_cache.pop(key, None)
+
+        while len(self._delivery_idempotency_cache) > self._delivery_idempotency_max_entries and self._delivery_idempotency_order:
+            key, expiry = self._delivery_idempotency_order.popleft()
+            if self._delivery_idempotency_cache.get(key) == expiry:
+                self._delivery_idempotency_cache.pop(key, None)
+
+    def _is_delivery_idempotency_suppressed(self, key: str) -> bool:
+        current = time.monotonic()
+        self._prune_delivery_idempotency_cache(now=current)
+        expiry = self._delivery_idempotency_cache.get(key)
+        if expiry is None:
+            return False
+        if expiry <= current:
+            self._delivery_idempotency_cache.pop(key, None)
+            return False
+        return True
+
+    def _remember_delivery_idempotency(self, key: str) -> None:
+        ttl = max(0.0, float(self._delivery_idempotency_ttl_s))
+        current = time.monotonic()
+        expiry = current + ttl
+        self._delivery_idempotency_cache[key] = expiry
+        self._delivery_idempotency_order.append((key, expiry))
+        self._prune_delivery_idempotency_cache(now=current)
 
     def register(self, name: str, channel_cls: type[BaseChannel]) -> None:
         self._registry[name] = channel_cls
@@ -228,6 +303,23 @@ class ChannelManager:
         max_attempts = max(1, self._send_max_attempts)
         last_error = ""
         backoff = self._send_retry_backoff_s
+        event, idempotency_key = self._ensure_delivery_idempotency_key(event)
+        if self._is_delivery_idempotency_suppressed(idempotency_key):
+            self._inc_delivery(channel=event.channel, key="idempotency_suppressed")
+            bind_event("channel.send", session=event.session_id, channel=event.channel).info(
+                "dispatch suppressed duplicate target={} key={}",
+                event.target,
+                idempotency_key,
+            )
+            return replace(
+                event,
+                attempt=0,
+                max_attempts=max_attempts,
+                retryable=channel.capabilities.supports_retry,
+                dead_lettered=False,
+                dead_letter_reason="",
+                last_error="",
+            )
         for attempt in range(1, max_attempts + 1):
             attempt_event = replace(
                 event,
@@ -243,6 +335,8 @@ class ChannelManager:
             try:
                 await channel.send(target=event.target, text=event.text, metadata=event.metadata)
                 self._inc_delivery(channel=event.channel, key="success")
+                self._inc_delivery(channel=event.channel, key="delivery_confirmed")
+                self._remember_delivery_idempotency(idempotency_key)
                 bind_event("channel.send", session=event.session_id, channel=event.channel).info(
                     "dispatch sent target={} attempt={}/{}",
                     event.target,
@@ -278,6 +372,7 @@ class ChannelManager:
         )
         await self.bus.publish_dead_letter(dead)
         self._inc_delivery(channel=event.channel, key="dead_lettered")
+        self._inc_delivery(channel=event.channel, key="delivery_failed_final")
         bind_event("channel.send", session=event.session_id, channel=event.channel).error(
             "dispatch dead-letter target={} attempts={} error={}",
             event.target,
@@ -302,6 +397,7 @@ class ChannelManager:
             )
             await self.bus.publish_dead_letter(dead)
             self._inc_delivery(channel=event.channel, key="dead_lettered")
+            self._inc_delivery(channel=event.channel, key="delivery_failed_final")
             return
         if not self._delivery_allowed(channel=channel, event=event):
             self._inc_delivery(channel=event.channel, key="policy_dropped")
@@ -525,6 +621,21 @@ class ChannelManager:
             self._send_retry_backoff_s,
             float(channels_cfg.get("send_retry_max_backoff_s", channels_cfg.get("sendRetryMaxBackoffS", 4.0)) or 4.0),
         )
+        self._delivery_idempotency_ttl_s = max(
+            0.0,
+            float(channels_cfg.get("delivery_idempotency_ttl_s", channels_cfg.get("deliveryIdempotencyTtlS", 900.0)) or 900.0),
+        )
+        self._delivery_idempotency_max_entries = max(
+            1,
+            int(
+                channels_cfg.get(
+                    "delivery_idempotency_max_entries",
+                    channels_cfg.get("deliveryIdempotencyMaxEntries", 2048),
+                )
+                or 2048
+            ),
+        )
+        self._prune_delivery_idempotency_cache()
         self._reset_dispatch_controls()
 
         for name, row in channels_cfg.items():

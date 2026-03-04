@@ -80,7 +80,7 @@ If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostic
 
 `channels_delivery` is additive and includes manager-level delivery counters with this shape:
 
-- `total`: aggregate counters (`attempts`, `success`, `failures`, `dead_lettered`, `replayed`, `channel_unavailable`, `policy_dropped`)
+- `total`: aggregate counters (`attempts`, `success`, `failures`, `dead_lettered`, `replayed`, `channel_unavailable`, `policy_dropped`, `delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`)
 - `per_channel`: same counter schema keyed by channel name
 
 When `gateway.diagnostics.include_config=true`, `environment` may include additive engine persistence telemetry, session-recovery telemetry under `environment.engine.session_recovery`, memory-store durability/recovery telemetry under `environment.engine.memory_store`, nested session-store durability/recovery diagnostics, tool execution telemetry under `environment.engine.tools` (`total` + `per_tool` counters), and provider telemetry under `environment.engine.provider`.
@@ -433,6 +433,7 @@ Campos baseline de contrato:
 - `uptime_s`: uptime do processo do gateway em segundos.
 - `contract_version`: versao estavel do contrato HTTP do gateway.
 - `channels_delivery`: contadores de entrega agregados do `ChannelManager` (`total` e `per_channel`).
+  Inclui contadores aditivos de confirmacao/falha final e supressao de duplicatas (`delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`).
 - `http`: telemetria HTTP em memoria (aditiva) com `total_requests`,
   `in_flight`, `by_method`, `by_path`, `by_status` e `latency_ms`
   (`count`, `min`, `max`, `avg`).
