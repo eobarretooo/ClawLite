@@ -155,6 +155,8 @@ def _env_overrides(*, include_model: bool = True) -> dict[str, Any]:
     if auth_mode in {"off", "optional", "required"}:
         out.setdefault("gateway", {}).setdefault("auth", {})["mode"] = auth_mode
     auth_token = os.getenv("CLAWLITE_GATEWAY_AUTH_TOKEN", "").strip()
+    if not auth_token:
+        auth_token = os.getenv("CLAWLITE_GATEWAY_TOKEN", "").strip()
     if auth_token:
         out.setdefault("gateway", {}).setdefault("auth", {})["token"] = auth_token
     auth_allow_loopback = os.getenv("CLAWLITE_GATEWAY_AUTH_ALLOW_LOOPBACK", "").strip().lower()

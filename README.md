@@ -74,6 +74,7 @@ Gateway compatibility aliases (OpenClaw-style surface):
 - `GET /api/token` (diagnóstico com token mascarado)
 - `WS /ws` (alias de `WS /v1/ws`)
 - `GET /` (entrypoint HTML leve e determinístico)
+- Progress 2026-03-04: gateway auth now auto-hardens to `required` on non-loopback hosts when a token is configured (localhost behavior unchanged); env fallback `CLAWLITE_GATEWAY_TOKEN` is also accepted.
 
 ## 🔧 Minimal Config (Gemini + Telegram)
 ClawLite loads config from `~/.clawlite/config.json` by default.

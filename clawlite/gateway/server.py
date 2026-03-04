@@ -149,12 +149,23 @@ class GatewayAuthGuard:
     @classmethod
     def from_config(cls, config: AppConfig) -> GatewayAuthGuard:
         auth_cfg = config.gateway.auth
-        mode = str(auth_cfg.mode or "off").strip().lower()
-        if mode not in {"off", "optional", "required"}:
-            mode = "off"
+        configured_mode = str(auth_cfg.mode or "off").strip().lower()
+        if configured_mode not in {"off", "optional", "required"}:
+            configured_mode = "off"
+        token = str(auth_cfg.token or "").strip()
+        host = str(config.gateway.host or "").strip()
+        effective_mode = configured_mode
+        if configured_mode == "off" and token and not cls._is_loopback(host):
+            effective_mode = "required"
+            bind_event("gateway.auth").warning(
+                "gateway auth auto-hardened configured_mode={} effective_mode={} host={} token_configured=true",
+                configured_mode,
+                effective_mode,
+                host or "-",
+            )
         return cls(
-            mode=mode,
-            token=str(auth_cfg.token or "").strip(),
+            mode=effective_mode,
+            token=token,
             allow_loopback_without_auth=bool(auth_cfg.allow_loopback_without_auth),
             header_name=str(auth_cfg.header_name or "Authorization").strip() or "Authorization",
             query_param=str(auth_cfg.query_param or "token").strip() or "token",

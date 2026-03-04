@@ -7,12 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 
 from clawlite.config.schema import AppConfig, SchedulerConfig
 from clawlite.gateway.server import _run_heartbeat, create_app
 from clawlite.providers.base import LLMResult
 from clawlite.scheduler.heartbeat import HeartbeatDecision
+from clawlite.utils import logging as logging_utils
 
 
 class FakeProvider:
@@ -181,6 +183,87 @@ def test_gateway_auth_required_for_control_plane(tmp_path: Path) -> None:
         assert token_payload["token_configured"] is True
         assert token_payload["token_masked"] == "********oken"
         assert token_payload["token_masked"] != "secret-token"
+
+
+def test_gateway_auth_auto_hardens_on_non_loopback_with_token(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "host": "0.0.0.0",
+            "auth": {
+                "mode": "off",
+                "token": "secret-token",
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        unauthorized = client.get("/v1/status")
+        assert unauthorized.status_code == 401
+        assert unauthorized.json()["error"] == "gateway_auth_required"
+
+        ok = client.get("/v1/status", headers={"Authorization": "Bearer secret-token"})
+        assert ok.status_code == 200
+        payload = ok.json()
+        assert payload["auth"]["mode"] == "required"
+        assert payload["auth"]["posture"] == "strict"
+
+
+def test_gateway_auth_keeps_loopback_open_with_mode_off(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "host": "127.0.0.1",
+            "auth": {
+                "mode": "off",
+                "token": "secret-token",
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        response = client.get("/v1/status")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["auth"]["mode"] == "off"
+        assert payload["auth"]["posture"] == "open"
+
+
+def test_gateway_auth_auto_hardening_emits_log_event(tmp_path: Path) -> None:
+    rows: list[str] = []
+    sink_id = logger.add(rows.append, format=logging_utils._text_format)
+    try:
+        create_app(
+            AppConfig(
+                workspace_path=str(tmp_path / "workspace"),
+                state_path=str(tmp_path / "state"),
+                scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+                gateway={
+                    "host": "0.0.0.0",
+                    "auth": {"mode": "off", "token": "secret-token"},
+                    "heartbeat": {"enabled": False},
+                },
+                channels={},
+            )
+        )
+    finally:
+        logger.remove(sink_id)
+
+    joined = "\n".join(rows)
+    assert "gateway.auth" in joined
+    assert "gateway auth auto-hardened" in joined
 
 
 def test_gateway_ws_alias_behaves_like_v1_ws(tmp_path: Path) -> None:

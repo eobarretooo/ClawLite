@@ -261,6 +261,15 @@ def test_load_config_gateway_auth_and_diagnostics_env_overrides(tmp_path: Path, 
     assert cfg.gateway.diagnostics.require_auth is False
 
 
+def test_load_config_gateway_auth_legacy_env_alias_fallback(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"gateway": {"auth": {"mode": "off"}}}), encoding="utf-8")
+    monkeypatch.setenv("CLAWLITE_GATEWAY_AUTH_TOKEN", "")
+    monkeypatch.setenv("CLAWLITE_GATEWAY_TOKEN", "legacy-token")
+    cfg = load_config(path)
+    assert cfg.gateway.auth.token == "legacy-token"
+
+
 def test_load_config_tool_loop_detection_settings(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(
