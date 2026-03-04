@@ -75,3 +75,43 @@
 2. Complete Telegram + robust providers for channel and inference reliability.
 3. Consolidate skills and proactive autonomy with structured observability.
 4. Move into `FUTURE` with subagents, advanced memory, and `no-approval` mode with notification-only.
+
+## ClawMemory (memU-inspired, ClawLite-native)
+
+### Vision and differentiation
+- Build **ClawMemory** as a proactive memory engine that adapts ideas from `memU` for ClawLite architecture, focused on actionable decisions instead of passive storage.
+- Prioritize memory-to-action loops: detect context gaps, propose next steps, trigger safe reminders, and feed agent planning with ranked evidence.
+- Keep native operational fit: memory behavior must align with ClawLite channels, skills, subagents, and gateway contracts.
+
+### Capability tracks (10)
+- [ ] 1) Tool-integrated memory writes/reads (`tools`, channel events, gateway messages).
+- [ ] 2) Temporal awareness (recency, cadence, deadlines, decay, periodic recall).
+- [ ] 3) Multimodal memory artifacts (text-first now, image/audio metadata-ready).
+- [ ] 4) Emotional and intent memory markers (tone, urgency, preference confidence).
+- [ ] 5) Shared/distributed memory across sessions, devices, and cooperating agents.
+- [ ] 6) Reasoning layers (facts, hypotheses, decisions, outcomes, confidence).
+- [ ] 7) Versioning and branching (memory snapshots, rollback, branch merge strategy).
+- [ ] 8) Privacy and control plane (scope, retention, redaction, user override).
+- [ ] 9) Self-improvement loop (quality scoring, retrieval success metrics, drift checks).
+- [ ] 10) Native integration with agents/skills/subagents (first-class APIs + policies).
+
+### Implementation phases
+- **Phase 1 — Foundation (2-3 weeks):** memory schema v1, storage adapters, indexing primitives, policy/retention baseline; deliver `clawlite memory doctor` and migration-safe state.
+- **Phase 2 — Learn + Retrieve (3-4 weeks):** ingestion pipeline, ranking/retrieval API, context window composer, evaluation harness; deliver measurable top-k relevance and latency budgets.
+- **Phase 3 — Proactivity (2-3 weeks):** trigger engine, reminder planner, safe autonomous suggestions, channel notification hooks; deliver opt-in proactive actions with audit trail.
+- **Phase 4 — Optimization (2 weeks):** compaction, cache strategy, branch/version ops, quality telemetry dashboards; deliver cost/performance tuning and reliability hardening.
+
+### Milestones
+- [ ] **M1:** ClawMemory schema + storage contract finalized.
+- [ ] **M2:** Retrieval API integrated into agent runtime and gateway flow.
+- [ ] **M3:** Temporal scoring and recency/decay logic in production path.
+- [ ] **M4:** Proactive trigger engine live with guardrails and audit logs.
+- [ ] **M5:** Shared/distributed memory + branch/version controls released.
+- [ ] **M6:** Self-improvement metrics loop closes with automated tuning reports.
+
+### Top 5 differentiators (priority order)
+1. Proactive memory-to-action orchestration (not passive recall only).
+2. Native ClawLite integration with agents, skills, and subagents.
+3. Temporal and intent-aware retrieval with operational triggers.
+4. Privacy-first control plane with explicit user governance.
+5. Versioned/branchable memory with measurable self-improvement.
