@@ -268,3 +268,89 @@ def test_cli_validate_channels_slack_bot_only_is_ok_with_warning(tmp_path: Path,
     slack_row = next(row for row in payload["channels"] if row["channel"] == "slack")
     assert slack_row["status"] == "warning"
     assert slack_row["warnings"] == ["app_token"]
+
+
+def test_cli_memory_doctor_outputs_expected_keys(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory", "doctor"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["repair_applied"] is False
+    assert set(payload["paths"].keys()) == {"history", "curated", "checkpoints"}
+    assert set(payload["files"].keys()) == {"history", "curated", "checkpoints"}
+    assert set(payload["counts"].keys()) == {"history", "curated", "total"}
+    assert set(payload["analysis"].keys()) == {"recent", "temporal_marked_count", "top_sources"}
+    assert "diagnostics" in payload
+    assert set(payload["schema"].keys()) == {"curated", "checkpoints"}
+
+
+def test_cli_memory_doctor_repair_handles_corrupt_history_line(tmp_path: Path, capsys) -> None:
+    state_path = tmp_path / "state"
+    state_path.mkdir(parents=True, exist_ok=True)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    history_path = state_path / "memory.jsonl"
+    history_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": "a1", "text": "remember alpha", "source": "seed", "created_at": "2026-01-01T00:00:00+00:00"}),
+                "{broken-json",
+                json.dumps({"id": "b2", "text": "remember beta", "source": "seed", "created_at": "2026-01-02T00:00:00+00:00"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory", "doctor", "--repair"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["repair_applied"] is True
+    assert payload["diagnostics"]["history_read_corrupt_lines"] >= 1
+    assert payload["diagnostics"]["history_repaired_files"] >= 1
+
+    repaired_lines = [line for line in history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(repaired_lines) == 2
+    assert all("broken-json" not in line for line in repaired_lines)
+
+
+def test_cli_memory_doctor_does_not_import_gateway_runtime(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc = main(["--config", str(config_path), "memory", "doctor"])
+    assert rc == 0
+    assert "clawlite.gateway.server" not in sys.modules
+    capsys.readouterr()

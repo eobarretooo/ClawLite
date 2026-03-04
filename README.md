@@ -146,6 +146,7 @@ Tool safety defaults (channel-aware, additive over tool-level guards):
 | `clawlite onboard [--overwrite ...]` | Generate workspace identity templates |
 | `clawlite validate provider|channels|onboarding [--fix]` | Validate operator readiness for provider/channel/workspace |
 | `clawlite diagnostics [--gateway-url --token --timeout]` | Emit local diagnostics and optional gateway probes |
+| `clawlite memory doctor [--repair]` | Emit script-friendly memory health snapshot and optional safe repair |
 | `clawlite skills list [--all]` | List discovered skills |
 | `clawlite skills show <name>` | Show metadata/body of one skill |
 | `clawlite cron add --session-id --expression --prompt [--name]` | Create scheduled job |

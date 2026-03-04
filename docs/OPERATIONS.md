@@ -51,6 +51,22 @@ clawlite cron add --session-id cli:ops --expression "every 300" --prompt "status
 clawlite cron list --session-id cli:ops
 ```
 
+## Memory doctor
+
+```bash
+clawlite memory doctor
+clawlite memory doctor --repair
+```
+
+Campos esperados no JSON:
+- `ok`, `repair_applied`
+- `paths` (`history`, `curated`, `checkpoints`)
+- `files` (`exists`, `size_bytes`, `mtime` por arquivo)
+- `counts` (`history`, `curated`, `total`)
+- `analysis` (`recent`, `temporal_marked_count`, `top_sources`)
+- `diagnostics` (contadores de reparo/dedup/recovery)
+- `schema` (hints de versão/chaves para curated e checkpoints)
+
 ## Incident checklist
 
 1. Confirmar `/health`.

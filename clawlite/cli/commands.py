@@ -9,6 +9,7 @@ from clawlite import __version__
 from clawlite.cli.ops import channels_validation
 from clawlite.cli.ops import diagnostics_snapshot
 from clawlite.cli.ops import fetch_gateway_diagnostics
+from clawlite.cli.ops import memory_doctor_snapshot
 from clawlite.cli.ops import onboarding_validation
 from clawlite.cli.ops import provider_validation
 from clawlite.config.loader import load_config
@@ -141,6 +142,13 @@ def cmd_diagnostics(args: argparse.Namespace) -> int:
         )
     _print_json(payload)
     return 0
+
+
+def cmd_memory_doctor(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_doctor_snapshot(cfg, repair=bool(args.repair))
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
 
 
 def cmd_cron_add(args: argparse.Namespace) -> int:
@@ -337,6 +345,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_diagnostics.add_argument("--timeout", type=float, default=3.0, help="Gateway probe timeout in seconds")
     p_diagnostics.add_argument("--no-validation", action="store_true", help="Skip local provider/channel/onboarding validations")
     p_diagnostics.set_defaults(handler=cmd_diagnostics)
+
+    p_memory = sub.add_parser("memory", help="Memory inspection and maintenance")
+    memory_sub = p_memory.add_subparsers(dest="memory_command", required=True)
+
+    p_memory_doctor = memory_sub.add_parser("doctor", help="Emit memory diagnostics snapshot")
+    p_memory_doctor.add_argument("--repair", action="store_true", help="Trigger safe history repair before reporting")
+    p_memory_doctor.set_defaults(handler=cmd_memory_doctor)
 
     p_cron = sub.add_parser("cron", help="Manage scheduled jobs")
     cron_sub = p_cron.add_subparsers(dest="cron_command", required=True)

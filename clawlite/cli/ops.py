@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from clawlite.config.schema import AppConfig
+from clawlite.core.memory import MemoryStore
 from clawlite.providers.registry import SPECS, detect_provider_name
 from clawlite.workspace.loader import TEMPLATE_FILES
 
@@ -300,3 +303,106 @@ def fetch_gateway_diagnostics(*, gateway_url: str, timeout: float = 3.0, token: 
                     "error": str(exc),
                 }
     return out
+
+
+def _file_stat(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "exists": False,
+            "size_bytes": 0,
+            "mtime": "",
+        }
+    stat = path.stat()
+    mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+    return {
+        "exists": True,
+        "size_bytes": int(stat.st_size),
+        "mtime": mtime,
+    }
+
+
+def _schema_hints(path: Path, *, kind: str) -> dict[str, Any]:
+    hints: dict[str, Any] = {
+        "exists": path.exists(),
+        "version": None,
+        "keys_present": [],
+    }
+    if not path.exists():
+        return hints
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8").strip() or "{}")
+    except Exception:
+        hints["parse_error"] = True
+        return hints
+
+    if isinstance(payload, dict):
+        keys = sorted(str(key) for key in payload.keys())
+        hints["keys_present"] = keys
+        raw_version = payload.get("version")
+        if isinstance(raw_version, (int, float, str)):
+            hints["version"] = raw_version
+        if kind == "checkpoints":
+            hints["shape"] = "v2" if any(
+                key in payload for key in ("source_signatures", "source_activity", "global_signatures")
+            ) else "legacy_or_custom"
+    else:
+        hints["parse_error"] = True
+    return hints
+
+
+def memory_doctor_snapshot(config: AppConfig, repair: bool = False) -> dict[str, Any]:
+    state_path = Path(config.state_path).expanduser()
+    history_path = state_path / "memory.jsonl"
+    curated_path = state_path / "memory_curated.json"
+    checkpoints_path = state_path / "memory_checkpoints.json"
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "repair_applied": False,
+        "paths": {
+            "history": str(history_path),
+            "curated": str(curated_path),
+            "checkpoints": str(checkpoints_path),
+        },
+        "files": {
+            "history": _file_stat(history_path),
+            "curated": _file_stat(curated_path),
+            "checkpoints": _file_stat(checkpoints_path),
+        },
+        "counts": {"history": 0, "curated": 0, "total": 0},
+        "analysis": {
+            "recent": {"last_24h": 0, "last_7d": 0, "last_30d": 0},
+            "temporal_marked_count": 0,
+            "top_sources": [],
+        },
+        "diagnostics": {},
+        "schema": {
+            "curated": _schema_hints(curated_path, kind="curated"),
+            "checkpoints": _schema_hints(checkpoints_path, kind="checkpoints"),
+        },
+    }
+
+    try:
+        store = MemoryStore(
+            db_path=history_path,
+            curated_path=curated_path,
+            checkpoints_path=checkpoints_path,
+        )
+        if repair:
+            store.all()
+            payload["repair_applied"] = True
+        stats = store.analysis_stats()
+        payload["counts"] = dict(stats.get("counts", {}))
+        payload["analysis"] = {
+            "recent": dict(stats.get("recent", {})),
+            "temporal_marked_count": int(stats.get("temporal_marked_count", 0) or 0),
+            "top_sources": list(stats.get("top_sources", [])),
+        }
+        payload["diagnostics"] = store.diagnostics()
+    except Exception as exc:
+        payload["ok"] = False
+        payload["error"] = {
+            "type": exc.__class__.__name__,
+            "message": str(exc),
+        }
+    return payload
