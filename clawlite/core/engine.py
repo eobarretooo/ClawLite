@@ -122,7 +122,15 @@ class ToolRegistryProtocol:
     def schema(self) -> list[dict[str, Any]]:  # pragma: no cover
         raise NotImplementedError
 
-    async def execute(self, name: str, arguments: dict[str, Any], *, session_id: str) -> str:  # pragma: no cover
+    async def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+    ) -> str:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -715,7 +723,13 @@ class AgentEngine:
                     )
                     bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).debug("executing call_id={}", call_id)
                     try:
-                        tool_result = await self.tools.execute(name, arguments, session_id=session_id)
+                        tool_result = await self.tools.execute(
+                            name,
+                            arguments,
+                            session_id=session_id,
+                            channel=runtime_channel,
+                            user_id=runtime_chat_id,
+                        )
                     except Exception as exc:
                         bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).error("execution failed call_id={} error={}", call_id, exc)
                         tool_result = f"tool_error:{name}:{exc}"

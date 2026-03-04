@@ -338,7 +338,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         state_path=workspace_path / "memory" / "heartbeat-state.json",
     )
 
-    tools = ToolRegistry()
+    tools = ToolRegistry(safety=config.tools.safety)
     tools.register(
         ExecTool(
             workspace_path=workspace_path,

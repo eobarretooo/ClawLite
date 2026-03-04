@@ -111,6 +111,12 @@ Environment overrides supported:
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`
 - `CLAWLITE_GATEWAY_HOST`, `CLAWLITE_GATEWAY_PORT`
 
+Tool safety defaults (channel-aware, additive over tool-level guards):
+- `tools.safety.enabled: true`
+- `tools.safety.risky_tools: ["exec", "web_fetch", "web_search", "mcp"]`
+- `tools.safety.blocked_channels: ["telegram", "discord", "slack", "whatsapp"]`
+- `tools.safety.allowed_channels: []` (optional explicit override)
+
 ## 📡 Supported Channels
 | Channel | Status | Notes |
 |---|---|---|

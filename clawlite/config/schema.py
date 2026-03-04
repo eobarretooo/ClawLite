@@ -513,12 +513,49 @@ class ToolLoopDetectionConfig:
 
 
 @dataclass(slots=True)
+class ToolSafetyPolicyConfig:
+    enabled: bool = True
+    risky_tools: list[str] = field(default_factory=lambda: ["exec", "web_fetch", "web_search", "mcp"])
+    blocked_channels: list[str] = field(default_factory=lambda: ["telegram", "discord", "slack", "whatsapp"])
+    allowed_channels: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def _parse_names(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip().lower() for item in raw if str(item).strip()]
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> ToolSafetyPolicyConfig:
+        data = dict(raw or {})
+        if "riskyTools" in data:
+            risky_raw = data.get("riskyTools")
+        else:
+            risky_raw = data.get("risky_tools", ["exec", "web_fetch", "web_search", "mcp"])
+        if "blockedChannels" in data:
+            blocked_raw = data.get("blockedChannels")
+        else:
+            blocked_raw = data.get("blocked_channels", ["telegram", "discord", "slack", "whatsapp"])
+        if "allowedChannels" in data:
+            allowed_raw = data.get("allowedChannels")
+        else:
+            allowed_raw = data.get("allowed_channels", [])
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            risky_tools=cls._parse_names(risky_raw),
+            blocked_channels=cls._parse_names(blocked_raw),
+            allowed_channels=cls._parse_names(allowed_raw),
+        )
+
+
+@dataclass(slots=True)
 class ToolsConfig:
     restrict_to_workspace: bool = False
     web: WebToolConfig = field(default_factory=WebToolConfig)
     exec: ExecToolConfig = field(default_factory=ExecToolConfig)
     mcp: MCPToolConfig = field(default_factory=MCPToolConfig)
     loop_detection: ToolLoopDetectionConfig = field(default_factory=ToolLoopDetectionConfig)
+    safety: ToolSafetyPolicyConfig = field(default_factory=ToolSafetyPolicyConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> ToolsConfig:
@@ -532,12 +569,15 @@ class ToolsConfig:
         mcp_cfg = MCPToolConfig.from_dict(dict(data.get("mcp") or {}))
         loop_detection_raw = data.get("loop_detection", data.get("loopDetection", {}))
         loop_detection_cfg = ToolLoopDetectionConfig.from_dict(dict(loop_detection_raw or {}))
+        safety_raw = data.get("safety", {})
+        safety_cfg = ToolSafetyPolicyConfig.from_dict(dict(safety_raw or {}))
         return cls(
             restrict_to_workspace=restrict,
             web=web_cfg,
             exec=exec_cfg,
             mcp=mcp_cfg,
             loop_detection=loop_detection_cfg,
+            safety=safety_cfg,
         )
 
 

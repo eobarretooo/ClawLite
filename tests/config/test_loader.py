@@ -59,6 +59,39 @@ def test_load_config_tools_flags(tmp_path: Path) -> None:
     assert cfg.tools.exec.deny_path_patterns == []
 
 
+def test_load_config_tools_safety_defaults(tmp_path: Path) -> None:
+    cfg = load_config(tmp_path / "missing.json")
+    assert cfg.tools.safety.enabled is True
+    assert cfg.tools.safety.risky_tools == ["exec", "web_fetch", "web_search", "mcp"]
+    assert cfg.tools.safety.blocked_channels == ["telegram", "discord", "slack", "whatsapp"]
+    assert cfg.tools.safety.allowed_channels == []
+
+
+def test_load_config_tools_safety_custom_and_camel_case(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "safety": {
+                        "enabled": True,
+                        "riskyTools": ["exec", "mcp"],
+                        "blockedChannels": ["telegram", "slack"],
+                        "allowed_channels": ["telegram"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.tools.safety.enabled is True
+    assert cfg.tools.safety.risky_tools == ["exec", "mcp"]
+    assert cfg.tools.safety.blocked_channels == ["telegram", "slack"]
+    assert cfg.tools.safety.allowed_channels == ["telegram"]
+
+
 def test_load_config_web_tool_policy(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(

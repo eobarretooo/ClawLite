@@ -4,7 +4,10 @@ from dataclasses import dataclass
 import asyncio
 from typing import Any
 
+from clawlite.config.schema import ToolSafetyPolicyConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings, ProviderResult, ToolCall, TurnBudget
+from clawlite.tools.base import Tool, ToolContext
+from clawlite.tools.registry import ToolRegistry
 
 
 class FakeProvider:
@@ -24,7 +27,7 @@ class FakeProvider:
 
 @dataclass
 class FakeTools:
-    async def execute(self, name, arguments, *, session_id: str) -> str:
+    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
         return f"{name}:{arguments.get('text', '')}:{session_id}"
 
     def schema(self):
@@ -130,6 +133,48 @@ class FakeErrorProvider:
         raise RuntimeError(self.message)
 
 
+class FakeBlockedToolProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def complete(self, *, messages, tools):
+        self.calls += 1
+        self.snapshots.append(messages)
+        if self.calls == 1:
+            return ProviderResult(
+                text="use risky tool",
+                tool_calls=[ToolCall(name="exec", arguments={"command": "id"})],
+                model="fake/model",
+            )
+        return ProviderResult(text="done", tool_calls=[], model="fake/model")
+
+
+class ContextCaptureTools:
+    def __init__(self) -> None:
+        self.last_channel = ""
+        self.last_user_id = ""
+
+    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+        self.last_channel = str(channel)
+        self.last_user_id = str(user_id)
+        return f"{name}:ok:{session_id}"
+
+    def schema(self):
+        return [{"name": "echo", "description": "echo text", "arguments": {"text": "string"}}]
+
+
+class ExecNoopTool(Tool):
+    name = "exec"
+    description = "exec noop"
+
+    def args_schema(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {"command": {"type": "string"}}}
+
+    async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
+        return "ok"
+
+
 class BlockingConcurrencyProvider:
     def __init__(self) -> None:
         self.active_calls = 0
@@ -183,6 +228,46 @@ def test_engine_uses_tool_message_protocol_and_processes_all_calls() -> None:
     asyncio.run(_scenario())
 
 
+def test_engine_passes_channel_and_user_to_tool_registry() -> None:
+    async def _scenario() -> None:
+        tools = ContextCaptureTools()
+        engine = AgentEngine(
+            provider=FakeProvider(),
+            tools=tools,
+        )
+        out = await engine.run(session_id="telegram:42", user_text="run")
+        assert out.text == "final answer"
+        assert tools.last_channel == "telegram"
+        assert tools.last_user_id == "42"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_surfaces_tool_safety_block_as_safe_tool_result() -> None:
+    async def _scenario() -> None:
+        provider = FakeBlockedToolProvider()
+        registry = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["exec"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        registry.register(ExecNoopTool())
+        engine = AgentEngine(provider=provider, tools=registry)
+
+        out = await engine.run(session_id="telegram:9001", user_text="run")
+        assert out.text == "done"
+        assert provider.calls == 2
+        tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
+        assert len(tool_rows) == 1
+        content = str(tool_rows[0].get("content", ""))
+        assert "tool_error:exec:tool_blocked_by_safety_policy:exec:telegram" in content
+
+    asyncio.run(_scenario())
+
+
 def test_engine_passes_max_tokens_and_temperature_when_supported() -> None:
     async def _scenario() -> None:
         provider = FakeProviderWithSamplingCapture()
@@ -213,7 +298,7 @@ def test_engine_truncates_tool_result_payload() -> None:
     async def _scenario() -> None:
         provider = FakeLongToolProvider()
         tools = FakeTools()
-        async def _long_execute(name, arguments, *, session_id: str) -> str:
+        async def _long_execute(name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
             return "x" * 200
 
         tools.execute = _long_execute  # type: ignore[method-assign]
