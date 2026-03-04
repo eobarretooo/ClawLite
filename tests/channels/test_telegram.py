@@ -1590,6 +1590,7 @@ def test_telegram_webhook_mode_start_sets_webhook_and_stop_deletes_webhook() -> 
                 "message",
                 "edited_message",
                 "callback_query",
+                "message_reaction",
                 "channel_post",
                 "edited_channel_post",
             ]
@@ -1796,5 +1797,199 @@ def test_telegram_handle_webhook_update_normalizes_channel_post_payload() -> Non
         assert text == "raw channel"
         assert metadata["chat_id"] == "-100222"
         assert metadata["is_edit"] is False
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_message_reaction_notifications_all_emits_event() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "reaction_notifications": "all"},
+            on_message=_on_message,
+        )
+        update = SimpleNamespace(
+            update_id=300,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=42),
+                message_id=77,
+                user=SimpleNamespace(id=7, username="alice", is_bot=False),
+                old_reaction=[SimpleNamespace(emoji="👍")],
+                new_reaction=[SimpleNamespace(emoji="👍"), SimpleNamespace(emoji="🔥")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:42"
+        assert user_id == "7"
+        assert text == "[telegram reaction] 🔥"
+        assert metadata["channel"] == "telegram"
+        assert metadata["is_message_reaction"] is True
+        assert metadata["chat_id"] == "42"
+        assert metadata["message_id"] == 77
+        assert metadata["user_id"] == "7"
+        assert metadata["username"] == "alice"
+        assert metadata["reaction_added"] == ["🔥"]
+        assert metadata["reaction_new"] == ["👍", "🔥"]
+        assert metadata["reaction_old"] == ["👍"]
+        signals = channel.signals()
+        assert signals["message_reaction_received_count"] == 1
+        assert signals["message_reaction_emitted_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_message_reaction_notifications_off_blocks_event() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "reaction_notifications": "off"},
+            on_message=_on_message,
+        )
+        update = SimpleNamespace(
+            update_id=301,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=42),
+                message_id=88,
+                user=SimpleNamespace(id=8, username="bob", is_bot=False),
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="👍")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert emitted == []
+        signals = channel.signals()
+        assert signals["message_reaction_received_count"] == 1
+        assert signals["message_reaction_blocked_count"] == 1
+        assert signals["message_reaction_emitted_count"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_message_reaction_notifications_own_requires_sent_cache() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "reaction_notifications": "own"},
+            on_message=_on_message,
+        )
+
+        class FakeBot:
+            async def send_message(self, **kwargs):
+                del kwargs
+                return SimpleNamespace(message_id=99)
+
+        channel.bot = FakeBot()
+
+        blocked_update = SimpleNamespace(
+            update_id=302,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=42),
+                message_id=98,
+                user=SimpleNamespace(id=9, username="carol", is_bot=False),
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="🔥")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+        allowed_update = SimpleNamespace(
+            update_id=303,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=42),
+                message_id=99,
+                user=SimpleNamespace(id=9, username="carol", is_bot=False),
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="🔥")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        blocked_processed = await channel._handle_update(blocked_update)
+        send_out = await channel.send(target="42", text="seed")
+        allowed_processed = await channel._handle_update(allowed_update)
+
+        assert blocked_processed is True
+        assert send_out == "telegram:sent:1"
+        assert allowed_processed is True
+        assert len(emitted) == 1
+        assert emitted[0][0] == "telegram:42"
+        assert emitted[0][1] == "9"
+        assert emitted[0][2] == "[telegram reaction] 🔥"
+        signals = channel.signals()
+        assert signals["message_reaction_received_count"] == 2
+        assert signals["message_reaction_blocked_count"] == 1
+        assert signals["message_reaction_emitted_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_message_reaction_bot_user_is_ignored() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "reaction_notifications": "all"},
+            on_message=_on_message,
+        )
+        update = SimpleNamespace(
+            update_id=304,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=42),
+                message_id=100,
+                user=SimpleNamespace(id=777, username="bot", is_bot=True),
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="👍")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert emitted == []
+        signals = channel.signals()
+        assert signals["message_reaction_received_count"] == 1
+        assert signals["message_reaction_ignored_bot_count"] == 1
+        assert signals["message_reaction_emitted_count"] == 0
+        assert signals["message_reaction_blocked_count"] == 0
 
     asyncio.run(_scenario())

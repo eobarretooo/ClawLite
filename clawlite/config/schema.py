@@ -482,6 +482,8 @@ class TelegramChannelConfig(BaseChannelConfig):
     typing_timeout_s: float = 5.0
     typing_circuit_failure_threshold: int = 1
     typing_circuit_cooldown_s: float = 60.0
+    reaction_notifications: str = "own"
+    reaction_own_cache_limit: int = 4096
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> TelegramChannelConfig:
@@ -516,6 +518,11 @@ class TelegramChannelConfig(BaseChannelConfig):
                 data.get("typing_circuit_failure_threshold", data.get("typingCircuitFailureThreshold", 1)) or 1
             ),
             typing_circuit_cooldown_s=float(data.get("typing_circuit_cooldown_s", data.get("typingCircuitCooldownS", 60.0)) or 60.0),
+            reaction_notifications=str(data.get("reaction_notifications", data.get("reactionNotifications", "own")) or "own"),
+            reaction_own_cache_limit=max(
+                1,
+                int(data.get("reaction_own_cache_limit", data.get("reactionOwnCacheLimit", 4096)) or 4096),
+            ),
         )
 
 

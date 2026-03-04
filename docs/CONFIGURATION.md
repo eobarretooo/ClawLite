@@ -181,6 +181,8 @@ In `channels.telegram`, besides `enabled` and `token`, the most used operational
 - `typing_timeout_s` (HTTP timeout for typing API calls)
 - `typing_circuit_failure_threshold` (consecutive typing auth failures before opening typing circuit)
 - `typing_circuit_cooldown_s` (cooldown while typing auth circuit is open)
+- `reaction_notifications` (`off|own|all`, default `own`; `own` only forwards reactions for messages sent by this bot instance)
+- `reaction_own_cache_limit` (max cached `(chat_id,message_id)` keys used by `reaction_notifications=own`, default `4096`)
 
 Webhook notes:
 - Webhook activates when `mode=webhook` or `webhook_enabled=true` and both `webhook_url` + `webhook_secret` are configured.

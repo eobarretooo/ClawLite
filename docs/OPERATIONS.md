@@ -57,6 +57,7 @@ Notas:
 - `channels_delivery` inclui supressao idempotente outbound e confirmacao/falha final (`idempotency_suppressed`, `delivery_confirmed`, `delivery_failed_final`).
 - `channels_delivery.recent` lista outcomes por mensagem (mais recente primeiro), incluindo `send_result` e `receipt` seguro de canais como Telegram (`message_ids`, `last_message_id`, `chunks`, `chat_id`).
 - Telegram tambem ingere eventos `callback_query`; contadores operacionais podem ser inspecionados em `engine.channels.telegram_signals` (ex.: `callback_query_received_count`, `callback_query_blocked_count`, `callback_query_ack_error_count`).
+- Telegram tambem ingere `message_reaction` com politica `reaction_notifications=off|own|all`; acompanhe `message_reaction_received_count`, `message_reaction_blocked_count`, `message_reaction_ignored_bot_count` e `message_reaction_emitted_count` em `engine.channels.telegram_signals`.
 - Telegram ingere tambem updates de canal `channel_post` e `edited_channel_post` (polling e webhook) pelo mesmo pipeline inbound.
 - Tool `message` suporta `metadata` e `buttons` para inline keyboard do Telegram via `_telegram_inline_keyboard`.
 - `/v1/diagnostics` e `/api/diagnostics` incluem `engine.turn_metrics` com contadores por turno (`turns_total`, `turns_success`, `turns_provider_errors`, `turns_cancelled`), `tool_calls_executed`, buckets de latencia e ultimo resultado/modelo.

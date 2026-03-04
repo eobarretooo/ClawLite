@@ -26,6 +26,7 @@ TELEGRAM_ALLOWED_UPDATES = [
     "message",
     "edited_message",
     "callback_query",
+    "message_reaction",
     "channel_post",
     "edited_channel_post",
 ]
@@ -340,6 +341,13 @@ class TelegramChannel(BaseChannel):
         self.typing_circuit_cooldown_s = float(
             config.get("typing_circuit_cooldown_s", config.get("typingCircuitCooldownS", 60.0)) or 60.0
         )
+        self.reaction_notifications = self._normalize_reaction_notifications(
+            str(config.get("reaction_notifications", config.get("reactionNotifications", "own")) or "own")
+        )
+        self.reaction_own_cache_limit = max(
+            1,
+            int(config.get("reaction_own_cache_limit", config.get("reactionOwnCacheLimit", 4096)) or 4096),
+        )
         self._send_retry_policy = TelegramRetryPolicy(
             max_attempts=self.send_retry_attempts,
             base_backoff_s=self.send_backoff_base_s,
@@ -365,6 +373,8 @@ class TelegramChannel(BaseChannel):
         self._webhook_seen_limit = max(32, int(config.get("webhook_dedupe_limit", 2048) or 2048))
         self._webhook_seen_ids: set[int] = set()
         self._webhook_seen_order: deque[int] = deque()
+        self._own_sent_message_keys: set[tuple[str, int]] = set()
+        self._own_sent_message_order: deque[tuple[str, int]] = deque()
         self._message_signatures: dict[tuple[str, int], str] = {}
         self._signature_limit = 4096
         self._signals: dict[str, int] = {
@@ -385,6 +395,10 @@ class TelegramChannel(BaseChannel):
             "webhook_update_received_count": 0,
             "webhook_update_duplicate_count": 0,
             "webhook_update_parse_error_count": 0,
+            "message_reaction_received_count": 0,
+            "message_reaction_ignored_bot_count": 0,
+            "message_reaction_blocked_count": 0,
+            "message_reaction_emitted_count": 0,
         }
         self._send_auth_breaker_seen_open = False
         self._typing_auth_breaker_seen_open = False
@@ -473,6 +487,13 @@ class TelegramChannel(BaseChannel):
     def _normalize_webhook_path(value: str) -> str:
         raw = str(value or "").strip() or "/api/webhooks/telegram"
         return raw if raw.startswith("/") else f"/{raw}"
+
+    @staticmethod
+    def _normalize_reaction_notifications(value: str) -> str:
+        mode = str(value or "own").strip().lower()
+        if mode not in {"off", "own", "all"}:
+            return "own"
+        return mode
 
     def _webhook_requested(self) -> bool:
         return self.mode == "webhook" or self.webhook_enabled
@@ -583,6 +604,84 @@ class TelegramChannel(BaseChannel):
         if len(self._message_signatures) > self._signature_limit:
             oldest_key = next(iter(self._message_signatures))
             self._message_signatures.pop(oldest_key, None)
+
+    def _remember_own_sent_message_ids(self, *, chat_id: str, message_ids: list[int]) -> None:
+        normalized_chat_id = str(chat_id or "").strip()
+        if not normalized_chat_id:
+            return
+        for raw_message_id in message_ids:
+            try:
+                message_id = int(raw_message_id)
+            except (TypeError, ValueError):
+                continue
+            if message_id <= 0:
+                continue
+            key = (normalized_chat_id, message_id)
+            if key in self._own_sent_message_keys:
+                continue
+            self._own_sent_message_keys.add(key)
+            self._own_sent_message_order.append(key)
+        while len(self._own_sent_message_order) > self.reaction_own_cache_limit:
+            oldest = self._own_sent_message_order.popleft()
+            self._own_sent_message_keys.discard(oldest)
+
+    @staticmethod
+    def _reaction_token(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+
+        emoji = getattr(value, "emoji", None)
+        if emoji is None and isinstance(value, dict):
+            emoji = value.get("emoji")
+        if emoji:
+            return str(emoji)
+
+        custom_emoji_id = getattr(value, "custom_emoji_id", None)
+        if custom_emoji_id is None and isinstance(value, dict):
+            custom_emoji_id = value.get("custom_emoji_id")
+        if custom_emoji_id:
+            return f"custom:{custom_emoji_id}"
+
+        reaction_type = getattr(value, "type", None)
+        if reaction_type is None and isinstance(value, dict):
+            reaction_type = value.get("type")
+        if reaction_type:
+            return str(reaction_type)
+
+        return ""
+
+    @classmethod
+    def _reaction_tokens(cls, payload: Any) -> list[str]:
+        if payload is None:
+            return []
+        if not isinstance(payload, list):
+            payload = [payload]
+        tokens: list[str] = []
+        for item in payload:
+            token = cls._reaction_token(item)
+            if token:
+                tokens.append(token)
+        return tokens
+
+    @classmethod
+    def _added_reaction_tokens(cls, *, old_reaction: Any, new_reaction: Any) -> list[str]:
+        old_tokens = cls._reaction_tokens(old_reaction)
+        new_tokens = cls._reaction_tokens(new_reaction)
+        if not new_tokens:
+            return []
+        old_counts: dict[str, int] = {}
+        for token in old_tokens:
+            old_counts[token] = old_counts.get(token, 0) + 1
+        added: list[str] = []
+        for token in new_tokens:
+            count = old_counts.get(token, 0)
+            if count > 0:
+                old_counts[token] = count - 1
+                continue
+            added.append(token)
+        return added
 
     async def _typing_loop(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
         started_at = time.monotonic()
@@ -849,6 +948,76 @@ class TelegramChannel(BaseChannel):
                 text=callback_text,
                 metadata=metadata,
             )
+            return True
+
+        message_reaction = getattr(item, "message_reaction", None)
+        if message_reaction is not None:
+            self._signals["message_reaction_received_count"] += 1
+            reaction_chat = getattr(message_reaction, "chat", None)
+            chat_id = str(
+                getattr(message_reaction, "chat_id", "")
+                or getattr(reaction_chat, "id", "")
+                or ""
+            )
+            if not chat_id:
+                return True
+
+            try:
+                message_id = int(getattr(message_reaction, "message_id", 0) or 0)
+            except (TypeError, ValueError):
+                message_id = 0
+
+            reactor = getattr(message_reaction, "user", None) or getattr(message_reaction, "from_user", None)
+            reactor_user_id = str(getattr(reactor, "id", "") or chat_id)
+            reactor_username = str(getattr(reactor, "username", "") or "").strip()
+            if bool(getattr(reactor, "is_bot", False)):
+                self._signals["message_reaction_ignored_bot_count"] += 1
+                return True
+
+            if self.reaction_notifications == "off":
+                self._signals["message_reaction_blocked_count"] += 1
+                return True
+
+            if self.reaction_notifications == "own":
+                if message_id <= 0 or (chat_id, message_id) not in self._own_sent_message_keys:
+                    self._signals["message_reaction_blocked_count"] += 1
+                    return True
+
+            if not self._is_allowed_sender(reactor_user_id, reactor_username):
+                self._signals["message_reaction_blocked_count"] += 1
+                return True
+
+            old_reaction = getattr(message_reaction, "old_reaction", None)
+            new_reaction = getattr(message_reaction, "new_reaction", None)
+            reaction_added = self._added_reaction_tokens(old_reaction=old_reaction, new_reaction=new_reaction)
+            if not reaction_added:
+                return True
+
+            reaction_new_tokens = self._reaction_tokens(new_reaction)
+            reaction_old_tokens = self._reaction_tokens(old_reaction)
+            reaction_marker = " ".join(reaction_added)
+            reaction_text = f"[telegram reaction] {reaction_marker}".strip()
+            session_id = f"telegram:{chat_id}"
+            metadata = {
+                "channel": "telegram",
+                "chat_id": chat_id,
+                "is_message_reaction": True,
+                "message_id": message_id,
+                "user_id": reactor_user_id,
+                "username": reactor_username,
+                "reaction_added": reaction_added,
+                "reaction_new": reaction_new_tokens,
+                "reaction_old": reaction_old_tokens,
+                "update_id": int(getattr(item, "update_id", 0) or 0),
+                "text": reaction_text,
+            }
+            await self.emit(
+                session_id=session_id,
+                user_id=reactor_user_id,
+                text=reaction_text,
+                metadata=metadata,
+            )
+            self._signals["message_reaction_emitted_count"] += 1
             return True
 
         message = getattr(item, "message", None)
@@ -1213,6 +1382,8 @@ class TelegramChannel(BaseChannel):
             if message_thread_id is not None:
                 receipt["message_thread_id"] = message_thread_id
             caller_metadata["_delivery_receipt"] = receipt
+        if message_ids:
+            self._remember_own_sent_message_ids(chat_id=chat_id, message_ids=message_ids)
         logger.info("telegram outbound sent chat={} chunks={} chars={}", chat_id, len(chunks), len(text))
         return f"telegram:sent:{len(chunks)}"
 
