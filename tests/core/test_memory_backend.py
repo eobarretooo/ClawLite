@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 from clawlite.core.memory_backend import resolve_memory_backend
@@ -51,3 +52,26 @@ def test_pgvector_backend_remains_graceful_when_unsupported(tmp_path: Path) -> N
     )
     assert backend.fetch_layer_records(layer="item", limit=5) == []
     assert backend.delete_layer_records(["rec-1"]) == 0
+
+
+def test_pgvector_support_detection_requires_valid_url_and_driver(monkeypatch) -> None:
+    backend_with_invalid_url = resolve_memory_backend("pgvector", pgvector_url="not-a-postgres-url")
+    assert backend_with_invalid_url.is_supported() is False
+
+    attempted_imports: list[str] = []
+    real_import_module = importlib.import_module
+
+    def fake_import_module(name: str, package: str | None = None):
+        if name in {"psycopg", "psycopg2"}:
+            attempted_imports.append(name)
+            raise ImportError(f"{name} missing")
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+
+    backend_missing_drivers = resolve_memory_backend(
+        "pgvector",
+        pgvector_url="postgresql://user:pass@localhost:5432/clawlite",
+    )
+    assert backend_missing_drivers.is_supported() is False
+    assert attempted_imports == ["psycopg", "psycopg2"]

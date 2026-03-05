@@ -970,6 +970,111 @@ def memory_version_snapshot(config: AppConfig) -> dict[str, Any]:
         }
 
 
+def memory_branches_snapshot(config: AppConfig) -> dict[str, Any]:
+    try:
+        store = _build_memory_store(config)
+        payload = store.branches()
+        return {
+            "ok": True,
+            "current": str(payload.get("current", "main") or "main"),
+            "branches": payload.get("branches", {}),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
+def memory_branch_create(config: AppConfig, name: str, from_version: str = "", checkout: bool = False) -> dict[str, Any]:
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        return {"ok": False, "error": {"type": "ValueError", "message": "branch_name_required"}}
+    try:
+        store = _build_memory_store(config)
+        payload = store.branch(clean_name, from_version=str(from_version or ""), checkout=bool(checkout))
+        return {
+            "ok": True,
+            "name": str(payload.get("name", "") or clean_name),
+            "head": str(payload.get("head", "") or ""),
+            "current": str(payload.get("current", "main") or "main"),
+            "checkout": bool(payload.get("checkout", False)),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "name": clean_name,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
+def memory_branch_checkout(config: AppConfig, name: str) -> dict[str, Any]:
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        return {"ok": False, "error": {"type": "ValueError", "message": "branch_name_required"}}
+    try:
+        store = _build_memory_store(config)
+        payload = store.checkout_branch(clean_name)
+        return {
+            "ok": True,
+            "current": str(payload.get("current", "") or clean_name),
+            "head": str(payload.get("head", "") or ""),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "current": clean_name,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
+def memory_merge_branches(config: AppConfig, source: str, target: str, tag: str = "merge") -> dict[str, Any]:
+    source_name = str(source or "").strip()
+    target_name = str(target or "").strip()
+    if not source_name or not target_name:
+        return {"ok": False, "error": {"type": "ValueError", "message": "source_and_target_required"}}
+    try:
+        store = _build_memory_store(config)
+        payload = store.merge(source_name, target_name, tag=str(tag or "merge"))
+        return {
+            "ok": True,
+            "source": str(payload.get("source", source_name)),
+            "target": str(payload.get("target", target_name)),
+            "source_head": str(payload.get("source_head", "") or ""),
+            "target_head_before": str(payload.get("target_head_before", "") or ""),
+            "target_head_after": str(payload.get("target_head_after", "") or ""),
+            "version": str(payload.get("version", "") or ""),
+            "imported": bool(payload.get("imported", False)),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source": source_name,
+            "target": target_name,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
+def memory_shared_opt_in(config: AppConfig, user_id: str, enabled: bool) -> dict[str, Any]:
+    clean_user = str(user_id or "").strip()
+    if not clean_user:
+        return {"ok": False, "error": {"type": "ValueError", "message": "user_id_required"}}
+    try:
+        store = _build_memory_store(config)
+        payload = store.set_shared_opt_in(clean_user, bool(enabled))
+        return {
+            "ok": True,
+            "user_id": str(payload.get("user_id", clean_user) or clean_user),
+            "enabled": bool(payload.get("enabled", False)),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "user_id": clean_user,
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
+
+
 def _build_memory_store(config: AppConfig) -> MemoryStore:
     semantic_enabled = bool(
         getattr(config.agents.defaults.memory, "semantic_search", config.agents.defaults.semantic_memory)

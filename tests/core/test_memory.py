@@ -726,6 +726,42 @@ def test_memory_async_memorize_supports_text_and_messages(tmp_path: Path) -> Non
     asyncio.run(_scenario())
 
 
+def test_memory_async_memorize_ingests_text_file_path_with_default_modality(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        note = tmp_path / "notes.md"
+        note.write_text("Project alpha launch notes\nDeadline: 2026-05-10", encoding="utf-8")
+
+        result = await store.memorize(file_path=str(note), source="session:file")
+        assert result["status"] == "ok"
+        assert result["mode"] == "add"
+        assert "Project alpha launch notes" in str(result["record"]["text"])
+        assert result["record"]["modality"] == "text"
+
+    asyncio.run(_scenario())
+
+
+def test_memory_async_memorize_ingests_url_audio_fallback_text_and_modality(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+
+        result = await store.memorize(
+            url="https://example.com/audio/meeting-42",
+            modality="audio",
+            metadata={"transcript": "Call with Ana about travel plans and deadlines."},
+            source="session:audio",
+        )
+
+        assert result["status"] == "ok"
+        assert result["mode"] == "add"
+        text = str(result["record"]["text"]).lower()
+        assert "https://example.com/audio/meeting-42" in text
+        assert "travel plans" in text
+        assert result["record"]["modality"] == "audio"
+
+    asyncio.run(_scenario())
+
+
 def test_memory_async_retrieve_rag_and_llm_fallback(tmp_path: Path, monkeypatch) -> None:
     async def _scenario() -> None:
         store = MemoryStore(tmp_path / "memory.jsonl")
@@ -750,6 +786,30 @@ def test_memory_async_retrieve_rag_and_llm_fallback(tmp_path: Path, monkeypatch)
     asyncio.run(_scenario())
 
 
+def test_memory_async_retrieve_llm_returns_next_step_query_from_json(tmp_path: Path, monkeypatch) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        store.add("project alpha deploys on friday", source="session:a")
+
+        async def _json_completion(**kwargs):
+            del kwargs
+            payload = {
+                "answer": "Project alpha deploys on Friday.",
+                "next_step_query": "Do we have a rollback plan for project alpha?",
+            }
+            return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+        monkeypatch.setitem(sys.modules, "litellm", types.SimpleNamespace(acompletion=_json_completion))
+        llm = await store.retrieve("project alpha", method="llm", limit=3)
+
+        assert llm["method"] == "llm"
+        assert llm["metadata"]["fallback_to_rag"] is False
+        assert llm["answer"] == "Project alpha deploys on Friday."
+        assert llm["next_step_query"] == "Do we have a rollback plan for project alpha?"
+
+    asyncio.run(_scenario())
+
+
 def test_memory_memorize_skips_when_privacy_pattern_matches(tmp_path: Path) -> None:
     async def _scenario() -> None:
         store = MemoryStore(tmp_path / "memory.jsonl")
@@ -759,6 +819,124 @@ def test_memory_memorize_skips_when_privacy_pattern_matches(tmp_path: Path) -> N
         assert store.all() == []
 
     asyncio.run(_scenario())
+
+
+def test_memory_privacy_skip_writes_audit_entry(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        store.privacy_path.write_text(
+            json.dumps(
+                {
+                    "never_memorize_patterns": ["secret-token"],
+                    "ephemeral_categories": ["context"],
+                    "ephemeral_ttl_days": 7,
+                    "encrypted_categories": [],
+                    "audit_log": True,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        result = await store.memorize(text="contains secret-token", source="session:audit")
+        assert result["status"] == "skipped"
+
+        lines = [line for line in store.privacy_audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert lines
+        payload = json.loads(lines[-1])
+        assert payload["action"] == "memorize_skipped"
+        assert payload["source"] == "session:audit"
+        assert payload["reason"].startswith("pattern:")
+        assert store.diagnostics()["privacy_audit_writes"] >= 1
+
+    asyncio.run(_scenario())
+
+
+def test_memory_ephemeral_ttl_cleanup_deletes_expired_rows(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        now = datetime.now(timezone.utc)
+        old_stamp = (now - timedelta(days=3)).isoformat()
+        fresh_stamp = (now - timedelta(hours=2)).isoformat()
+        store.history_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "id": "ttl-old",
+                            "text": "stale context",
+                            "source": "session:old",
+                            "created_at": old_stamp,
+                            "category": "context",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "id": "ttl-new",
+                            "text": "fresh context",
+                            "source": "session:new",
+                            "created_at": fresh_stamp,
+                            "category": "context",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        store._append_embedding(record_id="ttl-old", embedding=[0.1, 0.9], created_at=old_stamp, source="session:old")
+        store._append_embedding(record_id="ttl-new", embedding=[0.9, 0.1], created_at=fresh_stamp, source="session:new")
+        store.privacy_path.write_text(
+            json.dumps(
+                {
+                    "never_memorize_patterns": [],
+                    "ephemeral_categories": ["context"],
+                    "ephemeral_ttl_days": 1,
+                    "encrypted_categories": [],
+                    "audit_log": True,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        await store.memorize(text="trigger cleanup", source="session:ttl")
+
+        remaining_ids = {row.id for row in store.all()}
+        assert "ttl-old" not in remaining_ids
+        assert "ttl-new" in remaining_ids
+        embedding_ids = {json.loads(line)["id"] for line in store.embeddings_path.read_text(encoding="utf-8").splitlines() if line.strip()}
+        assert "ttl-old" not in embedding_ids
+        assert store.diagnostics()["privacy_ttl_deleted"] >= 1
+
+    asyncio.run(_scenario())
+
+
+def test_memory_encrypted_category_roundtrip_preserves_plain_reads(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl", memory_auto_categorize=False)
+    store.privacy_path.write_text(
+        json.dumps(
+            {
+                "never_memorize_patterns": [],
+                "ephemeral_categories": ["context"],
+                "ephemeral_ttl_days": 7,
+                "encrypted_categories": ["context"],
+                "audit_log": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = store.add("sensitive context text", source="session:enc")
+    assert row.text == "sensitive context text"
+    raw_lines = [line for line in store.history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert raw_lines
+    stored = json.loads(raw_lines[0])
+    assert stored["text"].startswith("enc:v1:")
+
+    read_back = store.all()
+    assert read_back[0].text == "sensitive context text"
+    assert store.search("sensitive", limit=1)[0].text == "sensitive context text"
 
 
 def test_memory_profile_auto_update_from_preferences_timezone_and_topics(tmp_path: Path) -> None:
@@ -888,3 +1066,67 @@ def test_memory_delete_by_prefixes_prunes_layer_files_and_backend_index(tmp_path
     backend_rows = store.backend.fetch_layer_records(layer="item", limit=10)
     backend_ids = {str(row.get("record_id", "")) for row in backend_rows}
     assert drop.id not in backend_ids
+
+
+def test_memory_user_scoped_memorize_and_retrieve_isolated_by_default(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.memorize(text="alpha-only memory", source="session:a", user_id="user-a")
+        await store.memorize(text="beta-only memory", source="session:b", user_id="user-b")
+
+        a_hits = await store.retrieve("memory", user_id="user-a", limit=5)
+        b_hits = await store.retrieve("memory", user_id="user-b", limit=5)
+
+        assert any("alpha-only" in str(item["text"]).lower() for item in a_hits["hits"])
+        assert all("beta-only" not in str(item["text"]).lower() for item in a_hits["hits"])
+        assert any("beta-only" in str(item["text"]).lower() for item in b_hits["hits"])
+        assert all("alpha-only" not in str(item["text"]).lower() for item in b_hits["hits"])
+
+    asyncio.run(_scenario())
+
+
+def test_memory_shared_opt_in_controls_include_shared_results(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.memorize(text="shared handbook", source="session:shared", shared=True)
+        await store.memorize(text="private alpha note", source="session:a", user_id="user-a")
+
+        without_optin = await store.retrieve("shared", user_id="user-a", include_shared=True, limit=5)
+        assert all("shared handbook" not in str(item["text"]).lower() for item in without_optin["hits"])
+
+        store.set_shared_opt_in("user-a", True)
+        with_optin = await store.retrieve("shared", user_id="user-a", include_shared=True, limit=5)
+        assert any("shared handbook" in str(item["text"]).lower() for item in with_optin["hits"])
+
+    asyncio.run(_scenario())
+
+
+def test_memory_branch_create_list_checkout_basics(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    snap = store.snapshot("seed")
+    created = store.branch("feature-x", from_version=snap, checkout=False)
+    listed = store.branches()
+    checked = store.checkout_branch("feature-x")
+
+    assert created["name"] == "feature-x"
+    assert created["head"] == snap
+    assert "feature-x" in listed["branches"]
+    assert checked["current"] == "feature-x"
+
+
+def test_memory_merge_creates_snapshot_and_updates_target_head(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.add("main baseline", source="session:main")
+    main_snap = store.snapshot("main-base")
+    store.branch("feature", from_version=main_snap, checkout=True)
+    store.add("feature line", source="session:feature")
+    feature_snap = store.snapshot("feature-work")
+    store.checkout_branch("main")
+
+    merged = store.merge("feature", "main")
+    listed = store.branches()
+
+    assert merged["source_head"] == feature_snap
+    assert merged["target_head_before"] == main_snap
+    assert merged["target_head_after"] == merged["version"]
+    assert listed["branches"]["main"]["head"] == merged["version"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from typing import Any
 
 from clawlite.core.memory import MemoryRecord, MemoryStore
@@ -53,6 +54,16 @@ def _dump_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def _accepts_parameter(func: Any, parameter: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    if parameter in signature.parameters:
+        return True
+    return any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
+
+
 class MemoryRecallTool(Tool):
     name = "memory_recall"
     description = "Recall semantically related memory snippets with provenance refs."
@@ -72,7 +83,6 @@ class MemoryRecallTool(Tool):
         }
 
     async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
-        del ctx
         query = str(arguments.get("query", "")).strip()
         if not query:
             raise ValueError("query is required")
@@ -84,7 +94,15 @@ class MemoryRecallTool(Tool):
         retrieve_fn = getattr(self.memory, "retrieve", None)
         if callable(retrieve_fn):
             try:
-                payload = await retrieve_fn(query, limit=limit, method="rag")
+                retrieve_kwargs: dict[str, Any] = {"limit": limit, "method": "rag"}
+                if _accepts_parameter(retrieve_fn, "user_id"):
+                    retrieve_kwargs["user_id"] = ctx.user_id
+                if _accepts_parameter(retrieve_fn, "include_shared"):
+                    retrieve_kwargs["include_shared"] = True
+                try:
+                    payload = await retrieve_fn(query, **retrieve_kwargs)
+                except TypeError:
+                    payload = await retrieve_fn(query, limit=limit, method="rag")
                 if isinstance(payload, dict):
                     raw_hits = payload.get("hits", [])
                     if isinstance(raw_hits, list):
@@ -92,7 +110,16 @@ class MemoryRecallTool(Tool):
             except Exception:
                 async_retrieved = None
         if async_retrieved is None:
-            rows = self.memory.search(query, limit=limit)
+            search_kwargs: dict[str, Any] = {"limit": limit}
+            search_fn = getattr(self.memory, "search")
+            if _accepts_parameter(search_fn, "user_id"):
+                search_kwargs["user_id"] = ctx.user_id
+            if _accepts_parameter(search_fn, "include_shared"):
+                search_kwargs["include_shared"] = True
+            try:
+                rows = search_fn(query, **search_kwargs)
+            except TypeError:
+                rows = search_fn(query, limit=limit)
 
         results: list[dict[str, Any]] = []
         if async_retrieved is not None:
@@ -156,7 +183,15 @@ class MemoryLearnTool(Tool):
         memorize_fn = getattr(self.memory, "memorize", None)
         if callable(memorize_fn):
             try:
-                payload = await memorize_fn(text=text, source=source)
+                memorize_kwargs: dict[str, Any] = {"text": text, "source": source}
+                if _accepts_parameter(memorize_fn, "user_id"):
+                    memorize_kwargs["user_id"] = ctx.user_id
+                if _accepts_parameter(memorize_fn, "shared"):
+                    memorize_kwargs["shared"] = False
+                try:
+                    payload = await memorize_fn(**memorize_kwargs)
+                except TypeError:
+                    payload = await memorize_fn(text=text, source=source)
                 record = payload.get("record") if isinstance(payload, dict) else None
                 if isinstance(record, dict):
                     row = MemoryRecord(
@@ -166,12 +201,50 @@ class MemoryLearnTool(Tool):
                         created_at=str(record.get("created_at", "") or ""),
                         category=str(record.get("category", "context") or "context"),
                     )
+                elif isinstance(payload, dict) and str(payload.get("status", "")).strip().lower() == "skipped":
+                    return _dump_json(
+                        {
+                            "status": "skipped",
+                            "ref": "",
+                            "id": "",
+                            "source": source,
+                            "created_at": "",
+                            "chars": len(text),
+                        }
+                    )
                 else:
-                    row = self.memory.add(text, source=source)
+                    add_fn = getattr(self.memory, "add")
+                    add_kwargs: dict[str, Any] = {"source": source}
+                    if _accepts_parameter(add_fn, "user_id"):
+                        add_kwargs["user_id"] = ctx.user_id
+                    if _accepts_parameter(add_fn, "shared"):
+                        add_kwargs["shared"] = False
+                    try:
+                        row = add_fn(text, **add_kwargs)
+                    except TypeError:
+                        row = add_fn(text, source=source)
             except Exception:
-                row = self.memory.add(text, source=source)
+                add_fn = getattr(self.memory, "add")
+                add_kwargs = {"source": source}
+                if _accepts_parameter(add_fn, "user_id"):
+                    add_kwargs["user_id"] = ctx.user_id
+                if _accepts_parameter(add_fn, "shared"):
+                    add_kwargs["shared"] = False
+                try:
+                    row = add_fn(text, **add_kwargs)
+                except TypeError:
+                    row = add_fn(text, source=source)
         else:
-            row = self.memory.add(text, source=source)
+            add_fn = getattr(self.memory, "add")
+            add_kwargs = {"source": source}
+            if _accepts_parameter(add_fn, "user_id"):
+                add_kwargs["user_id"] = ctx.user_id
+            if _accepts_parameter(add_fn, "shared"):
+                add_kwargs["shared"] = False
+            try:
+                row = add_fn(text, **add_kwargs)
+            except TypeError:
+                row = add_fn(text, source=source)
 
         payload = {
             "status": "ok",

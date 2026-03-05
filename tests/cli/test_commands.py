@@ -773,6 +773,114 @@ def test_cli_memory_export_and_import_roundtrip(tmp_path: Path, capsys) -> None:
     assert ids == {"exp-a"}
 
 
+def test_cli_memory_branching_commands_return_expected_shapes(tmp_path: Path, capsys) -> None:
+    state_path = tmp_path / "state"
+    state_path.mkdir(parents=True, exist_ok=True)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    history_path = state_path / "memory.jsonl"
+    history_path.write_text(
+        json.dumps(
+            {
+                "id": "branch-a",
+                "text": "baseline branch row",
+                "source": "session:branch",
+                "created_at": "2026-03-04T00:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config", str(config_path), "memory", "snapshot", "--tag", "seed"]) == 0
+    capsys.readouterr()
+
+    rc_branches = main(["--config", str(config_path), "memory", "branches"])
+    assert rc_branches == 0
+    branches_payload = json.loads(capsys.readouterr().out)
+    assert branches_payload["ok"] is True
+    assert branches_payload["current"] == "main"
+    assert isinstance(branches_payload["branches"], dict)
+
+    rc_branch = main(["--config", str(config_path), "memory", "branch", "feature-x", "--checkout"])
+    assert rc_branch == 0
+    branch_payload = json.loads(capsys.readouterr().out)
+    assert branch_payload["ok"] is True
+    assert branch_payload["name"] == "feature-x"
+    assert branch_payload["checkout"] is True
+    assert branch_payload["current"] == "feature-x"
+
+    rc_checkout = main(["--config", str(config_path), "memory", "checkout", "main"])
+    assert rc_checkout == 0
+    checkout_payload = json.loads(capsys.readouterr().out)
+    assert checkout_payload["ok"] is True
+    assert checkout_payload["current"] == "main"
+    assert "head" in checkout_payload
+
+    rc_merge = main(
+        [
+            "--config",
+            str(config_path),
+            "memory",
+            "merge",
+            "--source",
+            "feature-x",
+            "--target",
+            "main",
+            "--tag",
+            "sync",
+        ]
+    )
+    assert rc_merge == 0
+    merge_payload = json.loads(capsys.readouterr().out)
+    assert merge_payload["ok"] is True
+    assert merge_payload["source"] == "feature-x"
+    assert merge_payload["target"] == "main"
+    assert merge_payload["version"]
+    assert "target_head_before" in merge_payload
+    assert "target_head_after" in merge_payload
+
+    rc_share = main(["--config", str(config_path), "memory", "share-optin", "--user", "42", "--enabled", "true"])
+    assert rc_share == 0
+    share_payload = json.loads(capsys.readouterr().out)
+    assert share_payload == {"ok": True, "user_id": "42", "enabled": True}
+
+
+def test_cli_memory_branching_commands_do_not_import_gateway_runtime(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc_branches = main(["--config", str(config_path), "memory", "branches"])
+    assert rc_branches == 0
+    assert "clawlite.gateway.server" not in sys.modules
+    capsys.readouterr()
+
+    sys.modules.pop("clawlite.gateway.server", None)
+    rc_share = main(["--config", str(config_path), "memory", "share-optin", "--user", "99", "--enabled", "false"])
+    assert rc_share == 0
+    assert "clawlite.gateway.server" not in sys.modules
+
+
 def test_cli_new_memory_commands_do_not_import_gateway_runtime(tmp_path: Path, capsys) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(

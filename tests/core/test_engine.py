@@ -125,6 +125,42 @@ class FakeMemoryWithAsyncMemorize(FakeMemory):
         return None
 
 
+class FakeMemoryWithContextKwargs(FakeMemory):
+    def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
+        super().__init__(rows)
+        self.search_calls: list[dict[str, Any]] = []
+        self.memorize_calls: list[dict[str, Any]] = []
+
+    def search(self, query: str, *, limit: int = 5, user_id: str = "", include_shared: bool = False) -> list[MemoryRecord]:
+        self.search_calls.append(
+            {
+                "query": query,
+                "limit": limit,
+                "user_id": user_id,
+                "include_shared": include_shared,
+            }
+        )
+        return self.rows[:limit]
+
+    async def memorize(
+        self,
+        *,
+        messages=None,
+        source: str = "session",
+        user_id: str = "",
+        shared: bool = False,
+    ):
+        self.memorize_calls.append(
+            {
+                "messages": messages,
+                "source": source,
+                "user_id": user_id,
+                "shared": shared,
+            }
+        )
+        return {"status": "ok"}
+
+
 class FakePlannerMemory:
     def __init__(
         self,
@@ -454,6 +490,33 @@ def test_engine_prefers_async_memorize_over_consolidate() -> None:
         assert call["source"] == "session:cli:memorize"
         assert isinstance(call["messages"], list)
         assert memory.consolidate_calls == 0
+
+    asyncio.run(_scenario())
+
+
+def test_engine_passes_runtime_user_context_to_memory_search_and_memorize() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithContextKwargs(
+            [
+                MemoryRecord(
+                    id="ctx11112222",
+                    text="User timezone is America/Sao_Paulo.",
+                    source="session:telegram:42",
+                    created_at="2026-03-04T12:00:00+00:00",
+                )
+            ]
+        )
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="telegram:42", user_text="what is my timezone preference")
+        assert out.text == "ok"
+        assert memory.search_calls
+        assert memory.search_calls[0]["user_id"] == "42"
+        assert memory.search_calls[0]["include_shared"] is True
+        assert memory.memorize_calls
+        assert memory.memorize_calls[0]["user_id"] == "42"
+        assert memory.memorize_calls[0]["shared"] is False
 
     asyncio.run(_scenario())
 

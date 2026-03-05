@@ -10,11 +10,16 @@ from clawlite.cli.ops import channels_validation
 from clawlite.cli.ops import diagnostics_snapshot
 from clawlite.cli.ops import fetch_gateway_diagnostics
 from clawlite.cli.ops import memory_eval_snapshot
+from clawlite.cli.ops import memory_branch_checkout
+from clawlite.cli.ops import memory_branch_create
+from clawlite.cli.ops import memory_branches_snapshot
 from clawlite.cli.ops import memory_export_snapshot
 from clawlite.cli.ops import memory_import_snapshot
+from clawlite.cli.ops import memory_merge_branches
 from clawlite.cli.ops import memory_overview_snapshot
 from clawlite.cli.ops import memory_privacy_snapshot
 from clawlite.cli.ops import memory_profile_snapshot
+from clawlite.cli.ops import memory_shared_opt_in
 from clawlite.cli.ops import memory_snapshot_create
 from clawlite.cli.ops import memory_snapshot_rollback
 from clawlite.cli.ops import memory_suggest_snapshot
@@ -51,6 +56,15 @@ def _ensure_config_materialized(config_path: str | None) -> Any:
         else:
             stdout_text("Config criado em ~/.clawlite/config.json.")
     return cfg
+
+
+def _parse_bool_flag(value: str) -> bool:
+    lowered = str(value or "").strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("expected boolean value: true|false")
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -333,6 +347,55 @@ def cmd_memory_import(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok", False) else 2
 
 
+def cmd_memory_branches(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_branches_snapshot(cfg)
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_memory_branch(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_branch_create(
+        cfg,
+        name=str(args.name or ""),
+        from_version=str(getattr(args, "from_version", "") or ""),
+        checkout=bool(getattr(args, "checkout", False)),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_memory_checkout(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_branch_checkout(cfg, name=str(args.name or ""))
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_memory_merge(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_merge_branches(
+        cfg,
+        source=str(args.source or ""),
+        target=str(args.target or ""),
+        tag=str(args.tag or "merge"),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_memory_share_optin(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = memory_shared_opt_in(
+        cfg,
+        user_id=str(args.user or ""),
+        enabled=bool(args.enabled),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
 def cmd_cron_add(args: argparse.Namespace) -> int:
     from clawlite.gateway.server import build_runtime
 
@@ -603,6 +666,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_memory_import = memory_sub.add_parser("import", help="Import memory payload from file path")
     p_memory_import.add_argument("file")
     p_memory_import.set_defaults(handler=cmd_memory_import)
+
+    p_memory_branches = memory_sub.add_parser("branches", help="Show memory branch metadata")
+    p_memory_branches.set_defaults(handler=cmd_memory_branches)
+
+    p_memory_branch = memory_sub.add_parser("branch", help="Create memory branch")
+    p_memory_branch.add_argument("name")
+    p_memory_branch.add_argument("--from-version", default="", dest="from_version")
+    p_memory_branch.add_argument("--checkout", action="store_true")
+    p_memory_branch.set_defaults(handler=cmd_memory_branch)
+
+    p_memory_checkout = memory_sub.add_parser("checkout", help="Switch active memory branch")
+    p_memory_checkout.add_argument("name")
+    p_memory_checkout.set_defaults(handler=cmd_memory_checkout)
+
+    p_memory_merge = memory_sub.add_parser("merge", help="Merge source branch into target branch")
+    p_memory_merge.add_argument("--source", required=True)
+    p_memory_merge.add_argument("--target", required=True)
+    p_memory_merge.add_argument("--tag", default="merge")
+    p_memory_merge.set_defaults(handler=cmd_memory_merge)
+
+    p_memory_share_optin = memory_sub.add_parser("share-optin", help="Enable or disable user shared-memory opt-in")
+    p_memory_share_optin.add_argument("--user", required=True)
+    p_memory_share_optin.add_argument("--enabled", type=_parse_bool_flag, required=True)
+    p_memory_share_optin.set_defaults(handler=cmd_memory_share_optin)
 
     p_cron = sub.add_parser("cron", help="Manage scheduled jobs")
     cron_sub = p_cron.add_subparsers(dest="cron_command", required=True)

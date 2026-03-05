@@ -345,6 +345,24 @@ def test_gateway_status_exposes_memory_proactive_enabled_flag(tmp_path: Path) ->
         assert payload["memory_proactive_enabled"] is False
 
 
+def test_gateway_diagnostics_exposes_memory_monitor_telemetry_when_enabled(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"proactive": True}}},
+        gateway={"heartbeat": {"enabled": False}, "diagnostics": {"enabled": True, "require_auth": False}},
+        channels={},
+    )
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+        monitor_payload = payload["memory_monitor"]
+        assert monitor_payload["enabled"] is True
+        assert "scans" in monitor_payload
+        assert "generated" in monitor_payload
+
+
 def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
@@ -459,6 +477,7 @@ def test_run_heartbeat_sends_high_priority_memory_suggestions() -> None:
     class _Monitor:
         def __init__(self) -> None:
             self.delivered: list[str] = []
+            self.failed: list[str] = []
 
         async def scan(self):
             return [
@@ -480,8 +499,22 @@ def test_run_heartbeat_sends_high_priority_memory_suggestions() -> None:
             ]
 
         def mark_delivered(self, suggestion_id: str) -> bool:
-            self.delivered.append(suggestion_id)
+            if hasattr(suggestion_id, "suggestion_id"):
+                self.delivered.append(str(getattr(suggestion_id, "suggestion_id")))
+            else:
+                self.delivered.append(str(suggestion_id))
             return True
+
+        def mark_failed(self, suggestion_id: str, *, error: str = "") -> bool:
+            del error
+            if hasattr(suggestion_id, "suggestion_id"):
+                self.failed.append(str(getattr(suggestion_id, "suggestion_id")))
+            else:
+                self.failed.append(str(suggestion_id))
+            return True
+
+        def should_deliver(self, suggestion, *, min_priority: float = 0.0) -> bool:
+            return float(getattr(suggestion, "priority", 0.0) or 0.0) >= float(min_priority)
 
     async def _scenario() -> None:
         monitor = _Monitor()
@@ -521,6 +554,13 @@ def test_run_heartbeat_skips_low_priority_suggestions() -> None:
         def mark_delivered(self, suggestion_id: str) -> bool:
             return False
 
+        def mark_failed(self, suggestion_id: str, *, error: str = "") -> bool:
+            del suggestion_id, error
+            return False
+
+        def should_deliver(self, suggestion, *, min_priority: float = 0.0) -> bool:
+            return float(getattr(suggestion, "priority", 0.0) or 0.0) >= float(min_priority)
+
     async def _scenario() -> None:
         channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
         runtime = SimpleNamespace(engine=_Engine(), channels=channels, memory_monitor=_Monitor())
@@ -543,6 +583,14 @@ def test_run_heartbeat_monitor_fail_soft_does_not_break_decision() -> None:
 
         def mark_delivered(self, suggestion_id: str) -> bool:
             return False
+
+        def mark_failed(self, suggestion_id: str, *, error: str = "") -> bool:
+            del suggestion_id, error
+            return False
+
+        def should_deliver(self, suggestion, *, min_priority: float = 0.0) -> bool:
+            del suggestion
+            return min_priority <= 0.0
 
     async def _scenario() -> None:
         channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
@@ -812,6 +860,8 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "heartbeat" in payload
         assert "bootstrap" in payload
         assert "pending" in payload["bootstrap"]
+        assert "memory_monitor" in payload
+        assert payload["memory_monitor"]["enabled"] is False
         assert "engine" in payload
         assert "http" in payload
         assert "retrieval_metrics" in payload["engine"]

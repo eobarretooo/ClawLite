@@ -93,6 +93,7 @@ class DiagnosticsResponse(BaseModel):
     cron: dict[str, Any]
     heartbeat: dict[str, Any]
     bootstrap: dict[str, Any]
+    memory_monitor: dict[str, Any] = {}
     engine: dict[str, Any] = {}
     environment: dict[str, Any] = {}
     http: dict[str, Any] = {}
@@ -658,12 +659,12 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
             bind_event("heartbeat.memory", session="heartbeat:system").warning("memory monitor scan failed error={}", exc)
         else:
             for suggestion in suggestions:
+                if not monitor.should_deliver(suggestion, min_priority=0.7):
+                    continue
                 try:
                     priority = float(getattr(suggestion, "priority", 0.0) or 0.0)
                 except Exception:
                     priority = 0.0
-                if priority < 0.7:
-                    continue
                 metadata = {
                     "source": "memory_monitor",
                     "suggestion_id": suggestion.suggestion_id,
@@ -686,9 +687,13 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
                         suggestion.target,
                         exc,
                     )
+                    try:
+                        monitor.mark_failed(suggestion, error=str(exc))
+                    except Exception:
+                        pass
                     continue
                 try:
-                    monitor.mark_delivered(suggestion.suggestion_id)
+                    monitor.mark_delivered(suggestion)
                 except Exception as exc:
                     bind_event("heartbeat.memory", session="heartbeat:system").warning(
                         "memory suggestion mark_delivered failed suggestion_id={} error={}",
@@ -1024,6 +1029,16 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         }
         if cfg.gateway.diagnostics.include_provider_telemetry:
             engine_payload["provider"] = _provider_telemetry_snapshot(runtime.engine.provider)
+        monitor_payload: dict[str, Any]
+        if runtime.memory_monitor is None:
+            monitor_payload = {"enabled": False}
+        else:
+            try:
+                monitor_payload = dict(runtime.memory_monitor.telemetry())
+            except Exception:
+                monitor_payload = {}
+            monitor_payload["enabled"] = True
+
         return DiagnosticsResponse(
             schema_version="2026-03-02",
             contract_version=GATEWAY_CONTRACT_VERSION,
@@ -1036,6 +1051,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             cron=runtime.cron.status(),
             heartbeat=runtime.heartbeat.status(),
             bootstrap=_bootstrap_status_snapshot(),
+            memory_monitor=monitor_payload,
             engine=engine_payload,
             environment=environment,
             http=await http_telemetry.snapshot(),

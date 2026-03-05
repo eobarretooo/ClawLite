@@ -121,3 +121,42 @@ def test_memory_monitor_pending_persistence_and_mark_delivered(tmp_path: Path) -
         assert delivered[0]["status"] == "delivered"
 
     asyncio.run(_scenario())
+
+
+def test_memory_monitor_dedupe_and_cooldown_controls(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        now = datetime.now(timezone.utc)
+        event_date = (now + timedelta(days=2)).date().isoformat()
+        _seed_history(
+            store,
+            [
+                {
+                    "id": "evt-cooldown",
+                    "text": f"birthday da Ana em {event_date}",
+                    "source": "session:telegram:ana_chat",
+                    "created_at": now.isoformat(),
+                }
+            ],
+        )
+        monitor = MemoryMonitor(store, cooldown_seconds=3600)
+
+        first = await monitor.scan()
+        second = await monitor.scan()
+        assert first
+        assert second
+        assert len(first) == 1
+        assert len(second) == 1
+
+        suggestion = first[0]
+        assert monitor.should_deliver(suggestion, min_priority=0.7) is True
+        assert monitor.mark_delivered(suggestion) is True
+        assert monitor.should_deliver(suggestion, min_priority=0.7) is False
+
+        metrics = monitor.telemetry()
+        assert metrics["scans"] == 2
+        assert metrics["deduped"] >= 1
+        assert metrics["cooldown_skipped"] >= 1
+        assert metrics["sent"] >= 1
+
+    asyncio.run(_scenario())

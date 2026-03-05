@@ -650,7 +650,36 @@ class AgentEngine:
         original = " ".join(str(user_text or "").split()).strip().lower()
         return "" if rewritten.lower() == original else rewritten
 
-    def _plan_memory_snippets(self, *, session_id: str = "", user_text: str, run_log: Any) -> list[str]:
+    @staticmethod
+    def _accepts_parameter(func: Any, parameter: str) -> bool:
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            return False
+        if parameter in signature.parameters:
+            return True
+        return any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
+
+    def _memory_search(
+        self,
+        *,
+        query: str,
+        limit: int,
+        user_id: str,
+        include_shared: bool,
+    ) -> list[MemoryRecord]:
+        search_fn = getattr(self.memory, "search")
+        kwargs: dict[str, Any] = {"limit": limit}
+        if self._accepts_parameter(search_fn, "user_id"):
+            kwargs["user_id"] = user_id
+        if self._accepts_parameter(search_fn, "include_shared"):
+            kwargs["include_shared"] = include_shared
+        try:
+            return search_fn(query, **kwargs)
+        except TypeError:
+            return search_fn(query, limit=limit)
+
+    def _plan_memory_snippets(self, *, session_id: str = "", user_id: str = "", user_text: str, run_log: Any) -> list[str]:
         route = self._MEMORY_ROUTE_NO_RETRIEVE
         selected_query = ""
         attempts = 0
@@ -671,7 +700,7 @@ class AgentEngine:
             route = self._MEMORY_ROUTE_RETRIEVE
             selected_query = " ".join(str(user_text or "").split()).strip()
             started = time.perf_counter()
-            first_rows = self.memory.search(selected_query, limit=6)
+            first_rows = self._memory_search(query=selected_query, limit=6, user_id=user_id, include_shared=True)
             attempts += 1
             self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
             if first_rows:
@@ -685,7 +714,7 @@ class AgentEngine:
                     selected_query = rewritten
                     rewrites += 1
                     started = time.perf_counter()
-                    second_rows = self.memory.search(rewritten, limit=6)
+                    second_rows = self._memory_search(query=rewritten, limit=6, user_id=user_id, include_shared=True)
                     attempts += 1
                     self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
                     if second_rows:
@@ -920,7 +949,12 @@ class AgentEngine:
         budget = self._resolve_turn_budget(turn_budget)
         progress_counter = [0]
         history = self.sessions.read(session_id, limit=self.memory_window)
-        memories = self._plan_memory_snippets(session_id=session_id, user_text=user_text, run_log=run_log)
+        memories = self._plan_memory_snippets(
+            session_id=session_id,
+            user_id=runtime_chat_id,
+            user_text=user_text,
+            run_log=run_log,
+        )
         skills = self.skills_loader.render_for_prompt()
         always_names = [item.name for item in self.skills_loader.always_on()]
         skills_context = self.skills_loader.load_skills_for_context(always_names)
@@ -1208,7 +1242,18 @@ class AgentEngine:
             memorize_fn = getattr(self.memory, "memorize", None)
             if callable(memorize_fn):
                 try:
-                    memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
+                    memorize_kwargs: dict[str, Any] = {
+                        "messages": memory_messages,
+                        "source": f"session:{session_id}",
+                    }
+                    if self._accepts_parameter(memorize_fn, "user_id"):
+                        memorize_kwargs["user_id"] = runtime_chat_id
+                    if self._accepts_parameter(memorize_fn, "shared"):
+                        memorize_kwargs["shared"] = False
+                    try:
+                        memorize_result = memorize_fn(**memorize_kwargs)
+                    except TypeError:
+                        memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
                     if inspect.isawaitable(memorize_result):
                         await memorize_result
                 except Exception as exc:

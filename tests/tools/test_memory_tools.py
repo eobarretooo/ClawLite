@@ -280,3 +280,121 @@ def test_memory_learn_prefers_async_memorize_and_preserves_response_shape() -> N
         assert memory.memorize_calls == [("saved async", "memory_learn:cli:99")]
 
     asyncio.run(_scenario())
+
+
+def test_memory_learn_does_not_bypass_privacy_skip_with_add_fallback() -> None:
+    class _AsyncMemory:
+        async def memorize(self, *, text: str | None = None, source: str = "session", messages=None) -> dict[str, object]:
+            del text, source, messages
+            return {"status": "skipped", "record": None}
+
+        def add(self, text: str, *, source: str = "user"):
+            raise AssertionError(f"privacy skip must not call add fallback text={text} source={source}")
+
+    async def _scenario() -> None:
+        memory = _AsyncMemory()
+        tool = MemoryLearnTool(memory)  # type: ignore[arg-type]
+        payload = json.loads(await tool.run({"text": "secret payload"}, ToolContext(session_id="cli:privacy")))
+        assert payload["status"] == "skipped"
+        assert payload["id"] == ""
+        assert payload["ref"] == ""
+
+    asyncio.run(_scenario())
+
+
+def test_memory_recall_passes_user_context_when_retrieve_supports_kwargs() -> None:
+    class _AsyncMemory:
+        def __init__(self) -> None:
+            self.retrieve_calls: list[dict[str, object]] = []
+
+        async def retrieve(
+            self,
+            query: str,
+            *,
+            limit: int = 5,
+            method: str = "rag",
+            user_id: str = "",
+            include_shared: bool = False,
+        ) -> dict[str, object]:
+            self.retrieve_calls.append(
+                {
+                    "query": query,
+                    "limit": limit,
+                    "method": method,
+                    "user_id": user_id,
+                    "include_shared": include_shared,
+                }
+            )
+            return {"status": "ok", "hits": []}
+
+        def search(self, query: str, *, limit: int = 5):
+            del query, limit
+            return []
+
+    async def _scenario() -> None:
+        memory = _AsyncMemory()
+        tool = MemoryRecallTool(memory)  # type: ignore[arg-type]
+        payload = json.loads(await tool.run({"query": "timezone"}, ToolContext(session_id="telegram:42", user_id="42")))
+        assert payload["status"] == "ok"
+        assert memory.retrieve_calls == [
+            {
+                "query": "timezone",
+                "limit": 6,
+                "method": "rag",
+                "user_id": "42",
+                "include_shared": True,
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_memory_learn_passes_user_context_when_memorize_supports_kwargs() -> None:
+    class _AsyncMemory:
+        def __init__(self) -> None:
+            self.memorize_calls: list[dict[str, object]] = []
+
+        async def memorize(
+            self,
+            *,
+            text: str | None = None,
+            source: str = "session",
+            messages=None,
+            user_id: str = "",
+            shared: bool = True,
+        ) -> dict[str, object]:
+            del messages
+            self.memorize_calls.append(
+                {
+                    "text": text,
+                    "source": source,
+                    "user_id": user_id,
+                    "shared": shared,
+                }
+            )
+            return {
+                "status": "ok",
+                "record": {
+                    "id": "ctx99887766",
+                    "text": str(text),
+                    "source": source,
+                    "created_at": "2026-03-04T00:00:00+00:00",
+                    "category": "context",
+                },
+            }
+
+    async def _scenario() -> None:
+        memory = _AsyncMemory()
+        tool = MemoryLearnTool(memory)  # type: ignore[arg-type]
+        payload = json.loads(await tool.run({"text": "save this"}, ToolContext(session_id="cli:7", user_id="u-7")))
+        assert payload["status"] == "ok"
+        assert memory.memorize_calls == [
+            {
+                "text": "save this",
+                "source": "memory_learn:cli:7",
+                "user_id": "u-7",
+                "shared": False,
+            }
+        ]
+
+    asyncio.run(_scenario())

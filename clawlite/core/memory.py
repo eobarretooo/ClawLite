@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import gzip
 import hashlib
+import base64
 import math
 import re
 import asyncio
@@ -12,7 +13,7 @@ import uuid
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
@@ -195,12 +196,22 @@ class MemoryStore:
     _SEMANTIC_VECTOR_WEIGHT = 0.6
     _MEMORY_CATEGORIES: tuple[str, ...] = (
         "preferences",
-        "facts",
+        "relationships",
+        "knowledge",
+        "context",
         "decisions",
         "skills",
-        "context",
-        "relationships",
+        "events",
+        "facts",
     )
+    _TEXT_LIKE_SUFFIXES: frozenset[str] = frozenset({".txt", ".md", ".json", ".py", ".yaml", ".yml", ".csv", ".log"})
+    _ENTITY_URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+    _ENTITY_EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")
+    _ENTITY_DATE_RE = re.compile(
+        r"(?:\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\b)",
+        re.IGNORECASE,
+    )
+    _ENTITY_TIME_RE = re.compile(r"(?:\b\d{1,2}:\d{2}(?:\s?(?:am|pm))?\b|\b\d{1,2}\s?(?:am|pm)\b)", re.IGNORECASE)
 
     @staticmethod
     def _normalize_layer(value: Any) -> str:
@@ -277,9 +288,13 @@ class MemoryStore:
         self.embeddings_home = self.memory_home / "embeddings"
         self.emotional_path = self.memory_home / "emotional"
         self.privacy_path = self.memory_home / "privacy.json"
+        self.privacy_audit_path = self.memory_home / "privacy-audit.jsonl"
         self.versions_path = self.memory_home / "versions"
         self.users_path = self.memory_home / "users"
         self.shared_path = self.memory_home / "shared"
+        self.shared_optin_path = self.shared_path / "optin.json"
+        self.branches_meta_path = self.versions_path / "branches.json"
+        self.branch_head_path = self.versions_path / "HEAD"
         self.profile_path = self.emotional_path / "profile.json"
         self._legacy_profile_path = self.memory_home / "profile.json"
 
@@ -340,6 +355,11 @@ class MemoryStore:
         self._ensure_file(self.embeddings_path, default="")
         self._ensure_json_file(self.profile_path, self._default_profile())
         self._ensure_json_file(self.privacy_path, self._default_privacy())
+        self._ensure_json_file(self.shared_optin_path, {})
+        self._ensure_file(self.privacy_audit_path, default="")
+        self._ensure_json_file(self.branches_meta_path, self._default_branches_metadata())
+        self._ensure_file(self.branch_head_path, default="main\n")
+        self._sync_branch_head_file()
         try:
             self.backend.initialize(self.memory_home)
         except Exception:
@@ -351,6 +371,14 @@ class MemoryStore:
             "consolidate_dedup_hits": 0,
             "session_recovery_attempts": 0,
             "session_recovery_hits": 0,
+            "privacy_audit_writes": 0,
+            "privacy_audit_skipped": 0,
+            "privacy_audit_errors": 0,
+            "privacy_ttl_deleted": 0,
+            "privacy_encrypt_events": 0,
+            "privacy_encrypt_errors": 0,
+            "privacy_decrypt_events": 0,
+            "privacy_decrypt_errors": 0,
             "last_error": "",
         }
 
@@ -391,6 +419,19 @@ class MemoryStore:
         }
 
     @classmethod
+    def _default_branches_metadata(cls) -> dict[str, Any]:
+        return {
+            "current": "main",
+            "branches": {
+                "main": {
+                    "head": "",
+                    "created_at": cls._utcnow_iso(),
+                    "updated_at": cls._utcnow_iso(),
+                }
+            },
+        }
+
+    @classmethod
     def _ensure_json_file(cls, path: Path, default_payload: dict[str, Any]) -> None:
         if path.exists():
             try:
@@ -419,6 +460,223 @@ class MemoryStore:
     @staticmethod
     def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _normalize_user_id(user_id: str) -> str:
+        clean = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(user_id or "default").strip())
+        return clean or "default"
+
+    def _scope_paths(self, *, user_id: str = "default", shared: bool = False) -> dict[str, Path]:
+        clean_user = self._normalize_user_id(user_id)
+        if shared:
+            root = self.shared_path
+        elif clean_user == "default":
+            root = self.memory_home
+        else:
+            root = self.users_path / clean_user
+        return {
+            "root": root,
+            "history": self.history_path if root == self.memory_home else (root / "history.jsonl"),
+            "curated": self.curated_path if (root == self.memory_home and self.curated_path is not None) else (root / "curated.json"),
+            "checkpoints": self.checkpoints_path if root == self.memory_home else (root / "checkpoints.json"),
+            "resources": self.resources_path if root == self.memory_home else (root / "resources"),
+            "items": self.items_path if root == self.memory_home else (root / "items"),
+            "categories": self.categories_path if root == self.memory_home else (root / "categories"),
+        }
+
+    def _ensure_scope_paths(self, scope: dict[str, Path]) -> None:
+        root = scope["root"]
+        root.mkdir(parents=True, exist_ok=True)
+        scope["resources"].mkdir(parents=True, exist_ok=True)
+        scope["items"].mkdir(parents=True, exist_ok=True)
+        scope["categories"].mkdir(parents=True, exist_ok=True)
+        self._ensure_file(scope["history"], default="")
+        self._ensure_file(scope["checkpoints"], default="{}\n")
+        self._ensure_file(scope["curated"], default='{"version": 2, "facts": []}\n')
+
+    def _scope_resource_file_path_for_timestamp(self, scope: dict[str, Path], stamp: str) -> Path:
+        parsed = self._parse_iso_timestamp(stamp)
+        if parsed.year <= 1:
+            parsed = datetime.now(timezone.utc)
+        return scope["resources"] / f"conv_{parsed.strftime('%Y_%m_%d')}.jsonl"
+
+    def _scope_item_file_path(self, scope: dict[str, Path], category: str) -> Path:
+        return scope["items"] / f"{self._safe_category_slug(category)}.json"
+
+    def _scope_category_file_path(self, scope: dict[str, Path], category: str) -> Path:
+        return scope["categories"] / f"{self._safe_category_slug(category)}.md"
+
+    def _load_shared_optin_map(self) -> dict[str, bool]:
+        payload = self._load_json_dict(self.shared_optin_path, {})
+        out: dict[str, bool] = {}
+        for key, value in payload.items():
+            out[self._normalize_user_id(str(key))] = bool(value)
+        return out
+
+    def set_shared_opt_in(self, user_id: str, enabled: bool) -> dict[str, Any]:
+        clean_user = self._normalize_user_id(user_id)
+        payload = self._load_shared_optin_map()
+        payload[clean_user] = bool(enabled)
+        self._write_json_dict(self.shared_optin_path, payload)
+        return {"user_id": clean_user, "enabled": bool(enabled)}
+
+    def shared_opt_in(self, user_id: str) -> bool:
+        clean_user = self._normalize_user_id(user_id)
+        return bool(self._load_shared_optin_map().get(clean_user, False))
+
+    def _load_branches_metadata(self) -> dict[str, Any]:
+        payload = self._load_json_dict(self.branches_meta_path, self._default_branches_metadata())
+        current = str(payload.get("current", "main") or "main")
+        branches_raw = payload.get("branches", {})
+        branches = branches_raw if isinstance(branches_raw, dict) else {}
+        if "main" not in branches or not isinstance(branches.get("main"), dict):
+            now_iso = self._utcnow_iso()
+            branches["main"] = {"head": "", "created_at": now_iso, "updated_at": now_iso}
+        payload["current"] = current if current in branches else "main"
+        payload["branches"] = branches
+        return payload
+
+    def _save_branches_metadata(self, payload: dict[str, Any]) -> None:
+        self._write_json_dict(self.branches_meta_path, payload)
+
+    def _sync_branch_head_file(self) -> None:
+        meta = self._load_branches_metadata()
+        current = str(meta.get("current", "main") or "main")
+        self.branch_head_path.write_text(f"{current}\n", encoding="utf-8")
+
+    def _set_current_branch(self, name: str) -> None:
+        meta = self._load_branches_metadata()
+        branches = meta.get("branches", {})
+        if not isinstance(branches, dict) or name not in branches:
+            raise ValueError(f"unknown branch: {name}")
+        meta["current"] = name
+        self._save_branches_metadata(meta)
+        self.branch_head_path.write_text(f"{name}\n", encoding="utf-8")
+
+    def _advance_branch_head(self, branch_name: str, version_id: str) -> None:
+        meta = self._load_branches_metadata()
+        branches = meta.get("branches", {})
+        if not isinstance(branches, dict):
+            branches = {}
+        now_iso = self._utcnow_iso()
+        entry = branches.get(branch_name, {})
+        if not isinstance(entry, dict):
+            entry = {}
+        created_at = str(entry.get("created_at", now_iso) or now_iso)
+        branches[branch_name] = {
+            "head": str(version_id or ""),
+            "created_at": created_at,
+            "updated_at": now_iso,
+        }
+        meta["branches"] = branches
+        if branch_name not in branches:
+            meta["current"] = "main"
+        self._save_branches_metadata(meta)
+        self._sync_branch_head_file()
+
+    def _current_branch_name(self) -> str:
+        return str(self._load_branches_metadata().get("current", "main") or "main")
+
+    def _current_branch_head(self) -> str:
+        meta = self._load_branches_metadata()
+        current = str(meta.get("current", "main") or "main")
+        branches = meta.get("branches", {})
+        if not isinstance(branches, dict):
+            return ""
+        row = branches.get(current, {})
+        if not isinstance(row, dict):
+            return ""
+        return str(row.get("head", "") or "")
+
+    def _privacy_settings(self) -> dict[str, Any]:
+        payload = self._load_json_dict(self.privacy_path, self._default_privacy())
+        merged = self._default_privacy()
+        merged.update(payload)
+        return merged
+
+    def _append_privacy_audit_event(
+        self,
+        *,
+        action: str,
+        reason: str,
+        source: str = "",
+        category: str = "",
+        record_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        settings = self._privacy_settings()
+        if not bool(settings.get("audit_log", True)):
+            self._diagnostics["privacy_audit_skipped"] = int(self._diagnostics["privacy_audit_skipped"]) + 1
+            return
+        payload: dict[str, Any] = {
+            "timestamp": self._utcnow_iso(),
+            "action": str(action or "unknown"),
+            "reason": str(reason or ""),
+        }
+        if source:
+            payload["source"] = str(source)
+        if category:
+            payload["category"] = str(category)
+        if record_id:
+            payload["id"] = str(record_id)
+        if isinstance(metadata, dict) and metadata:
+            payload["metadata"] = metadata
+        try:
+            with self._locked_file(self.privacy_audit_path, "a", exclusive=True) as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                fh.flush()
+            self._diagnostics["privacy_audit_writes"] = int(self._diagnostics["privacy_audit_writes"]) + 1
+        except Exception as exc:
+            self._diagnostics["privacy_audit_errors"] = int(self._diagnostics["privacy_audit_errors"]) + 1
+            self._diagnostics["last_error"] = str(exc)
+
+    @staticmethod
+    def _encrypted_prefix() -> str:
+        return "enc:v1:"
+
+    def _is_encrypted_category(self, category: str, *, settings: dict[str, Any] | None = None) -> bool:
+        payload = settings if isinstance(settings, dict) else self._privacy_settings()
+        raw_categories = payload.get("encrypted_categories", [])
+        if not isinstance(raw_categories, list):
+            return False
+        categories = {str(item or "").strip().lower() for item in raw_categories if str(item or "").strip()}
+        return str(category or "").strip().lower() in categories
+
+    def _encrypt_text_for_category(self, text: str, category: str, *, settings: dict[str, Any] | None = None) -> str:
+        clean = str(text or "")
+        if not clean:
+            return clean
+        if not self._is_encrypted_category(category, settings=settings):
+            return clean
+        try:
+            encoded = base64.urlsafe_b64encode(clean.encode("utf-8")).decode("ascii")
+            self._diagnostics["privacy_encrypt_events"] = int(self._diagnostics["privacy_encrypt_events"]) + 1
+            return f"{self._encrypted_prefix()}{encoded}"
+        except Exception as exc:
+            self._diagnostics["privacy_encrypt_errors"] = int(self._diagnostics["privacy_encrypt_errors"]) + 1
+            self._diagnostics["last_error"] = str(exc)
+            return clean
+
+    def _decrypt_text_for_category(self, text: str, category: str, *, settings: dict[str, Any] | None = None) -> str:
+        clean = str(text or "")
+        if not clean:
+            return clean
+        prefix = self._encrypted_prefix()
+        if not clean.startswith(prefix):
+            return clean
+        # Decrypt whenever marker is present to preserve backward compatibility
+        # when privacy.encrypted_categories changes over time.
+        _ = category
+        _ = settings
+        try:
+            encoded = clean[len(prefix) :]
+            decoded = base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8")
+            self._diagnostics["privacy_decrypt_events"] = int(self._diagnostics["privacy_decrypt_events"]) + 1
+            return decoded
+        except Exception as exc:
+            self._diagnostics["privacy_decrypt_errors"] = int(self._diagnostics["privacy_decrypt_errors"]) + 1
+            self._diagnostics["last_error"] = str(exc)
+            return clean
 
     @contextmanager
     def _locked_file(self, path: Path, mode: str, *, exclusive: bool):
@@ -814,7 +1072,7 @@ class MemoryStore:
     def _classify_category_with_llm(self, text: str) -> str | None:
         prompt = (
             "Classifique a memoria em UMA categoria desta lista: "
-            "preferences, facts, decisions, skills, context, relationships. "
+            "preferences, relationships, knowledge, context, decisions, skills, events, facts. "
             "Retorne apenas o nome da categoria.\n\n"
             f"MEMORIA:\n{text.strip()}"
         )
@@ -843,16 +1101,61 @@ class MemoryStore:
                     content = str(message.get("content", "") or "")
                 else:
                     content = str(getattr(message, "content", "") or "")
-            candidate = content.strip().lower()
-            if candidate in self._MEMORY_CATEGORIES:
-                return candidate
-            return None
+            return self._normalize_category_label(content)
         except Exception:
             return None
+
+    @classmethod
+    def _normalize_category_label(cls, raw_label: str) -> str | None:
+        normalized = re.sub(r"[^a-z_\s]", " ", str(raw_label or "").strip().lower())
+        normalized = " ".join(normalized.split())
+        if not normalized:
+            return None
+        if normalized in cls._MEMORY_CATEGORIES:
+            return normalized
+
+        synonym_map: dict[str, tuple[str, ...]] = {
+            "preferences": ("preference", "likes", "dislikes", "style", "habit"),
+            "relationships": ("relationship", "contact", "family", "friend", "coworker", "team"),
+            "knowledge": ("know", "knowledge", "information", "reference", "learned", "learning"),
+            "context": ("context", "note", "background"),
+            "decisions": ("decision", "chosen", "resolved", "resolution", "plan"),
+            "skills": ("skill", "ability", "capability", "how to", "expertise"),
+            "events": ("event", "schedule", "deadline", "meeting", "travel", "trip", "birthday"),
+            "facts": ("fact", "factual"),
+        }
+        for category, aliases in synonym_map.items():
+            if normalized == category:
+                return category
+            if any(alias in normalized for alias in aliases):
+                return category
+        return None
+
+    @classmethod
+    def _extract_entities(cls, text: str) -> dict[str, list[str]]:
+        raw = str(text or "")
+        entities = {
+            "urls": cls._ENTITY_URL_RE.findall(raw),
+            "emails": cls._ENTITY_EMAIL_RE.findall(raw),
+            "dates": cls._ENTITY_DATE_RE.findall(raw),
+            "times": cls._ENTITY_TIME_RE.findall(raw),
+        }
+        out: dict[str, list[str]] = {}
+        for key, values in entities.items():
+            unique: list[str] = []
+            for value in values:
+                clean = str(value or "").strip()
+                if clean and clean not in unique:
+                    unique.append(clean)
+            out[key] = unique
+        return out
 
     def _heuristic_category(self, text: str, source: str) -> str:
         normalized = str(text or "").lower()
         source_norm = str(source or "").lower()
+        entities = self._extract_entities(text)
+        has_date_time = bool(entities["dates"] or entities["times"])
+        has_knowledge_entities = bool(entities["urls"] or entities["emails"])
         if any(token in normalized for token in ("prefer", "preference", "always", "never", "gosto", "prefiro")):
             return "preferences"
         if any(token in normalized for token in ("decide", "decision", "we will", "vamos", "escolhemos", "resolved")):
@@ -861,7 +1164,38 @@ class MemoryStore:
             return "skills"
         if any(token in normalized for token in ("name is", "works at", "friend", "wife", "husband", "team", "cliente", "parceiro")):
             return "relationships"
-        if source_norm.startswith("curated:") or any(token in normalized for token in ("timezone", "deadline", "fact", "is ", "sao", "eh ")):
+        if has_date_time or any(
+            token in normalized
+            for token in (
+                "deadline",
+                "meeting",
+                "appointment",
+                "schedule",
+                "trip",
+                "travel",
+                "birthday",
+                "tomorrow",
+                "next week",
+                "flight",
+            )
+        ):
+            return "events"
+        if has_knowledge_entities or any(
+            token in normalized
+            for token in (
+                "learn",
+                "learned",
+                "know",
+                "knowledge",
+                "documentation",
+                "docs",
+                "guide",
+                "tutorial",
+                "reference",
+            )
+        ):
+            return "knowledge"
+        if source_norm.startswith("curated:") or "fact" in normalized or "timezone" in normalized:
             return "facts"
         return "context"
 
@@ -872,6 +1206,55 @@ class MemoryStore:
         if by_llm in self._MEMORY_CATEGORIES:
             return by_llm
         return self._heuristic_category(text, source)
+
+    @staticmethod
+    def _metadata_hint(metadata: dict[str, Any] | None) -> str:
+        if not isinstance(metadata, dict):
+            return ""
+        for key in ("transcript", "caption", "description", "summary"):
+            value = str(metadata.get(key, "") or "").strip()
+            if value:
+                return value[:600]
+        return ""
+
+    @classmethod
+    def _memory_text_from_file(
+        cls,
+        file_path: str,
+        *,
+        modality: str,
+        metadata: dict[str, Any] | None,
+    ) -> str:
+        target = Path(file_path).expanduser()
+        suffix = target.suffix.lower()
+        hint = cls._metadata_hint(metadata)
+        if suffix in cls._TEXT_LIKE_SUFFIXES:
+            try:
+                content = target.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                content = ""
+            excerpt = content[:4000].strip()
+            if excerpt:
+                return excerpt
+
+        synthetic = [f"Ingested {modality} file reference: {target.name} ({target})."]
+        if hint:
+            synthetic.append(f"Supplemental metadata: {hint}")
+        return " ".join(synthetic)[:4000]
+
+    @classmethod
+    def _memory_text_from_url(
+        cls,
+        url: str,
+        *,
+        modality: str,
+        metadata: dict[str, Any] | None,
+    ) -> str:
+        hint = cls._metadata_hint(metadata)
+        parts = [f"Ingested {modality} URL reference: {url.strip()}."]
+        if hint:
+            parts.append(f"Supplemental metadata: {hint}")
+        return " ".join(parts)[:4000]
 
     @staticmethod
     def _detect_emotional_tone(text: str) -> str:
@@ -952,8 +1335,8 @@ class MemoryStore:
                 topics.append(token)
         return topics[:8]
 
-    def _privacy_allows_memorize(self, text: str) -> bool:
-        privacy = self._load_json_dict(self.privacy_path, self._default_privacy())
+    def _privacy_block_reason(self, text: str) -> str | None:
+        privacy = self._privacy_settings()
         patterns = privacy.get("never_memorize_patterns", [])
         if not isinstance(patterns, list):
             patterns = []
@@ -961,8 +1344,11 @@ class MemoryStore:
         for item in patterns:
             pattern = str(item or "").strip().lower()
             if pattern and pattern in lowered:
-                return False
-        return True
+                return f"pattern:{pattern}"
+        return None
+
+    def _privacy_allows_memorize(self, text: str) -> bool:
+        return self._privacy_block_reason(text) is None
 
     def _update_profile_from_text(self, text: str) -> None:
         clean = str(text or "").strip()
@@ -1064,6 +1450,8 @@ class MemoryStore:
             normalized = self._normalize_curated_fact(row)
             if normalized is None:
                 continue
+            category = str(normalized.get("category", "context") or "context")
+            normalized["text"] = self._decrypt_text_for_category(str(normalized.get("text", "") or ""), category)
             out.append(normalized)
         return out
 
@@ -1076,6 +1464,8 @@ class MemoryStore:
                 continue
             clean = self._normalize_curated_fact(fact)
             if clean is not None:
+                category = str(clean.get("category", "context") or "context")
+                clean["text"] = self._encrypt_text_for_category(str(clean.get("text", "") or ""), category)
                 normalized.append(clean)
 
         normalized.sort(key=self._curated_rank, reverse=True)
@@ -1085,6 +1475,72 @@ class MemoryStore:
             fh.write(encoded)
             fh.write("\n")
             fh.flush()
+
+    def _read_curated_facts_from(self, curated_path: Path) -> list[dict[str, object]]:
+        with self._locked_file(curated_path, "r", exclusive=False) as fh:
+            raw = fh.read().strip()
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, dict):
+            return []
+        facts = payload.get("facts", [])
+        if not isinstance(facts, list):
+            return []
+        out: list[dict[str, object]] = []
+        for row in facts:
+            if not isinstance(row, dict):
+                continue
+            normalized = self._normalize_curated_fact(row)
+            if normalized is None:
+                continue
+            category = str(normalized.get("category", "context") or "context")
+            normalized["text"] = self._decrypt_text_for_category(str(normalized.get("text", "") or ""), category)
+            out.append(normalized)
+        return out
+
+    def _write_curated_facts_to(self, curated_path: Path, facts: list[dict[str, object]]) -> None:
+        normalized: list[dict[str, object]] = []
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            clean = self._normalize_curated_fact(fact)
+            if clean is not None:
+                category = str(clean.get("category", "context") or "context")
+                clean["text"] = self._encrypt_text_for_category(str(clean.get("text", "") or ""), category)
+                normalized.append(clean)
+
+        normalized.sort(key=self._curated_rank, reverse=True)
+        payload = {"version": 2, "facts": normalized[: self._MAX_CURATED_FACTS]}
+        encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+        with self._locked_file(curated_path, "w", exclusive=True) as fh:
+            fh.write(encoded)
+            fh.write("\n")
+            fh.flush()
+
+    def _read_history_records_from(self, history_path: Path) -> list[MemoryRecord]:
+        out: list[MemoryRecord] = []
+        with self._locked_file(history_path, "r", exclusive=False) as fh:
+            lines = fh.read().splitlines()
+        for line in lines:
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            row = self._record_from_payload(payload)
+            if row is None:
+                continue
+            row.text = self._decrypt_text_for_category(str(row.text or ""), row.category)
+            out.append(row)
+        return out
 
     @staticmethod
     def _source_session_key(source: str) -> str:
@@ -1228,11 +1684,12 @@ class MemoryStore:
         return self.categories_path / f"{self._safe_category_slug(category)}.md"
 
     def _append_resource_layer(self, *, record: MemoryRecord, raw_text: str) -> None:
+        category = str(record.category or "context")
         payload = {
             "id": str(record.id or ""),
-            "text": str(raw_text or "").strip(),
+            "text": self._encrypt_text_for_category(str(raw_text or "").strip(), category),
             "source": str(record.source or ""),
-            "category": str(record.category or "context"),
+            "category": category,
             "created_at": str(record.created_at or ""),
             "layer": MemoryLayer.RESOURCE.value,
         }
@@ -1271,7 +1728,9 @@ class MemoryStore:
         out: list[dict[str, Any]] = []
         for row in rows:
             if isinstance(row, dict) and str(row.get("id", "")).strip():
-                out.append(row)
+                decoded = dict(row)
+                decoded["text"] = self._decrypt_text_for_category(str(decoded.get("text", "") or ""), category)
+                out.append(decoded)
         return out
 
     def _write_category_items(self, category: str, rows: list[dict[str, Any]]) -> None:
@@ -1320,16 +1779,20 @@ class MemoryStore:
         category = str(record.category or "context")
         rows = self._load_category_items(category)
         row_payload = self._serialize_hit(record)
+        stored_payload = dict(row_payload)
+        stored_payload["text"] = self._encrypt_text_for_category(str(row_payload.get("text", "") or ""), category)
         updated_rows: list[dict[str, Any]] = []
         found = False
         for row in rows:
             if str(row.get("id", "")).strip() == record.id:
-                updated_rows.append(row_payload)
+                updated_rows.append(stored_payload)
                 found = True
             else:
-                updated_rows.append(row)
+                preserved = dict(row)
+                preserved["text"] = self._encrypt_text_for_category(str(preserved.get("text", "") or ""), category)
+                updated_rows.append(preserved)
         if not found:
-            updated_rows.append(row_payload)
+            updated_rows.append(stored_payload)
         self._write_category_items(category, updated_rows)
         self._update_category_summary_file(category)
         category_path = self._category_file_path(category)
@@ -1338,7 +1801,7 @@ class MemoryStore:
             self.backend.upsert_layer_record(
                 layer=MemoryLayer.ITEM.value,
                 record_id=str(record.id),
-                payload=row_payload,
+                payload=stored_payload,
                 category=category,
                 created_at=str(record.created_at or ""),
                 updated_at=str(record.updated_at or record.created_at or ""),
@@ -1362,6 +1825,104 @@ class MemoryStore:
     def _persist_layer_artifacts(self, record: MemoryRecord, *, raw_resource_text: str) -> None:
         self._append_resource_layer(record=record, raw_text=raw_resource_text)
         self._upsert_item_layer(record)
+
+    def _load_scope_category_items(self, scope: dict[str, Path], category: str) -> list[dict[str, Any]]:
+        item_path = self._scope_item_file_path(scope, category)
+        if not item_path.exists():
+            return []
+        try:
+            payload = json.loads(item_path.read_text(encoding="utf-8") or "{}")
+        except Exception:
+            return []
+        if not isinstance(payload, dict):
+            return []
+        rows = payload.get("items", [])
+        if not isinstance(rows, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("id", "")).strip():
+                decoded = dict(row)
+                decoded["text"] = self._decrypt_text_for_category(str(decoded.get("text", "") or ""), category)
+                out.append(decoded)
+        return out
+
+    def _write_scope_category_items(self, scope: dict[str, Path], category: str, rows: list[dict[str, Any]]) -> None:
+        item_path = self._scope_item_file_path(scope, category)
+        item_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 1,
+            "category": str(category or "context"),
+            "updated_at": self._utcnow_iso(),
+            "items": rows,
+        }
+        item_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _update_scope_category_summary_file(self, scope: dict[str, Path], category: str) -> None:
+        rows = self._load_scope_category_items(scope, category)
+        category_path = self._scope_category_file_path(scope, category)
+        category_path.parent.mkdir(parents=True, exist_ok=True)
+        now_iso = self._utcnow_iso()
+        sources: Counter[str] = Counter()
+        for row in rows:
+            sources[str(row.get("source", "unknown") or "unknown")] += 1
+        top_sources = [
+            f"- {source}: {count}"
+            for source, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))[:5]
+        ]
+        recent_lines = [
+            f"- {str(row.get('id', '') or '')}: {str(row.get('text', '') or '').strip()[:160]}"
+            for row in rows[-5:]
+        ]
+        body = [
+            f"# Category: {category}",
+            "",
+            f"Updated: {now_iso}",
+            f"Total items: {len(rows)}",
+            "",
+            "## Top Sources",
+            *(top_sources or ["- none"]),
+            "",
+            "## Recent Items",
+            *(recent_lines or ["- none"]),
+            "",
+        ]
+        category_path.write_text("\n".join(body), encoding="utf-8")
+
+    def _persist_layer_artifacts_to_scope(self, scope: dict[str, Path], record: MemoryRecord, *, raw_resource_text: str) -> None:
+        category = str(record.category or "context")
+        resource_payload = {
+            "id": str(record.id or ""),
+            "text": self._encrypt_text_for_category(str(raw_resource_text or "").strip(), category),
+            "source": str(record.source or ""),
+            "category": category,
+            "created_at": str(record.created_at or ""),
+            "layer": MemoryLayer.RESOURCE.value,
+        }
+        resource_file = self._scope_resource_file_path_for_timestamp(scope, resource_payload["created_at"])
+        self._ensure_file(resource_file, default="")
+        with self._locked_file(resource_file, "a", exclusive=True) as fh:
+            fh.write(json.dumps(resource_payload, ensure_ascii=False) + "\n")
+            fh.flush()
+
+        rows = self._load_scope_category_items(scope, category)
+        row_payload = self._serialize_hit(record)
+        stored_payload = dict(row_payload)
+        stored_payload["text"] = self._encrypt_text_for_category(str(row_payload.get("text", "") or ""), category)
+        updated_rows: list[dict[str, Any]] = []
+        found = False
+        for row in rows:
+            if str(row.get("id", "")).strip() == record.id:
+                updated_rows.append(stored_payload)
+                found = True
+            else:
+                preserved = dict(row)
+                preserved["text"] = self._encrypt_text_for_category(str(preserved.get("text", "") or ""), category)
+                updated_rows.append(preserved)
+        if not found:
+            updated_rows.append(stored_payload)
+        self._write_scope_category_items(scope, category, updated_rows)
+        self._update_scope_category_summary_file(scope, category)
 
     def _prune_item_and_category_layers(self, record_ids: set[str]) -> int:
         if not record_ids:
@@ -1394,21 +1955,225 @@ class MemoryStore:
                 self._update_category_summary_file(category)
         return deleted
 
-    def add(self, text: str, *, source: str = "user", raw_resource_text: str | None = None) -> MemoryRecord:
+    def _prune_resource_layer_for_ids(self, record_ids: set[str]) -> int:
+        if not record_ids:
+            return 0
+        deleted = 0
+        for resource_file in self.resources_path.glob("conv_*.jsonl"):
+            try:
+                with self._locked_file(resource_file, "r+", exclusive=True) as fh:
+                    lines = fh.read().splitlines()
+                    kept_lines: list[str] = []
+                    for line in lines:
+                        raw = line.strip()
+                        if not raw:
+                            continue
+                        try:
+                            payload = json.loads(raw)
+                        except Exception:
+                            kept_lines.append(raw)
+                            continue
+                        if not isinstance(payload, dict):
+                            kept_lines.append(raw)
+                            continue
+                        row_id = str(payload.get("id", "")).strip()
+                        if row_id and row_id in record_ids:
+                            deleted += 1
+                            continue
+                        kept_lines.append(raw)
+                    fh.seek(0)
+                    fh.truncate()
+                    if kept_lines:
+                        fh.write("\n".join(kept_lines) + "\n")
+                    fh.flush()
+            except Exception:
+                continue
+        return deleted
+
+    def _delete_records_by_ids(self, record_ids: set[str]) -> dict[str, int | list[str]]:
+        if not record_ids:
+            return {
+                "deleted_ids": [],
+                "history_deleted": 0,
+                "curated_deleted": 0,
+                "embeddings_deleted": 0,
+                "layer_deleted": 0,
+                "backend_deleted": 0,
+                "deleted_count": 0,
+            }
+
+        history_deleted = 0
+        curated_deleted = 0
+        embeddings_deleted = 0
+        backend_deleted = 0
+        layer_deleted = 0
+
+        try:
+            with self._locked_file(self.history_path, "r+", exclusive=True) as fh:
+                lines = fh.read().splitlines()
+                kept_lines: list[str] = []
+                for line in lines:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError:
+                        kept_lines.append(raw)
+                        continue
+                    if not isinstance(payload, dict):
+                        kept_lines.append(raw)
+                        continue
+                    row_id = str(payload.get("id", "")).strip()
+                    if row_id and row_id in record_ids:
+                        history_deleted += 1
+                        continue
+                    kept_lines.append(raw)
+
+                fh.seek(0)
+                fh.truncate()
+                if kept_lines:
+                    fh.write("\n".join(kept_lines) + "\n")
+                fh.flush()
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+        if self.curated_path is not None:
+            try:
+                facts = self._read_curated_facts()
+                kept_facts: list[dict[str, object]] = []
+                for fact in facts:
+                    row_id = str(fact.get("id", "")).strip()
+                    if row_id and row_id in record_ids:
+                        curated_deleted += 1
+                        continue
+                    kept_facts.append(fact)
+                self._write_curated_facts(kept_facts)
+            except Exception as exc:
+                self._diagnostics["last_error"] = str(exc)
+
+        try:
+            embeddings_deleted = self._prune_embeddings_for_ids(record_ids)
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+        try:
+            layer_deleted = self._prune_item_and_category_layers(record_ids)
+            layer_deleted += self._prune_resource_layer_for_ids(record_ids)
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+        try:
+            backend_deleted = int(self.backend.delete_layer_records(record_ids) or 0)
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
+        deleted_ids = sorted(record_ids)
+        return {
+            "deleted_ids": deleted_ids,
+            "history_deleted": history_deleted,
+            "curated_deleted": curated_deleted,
+            "embeddings_deleted": embeddings_deleted,
+            "layer_deleted": layer_deleted,
+            "backend_deleted": backend_deleted,
+            "deleted_count": len(deleted_ids),
+        }
+
+    def _cleanup_expired_ephemeral_records(self) -> int:
+        privacy = self._privacy_settings()
+        raw_categories = privacy.get("ephemeral_categories", [])
+        if not isinstance(raw_categories, list):
+            return 0
+        categories = {str(item or "").strip().lower() for item in raw_categories if str(item or "").strip()}
+        if not categories:
+            return 0
+        try:
+            ttl_days = int(privacy.get("ephemeral_ttl_days", 0) or 0)
+        except Exception:
+            ttl_days = 0
+        if ttl_days <= 0:
+            return 0
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
+        expired_ids: set[str] = set()
+
+        for row in self._read_history_records():
+            row_id = str(row.id or "").strip()
+            if not row_id:
+                continue
+            if str(row.category or "context").strip().lower() not in categories:
+                continue
+            if self._parse_iso_timestamp(str(row.created_at or "")) < cutoff:
+                expired_ids.add(row_id)
+
+        for row in self.curated():
+            row_id = str(row.id or "").strip()
+            if not row_id:
+                continue
+            if str(row.category or "context").strip().lower() not in categories:
+                continue
+            if self._parse_iso_timestamp(str(row.created_at or "")) < cutoff:
+                expired_ids.add(row_id)
+
+        if not expired_ids:
+            return 0
+
+        deleted = self._delete_records_by_ids(expired_ids)
+        deleted_count = int(deleted.get("deleted_count", 0) or 0)
+        if deleted_count > 0:
+            self._diagnostics["privacy_ttl_deleted"] = int(self._diagnostics["privacy_ttl_deleted"]) + deleted_count
+            self._append_privacy_audit_event(
+                action="ttl_cleanup",
+                reason="ephemeral_ttl_expired",
+                metadata={
+                    "deleted_count": deleted_count,
+                    "ttl_days": ttl_days,
+                    "categories": sorted(categories),
+                },
+            )
+        return deleted_count
+
+    def add(
+        self,
+        text: str,
+        *,
+        source: str = "user",
+        raw_resource_text: str | None = None,
+        user_id: str = "default",
+        shared: bool = False,
+        modality: str = "text",
+    ) -> MemoryRecord:
         clean = text.strip()
         if not clean:
             raise ValueError("memory text must not be empty")
+        clean_user = self._normalize_user_id(user_id)
         row = MemoryRecord(
             id=uuid.uuid4().hex,
             text=clean,
             source=source,
             created_at=datetime.now(timezone.utc).isoformat(),
             category=self._categorize_memory(clean, source),
+            user_id=clean_user,
             layer=MemoryLayer.ITEM.value,
+            modality=str(modality or "text").strip().lower() or "text",
             emotional_tone=self._detect_emotional_tone(clean) if self.emotional_tracking else "neutral",
         )
+        stored_payload = asdict(row)
+        stored_payload["text"] = self._encrypt_text_for_category(str(row.text or ""), row.category)
+
+        if shared or clean_user != "default":
+            scope = self._scope_paths(user_id=clean_user, shared=shared)
+            self._ensure_scope_paths(scope)
+            with self._locked_file(scope["history"], "a", exclusive=True) as fh:
+                fh.write(json.dumps(stored_payload, ensure_ascii=False) + "\n")
+                fh.flush()
+            try:
+                self._persist_layer_artifacts_to_scope(scope, row, raw_resource_text=str(raw_resource_text or clean))
+            except Exception:
+                pass
+
         with self._locked_file(self.history_path, "a", exclusive=True) as fh:
-            fh.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
+            fh.write(json.dumps(stored_payload, ensure_ascii=False) + "\n")
             fh.flush()
         try:
             self._persist_layer_artifacts(record=row, raw_resource_text=str(raw_resource_text or clean))
@@ -1450,6 +2215,7 @@ class MemoryStore:
             row = self._record_from_payload(payload)
             if row is None:
                 continue
+            row.text = self._decrypt_text_for_category(str(row.text or ""), row.category)
             out.append(row)
 
         if corrupt_lines:
@@ -1495,23 +2261,78 @@ class MemoryStore:
         text: str | None = None,
         messages: Iterable[dict[str, str]] | None = None,
         source: str = "session",
+        user_id: str = "default",
+        shared: bool = False,
+        include_shared: bool = False,
+        file_path: str | None = None,
+        url: str | None = None,
+        modality: str = "text",
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        _ = include_shared
+        try:
+            await asyncio.to_thread(self._cleanup_expired_ephemeral_records)
+        except Exception as exc:
+            self._diagnostics["last_error"] = str(exc)
+
         if messages is not None:
             joined_text = "\n".join(str(item.get("content", "") or "") for item in messages if isinstance(item, dict))
-            if joined_text and not self._privacy_allows_memorize(joined_text):
+            blocked_reason = self._privacy_block_reason(joined_text) if joined_text else None
+            if blocked_reason is not None:
+                self._append_privacy_audit_event(
+                    action="memorize_skipped",
+                    reason=blocked_reason,
+                    source=source,
+                    metadata={"mode": "consolidate"},
+                )
                 return {"status": "skipped", "mode": "consolidate", "record": None}
-            record = await asyncio.to_thread(self.consolidate, messages, source=source)
+            record = await asyncio.to_thread(
+                self.consolidate,
+                messages,
+                source=source,
+                user_id=user_id,
+                shared=shared,
+            )
             if record is None:
                 return {"status": "skipped", "mode": "consolidate", "record": None}
             self._update_profile_from_text(record.text)
             return {"status": "ok", "mode": "consolidate", "record": asdict(record)}
 
+        resolved_modality = str(modality or "text").strip().lower() or "text"
         clean = str(text or "").strip()
+        if not clean and file_path:
+            clean = await asyncio.to_thread(
+                self._memory_text_from_file,
+                file_path,
+                modality=resolved_modality,
+                metadata=metadata,
+            )
+        if not clean and url:
+            clean = await asyncio.to_thread(
+                self._memory_text_from_url,
+                url,
+                modality=resolved_modality,
+                metadata=metadata,
+            )
         if not clean:
             raise ValueError("text or messages is required")
-        if not self._privacy_allows_memorize(clean):
+        blocked_reason = self._privacy_block_reason(clean)
+        if blocked_reason is not None:
+            self._append_privacy_audit_event(
+                action="memorize_skipped",
+                reason=blocked_reason,
+                source=source,
+                metadata={"mode": "add"},
+            )
             return {"status": "skipped", "mode": "add", "record": None}
-        record = await asyncio.to_thread(self.add, clean, source=source)
+        record = await asyncio.to_thread(
+            self.add,
+            clean,
+            source=source,
+            user_id=user_id,
+            shared=shared,
+            modality=resolved_modality,
+        )
         self._update_profile_from_text(clean)
         return {"status": "ok", "mode": "add", "record": asdict(record)}
 
@@ -1532,12 +2353,13 @@ class MemoryStore:
             "emotional_tone": str(row.emotional_tone or "neutral"),
         }
 
-    def _refine_hits_with_llm(self, query: str, hits: list[dict[str, Any]]) -> str | None:
+    def _refine_hits_with_llm(self, query: str, hits: list[dict[str, Any]]) -> dict[str, str] | None:
         if not hits:
-            return ""
+            return {"answer": "", "next_step_query": ""}
         prompt = (
             "Use os trechos de memoria abaixo para responder de forma objetiva. "
-            "Se os trechos nao forem suficientes, diga isso explicitamente.\n\n"
+            "Se os trechos nao forem suficientes, diga isso explicitamente. "
+            "Responda APENAS em JSON valido com as chaves: answer (string) e next_step_query (string opcional).\n\n"
             f"PERGUNTA:\n{query}\n\n"
             f"MEMORIAS:\n{json.dumps(hits, ensure_ascii=False)}"
         )
@@ -1570,14 +2392,40 @@ class MemoryStore:
             content = str(message.get("content", "") or "")
         else:
             content = str(getattr(message, "content", "") or "")
-        return content.strip()
+        content = content.strip()
+        if not content:
+            return {"answer": "", "next_step_query": ""}
+        try:
+            parsed = json.loads(content)
+        except Exception:
+            return {"answer": content, "next_step_query": ""}
+        if not isinstance(parsed, dict):
+            return {"answer": content, "next_step_query": ""}
+        answer = str(parsed.get("answer", "") or "").strip()
+        next_step = str(parsed.get("next_step_query", "") or "").strip()
+        return {"answer": answer, "next_step_query": next_step}
 
-    async def retrieve(self, query: str, *, limit: int = 5, method: str = "rag") -> dict[str, Any]:
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        method: str = "rag",
+        user_id: str = "",
+        include_shared: bool = False,
+    ) -> dict[str, Any]:
         clean_query = str(query or "").strip()
         if not clean_query:
             raise ValueError("query is required")
         bounded_limit = max(1, int(limit or 1))
-        records = await asyncio.to_thread(self.search, clean_query, limit=bounded_limit)
+        resolved_user = user_id or "default"
+        records = await asyncio.to_thread(
+            self.search,
+            clean_query,
+            limit=bounded_limit,
+            user_id=resolved_user,
+            include_shared=include_shared,
+        )
         hits = [self._serialize_hit(row) for row in records]
 
         rag_payload: dict[str, Any] = {
@@ -1595,10 +2443,12 @@ class MemoryStore:
         if normalized_method != "llm":
             raise ValueError("method must be 'rag' or 'llm'")
 
-        llm_answer = await asyncio.to_thread(self._refine_hits_with_llm, clean_query, hits)
-        if llm_answer is None:
+        llm_refinement = await asyncio.to_thread(self._refine_hits_with_llm, clean_query, hits)
+        if llm_refinement is None:
             rag_payload["method"] = "llm"
             rag_payload["metadata"] = {"fallback_to_rag": True}
+            rag_payload["answer"] = ""
+            rag_payload["next_step_query"] = ""
             return rag_payload
 
         return {
@@ -1608,30 +2458,23 @@ class MemoryStore:
             "limit": bounded_limit,
             "count": len(hits),
             "hits": hits,
-            "answer": llm_answer,
+            "answer": str(llm_refinement.get("answer", "") or ""),
+            "next_step_query": str(llm_refinement.get("next_step_query", "") or ""),
             "metadata": {"fallback_to_rag": False},
         }
 
-    def search(self, query: str, *, limit: int = 5) -> list[MemoryRecord]:
-        curated_rows = self._read_curated_facts()
-        curated_records = [
-            MemoryRecord(
-                id=str(item.get("id", "")),
-                text=str(item.get("text", "")).strip(),
-                source=str(item.get("source", "curated")),
-                created_at=str(item.get("created_at", "")),
-                category=str(item.get("category", "context") or "context"),
-            )
-            for item in curated_rows
-            if str(item.get("text", "")).strip()
-        ]
-        curated_importance = {str(item.get("id", "")): float(item.get("importance", 1.0)) for item in curated_rows}
-        curated_mentions = {str(item.get("id", "")): int(item.get("mentions", 1)) for item in curated_rows}
-
-        records = curated_records + self.all()
+    def _rank_records(
+        self,
+        query: str,
+        records: list[MemoryRecord],
+        *,
+        curated_importance: dict[str, float],
+        curated_mentions: dict[str, int],
+        limit: int,
+        semantic_enabled: bool,
+    ) -> list[MemoryRecord]:
         if not records:
             return []
-
         q_tokens = self._tokens(query)
         query_has_temporal_intent = self._query_has_temporal_intent(query)
         if not q_tokens:
@@ -1640,7 +2483,6 @@ class MemoryStore:
         corpus_tokens = [self._tokens(item.text) for item in records]
         qset = set(q_tokens)
 
-        bm25_scores: list[float]
         if BM25Okapi is None:
             bm25_scores = [0.0 for _ in records]
         else:
@@ -1650,7 +2492,7 @@ class MemoryStore:
 
         semantic_scores = [0.0 for _ in records]
         semantic_active = False
-        if self.semantic_enabled:
+        if semantic_enabled:
             query_embedding = self._generate_embedding(query)
             if query_embedding is not None:
                 embeddings = self._read_embeddings_map()
@@ -1662,8 +2504,6 @@ class MemoryStore:
                         semantic_scores[idx] = self._cosine_similarity(query_embedding, vector)
                     semantic_active = True
 
-        # Primary key: lexical overlap with query terms.
-        # Secondary key: BM25 or hybrid semantic score.
         scored: list[tuple[float, float, float, int]] = []
         for idx, toks in enumerate(corpus_tokens):
             overlap = len(qset.intersection(toks))
@@ -1692,7 +2532,6 @@ class MemoryStore:
                 scored.append((float(overlap) + curated_boost, ranking_score, tie_breaker, idx))
 
         scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
-
         picked: list[MemoryRecord] = []
         for overlap_score, relevance_score, _tie_breaker, idx in scored:
             if len(picked) >= limit:
@@ -1700,10 +2539,245 @@ class MemoryStore:
             if overlap_score <= 0 and relevance_score <= 0.0:
                 continue
             picked.append(records[idx])
-
         return picked if picked else records[-limit:][::-1]
 
-    def consolidate(self, messages: Iterable[dict[str, str]], *, source: str = "session") -> MemoryRecord | None:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        user_id: str = "",
+        include_shared: bool = False,
+    ) -> list[MemoryRecord]:
+        bounded_limit = max(1, int(limit or 1))
+        clean_user = self._normalize_user_id(user_id or "default")
+
+        if clean_user == "default" and not include_shared:
+            curated_rows = self._read_curated_facts()
+            curated_records = [
+                MemoryRecord(
+                    id=str(item.get("id", "")),
+                    text=str(item.get("text", "")).strip(),
+                    source=str(item.get("source", "curated")),
+                    created_at=str(item.get("created_at", "")),
+                    category=str(item.get("category", "context") or "context"),
+                )
+                for item in curated_rows
+                if str(item.get("text", "")).strip()
+            ]
+            curated_importance = {str(item.get("id", "")): float(item.get("importance", 1.0)) for item in curated_rows}
+            curated_mentions = {str(item.get("id", "")): int(item.get("mentions", 1)) for item in curated_rows}
+            records = curated_records + self.all()
+            return self._rank_records(
+                query,
+                records,
+                curated_importance=curated_importance,
+                curated_mentions=curated_mentions,
+                limit=bounded_limit,
+                semantic_enabled=self.semantic_enabled,
+            )
+
+        user_scope = self._scope_paths(user_id=clean_user, shared=False)
+        self._ensure_scope_paths(user_scope)
+        curated_rows = self._read_curated_facts_from(user_scope["curated"])
+        curated_records = [
+            MemoryRecord(
+                id=str(item.get("id", "")),
+                text=str(item.get("text", "")).strip(),
+                source=str(item.get("source", "curated")),
+                created_at=str(item.get("created_at", "")),
+                category=str(item.get("category", "context") or "context"),
+                user_id=clean_user,
+            )
+            for item in curated_rows
+            if str(item.get("text", "")).strip()
+        ]
+        history_records = self._read_history_records_from(user_scope["history"])
+        records = curated_records + history_records
+        curated_importance = {str(item.get("id", "")): float(item.get("importance", 1.0)) for item in curated_rows}
+        curated_mentions = {str(item.get("id", "")): int(item.get("mentions", 1)) for item in curated_rows}
+
+        if include_shared and self.shared_opt_in(clean_user):
+            shared_scope = self._scope_paths(shared=True)
+            self._ensure_scope_paths(shared_scope)
+            shared_curated = self._read_curated_facts_from(shared_scope["curated"])
+            records.extend(
+                MemoryRecord(
+                    id=str(item.get("id", "")),
+                    text=str(item.get("text", "")).strip(),
+                    source=str(item.get("source", "curated:shared")),
+                    created_at=str(item.get("created_at", "")),
+                    category=str(item.get("category", "context") or "context"),
+                    user_id="shared",
+                )
+                for item in shared_curated
+                if str(item.get("text", "")).strip()
+            )
+            records.extend(self._read_history_records_from(shared_scope["history"]))
+
+        return self._rank_records(
+            query,
+            records,
+            curated_importance=curated_importance,
+            curated_mentions=curated_mentions,
+            limit=bounded_limit,
+            semantic_enabled=False,
+        )
+
+    def _consolidate_in_scope(
+        self,
+        scope: dict[str, Path],
+        messages: Iterable[dict[str, str]],
+        *,
+        source: str,
+        user_id: str,
+        shared: bool,
+    ) -> MemoryRecord | None:
+        self._ensure_scope_paths(scope)
+        lines = self._extract_consolidation_lines(messages)
+        if not lines:
+            return None
+
+        source_lines: list[str] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", "")).strip().lower()
+            content = " ".join(str(msg.get("content", "") or "").split())
+            if role not in {"user", "assistant"} or not content:
+                continue
+            source_lines.append(f"{role}: {content}")
+        resource_text = "\n".join(source_lines).strip()
+
+        summary_lines = lines[-6:]
+        signature = self._chunk_signature(summary_lines)
+        repeated_count = 1
+
+        with self._locked_file(scope["checkpoints"], "r+", exclusive=True) as checkpoints_fh:
+            checkpoints = self._parse_checkpoints(checkpoints_fh.read())
+            source_signatures = checkpoints.get("source_signatures", {})
+            if not isinstance(source_signatures, dict):
+                source_signatures = {}
+
+            source_activity = checkpoints.get("source_activity", {})
+            if not isinstance(source_activity, dict):
+                source_activity = {}
+
+            global_signatures = checkpoints.get("global_signatures", {})
+            if not isinstance(global_signatures, dict):
+                global_signatures = {}
+
+            if source_signatures.get(source) == signature:
+                self._diagnostics["consolidate_dedup_hits"] = int(self._diagnostics["consolidate_dedup_hits"]) + 1
+                return None
+
+            summary = "\n".join(summary_lines)
+            row = self.add(summary, source=source, raw_resource_text=(resource_text or summary), user_id=user_id, shared=shared)
+            self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            source_signatures[source] = signature
+            source_activity[source] = now_iso
+
+            global_signature_row = global_signatures.get(signature)
+            current_count = 0
+            if isinstance(global_signature_row, dict):
+                try:
+                    current_count = int(global_signature_row.get("count", 0))
+                except Exception:
+                    current_count = 0
+            repeated_count = max(1, current_count + 1)
+            global_signatures[signature] = {
+                "count": repeated_count,
+                "last_seen_at": now_iso,
+                "last_source": source,
+            }
+
+            checkpoints = {
+                "source_signatures": source_signatures,
+                "source_activity": source_activity,
+                "global_signatures": global_signatures,
+            }
+            checkpoints_fh.seek(0)
+            checkpoints_fh.truncate()
+            checkpoints_fh.write(self._format_checkpoints(checkpoints))
+            checkpoints_fh.flush()
+
+        curated_candidates: list[tuple[str, str]] = []
+        for line in summary_lines:
+            if ":" not in line:
+                continue
+            role, value = line.split(":", 1)
+            curated_candidates.append((role.strip().lower(), value.strip()))
+
+        facts = self._read_curated_facts_from(scope["curated"])
+        by_norm = {self._normalize_memory_text(str(item["text"])): item for item in facts}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        source_session = self._source_session_key(source)
+        changed = False
+        for role, candidate in curated_candidates:
+            norm = self._normalize_memory_text(candidate)
+            if not norm:
+                continue
+            existing = by_norm.get(norm)
+            if existing is None:
+                facts.append(
+                    {
+                        "id": uuid.uuid4().hex,
+                        "text": candidate,
+                        "source": f"curated:{source}",
+                        "created_at": now_iso,
+                        "last_seen_at": now_iso,
+                        "mentions": 1,
+                        "session_count": 1,
+                        "sessions": [source_session],
+                        "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
+                    }
+                )
+                changed = True
+                continue
+
+            existing_sessions = existing.get("sessions", [])
+            if not isinstance(existing_sessions, list):
+                existing_sessions = []
+            clean_sessions = []
+            for raw_session in existing_sessions:
+                clean = str(raw_session or "").strip().lower()
+                if clean and clean not in clean_sessions:
+                    clean_sessions.append(clean)
+            if source_session not in clean_sessions:
+                clean_sessions.append(source_session)
+
+            old_mentions = int(existing.get("mentions", 1))
+            old_session_count = int(existing.get("session_count", max(1, len(clean_sessions))))
+            old_importance = float(existing.get("importance", 1.0))
+            existing["mentions"] = old_mentions + 1
+            existing["session_count"] = max(old_session_count, len(clean_sessions))
+            existing["last_seen_at"] = now_iso
+            existing["sessions"] = clean_sessions[-self._MAX_CURATED_SESSIONS_PER_FACT :]
+            existing["importance"] = old_importance + self._candidate_importance(
+                role=role,
+                text=candidate,
+                repeated_count=repeated_count,
+            ) * 0.35
+            changed = True
+        if changed:
+            self._write_curated_facts_to(scope["curated"], facts)
+        return row
+
+    def consolidate(
+        self,
+        messages: Iterable[dict[str, str]],
+        *,
+        source: str = "session",
+        user_id: str = "default",
+        shared: bool = False,
+    ) -> MemoryRecord | None:
+        clean_user = self._normalize_user_id(user_id)
+        if shared or clean_user != "default":
+            scope = self._scope_paths(user_id=clean_user, shared=shared)
+            return self._consolidate_in_scope(scope, messages, source=source, user_id=clean_user, shared=shared)
+
         lines = self._extract_consolidation_lines(messages)
         if not lines:
             return None
@@ -1858,6 +2932,14 @@ class MemoryStore:
             "consolidate_dedup_hits": int(self._diagnostics["consolidate_dedup_hits"]),
             "session_recovery_attempts": int(self._diagnostics["session_recovery_attempts"]),
             "session_recovery_hits": int(self._diagnostics["session_recovery_hits"]),
+            "privacy_audit_writes": int(self._diagnostics["privacy_audit_writes"]),
+            "privacy_audit_skipped": int(self._diagnostics["privacy_audit_skipped"]),
+            "privacy_audit_errors": int(self._diagnostics["privacy_audit_errors"]),
+            "privacy_ttl_deleted": int(self._diagnostics["privacy_ttl_deleted"]),
+            "privacy_encrypt_events": int(self._diagnostics["privacy_encrypt_events"]),
+            "privacy_encrypt_errors": int(self._diagnostics["privacy_encrypt_errors"]),
+            "privacy_decrypt_events": int(self._diagnostics["privacy_decrypt_events"]),
+            "privacy_decrypt_errors": int(self._diagnostics["privacy_decrypt_errors"]),
             "last_error": str(self._diagnostics["last_error"]),
         }
 
@@ -1925,83 +3007,10 @@ class MemoryStore:
                 "backend_deleted": 0,
                 "deleted_count": 0,
             }
-
-        selected_lookup = set(selected_ids)
-        history_deleted = 0
-        curated_deleted = 0
-        embeddings_deleted = 0
-        backend_deleted = 0
-        layer_deleted = 0
-
-        try:
-            with self._locked_file(self.history_path, "r+", exclusive=True) as fh:
-                lines = fh.read().splitlines()
-                kept_lines: list[str] = []
-                for line in lines:
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    try:
-                        payload = json.loads(raw)
-                    except json.JSONDecodeError:
-                        kept_lines.append(raw)
-                        continue
-                    if not isinstance(payload, dict):
-                        kept_lines.append(raw)
-                        continue
-                    row_id = str(payload.get("id", "")).strip()
-                    if row_id and row_id in selected_lookup:
-                        history_deleted += 1
-                        continue
-                    kept_lines.append(raw)
-
-                fh.seek(0)
-                fh.truncate()
-                if kept_lines:
-                    fh.write("\n".join(kept_lines) + "\n")
-                fh.flush()
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        if self.curated_path is not None:
-            try:
-                facts = self._read_curated_facts()
-                kept_facts: list[dict[str, object]] = []
-                for fact in facts:
-                    row_id = str(fact.get("id", "")).strip()
-                    if row_id and row_id in selected_lookup:
-                        curated_deleted += 1
-                        continue
-                    kept_facts.append(fact)
-                self._write_curated_facts(kept_facts)
-            except Exception as exc:
-                self._diagnostics["last_error"] = str(exc)
-
-        try:
-            embeddings_deleted = self._prune_embeddings_for_ids(selected_lookup)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        try:
-            layer_deleted = self._prune_item_and_category_layers(selected_lookup)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        try:
-            backend_deleted = int(self.backend.delete_layer_records(selected_lookup) or 0)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        deleted_ids = [rid for rid in selected_ids if rid in selected_lookup]
-        return {
-            "deleted_ids": deleted_ids,
-            "history_deleted": history_deleted,
-            "curated_deleted": curated_deleted,
-            "embeddings_deleted": embeddings_deleted,
-            "layer_deleted": layer_deleted,
-            "backend_deleted": backend_deleted,
-            "deleted_count": len(deleted_ids),
-        }
+        deleted = self._delete_records_by_ids(set(selected_ids))
+        deleted["deleted_ids"] = selected_ids
+        deleted["deleted_count"] = len(selected_ids)
+        return deleted
 
     def export_payload(self) -> dict[str, Any]:
         return {
@@ -2031,7 +3040,9 @@ class MemoryStore:
                 parsed = self._record_from_payload(row)
                 if parsed is None:
                     continue
-                history_lines.append(json.dumps(asdict(parsed), ensure_ascii=False))
+                stored = asdict(parsed)
+                stored["text"] = self._encrypt_text_for_category(str(parsed.text or ""), parsed.category)
+                history_lines.append(json.dumps(stored, ensure_ascii=False))
         with self._locked_file(self.history_path, "w", exclusive=True) as fh:
             if history_lines:
                 fh.write("\n".join(history_lines) + "\n")
@@ -2059,15 +3070,209 @@ class MemoryStore:
             merged_privacy.update(privacy)
             self._write_json_dict(self.privacy_path, merged_privacy)
 
-    def snapshot(self, tag: str = "") -> str:
+    def _write_snapshot_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        tag: str = "",
+        advance_branch: bool = True,
+        branch_name: str = "",
+    ) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         safe_tag = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(tag or "").strip()).strip("-")
         version_id = f"{stamp}-{safe_tag}" if safe_tag else stamp
         version_path = self.versions_path / f"{version_id}.json.gz"
-        payload = self.export_payload()
         with gzip.open(version_path, "wt", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False)
+        if advance_branch:
+            current_branch = branch_name or self._current_branch_name()
+            self._advance_branch_head(current_branch, version_id)
         return version_id
+
+    def snapshot(self, tag: str = "") -> str:
+        payload = self.export_payload()
+        return self._write_snapshot_payload(payload, tag=tag)
+
+    def branch(self, name: str, from_version: str = "", checkout: bool = False) -> dict[str, Any]:
+        clean_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(name or "").strip()).strip("-")
+        if not clean_name:
+            raise ValueError("branch name is required")
+        meta = self._load_branches_metadata()
+        branches = meta.get("branches", {})
+        if not isinstance(branches, dict):
+            branches = {}
+        if clean_name in branches:
+            raise ValueError(f"branch already exists: {clean_name}")
+
+        base_version = str(from_version or "").strip() or self._current_branch_head()
+        now_iso = self._utcnow_iso()
+        branches[clean_name] = {
+            "head": base_version,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        meta["branches"] = branches
+        if checkout:
+            meta["current"] = clean_name
+        self._save_branches_metadata(meta)
+        self._sync_branch_head_file()
+        return {
+            "name": clean_name,
+            "head": base_version,
+            "current": str(meta.get("current", "main") or "main"),
+            "checkout": bool(checkout),
+        }
+
+    def branches(self) -> dict[str, Any]:
+        meta = self._load_branches_metadata()
+        return {
+            "current": str(meta.get("current", "main") or "main"),
+            "branches": meta.get("branches", {}),
+        }
+
+    def checkout_branch(self, name: str) -> dict[str, Any]:
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            raise ValueError("branch name is required")
+        self._set_current_branch(clean_name)
+        return {"current": clean_name, "head": self._current_branch_head()}
+
+    @staticmethod
+    def _merge_record_lists(preferred: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
+        for row in fallback:
+            if not isinstance(row, dict):
+                continue
+            row_id = str(row.get("id", "")).strip()
+            if row_id:
+                merged[row_id] = dict(row)
+        for row in preferred:
+            if not isinstance(row, dict):
+                continue
+            row_id = str(row.get("id", "")).strip()
+            if row_id:
+                merged[row_id] = dict(row)
+        return sorted(merged.values(), key=lambda item: (str(item.get("created_at", "")), str(item.get("id", ""))))
+
+    @staticmethod
+    def _merge_profile_conservative(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(target)
+        for key, value in source.items():
+            current_value = merged.get(key)
+            if key not in merged or current_value is None or current_value == "" or current_value == [] or current_value == {}:
+                merged[key] = value
+        source_interests = source.get("interests", [])
+        target_interests = target.get("interests", [])
+        if isinstance(source_interests, list) and isinstance(target_interests, list):
+            merged["interests"] = sorted({str(item) for item in source_interests + target_interests if str(item).strip()})
+        return merged
+
+    @staticmethod
+    def _merge_privacy_conservative(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(target)
+        for key in ("never_memorize_patterns", "ephemeral_categories", "encrypted_categories"):
+            src_list = source.get(key, [])
+            tgt_list = target.get(key, [])
+            if isinstance(src_list, list) and isinstance(tgt_list, list):
+                merged[key] = sorted({str(item) for item in src_list + tgt_list if str(item).strip()})
+        src_ttl = source.get("ephemeral_ttl_days")
+        tgt_ttl = target.get("ephemeral_ttl_days")
+        try:
+            src_ttl_i = int(src_ttl)
+        except Exception:
+            src_ttl_i = 0
+        try:
+            tgt_ttl_i = int(tgt_ttl)
+        except Exception:
+            tgt_ttl_i = 0
+        ttl_candidates = [val for val in (src_ttl_i, tgt_ttl_i) if val > 0]
+        if ttl_candidates:
+            merged["ephemeral_ttl_days"] = min(ttl_candidates)
+        merged["audit_log"] = bool(source.get("audit_log", True)) and bool(target.get("audit_log", True))
+        return merged
+
+    def merge(self, source_branch: str, target_branch: str, tag: str = "merge") -> dict[str, Any]:
+        meta = self._load_branches_metadata()
+        branches = meta.get("branches", {})
+        if not isinstance(branches, dict):
+            raise ValueError("branch metadata missing")
+        source_row = branches.get(source_branch)
+        target_row = branches.get(target_branch)
+        if not isinstance(source_row, dict) or not isinstance(target_row, dict):
+            raise ValueError("source or target branch not found")
+
+        source_head = str(source_row.get("head", "") or "")
+        target_head = str(target_row.get("head", "") or "")
+        if not source_head or not target_head:
+            raise ValueError("source and target branches must have head versions")
+
+        def _load(version_id: str) -> dict[str, Any]:
+            version_path = self.versions_path / f"{version_id}.json.gz"
+            if not version_path.exists():
+                return {}
+            with gzip.open(version_path, "rt", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            return payload if isinstance(payload, dict) else {}
+
+        source_payload = _load(source_head)
+        target_payload = _load(target_head)
+        merged_payload = {
+            "version": 1,
+            "exported_at": self._utcnow_iso(),
+            "history": self._merge_record_lists(
+                list(source_payload.get("history", [])) if isinstance(source_payload.get("history", []), list) else [],
+                list(target_payload.get("history", [])) if isinstance(target_payload.get("history", []), list) else [],
+            ),
+            "curated": self._merge_record_lists(
+                list(source_payload.get("curated", [])) if isinstance(source_payload.get("curated", []), list) else [],
+                list(target_payload.get("curated", [])) if isinstance(target_payload.get("curated", []), list) else [],
+            ),
+            "checkpoints": target_payload.get("checkpoints", {}),
+            "profile": self._merge_profile_conservative(
+                dict(source_payload.get("profile", {})) if isinstance(source_payload.get("profile", {}), dict) else {},
+                dict(target_payload.get("profile", {})) if isinstance(target_payload.get("profile", {}), dict) else {},
+            ),
+            "privacy": self._merge_privacy_conservative(
+                dict(source_payload.get("privacy", {})) if isinstance(source_payload.get("privacy", {}), dict) else {},
+                dict(target_payload.get("privacy", {})) if isinstance(target_payload.get("privacy", {}), dict) else {},
+            ),
+        }
+
+        version_id = self._write_snapshot_payload(
+            merged_payload,
+            tag=f"{tag}-{source_branch}-into-{target_branch}",
+            advance_branch=False,
+        )
+        meta = self._load_branches_metadata()
+        branches = meta.get("branches", {})
+        if not isinstance(branches, dict):
+            branches = {}
+        target_meta = branches.get(target_branch, {})
+        if not isinstance(target_meta, dict):
+            target_meta = {}
+        target_meta["head"] = version_id
+        target_meta["updated_at"] = self._utcnow_iso()
+        if "created_at" not in target_meta:
+            target_meta["created_at"] = self._utcnow_iso()
+        branches[target_branch] = target_meta
+        meta["branches"] = branches
+        self._save_branches_metadata(meta)
+        self._sync_branch_head_file()
+
+        current_branch = str(meta.get("current", "main") or "main")
+        imported = False
+        if current_branch == target_branch:
+            self.import_payload(merged_payload)
+            imported = True
+        return {
+            "source": source_branch,
+            "target": target_branch,
+            "source_head": source_head,
+            "target_head_before": target_head,
+            "target_head_after": version_id,
+            "version": version_id,
+            "imported": imported,
+        }
 
     def rollback(self, version_id: str) -> None:
         clean = str(version_id or "").strip()
