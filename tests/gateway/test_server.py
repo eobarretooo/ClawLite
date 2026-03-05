@@ -1581,6 +1581,7 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "retrieval_metrics" in payload["engine"]
         assert "turn_metrics" in payload["engine"]
         assert "memory" in payload["engine"]
+        assert "memory_analysis" in payload["engine"]
         assert "memory_integration" in payload["engine"]
         assert "memory_quality" in payload["engine"]
         assert "provider" in payload["engine"]
@@ -1590,6 +1591,10 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert memory_diag["backend_supported"] is True
         assert memory_diag["backend_initialized"] is True
         assert memory_diag["backend_init_error"] == ""
+        memory_analysis = payload["engine"]["memory_analysis"]
+        assert memory_analysis["available"] is True
+        assert isinstance(memory_analysis.get("reasoning_layers"), dict)
+        assert isinstance(memory_analysis.get("confidence"), dict)
         memory_integration = payload["engine"]["memory_integration"]
         assert memory_integration["available"] is True
         assert set(memory_integration.keys()) >= {"mode", "policies", "quality", "session_id", "available"}
@@ -1799,6 +1804,53 @@ def test_gateway_diagnostics_memory_quality_prefers_analysis_stats(tmp_path: Pat
         assert semantic_report["enabled"] is True
         assert semantic_report["coverage_ratio"] == pytest.approx(0.73)
         assert captured_semantic["coverage_ratio"] == pytest.approx(0.73)
+        analysis_payload = payload["engine"]["memory_analysis"]
+        assert analysis_payload["available"] is True
+        assert analysis_payload["semantic"]["coverage_ratio"] == pytest.approx(0.73)
+
+
+def test_gateway_diagnostics_memory_analysis_fail_soft_when_unavailable(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.memory.analysis_stats = None
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+        assert payload["engine"]["memory_analysis"] == {"available": False}
+
+
+def test_gateway_diagnostics_memory_analysis_fail_soft_when_errors(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+
+    def _analysis_error() -> dict[str, object]:
+        raise RuntimeError("analysis_stats_failed")
+
+    app.state.runtime.engine.memory.analysis_stats = _analysis_error
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+        analysis_payload = payload["engine"]["memory_analysis"]
+        assert analysis_payload["available"] is True
+        assert analysis_payload["error"] == "analysis_stats_failed"
 
 
 def test_gateway_tuning_loop_runs_when_heartbeat_disabled(tmp_path: Path) -> None:

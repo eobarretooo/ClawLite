@@ -46,6 +46,8 @@ EMOTIONAL_MARKERS: dict[str, tuple[str, ...]] = {
     "sad": ("triste", "mal", "cansado", "desanimado", "difícil"),
     "positive": ("ótimo", "obrigado", "ajudou", "certo", "legal"),
 }
+REASONING_LAYERS: tuple[str, ...] = ("fact", "hypothesis", "decision", "outcome")
+REASONING_LAYER_SET: frozenset[str] = frozenset(REASONING_LAYERS)
 PROFILE_TOPIC_STOPWORDS: frozenset[str] = frozenset(
     {
         "the",
@@ -87,6 +89,7 @@ class MemoryRecord:
     category: str = "context"
     user_id: str = "default"
     layer: str = "item"
+    reasoning_layer: str = "fact"
     modality: str = "text"
     updated_at: str = ""
     confidence: float = 1.0
@@ -202,6 +205,8 @@ class MemoryStore:
     )
     _SEMANTIC_BM25_WEIGHT = 0.4
     _SEMANTIC_VECTOR_WEIGHT = 0.6
+    _RANKING_CONFIDENCE_BOOST_MAX = 0.18
+    _RANKING_REASONING_BOOST_MAX = 0.14
     _MEMORY_CATEGORIES: tuple[str, ...] = (
         "preferences",
         "relationships",
@@ -230,16 +235,67 @@ class MemoryStore:
             return normalized
         return MemoryLayer.ITEM.value
 
+    @staticmethod
+    def _normalize_reasoning_layer(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in REASONING_LAYER_SET:
+            return normalized
+        return "fact"
+
+    @staticmethod
+    def _normalize_confidence(value: Any, *, default: float = 1.0) -> float:
+        try:
+            numeric = float(value)
+        except Exception:
+            numeric = default
+        if not math.isfinite(numeric):
+            return default
+        return numeric
+
+    @classmethod
+    def _bounded_confidence_score(cls, value: Any) -> float:
+        normalized = cls._normalize_confidence(value, default=1.0)
+        return max(0.0, min(1.0, normalized))
+
+    @classmethod
+    def _reasoning_intent_boosts(cls, query: str) -> dict[str, float]:
+        tokens = set(cls._tokens(query))
+        boosts = {layer: 0.0 for layer in REASONING_LAYERS}
+        boosts["fact"] = 0.04
+
+        if tokens.intersection({"hypothesis", "guess", "maybe", "assume", "possible", "possivel"}):
+            boosts["hypothesis"] += 0.08
+        if tokens.intersection({"decision", "decisions", "decide", "decided", "chosen", "choose", "escolha", "decisao"}):
+            boosts["decision"] += 0.1
+        if tokens.intersection({"outcome", "result", "results", "happened", "impact", "resultado", "efeito"}):
+            boosts["outcome"] += 0.1
+
+        if boosts["hypothesis"] == 0.0 and boosts["decision"] == 0.0 and boosts["outcome"] == 0.0:
+            boosts["fact"] += 0.03
+
+        max_boost = max(0.01, cls._RANKING_REASONING_BOOST_MAX)
+        for key, value in list(boosts.items()):
+            boosts[key] = max(0.0, min(max_boost, float(value)))
+        return boosts
+
+    @classmethod
+    def _normalize_reasoning_layers_filter(cls, layers: Iterable[str] | None) -> set[str]:
+        if layers is None:
+            return set()
+        normalized: set[str] = set()
+        for item in layers:
+            clean = cls._normalize_reasoning_layer(item)
+            if clean in REASONING_LAYER_SET:
+                normalized.add(clean)
+        return normalized
+
     @classmethod
     def _record_from_payload(cls, payload: dict[str, Any]) -> MemoryRecord | None:
         text = str(payload.get("text", "")).strip()
         if not text:
             return None
 
-        try:
-            confidence = float(payload.get("confidence", 1.0) or 1.0)
-        except Exception:
-            confidence = 1.0
+        confidence = cls._normalize_confidence(payload.get("confidence", 1.0), default=1.0)
         try:
             decay_rate = float(payload.get("decay_rate", payload.get("decayRate", 0.0)) or 0.0)
         except Exception:
@@ -253,6 +309,7 @@ class MemoryStore:
             category=str(payload.get("category", "context") or "context"),
             user_id=str(payload.get("user_id", payload.get("userId", "default")) or "default"),
             layer=cls._normalize_layer(payload.get("layer", "item")),
+            reasoning_layer=cls._normalize_reasoning_layer(payload.get("reasoning_layer", payload.get("reasoningLayer", "fact"))),
             modality=str(payload.get("modality", "text") or "text"),
             updated_at=str(payload.get("updated_at", payload.get("updatedAt", "")) or ""),
             confidence=confidence,
@@ -1394,6 +1451,8 @@ class MemoryStore:
             importance = float(row.get("importance", 1.0))
         except Exception:
             importance = 1.0
+        confidence = cls._normalize_confidence(row.get("confidence", 1.0), default=1.0)
+        reasoning_layer = cls._normalize_reasoning_layer(row.get("reasoning_layer", row.get("reasoningLayer", "fact")))
 
         sessions_raw = row.get("sessions", [])
         sessions: list[str] = []
@@ -1414,6 +1473,8 @@ class MemoryStore:
             "session_count": max(1, session_count),
             "sessions": sessions[-cls._MAX_CURATED_SESSIONS_PER_FACT :],
             "importance": max(0.1, importance),
+            "confidence": confidence,
+            "reasoning_layer": reasoning_layer,
         }
 
     @staticmethod
@@ -2261,13 +2322,23 @@ class MemoryStore:
         score += min(2.0, max(0, repeated_count - 1) * 0.35)
         return score
 
-    def _curate_candidates(self, candidates: list[tuple[str, str]], *, source: str, repeated_count: int = 1) -> None:
+    def _curate_candidates(
+        self,
+        candidates: list[tuple[str, str]],
+        *,
+        source: str,
+        repeated_count: int = 1,
+        reasoning_layer: str | None = None,
+        confidence: float | None = None,
+    ) -> None:
         if self.curated_path is None or not candidates:
             return
         current = self._read_curated_facts()
         by_norm = {self._normalize_memory_text(str(item["text"])): item for item in current}
         now_iso = datetime.now(timezone.utc).isoformat()
         source_session = self._source_session_key(source)
+        resolved_reasoning_layer = self._normalize_reasoning_layer(reasoning_layer)
+        resolved_confidence = self._normalize_confidence(confidence, default=1.0)
         changed = False
         for role, candidate in candidates:
             norm = self._normalize_memory_text(candidate)
@@ -2285,6 +2356,8 @@ class MemoryStore:
                     "session_count": 1,
                     "sessions": [source_session],
                     "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
+                    "reasoning_layer": resolved_reasoning_layer,
+                    "confidence": resolved_confidence,
                 }
                 current.append(row)
                 by_norm[norm] = row
@@ -2314,6 +2387,8 @@ class MemoryStore:
                 text=candidate,
                 repeated_count=repeated_count,
             ) * 0.35
+            existing["reasoning_layer"] = resolved_reasoning_layer
+            existing["confidence"] = resolved_confidence
             changed = True
         if changed:
             self._write_curated_facts(current)
@@ -2396,6 +2471,8 @@ class MemoryStore:
             "category": category,
             "created_at": str(record.created_at or ""),
             "layer": MemoryLayer.RESOURCE.value,
+            "reasoning_layer": self._normalize_reasoning_layer(record.reasoning_layer),
+            "confidence": self._normalize_confidence(record.confidence, default=1.0),
         }
         if not payload["id"] or not payload["text"]:
             return
@@ -2602,6 +2679,8 @@ class MemoryStore:
             "category": category,
             "created_at": str(record.created_at or ""),
             "layer": MemoryLayer.RESOURCE.value,
+            "reasoning_layer": self._normalize_reasoning_layer(record.reasoning_layer),
+            "confidence": self._normalize_confidence(record.confidence, default=1.0),
         }
         resource_file = self._scope_resource_file_path_for_timestamp(scope, resource_payload["created_at"])
         self._ensure_file(resource_file, default="")
@@ -2846,6 +2925,8 @@ class MemoryStore:
         user_id: str = "default",
         shared: bool = False,
         modality: str = "text",
+        reasoning_layer: str | None = None,
+        confidence: float | None = None,
     ) -> MemoryRecord:
         clean = text.strip()
         if not clean:
@@ -2859,7 +2940,9 @@ class MemoryStore:
             category=self._categorize_memory(clean, source),
             user_id=clean_user,
             layer=MemoryLayer.ITEM.value,
+            reasoning_layer=self._normalize_reasoning_layer(reasoning_layer),
             modality=str(modality or "text").strip().lower() or "text",
+            confidence=self._normalize_confidence(confidence, default=1.0),
             emotional_tone=self._detect_emotional_tone(clean) if self.emotional_tracking else "neutral",
         )
         stored_payload = asdict(row)
@@ -2952,6 +3035,8 @@ class MemoryStore:
                 created_at=str(item.get("created_at", "")),
                 category=str(item.get("category", "context") or "context"),
                 layer=self._normalize_layer(item.get("layer", MemoryLayer.ITEM.value)),
+                reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
+                confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
             )
             for item in rows
             if str(item.get("text", "")).strip()
@@ -2970,6 +3055,8 @@ class MemoryStore:
         url: str | None = None,
         modality: str = "text",
         metadata: dict[str, Any] | None = None,
+        reasoning_layer: str | None = None,
+        confidence: float | None = None,
     ) -> dict[str, Any]:
         _ = include_shared
         try:
@@ -2994,6 +3081,8 @@ class MemoryStore:
                 source=source,
                 user_id=user_id,
                 shared=shared,
+                reasoning_layer=reasoning_layer,
+                confidence=confidence,
             )
             if record is None:
                 return {"status": "skipped", "mode": "consolidate", "record": None}
@@ -3034,6 +3123,8 @@ class MemoryStore:
             user_id=user_id,
             shared=shared,
             modality=resolved_modality,
+            reasoning_layer=reasoning_layer,
+            confidence=confidence,
         )
         self._update_profile_from_text(clean)
         return {"status": "ok", "mode": "add", "record": asdict(record)}
@@ -3048,9 +3139,10 @@ class MemoryStore:
             "category": str(row.category or "context"),
             "user_id": str(row.user_id or "default"),
             "layer": MemoryStore._normalize_layer(getattr(row, "layer", MemoryLayer.ITEM.value)),
+            "reasoning_layer": MemoryStore._normalize_reasoning_layer(getattr(row, "reasoning_layer", "fact")),
             "modality": str(row.modality or "text"),
             "updated_at": str(row.updated_at or ""),
-            "confidence": float(row.confidence),
+            "confidence": MemoryStore._normalize_confidence(getattr(row, "confidence", 1.0), default=1.0),
             "decay_rate": float(row.decay_rate),
             "emotional_tone": str(row.emotional_tone or "neutral"),
         }
@@ -3115,6 +3207,8 @@ class MemoryStore:
         method: str = "rag",
         user_id: str = "",
         include_shared: bool = False,
+        reasoning_layers: Iterable[str] | None = None,
+        min_confidence: float | None = None,
     ) -> dict[str, Any]:
         clean_query = str(query or "").strip()
         if not clean_query:
@@ -3127,6 +3221,8 @@ class MemoryStore:
             limit=bounded_limit,
             user_id=resolved_user,
             include_shared=include_shared,
+            reasoning_layers=reasoning_layers,
+            min_confidence=min_confidence,
         )
         hits = [self._serialize_hit(row) for row in records]
 
@@ -3178,6 +3274,7 @@ class MemoryStore:
         if not records:
             return []
         q_tokens = self._tokens(query)
+        reasoning_boosts = self._reasoning_intent_boosts(query)
         query_has_temporal_intent = self._query_has_temporal_intent(query)
         if not q_tokens:
             return records[-limit:][::-1]
@@ -3248,14 +3345,21 @@ class MemoryStore:
                 else:
                     temporal_score -= self._TEMPORAL_INTENT_MISS_PENALTY
 
+            confidence_boost = self._bounded_confidence_score(records[idx].confidence) * self._RANKING_CONFIDENCE_BOOST_MAX
+            reasoning_layer = self._normalize_reasoning_layer(getattr(records[idx], "reasoning_layer", "fact"))
+            reasoning_boost = reasoning_boosts.get(reasoning_layer, 0.0)
+
             ranking_score = bm25_scores[idx]
-            tie_breaker = temporal_score
+            ranking_score += confidence_boost + reasoning_boost
+            tie_breaker = temporal_score + (confidence_boost * 0.5) + reasoning_boost
             if semantic_active:
                 ranking_score = (
                     self._SEMANTIC_BM25_WEIGHT * bm25_scores[idx]
                     + self._SEMANTIC_VECTOR_WEIGHT * semantic_scores[idx]
+                    + confidence_boost
+                    + reasoning_boost
                 )
-                tie_breaker = curated_boost + temporal_score
+                tie_breaker = curated_boost + temporal_score + (confidence_boost * 0.5) + reasoning_boost
                 scored.append((float(overlap), ranking_score, tie_breaker, idx))
             else:
                 scored.append((float(overlap) + curated_boost, ranking_score, tie_breaker, idx))
@@ -3277,9 +3381,13 @@ class MemoryStore:
         limit: int = 5,
         user_id: str = "",
         include_shared: bool = False,
+        reasoning_layers: Iterable[str] | None = None,
+        min_confidence: float | None = None,
     ) -> list[MemoryRecord]:
         bounded_limit = max(1, int(limit or 1))
         clean_user = self._normalize_user_id(user_id or "default")
+        reasoning_filter = self._normalize_reasoning_layers_filter(reasoning_layers)
+        min_conf_filter = self._normalize_confidence(min_confidence, default=0.0) if min_confidence is not None else None
 
         if clean_user == "default" and not include_shared:
             curated_rows = self._read_curated_facts()
@@ -3290,6 +3398,8 @@ class MemoryStore:
                     source=str(item.get("source", "curated")),
                     created_at=str(item.get("created_at", "")),
                     category=str(item.get("category", "context") or "context"),
+                    reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
+                    confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
                 )
                 for item in curated_rows
                 if str(item.get("text", "")).strip()
@@ -3297,6 +3407,10 @@ class MemoryStore:
             curated_importance = {str(item.get("id", "")): float(item.get("importance", 1.0)) for item in curated_rows}
             curated_mentions = {str(item.get("id", "")): int(item.get("mentions", 1)) for item in curated_rows}
             records = curated_records + self.all()
+            if reasoning_filter:
+                records = [row for row in records if self._normalize_reasoning_layer(row.reasoning_layer) in reasoning_filter]
+            if min_conf_filter is not None:
+                records = [row for row in records if self._normalize_confidence(row.confidence, default=1.0) >= min_conf_filter]
             return self._rank_records(
                 query,
                 records,
@@ -3310,17 +3424,19 @@ class MemoryStore:
         self._ensure_scope_paths(user_scope)
         curated_rows = self._read_curated_facts_from(user_scope["curated"])
         curated_records = [
-            MemoryRecord(
-                id=str(item.get("id", "")),
-                text=str(item.get("text", "")).strip(),
-                source=str(item.get("source", "curated")),
-                created_at=str(item.get("created_at", "")),
-                category=str(item.get("category", "context") or "context"),
-                user_id=clean_user,
-            )
-            for item in curated_rows
-            if str(item.get("text", "")).strip()
-        ]
+                MemoryRecord(
+                    id=str(item.get("id", "")),
+                    text=str(item.get("text", "")).strip(),
+                    source=str(item.get("source", "curated")),
+                    created_at=str(item.get("created_at", "")),
+                    category=str(item.get("category", "context") or "context"),
+                    user_id=clean_user,
+                    reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
+                    confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                )
+                for item in curated_rows
+                if str(item.get("text", "")).strip()
+            ]
         history_records = self._read_history_records_from(user_scope["history"])
         records = curated_records + history_records
         curated_importance = {str(item.get("id", "")): float(item.get("importance", 1.0)) for item in curated_rows}
@@ -3338,11 +3454,18 @@ class MemoryStore:
                     created_at=str(item.get("created_at", "")),
                     category=str(item.get("category", "context") or "context"),
                     user_id="shared",
+                    reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
+                    confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
                 )
                 for item in shared_curated
                 if str(item.get("text", "")).strip()
             )
             records.extend(self._read_history_records_from(shared_scope["history"]))
+
+        if reasoning_filter:
+            records = [row for row in records if self._normalize_reasoning_layer(row.reasoning_layer) in reasoning_filter]
+        if min_conf_filter is not None:
+            records = [row for row in records if self._normalize_confidence(row.confidence, default=1.0) >= min_conf_filter]
 
         return self._rank_records(
             query,
@@ -3361,6 +3484,8 @@ class MemoryStore:
         source: str,
         user_id: str,
         shared: bool,
+        reasoning_layer: str | None = None,
+        confidence: float | None = None,
     ) -> MemoryRecord | None:
         self._ensure_scope_paths(scope)
         lines = self._extract_consolidation_lines(messages)
@@ -3401,7 +3526,15 @@ class MemoryStore:
                 return None
 
             summary = "\n".join(summary_lines)
-            row = self.add(summary, source=source, raw_resource_text=(resource_text or summary), user_id=user_id, shared=shared)
+            row = self.add(
+                summary,
+                source=source,
+                raw_resource_text=(resource_text or summary),
+                user_id=user_id,
+                shared=shared,
+                reasoning_layer=reasoning_layer,
+                confidence=confidence,
+            )
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -3443,6 +3576,8 @@ class MemoryStore:
         by_norm = {self._normalize_memory_text(str(item["text"])): item for item in facts}
         now_iso = datetime.now(timezone.utc).isoformat()
         source_session = self._source_session_key(source)
+        resolved_reasoning_layer = self._normalize_reasoning_layer(reasoning_layer)
+        resolved_confidence = self._normalize_confidence(confidence, default=1.0)
         changed = False
         for role, candidate in curated_candidates:
             norm = self._normalize_memory_text(candidate)
@@ -3461,6 +3596,8 @@ class MemoryStore:
                         "session_count": 1,
                         "sessions": [source_session],
                         "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
+                        "reasoning_layer": resolved_reasoning_layer,
+                        "confidence": resolved_confidence,
                     }
                 )
                 changed = True
@@ -3489,6 +3626,8 @@ class MemoryStore:
                 text=candidate,
                 repeated_count=repeated_count,
             ) * 0.35
+            existing["reasoning_layer"] = resolved_reasoning_layer
+            existing["confidence"] = resolved_confidence
             changed = True
         if changed:
             self._write_curated_facts_to(scope["curated"], facts)
@@ -3501,11 +3640,21 @@ class MemoryStore:
         source: str = "session",
         user_id: str = "default",
         shared: bool = False,
+        reasoning_layer: str | None = None,
+        confidence: float | None = None,
     ) -> MemoryRecord | None:
         clean_user = self._normalize_user_id(user_id)
         if shared or clean_user != "default":
             scope = self._scope_paths(user_id=clean_user, shared=shared)
-            return self._consolidate_in_scope(scope, messages, source=source, user_id=clean_user, shared=shared)
+            return self._consolidate_in_scope(
+                scope,
+                messages,
+                source=source,
+                user_id=clean_user,
+                shared=shared,
+                reasoning_layer=reasoning_layer,
+                confidence=confidence,
+            )
 
         lines = self._extract_consolidation_lines(messages)
         if not lines:
@@ -3544,7 +3693,13 @@ class MemoryStore:
                 return None
 
             summary = "\n".join(summary_lines)
-            row = self.add(summary, source=source, raw_resource_text=(resource_text or summary))
+            row = self.add(
+                summary,
+                source=source,
+                raw_resource_text=(resource_text or summary),
+                reasoning_layer=reasoning_layer,
+                confidence=confidence,
+            )
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -3600,7 +3755,13 @@ class MemoryStore:
                 continue
             role, value = line.split(":", 1)
             curated_candidates.append((role.strip().lower(), value.strip()))
-        self._curate_candidates(curated_candidates, source=source, repeated_count=repeated_count)
+        self._curate_candidates(
+            curated_candidates,
+            source=source,
+            repeated_count=repeated_count,
+            reasoning_layer=reasoning_layer,
+            confidence=confidence,
+        )
         return row
 
     def recover_session_context(self, session_id: str, *, limit: int = 4) -> list[str]:
@@ -4081,6 +4242,9 @@ class MemoryStore:
         temporal_marked_count = 0
         sources: Counter[str] = Counter()
         categories: Counter[str] = Counter()
+        reasoning_layers: Counter[str] = Counter()
+        confidence_values: list[float] = []
+        confidence_buckets: Counter[str] = Counter()
 
         for row in combined:
             text = str(row.text or "")
@@ -4097,6 +4261,22 @@ class MemoryStore:
                 temporal_marked_count += 1
             sources[str(row.source or "unknown")] += 1
             categories[str(getattr(row, "category", "context") or "context")] += 1
+            reasoning_layers[self._normalize_reasoning_layer(getattr(row, "reasoning_layer", "fact"))] += 1
+
+            confidence_value = self._normalize_confidence(getattr(row, "confidence", 1.0), default=1.0)
+            if math.isfinite(confidence_value):
+                confidence_values.append(confidence_value)
+                bounded_confidence = max(0.0, min(1.0, confidence_value))
+                if bounded_confidence < 0.4:
+                    confidence_buckets["low"] += 1
+                elif bounded_confidence < 0.7:
+                    confidence_buckets["medium"] += 1
+                elif bounded_confidence < 0.9:
+                    confidence_buckets["high"] += 1
+                else:
+                    confidence_buckets["very_high"] += 1
+            else:
+                confidence_buckets["unknown"] += 1
 
         top_sources = [
             {"source": source, "count": count}
@@ -4112,6 +4292,11 @@ class MemoryStore:
         total_records = len(record_ids)
         missing_records = max(0, total_records - embedded_records)
         coverage_ratio = float(1.0 if total_records == 0 else embedded_records / total_records)
+
+        confidence_count = len(confidence_values)
+        confidence_avg = round((sum(confidence_values) / confidence_count), 6) if confidence_count else 0.0
+        confidence_min = round(min(confidence_values), 6) if confidence_count else 0.0
+        confidence_max = round(max(confidence_values), 6) if confidence_count else 0.0
 
         return {
             "counts": {
@@ -4129,6 +4314,20 @@ class MemoryStore:
             "categories": {
                 name: count
                 for name, count in sorted(categories.items(), key=lambda item: (-item[1], item[0]))
+            },
+            "reasoning_layers": {
+                name: count
+                for name, count in sorted(reasoning_layers.items(), key=lambda item: (-item[1], item[0]))
+            },
+            "confidence": {
+                "count": confidence_count,
+                "average": confidence_avg,
+                "minimum": confidence_min,
+                "maximum": confidence_max,
+                "buckets": {
+                    name: count
+                    for name, count in sorted(confidence_buckets.items(), key=lambda item: item[0])
+                },
             },
             "semantic": {
                 "enabled": bool(self.semantic_enabled),

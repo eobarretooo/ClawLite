@@ -30,6 +30,33 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
     return bool(value)
 
 
+def _coerce_float(value: Any, *, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not parsed == parsed:
+        return default
+    if parsed in {float("inf"), float("-inf")}:
+        return default
+    return parsed
+
+
+def _coerce_reasoning_layers(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return None
+    out: list[str] = []
+    for item in value:
+        text = str(item or "").strip().lower()
+        if text:
+            out.append(text)
+    return out
+
+
 def _memory_ref(memory_id: str) -> str:
     clean = str(memory_id or "").strip()
     short = clean[:8] if clean else "unknown"
@@ -78,6 +105,15 @@ class MemoryRecallTool(Tool):
                 "query": {"type": "string", "description": "Search query for memory retrieval."},
                 "limit": {"type": "integer", "description": "Max results (clamped to 1..20)."},
                 "include_metadata": {"type": "boolean", "description": "Include id/source/created_at fields."},
+                "reasoning_layers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional reasoning-layer filters.",
+                },
+                "min_confidence": {
+                    "type": "number",
+                    "description": "Optional minimum confidence filter.",
+                },
             },
             "required": ["query"],
         }
@@ -89,6 +125,8 @@ class MemoryRecallTool(Tool):
 
         limit = _clamp_int(arguments.get("limit"), default=6, minimum=1, maximum=20)
         include_metadata = _coerce_bool(arguments.get("include_metadata"), default=True)
+        reasoning_layers = _coerce_reasoning_layers(arguments.get("reasoning_layers"))
+        min_confidence = _coerce_float(arguments.get("min_confidence"), default=None)
         rows: list[MemoryRecord] = []
         async_retrieved: list[dict[str, Any]] | None = None
         retrieve_fn = getattr(self.memory, "retrieve", None)
@@ -99,6 +137,10 @@ class MemoryRecallTool(Tool):
                     retrieve_kwargs["user_id"] = ctx.user_id
                 if _accepts_parameter(retrieve_fn, "include_shared"):
                     retrieve_kwargs["include_shared"] = True
+                if reasoning_layers and _accepts_parameter(retrieve_fn, "reasoning_layers"):
+                    retrieve_kwargs["reasoning_layers"] = reasoning_layers
+                if min_confidence is not None and _accepts_parameter(retrieve_fn, "min_confidence"):
+                    retrieve_kwargs["min_confidence"] = min_confidence
                 try:
                     payload = await retrieve_fn(query, **retrieve_kwargs)
                 except TypeError:
@@ -116,6 +158,10 @@ class MemoryRecallTool(Tool):
                 search_kwargs["user_id"] = ctx.user_id
             if _accepts_parameter(search_fn, "include_shared"):
                 search_kwargs["include_shared"] = True
+            if reasoning_layers and _accepts_parameter(search_fn, "reasoning_layers"):
+                search_kwargs["reasoning_layers"] = reasoning_layers
+            if min_confidence is not None and _accepts_parameter(search_fn, "min_confidence"):
+                search_kwargs["min_confidence"] = min_confidence
             try:
                 rows = search_fn(query, **search_kwargs)
             except TypeError:
@@ -133,6 +179,8 @@ class MemoryRecallTool(Tool):
                     item["id"] = row_id
                     item["source"] = str(row.get("source", "") or "")
                     item["created_at"] = str(row.get("created_at", "") or "")
+                    item["reasoning_layer"] = str(row.get("reasoning_layer", "") or "")
+                    item["confidence"] = row.get("confidence")
                 results.append(item)
         else:
             for row in rows:
@@ -144,6 +192,8 @@ class MemoryRecallTool(Tool):
                     item["id"] = str(row.id or "")
                     item["source"] = str(row.source or "")
                     item["created_at"] = str(row.created_at or "")
+                    item["reasoning_layer"] = str(getattr(row, "reasoning_layer", "") or "")
+                    item["confidence"] = getattr(row, "confidence", None)
                 results.append(item)
 
         payload = {
@@ -168,6 +218,14 @@ class MemoryLearnTool(Tool):
             "properties": {
                 "text": {"type": "string", "description": "Memory text to store."},
                 "source": {"type": "string", "description": "Optional explicit source marker."},
+                "reasoning_layer": {
+                    "type": "string",
+                    "description": "Optional reasoning layer (fact/hypothesis/decision/outcome).",
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Optional confidence score for the stored memory.",
+                },
             },
             "required": ["text"],
         }
@@ -179,6 +237,11 @@ class MemoryLearnTool(Tool):
         text = text[:4000]
 
         source = str(arguments.get("source", "")).strip() or f"memory_learn:{ctx.session_id}"
+        reasoning_layer_raw = arguments.get("reasoning_layer")
+        reasoning_layer = str(reasoning_layer_raw).strip().lower() if reasoning_layer_raw is not None else None
+        if reasoning_layer == "":
+            reasoning_layer = None
+        confidence = _coerce_float(arguments.get("confidence"), default=None)
         row: MemoryRecord
         memorize_fn = getattr(self.memory, "memorize", None)
         if callable(memorize_fn):
@@ -188,6 +251,10 @@ class MemoryLearnTool(Tool):
                     memorize_kwargs["user_id"] = ctx.user_id
                 if _accepts_parameter(memorize_fn, "shared"):
                     memorize_kwargs["shared"] = False
+                if reasoning_layer is not None and _accepts_parameter(memorize_fn, "reasoning_layer"):
+                    memorize_kwargs["reasoning_layer"] = reasoning_layer
+                if confidence is not None and _accepts_parameter(memorize_fn, "confidence"):
+                    memorize_kwargs["confidence"] = confidence
                 try:
                     payload = await memorize_fn(**memorize_kwargs)
                 except TypeError:
@@ -200,6 +267,8 @@ class MemoryLearnTool(Tool):
                         source=str(record.get("source", "") or source),
                         created_at=str(record.get("created_at", "") or ""),
                         category=str(record.get("category", "context") or "context"),
+                        reasoning_layer=str(record.get("reasoning_layer", "") or "fact"),
+                        confidence=float(record.get("confidence", 1.0) or 1.0),
                     )
                 elif isinstance(payload, dict) and str(payload.get("status", "")).strip().lower() == "skipped":
                     return _dump_json(
@@ -210,6 +279,8 @@ class MemoryLearnTool(Tool):
                             "source": source,
                             "created_at": "",
                             "chars": len(text),
+                            "reasoning_layer": reasoning_layer or "",
+                            "confidence": confidence,
                         }
                     )
                 else:
@@ -219,6 +290,10 @@ class MemoryLearnTool(Tool):
                         add_kwargs["user_id"] = ctx.user_id
                     if _accepts_parameter(add_fn, "shared"):
                         add_kwargs["shared"] = False
+                    if reasoning_layer is not None and _accepts_parameter(add_fn, "reasoning_layer"):
+                        add_kwargs["reasoning_layer"] = reasoning_layer
+                    if confidence is not None and _accepts_parameter(add_fn, "confidence"):
+                        add_kwargs["confidence"] = confidence
                     try:
                         row = add_fn(text, **add_kwargs)
                     except TypeError:
@@ -230,6 +305,10 @@ class MemoryLearnTool(Tool):
                     add_kwargs["user_id"] = ctx.user_id
                 if _accepts_parameter(add_fn, "shared"):
                     add_kwargs["shared"] = False
+                if reasoning_layer is not None and _accepts_parameter(add_fn, "reasoning_layer"):
+                    add_kwargs["reasoning_layer"] = reasoning_layer
+                if confidence is not None and _accepts_parameter(add_fn, "confidence"):
+                    add_kwargs["confidence"] = confidence
                 try:
                     row = add_fn(text, **add_kwargs)
                 except TypeError:
@@ -241,6 +320,10 @@ class MemoryLearnTool(Tool):
                 add_kwargs["user_id"] = ctx.user_id
             if _accepts_parameter(add_fn, "shared"):
                 add_kwargs["shared"] = False
+            if reasoning_layer is not None and _accepts_parameter(add_fn, "reasoning_layer"):
+                add_kwargs["reasoning_layer"] = reasoning_layer
+            if confidence is not None and _accepts_parameter(add_fn, "confidence"):
+                add_kwargs["confidence"] = confidence
             try:
                 row = add_fn(text, **add_kwargs)
             except TypeError:
@@ -253,6 +336,8 @@ class MemoryLearnTool(Tool):
             "source": row.source,
             "created_at": row.created_at,
             "chars": len(row.text),
+            "reasoning_layer": str(getattr(row, "reasoning_layer", "") or ""),
+            "confidence": getattr(row, "confidence", None),
         }
         return _dump_json(payload)
 
@@ -406,6 +491,10 @@ class MemoryAnalyzeTool(Tool):
         }
         if isinstance(stats.get("categories"), dict):
             payload["categories"] = stats["categories"]
+        if isinstance(stats.get("reasoning_layers"), dict):
+            payload["reasoning_layers"] = stats["reasoning_layers"]
+        if isinstance(stats.get("confidence"), dict):
+            payload["confidence"] = stats["confidence"]
         if isinstance(stats.get("semantic"), dict):
             payload["semantic"] = stats["semantic"]
 

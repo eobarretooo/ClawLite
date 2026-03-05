@@ -881,6 +881,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_memory.set_defaults(handler=cmd_memory_overview)
 
     p_memory_doctor = memory_sub.add_parser("doctor", help="Emit memory diagnostics snapshot")
+    p_memory_doctor.add_argument("--json", action="store_true", help="Emit JSON output (default)")
     p_memory_doctor.add_argument("--repair", action="store_true", help="Trigger safe history repair before reporting")
     p_memory_doctor.set_defaults(handler=cmd_memory_doctor)
 
@@ -889,6 +890,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_memory_eval.set_defaults(handler=cmd_memory_eval)
 
     p_memory_quality = memory_sub.add_parser("quality", help="Compute and persist memory quality-state report")
+    p_memory_quality.add_argument("--json", action="store_true", help="Emit JSON output (default)")
     p_memory_quality.add_argument("--limit", type=int, default=5, help="Top-k retrieval limit per synthetic query")
     p_memory_quality.add_argument("--gateway-url", default="", help="Optional gateway base URL for diagnostics probe")
     p_memory_quality.add_argument("--token", default="", help="Optional bearer token for gateway diagnostics probe")

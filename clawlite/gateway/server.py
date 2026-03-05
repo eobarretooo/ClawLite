@@ -1840,6 +1840,28 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "available": False,
             }
         engine_payload["memory"] = memory_payload
+        memory_analysis_payload: dict[str, Any] = {
+            "available": False,
+        }
+        memory_analysis_stats = getattr(memory_store, "analysis_stats", None)
+        if callable(memory_analysis_stats):
+            try:
+                raw_memory_analysis_payload = memory_analysis_stats()
+            except Exception as exc:
+                memory_analysis_payload = {
+                    "available": True,
+                    "error": str(exc),
+                }
+            else:
+                if isinstance(raw_memory_analysis_payload, dict):
+                    memory_analysis_payload = dict(raw_memory_analysis_payload)
+                else:
+                    memory_analysis_payload = {
+                        "available": True,
+                        "error": "invalid_memory_analysis_payload",
+                    }
+                memory_analysis_payload.setdefault("available", True)
+        engine_payload["memory_analysis"] = memory_analysis_payload
 
         memory_quality_payload: dict[str, Any] = {
             "available": False,

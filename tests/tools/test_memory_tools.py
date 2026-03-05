@@ -28,6 +28,29 @@ def test_memory_learn_success(tmp_path) -> None:
     asyncio.run(_scenario())
 
 
+def test_memory_learn_persists_reasoning_layer_and_confidence(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        tool = MemoryLearnTool(store)
+
+        payload = json.loads(
+            await tool.run(
+                {"text": "Persistent decision memory", "reasoning_layer": "decision", "confidence": 0.82},
+                ToolContext(session_id="telegram:42"),
+            )
+        )
+        assert payload["status"] == "ok"
+        assert payload["reasoning_layer"] == "decision"
+        assert payload["confidence"] == 0.82
+
+        rows = store.all()
+        assert len(rows) == 1
+        assert rows[0].reasoning_layer == "decision"
+        assert rows[0].confidence == 0.82
+
+    asyncio.run(_scenario())
+
+
 def test_memory_learn_empty_error(tmp_path) -> None:
     async def _scenario() -> None:
         store = MemoryStore(db_path=tmp_path / "memory.jsonl")
@@ -349,6 +372,83 @@ def test_memory_recall_passes_user_context_when_retrieve_supports_kwargs() -> No
     asyncio.run(_scenario())
 
 
+def test_memory_recall_forwards_reasoning_filters_and_returns_metadata() -> None:
+    class _AsyncMemory:
+        def __init__(self) -> None:
+            self.retrieve_calls: list[dict[str, object]] = []
+
+        async def retrieve(
+            self,
+            query: str,
+            *,
+            limit: int = 5,
+            method: str = "rag",
+            user_id: str = "",
+            include_shared: bool = False,
+            reasoning_layers=None,
+            min_confidence: float | None = None,
+        ) -> dict[str, object]:
+            self.retrieve_calls.append(
+                {
+                    "query": query,
+                    "limit": limit,
+                    "method": method,
+                    "user_id": user_id,
+                    "include_shared": include_shared,
+                    "reasoning_layers": list(reasoning_layers or []),
+                    "min_confidence": min_confidence,
+                }
+            )
+            return {
+                "status": "ok",
+                "hits": [
+                    {
+                        "id": "rr99887766",
+                        "text": "reasoning-aware hit",
+                        "source": "seed",
+                        "created_at": "2026-03-04T00:00:00+00:00",
+                        "reasoning_layer": "hypothesis",
+                        "confidence": 0.66,
+                    }
+                ],
+            }
+
+        def search(self, query: str, *, limit: int = 5):
+            raise AssertionError(f"search fallback should not run for query={query} limit={limit}")
+
+    async def _scenario() -> None:
+        memory = _AsyncMemory()
+        tool = MemoryRecallTool(memory)  # type: ignore[arg-type]
+        payload = json.loads(
+            await tool.run(
+                {
+                    "query": "status",
+                    "reasoning_layers": ["hypothesis", "decision"],
+                    "min_confidence": 0.6,
+                    "include_metadata": True,
+                },
+                ToolContext(session_id="s1", user_id="u-1"),
+            )
+        )
+        assert payload["status"] == "ok"
+        assert payload["count"] == 1
+        assert payload["results"][0]["reasoning_layer"] == "hypothesis"
+        assert payload["results"][0]["confidence"] == 0.66
+        assert memory.retrieve_calls == [
+            {
+                "query": "status",
+                "limit": 6,
+                "method": "rag",
+                "user_id": "u-1",
+                "include_shared": True,
+                "reasoning_layers": ["hypothesis", "decision"],
+                "min_confidence": 0.6,
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
 def test_memory_learn_passes_user_context_when_memorize_supports_kwargs() -> None:
     class _AsyncMemory:
         def __init__(self) -> None:
@@ -396,5 +496,24 @@ def test_memory_learn_passes_user_context_when_memorize_supports_kwargs() -> Non
                 "shared": False,
             }
         ]
+
+    asyncio.run(_scenario())
+
+
+def test_memory_analyze_includes_reasoning_layers_and_confidence_blocks(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        store.add("fact row", source="seed:fact", reasoning_layer="fact", confidence=0.95)
+        store.add("hypothesis row", source="seed:hyp", reasoning_layer="hypothesis", confidence=0.45)
+        tool = MemoryAnalyzeTool(store)
+
+        payload = json.loads(await tool.run({}, ToolContext(session_id="s1")))
+        assert payload["status"] == "ok"
+        assert "reasoning_layers" in payload
+        assert payload["reasoning_layers"]["fact"] >= 1
+        assert payload["reasoning_layers"]["hypothesis"] >= 1
+        assert "confidence" in payload
+        assert payload["confidence"]["count"] >= 2
+        assert "buckets" in payload["confidence"]
 
     asyncio.run(_scenario())

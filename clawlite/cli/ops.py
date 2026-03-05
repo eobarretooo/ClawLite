@@ -1345,6 +1345,14 @@ def memory_quality_snapshot(
                 "failed": int(eval_snapshot.get("failed", 0) or 0),
             },
             "gateway_probe": gateway_block,
+            "analysis": {
+                "reasoning_layers": dict(analysis.get("reasoning_layers", {}))
+                if isinstance(analysis.get("reasoning_layers"), dict)
+                else {},
+                "confidence": dict(analysis.get("confidence", {}))
+                if isinstance(analysis.get("confidence"), dict)
+                else {},
+            },
         }
     except Exception as exc:
         return {
@@ -1446,6 +1454,12 @@ def memory_doctor_snapshot(config: AppConfig, repair: bool = False) -> dict[str,
             "temporal_marked_count": int(stats.get("temporal_marked_count", 0) or 0),
             "top_sources": list(stats.get("top_sources", [])),
         }
+        reasoning_layers = stats.get("reasoning_layers")
+        if isinstance(reasoning_layers, dict):
+            payload["analysis"]["reasoning_layers"] = dict(reasoning_layers)
+        confidence = stats.get("confidence")
+        if isinstance(confidence, dict):
+            payload["analysis"]["confidence"] = dict(confidence)
         payload["diagnostics"] = store.diagnostics()
     except Exception as exc:
         payload["ok"] = False

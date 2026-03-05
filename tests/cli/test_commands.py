@@ -653,7 +653,7 @@ def test_cli_memory_doctor_outputs_expected_keys(tmp_path: Path, capsys) -> None
         encoding="utf-8",
     )
 
-    rc = main(["--config", str(config_path), "memory", "doctor"])
+    rc = main(["--config", str(config_path), "memory", "doctor", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
@@ -661,7 +661,15 @@ def test_cli_memory_doctor_outputs_expected_keys(tmp_path: Path, capsys) -> None
     assert set(payload["paths"].keys()) == {"history", "curated", "checkpoints"}
     assert set(payload["files"].keys()) == {"history", "curated", "checkpoints"}
     assert set(payload["counts"].keys()) == {"history", "curated", "total"}
-    assert set(payload["analysis"].keys()) == {"recent", "temporal_marked_count", "top_sources"}
+    assert set(payload["analysis"].keys()) == {
+        "recent",
+        "temporal_marked_count",
+        "top_sources",
+        "reasoning_layers",
+        "confidence",
+    }
+    assert isinstance(payload["analysis"]["reasoning_layers"], dict)
+    assert isinstance(payload["analysis"]["confidence"], dict)
     assert "diagnostics" in payload
     assert set(payload["schema"].keys()) == {"curated", "checkpoints"}
 
@@ -847,7 +855,7 @@ def test_cli_memory_quality_generates_and_persists_report(tmp_path: Path, capsys
         encoding="utf-8",
     )
 
-    rc = main(["--config", str(config_path), "memory", "quality"])
+    rc = main(["--config", str(config_path), "memory", "quality", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
@@ -859,6 +867,9 @@ def test_cli_memory_quality_generates_and_persists_report(tmp_path: Path, capsys
     assert isinstance(report["recommendations"], list)
     assert payload["state"]["current"]["score"] == report["score"]
     assert Path(payload["quality_state_path"]).exists()
+    assert "analysis" in payload
+    assert isinstance(payload["analysis"]["reasoning_layers"], dict)
+    assert isinstance(payload["analysis"]["confidence"], dict)
 
 
 def test_cli_memory_profile_returns_schema_fields(tmp_path: Path, capsys) -> None:

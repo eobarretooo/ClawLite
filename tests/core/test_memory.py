@@ -730,11 +730,92 @@ def test_memory_record_normalization_fills_defaults_for_legacy_rows(tmp_path: Pa
     row = rows[0]
     assert row.user_id == "default"
     assert row.layer == "item"
+    assert row.reasoning_layer == "fact"
     assert row.modality == "text"
     assert row.updated_at == ""
     assert row.confidence == 1.0
     assert row.decay_rate == 0.0
     assert row.emotional_tone == "neutral"
+
+
+def test_memory_reasoning_layer_and_confidence_roundtrip_on_write_and_read(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    created = store.add(
+        "Decision: use blue-green deploy",
+        source="session:decision",
+        reasoning_layer="decision",
+        confidence=0.42,
+    )
+
+    assert created.reasoning_layer == "decision"
+    assert created.confidence == 0.42
+    read_back = store.all()
+    assert len(read_back) == 1
+    assert read_back[0].reasoning_layer == "decision"
+    assert read_back[0].confidence == 0.42
+
+    raw_line = next(line for line in store.history_path.read_text(encoding="utf-8").splitlines() if line.strip())
+    payload = json.loads(raw_line)
+    assert payload["reasoning_layer"] == "decision"
+    assert payload["confidence"] == 0.42
+
+
+def test_memory_search_and_retrieve_support_reasoning_layer_and_min_confidence_filters(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.memorize(text="project alpha baseline facts", source="session:a", reasoning_layer="fact", confidence=0.95)
+        await store.memorize(
+            text="project alpha might slip by one day",
+            source="session:b",
+            reasoning_layer="hypothesis",
+            confidence=0.55,
+        )
+        await store.memorize(
+            text="project alpha decision: keep friday release",
+            source="session:c",
+            reasoning_layer="decision",
+            confidence=0.88,
+        )
+
+        hypothesis_only = store.search("project alpha", limit=5, reasoning_layers=["hypothesis"])
+        assert hypothesis_only
+        assert all(row.reasoning_layer == "hypothesis" for row in hypothesis_only)
+
+        high_confidence = store.search("project alpha", limit=5, min_confidence=0.9)
+        assert high_confidence
+        assert all(float(row.confidence) >= 0.9 for row in high_confidence)
+
+        retrieved = await store.retrieve(
+            "project alpha",
+            method="rag",
+            limit=5,
+            reasoning_layers=["decision"],
+            min_confidence=0.8,
+        )
+        assert retrieved["hits"]
+        assert all(hit["reasoning_layer"] == "decision" for hit in retrieved["hits"])
+        assert all(float(hit["confidence"]) >= 0.8 for hit in retrieved["hits"])
+
+    asyncio.run(_scenario())
+
+
+def test_memory_analysis_stats_include_reasoning_layer_distribution_and_confidence_summary(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.add("fact row", source="session:a", reasoning_layer="fact", confidence=0.95)
+    store.add("hypothesis row", source="session:b", reasoning_layer="hypothesis", confidence=0.55)
+    store.add("decision row", source="session:c", reasoning_layer="decision", confidence=0.82)
+
+    stats = store.analysis_stats()
+
+    assert "reasoning_layers" in stats
+    assert stats["reasoning_layers"]["fact"] >= 1
+    assert stats["reasoning_layers"]["hypothesis"] >= 1
+    assert stats["reasoning_layers"]["decision"] >= 1
+    assert "confidence" in stats
+    assert stats["confidence"]["count"] >= 3
+    assert stats["confidence"]["maximum"] >= stats["confidence"]["minimum"]
+    buckets = stats["confidence"]["buckets"]
+    assert sum(int(value) for value in buckets.values()) >= 3
 
 
 def test_generate_embedding_fallback_order_tries_openai_after_gemini_failure(tmp_path: Path, monkeypatch) -> None:
