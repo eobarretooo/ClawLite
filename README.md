@@ -1,42 +1,38 @@
-<div align="center">
-  <img src="assets/logo.svg" alt="ClawLite" width="110" />
-  <h1>ClawLite</h1>
-  <p><strong>Autonomous personal AI agent for Linux, built in Python.</strong></p>
-  <p><strong>FastAPI gateway, CLI-first operations, channel adapters, scheduler, and persistent memory.</strong></p>
-  <p>
-    <a href="https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml"><img src="https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://github.com/eobarretooo/ClawLite/releases"><img src="https://img.shields.io/github/v/release/eobarretooo/ClawLite" alt="Latest Release"></a>
-    <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
-    <img src="https://img.shields.io/badge/platform-linux-0ea5e9" alt="Linux">
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT License"></a>
-  </p>
-</div>
+# ClawLite
 
-## What Is ClawLite
+![ClawLite logo](assets/logo.svg)
 
-ClawLite is an execution-focused assistant runtime that combines a local CLI, FastAPI gateway, channel delivery, scheduler, and memory pipeline in one operational model.
+ClawLite is a Linux/Termux-first, execution-focused AI runtime that combines a gateway, scheduler, and persistent memory with Telegram-first delivery reliability.
 
-It is designed for practical day-to-day automation with explicit control surfaces:
-- Interactive and scripted command execution via CLI.
-- HTTP and WebSocket access for external integration.
-- Scheduled jobs and heartbeat checks.
-- Persistent memory with diagnostics and repair paths.
-- Hybrid memory retrieval (semantic + BM25), versioning/branches, and proactive suggestions.
-- Provider routing (including deterministic `openai-codex/*` handling).
+[![CI](https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml/badge.svg)](https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Platform Linux|Termux](https://img.shields.io/badge/platform-linux%20%7C%20termux-0ea5e9)
+[![Release](https://img.shields.io/github/v/release/eobarretooo/ClawLite)](https://github.com/eobarretooo/ClawLite/releases)
 
-## How It Compares
+## What is ClawLite?
 
-| Project | Language | Primary Runtime | Current ClawLite Relationship |
-|---|---|---|---|
-| ClawLite | Python | CLI + FastAPI + channels | Active implementation |
-| OpenClaw | TypeScript | Gateway + dashboard + channels | Architectural reference for parity work |
-| nanobot | Python | Agentic automation workflows | Design influence for operational UX |
+ClawLite is a Python runtime for running an agent operationally, not just interactively.
 
-This repository tracks parity goals in `ROADMAP.md` and documents currently implemented behavior only.
+- **Single command surface:** operational commands live in `clawlite/cli/commands.py` (`start`, `gateway`, `run`, `status`, `onboard`, `validate`, `provider`, `diagnostics`, `memory`, `cron`, `skills`).
+- **Gateway as control plane:** HTTP + WebSocket routes are implemented in `clawlite/gateway/server.py`.
+- **Scheduler-driven automation:** heartbeat and cron execution logic lives in `clawlite/scheduler/heartbeat.py` and `clawlite/scheduler/cron.py`.
+- **Persistent memory stack:** memory runtime, backend, and monitoring are in `clawlite/core/memory.py`, `clawlite/core/memory_backend.py`, and `clawlite/core/memory_monitor.py`.
 
-## Quickstart
+## Key capabilities (implemented)
 
-1) Install locally:
+- **Gateway endpoints:** `GET /health`, `GET /v1/status`, `GET /api/status`, `GET /v1/diagnostics`, `GET /api/diagnostics`, `GET /api/token`, `GET /`, `POST /v1/chat`, `POST /api/message`, `POST /v1/control/heartbeat/trigger`, `POST /v1/cron/add`, `GET /v1/cron/list`, `DELETE /v1/cron/{job_id}`, `WS /v1/ws`, `WS /ws` in `clawlite/gateway/server.py`.
+- **Auth modes + token masking:** gateway auth config (`off|optional|required`) is defined in `clawlite/config/schema.py`; token masking for diagnostics endpoints is implemented in `clawlite/gateway/server.py` (`/api/token`).
+- **Telegram reliability semantics:** retry/backoff, dedupe, webhook/polling handling, and delivery guardrails are implemented in `clawlite/channels/telegram.py`; behavior contract is documented in `docs/TELEGRAM_RELIABILITY_SEMANTICS.md`.
+- **Cron lease/idempotency controls:** lease/claim/finalize behavior is in `clawlite/scheduler/cron.py`.
+- **Heartbeat loop + state persistence:** periodic heartbeat processing and state file writes are in `clawlite/scheduler/heartbeat.py`.
+- **Bootstrap lifecycle support:** bootstrap loading/finalization behavior is in `clawlite/workspace/loader.py` and finalized through gateway/runtime calls in `clawlite/gateway/server.py`.
+- **Provider reliability/failover:** provider registry/failover/reliability layers are in `clawlite/providers/registry.py`, `clawlite/providers/failover.py`, and `clawlite/providers/reliability.py`.
+- **Tools + skills plumbing:** tool registration and skill integration are in `clawlite/tools/registry.py`, `clawlite/tools/skill.py`, and `clawlite/core/skills.py`.
+
+## Install
+
+### From source (editable)
 
 ```bash
 git clone https://github.com/eobarretooo/ClawLite.git
@@ -47,302 +43,122 @@ pip install -U pip
 pip install -e .
 ```
 
-2) Generate workspace templates:
+Console entrypoint is declared in `pyproject.toml` (`clawlite = "clawlite.cli:main"`). Module entrypoint is also available: `python -m clawlite.cli`.
+
+### Installer script
 
 ```bash
-clawlite onboard
+bash scripts/install.sh
 ```
 
-3) Validate config and provider wiring:
+Installer behavior (venv/bootstrap/symlink flow) is implemented in `scripts/install.sh`.
+
+## Quickstart (2-5 min)
 
 ```bash
+clawlite onboard --wizard
 clawlite validate config
 clawlite validate provider
-```
-
-4) Start gateway:
-
-```bash
 clawlite start --host 127.0.0.1 --port 8787
 ```
 
-5) Run one prompt:
+In another terminal:
 
 ```bash
-clawlite run "say hello" --session-id cli:default
-```
-
-6) Check runtime status and diagnostics:
-
-```bash
+clawlite run "health check: respond with gateway status"
 clawlite status
-clawlite diagnostics --gateway-url http://127.0.0.1:8787
 ```
 
-## Provider Setup
-
-### Generic provider selection
-
-Use `provider use` to persist the active provider/model:
+Equivalent module form:
 
 ```bash
-clawlite provider use gemini --model gemini/gemini-2.5-flash
-clawlite provider use openai --model openai/gpt-4.1-mini
-clawlite provider use groq --model groq/llama-3.3-70b-versatile
+python -m clawlite.cli start --host 127.0.0.1 --port 8787
 ```
 
-Set a fallback model (or clear it):
+Command routing and handlers are implemented in `clawlite/cli/commands.py`.
+
+## Configuration
+
+- **Primary config path:** `~/.clawlite/config.json` via `DEFAULT_CONFIG_PATH` in `clawlite/config/loader.py`.
+- **Schema and auth settings:** gateway auth, provider, channels, diagnostics, and policy structures are defined in `clawlite/config/schema.py`.
+- **Provider selection:** provider selection commands are implemented in `clawlite/cli/commands.py` (`provider use`, `provider status`, login flows).
+- **Telegram settings:** polling/webhook behavior and dynamic webhook route (default `/api/webhooks/telegram`) are wired by `clawlite/config/schema.py`, `clawlite/channels/telegram.py`, and `clawlite/gateway/server.py`.
+- **Environment secret overrides:** env overlay handling is in `clawlite/config/loader.py` (for example gateway/provider secrets).
+
+Configuration references:
+
+- `docs/CONFIGURATION.md`
+- `docs/config.example.json`
+- `docs/TELEGRAM_RELIABILITY_SEMANTICS.md`
+
+## Runbook
+
+- **Run gateway:** `clawlite start --host 127.0.0.1 --port 8787` or `clawlite gateway --host 127.0.0.1 --port 8787` (`clawlite/cli/commands.py`).
+- **Check service health/status:** use `GET /health`, `GET /v1/status`, `GET /api/status` (`clawlite/gateway/server.py`).
+- **Send runtime messages:** `POST /api/message` or `POST /v1/chat` (`clawlite/gateway/server.py`).
+- **Use WebSocket channel:** connect to `WS /ws` or `WS /v1/ws` (`clawlite/gateway/server.py`).
+- **Telegram polling mode:** configure `channels.telegram.mode = "polling"` and token in config (`clawlite/config/schema.py`, `clawlite/channels/telegram.py`).
+- **Telegram webhook mode:** configure webhook settings; route defaults to `/api/webhooks/telegram` (`clawlite/config/schema.py`, `clawlite/gateway/server.py`).
+- **Scheduler operations:** add/list/remove jobs via CLI `clawlite cron ...` and API `POST /v1/cron/add`, `GET /v1/cron/list`, `DELETE /v1/cron/{job_id}` (`clawlite/cli/commands.py`, `clawlite/gateway/server.py`).
+- **Heartbeat operations:** periodic loop and state tracking in `clawlite/scheduler/heartbeat.py`; immediate trigger at `POST /v1/control/heartbeat/trigger`.
+
+API reference: `docs/API.md`.
+
+## Tests
+
+CI canonical command:
 
 ```bash
-clawlite provider use openai --model openai/gpt-4.1-mini --fallback-model openai/gpt-4o-mini
-clawlite provider use openai --model openai/gpt-4.1-mini --clear-fallback
+python -m pytest tests/ -q --tb=short
 ```
 
-Inspect provider status:
+Smoke test script:
 
 ```bash
-clawlite provider status
-clawlite provider status openai
-```
-
-### OpenAI Codex login and configuration
-
-ClawLite supports explicit Codex auth lifecycle commands:
-
-```bash
-clawlite provider login openai-codex
-clawlite provider login openai-codex --access-token "<token>"
-clawlite provider login openai-codex --access-token "<token>" --account-id "<org_or_account>" --set-model
-clawlite provider login openai-codex --no-interactive
-```
-
-Supported flags for `clawlite provider login openai-codex`:
-- `--access-token`
-- `--account-id`
-- `--set-model`
-- `--no-interactive`
-
-Status and logout:
-
-```bash
-clawlite provider status
-clawlite provider status openai-codex
-clawlite provider logout
-clawlite provider logout openai-codex
-```
-
-Codex auth environment variables (checked in this order group):
-- `CLAWLITE_CODEX_ACCESS_TOKEN`
-- `OPENAI_CODEX_ACCESS_TOKEN`
-- `OPENAI_ACCESS_TOKEN`
-- `CLAWLITE_CODEX_ACCOUNT_ID`
-- `OPENAI_ORG_ID`
-
-Config example (`~/.clawlite/config.json`):
-
-```json
-{
-  "auth": {
-    "providers": {
-      "openai_codex": {
-        "access_token": "<token>",
-        "account_id": "<optional_org_or_account>",
-        "source": "config"
-      }
-    }
-  },
-  "provider": {
-    "model": "openai-codex/gpt-5.3-codex"
-  },
-  "agents": {
-    "defaults": {
-      "model": "openai-codex/gpt-5.3-codex"
-    }
-  }
-}
-```
-
-Routing note: models with prefix `openai-codex/*` are resolved through deterministic Codex provider routing.
-
-## Channel Setup
-
-### Telegram (implemented, parity in progress)
-
-Telegram currently supports inbound polling plus outbound delivery. Configure in `~/.clawlite/config.json`:
-
-```json
-{
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token": "123456789:AA...",
-      "allow_from": ["1850513297"]
-    }
-  }
-}
-```
-
-Validate channel readiness:
-
-```bash
-clawlite validate channels
-```
-
-Current delivery surface:
-- Telegram: inbound + outbound.
-- Discord/Slack/WhatsApp: outbound adapters.
-- Additional channels: placeholders/skeletons.
-
-## Tool Policy
-
-All tools are enabled by default, including channel-triggered execution paths. Restrict tools by opting out with `tools.safety` in `~/.clawlite/config.json`.
-
-Example policy to block risky tools on selected channels:
-
-```json
-{
-  "tools": {
-    "safety": {
-      "enabled": true,
-      "risky_tools": ["exec", "run_skill", "web_fetch", "web_search", "mcp"],
-      "blocked_channels": ["telegram"],
-      "allowed_channels": []
-    }
-  }
-}
-```
-
-Available tool keys for restriction policies: `web`, `exec`, `files`, `memory`, `cron`, `mcp`, `skill`, `spawn`, `message`.
-
-Template updates in this area affect newly generated workspaces created by `clawlite onboard`.
-
-## Commands Reference
-
-Core runtime:
-- `clawlite start [--host ...] [--port ...]`
-- `clawlite gateway [--host ...] [--port ...]` (alias)
-- `clawlite run "<prompt>" --session-id <id> [--timeout <seconds>]`
-- `clawlite status`
-- `clawlite diagnostics [--gateway-url <url>] [--token <bearer>] [--timeout <seconds>] [--no-validation]`
-
-Validation and onboarding:
-- `clawlite onboard [--overwrite ...]`
-- `clawlite validate provider`
-- `clawlite validate channels`
-- `clawlite validate onboarding [--fix]`
-- `clawlite validate config`
-
-Provider lifecycle:
-- `clawlite provider use <provider> --model <provider/model> [--fallback-model <provider/model>] [--clear-fallback]`
-- `clawlite provider login openai-codex [--access-token ...] [--account-id ...] [--set-model] [--no-interactive]`
-- `clawlite provider status [provider]`
-- `clawlite provider logout [openai-codex]`
-
-Memory and scheduler:
-- `clawlite memory`
-- `clawlite memory doctor [--repair]`
-- `clawlite memory eval [--limit N]`
-- `clawlite memory profile`
-- `clawlite memory suggest [--no-refresh]`
-- `clawlite memory snapshot [--tag <tag>]`
-- `clawlite memory version`
-- `clawlite memory rollback <id>`
-- `clawlite memory privacy`
-- `clawlite memory export [--out <file>]`
-- `clawlite memory import <file>`
-- `clawlite memory branches`
-- `clawlite memory branch <name> [--from-version <id>] [--checkout]`
-- `clawlite memory checkout <name>`
-- `clawlite memory merge --source <name> --target <name> [--tag <tag>]`
-- `clawlite memory share-optin --user <user_id> --enabled <true|false>`
-- `clawlite skills check`
-- `clawlite cron add --session-id <id> --expression "<expr>" --prompt "<text>" [--name <name>]`
-- `clawlite cron list --session-id <id>`
-- `clawlite cron remove --job-id <id>`
-- `clawlite cron enable <job_id>`
-- `clawlite cron disable <job_id>`
-- `clawlite cron run <job_id>`
-
-Cron `--expression` accepts:
-- `every 120`
-- `at 2026-03-02T20:00:00`
-- `0 9 * * *` (requires `croniter`)
-
-## API Reference
-
-Default base URL: `http://127.0.0.1:8787`
-
-Primary endpoints:
-- `GET /health`
-- `POST /v1/chat`
-- `WS /v1/ws`
-- `GET /v1/status`
-- `GET /v1/diagnostics`
-- `POST /v1/cron/add`
-- `GET /v1/cron/list`
-- `DELETE /v1/cron/{job_id}`
-
-Compatibility aliases:
-- `POST /api/message` -> `POST /v1/chat`
-- `GET /api/status` -> `GET /v1/status`
-- `GET /api/diagnostics` -> `GET /v1/diagnostics`
-- `WS /ws` -> `WS /v1/ws`
-- `GET /api/token` (masked token diagnostics)
-- `GET /` (lightweight deterministic gateway entrypoint)
-
-More details: `docs/API.md`
-
-## Architecture
-
-```text
-clawlite/
-|- cli/         command parser and operator commands
-|- config/      schema + loader + env overlay
-|- core/        engine, prompts, memory, autonomy wiring
-|- gateway/     FastAPI server, auth guard, HTTP/WS contracts
-|- scheduler/   cron + heartbeat runtime
-|- channels/    Telegram and outbound channel adapters
-|- providers/   provider registry, routing, HTTP adapters
-|- tools/       tool implementations and safety policy hooks
-|- session/     session persistence and history windows
-|- workspace/   onboarding templates and workspace bootstrap files
-|- skills/      built-in SKILL.md catalog
-`- utils/       logging and shared helpers
-```
-
-## Security Notes
-
-- Gateway auth posture can auto-harden to `required` on non-loopback hosts when a token is configured.
-- `/api/token` returns masked diagnostics only; secrets are not returned in plaintext.
-- Risky tools (`exec`, `web_fetch`, `web_search`, `mcp`) are governed by channel-aware safety policy.
-- Keep secrets in environment variables or local config outside version control.
-- Review `SECURITY.md` before exposing gateway endpoints publicly.
-
-## Roadmap
-
-Current priorities are maintained in `ROADMAP.md`:
-- P0: core stability and contract hardening.
-- P1: operational autonomy and reliability.
-- P2: ecosystem maturity and operator experience.
-
-## Testing
-
-Documentation changes do not require runtime tests, but the project test commands are:
-
-```bash
-pytest -q tests
 bash scripts/smoke_test.sh
 ```
 
-## Acknowledgements
+Focused local subsets:
 
-ClawLite is informed by:
-- [OpenClaw](https://github.com/openclaw/openclaw)
-- [nanobot](https://github.com/HKUDS/nanobot)
-- [memU](https://github.com/NevaMind-AI/memU)
+```bash
+python -m pytest tests/gateway/test_server.py -q
+python -m pytest tests/channels/test_telegram.py -q
+python -m pytest tests/scheduler/test_cron.py tests/scheduler/test_heartbeat.py -q
+```
 
-## Contributing and License
+Coverage evidence examples: `tests/gateway/test_server.py`, `tests/channels/test_telegram.py`, `tests/scheduler/test_cron.py`, `tests/scheduler/test_heartbeat.py`, `tests/cli/test_commands.py`.
 
-- Contribution guide: `CONTRIBUTING.md`
-- Issues: <https://github.com/eobarretooo/ClawLite/issues>
-- License: MIT (`LICENSE`)
+## Security
+
+- Security policy and disclosure process: `SECURITY.md`.
+- Gateway auth behavior is defined by schema + server guard logic in `clawlite/config/schema.py` and `clawlite/gateway/server.py`.
+- Tool safety gating is configured in schema and enforced at registry level (`clawlite/config/schema.py`, `clawlite/tools/registry.py`).
+
+## Contributing
+
+- Contribution process: `CONTRIBUTING.md`.
+- Issue tracker: <https://github.com/eobarretooo/ClawLite/issues>.
+- Project roadmap and tracked work: `ROADMAP.md`.
+- Public API surface and route contracts: `docs/API.md`.
+- License terms: `LICENSE`.
+
+## Status
+
+✅ Shipping now
+
+- Core CLI command surface and onboarding flow (`clawlite/cli/commands.py`, `clawlite/cli/onboarding.py`).
+- Gateway HTTP/WS control plane with compatibility aliases (`clawlite/gateway/server.py`).
+- Telegram reliability implementation and documented semantics (`clawlite/channels/telegram.py`, `docs/TELEGRAM_RELIABILITY_SEMANTICS.md`).
+- Scheduler heartbeat + cron lease/idempotency behavior (`clawlite/scheduler/heartbeat.py`, `clawlite/scheduler/cron.py`).
+- Persistent memory runtime and monitoring (`clawlite/core/memory.py`, `clawlite/core/memory_backend.py`, `clawlite/core/memory_monitor.py`).
+
+🚧 In progress / not shipped
+
+- Rich dashboard UI is not shipped in this repository scope.
+- `GET /` currently serves a minimal endpoint page from the gateway, not a full dashboard (`clawlite/gateway/server.py`).
+
+## Related projects
+
+- OpenClaw: <https://github.com/openclaw/openclaw>
+- nanobot: <https://github.com/HKUDS/nanobot>
+- memU: <https://github.com/NevaMind-AI/memU>
