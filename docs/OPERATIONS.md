@@ -56,6 +56,7 @@ Notas:
 - `/v1/diagnostics` e `/api/diagnostics` expõem `generated_at`, `uptime_s` e `contract_version`.
 - `/v1/diagnostics` e `/api/diagnostics` incluem `bootstrap` com estado persistido (`pending`, `last_status`, `completed_at`, etc.).
 - `/v1/diagnostics` e `/api/diagnostics` incluem `http` com contadores de requisicoes em memoria (`total_requests`, `in_flight`, `by_method`, `by_path`, `by_status`, `latency_ms`).
+- `/v1/diagnostics` e `/api/diagnostics` incluem `memory_monitor` com telemetria operacional (`enabled`, `scans`, `generated`, `deduped`, `low_priority_skipped`, `cooldown_skipped`, `sent`, `failed`, `pending`, `cooldown_seconds`, `suggestions_path`).
 - `/v1/diagnostics` e `/api/diagnostics` incluem `channels_delivery` para inspecao de contadores de entrega por total e por canal.
 - `channels_delivery` inclui supressao idempotente outbound e confirmacao/falha final (`idempotency_suppressed`, `delivery_confirmed`, `delivery_failed_final`).
 - `channels_delivery.recent` lista outcomes por mensagem (mais recente primeiro), incluindo `send_result` e `receipt` seguro de canais como Telegram (`message_ids`, `last_message_id`, `chunks`, `chat_id`).
@@ -69,6 +70,7 @@ Notas:
 - `/v1/diagnostics` e `/api/diagnostics` incluem `engine.turn_metrics` com contadores por turno (`turns_total`, `turns_success`, `turns_provider_errors`, `turns_cancelled`), `tool_calls_executed`, buckets de latencia e ultimo resultado/modelo.
 - Telemetria de provider/failover inclui classificacao de erro (`last_error_class`, `error_class_counts`, `last_primary_error_class`, `last_fallback_error_class`) para diagnostico operacional.
 - `queue.dead_letter_recent` expoe snapshots por mensagem (sem `text`) para inspecionar outcomes de fallback/dead-letter em ordem mais recente primeiro.
+- Heartbeat pode disparar entrega proactive de memoria quando `agents.defaults.memory.proactive=true` e houver sugestoes com prioridade suficiente.
 
 ## Bootstrap one-shot lifecycle
 
@@ -111,6 +113,47 @@ Campos esperados no JSON:
 - `analysis` (`recent`, `temporal_marked_count`, `top_sources`)
 - `diagnostics` (contadores de reparo/dedup/recovery)
 - `schema` (hints de versão/chaves para curated e checkpoints)
+
+## Memory lifecycle runbook
+
+Visao e estado rapido:
+
+```bash
+clawlite memory
+clawlite memory profile
+clawlite memory privacy
+clawlite memory suggest
+```
+
+Versionamento e rollback:
+
+```bash
+clawlite memory snapshot --tag before_change
+clawlite memory version
+clawlite memory rollback <id>
+```
+
+Branches e merge:
+
+```bash
+clawlite memory branches
+clawlite memory branch feature-x --from-version <id> --checkout
+clawlite memory checkout main
+clawlite memory merge --source feature-x --target main --tag merge
+```
+
+Compartilhamento e portabilidade:
+
+```bash
+clawlite memory share-optin --user alice --enabled true
+clawlite memory export --out /tmp/memory-export.json
+clawlite memory import /tmp/memory-export.json
+```
+
+Saude do monitor proativo:
+- Rode `clawlite diagnostics --gateway-url http://127.0.0.1:8787` e confirme `memory_monitor.enabled=true` quando `agents.defaults.memory.proactive=true`.
+- Verifique progresso com `memory_monitor.scans/generated/sent/failed` e backlog com `memory_monitor.pending`.
+- Se houver falhas recorrentes de entrega, confira `channels_delivery` e `queue.dead_letter_recent` para correlacionar causa por canal.
 
 ## Codex provider auth lifecycle
 

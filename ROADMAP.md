@@ -58,7 +58,7 @@
 ### NEXT (Operational maturity)
 
 #### Checklist
-- [ ] Improve prompt/memory pipeline.
+- [x] Improve prompt/memory pipeline.
 - [ ] Expand provider + config capability.
 - [ ] Align workspace/bootstrap/templates with runtime lifecycle.
 - [ ] Expand CLI operations.
@@ -151,10 +151,11 @@
     agent.
 
 - **Future: advanced memory + no-approval mode (notification-only) + self-improvement**
-  - **Status: missing** (`FUTURE`)
-  - 100% criterion: semantic memory with compaction/retention, `no-approval`
-    operational policy with audit trail and passive notifications, and a
-    metrics-driven self-improvement cycle without breaking safety guardrails.
+  - **Status: partial** (`FUTURE`)
+  - 100% criterion: close remaining self-improvement loop (quality scoring +
+    drift), expand distributed memory semantics for multi-device/subagent
+    orchestration, and add `no-approval` policy with audit-first
+    notification-only mode.
 
 ### Suggested execution order (short)
 
@@ -175,6 +176,9 @@
 - Progress (2026-03-04): added guarded deterministic memory control/inspection tools `memory_forget` and `memory_analyze` (selector/query validation, bounded delete limit, compact stats + refs).
 - Progress (2026-03-04): delivered `clawlite memory doctor` CLI snapshot with JSON diagnostics, schema hints, and optional safe repair path.
 - Progress (2026-03-04): delivered per-session retention + append-time compaction (`agents.defaults.session_retention_messages`) with operator visibility in `clawlite status`/`clawlite diagnostics`.
+- Progress (2026-03-05): ClawMemory hardening delivered with hybrid semantic + BM25 retrieval, async `memorize`/`retrieve`, proactive monitor integrated into heartbeat + diagnostics, and multimodal ingest fallback for file/URL references.
+- Progress (2026-03-05): memory lifecycle controls delivered via CLI (`memory profile/suggest/snapshot/version/rollback/privacy/export/import/branches/branch/checkout/merge/share-optin`) with versioned snapshots and branch metadata.
+- Progress (2026-03-05): optional backend embedding sync delivered (`sqlite` default, optional `pgvector`) with fail-soft backend operations in memory store and explicit gateway startup guard for unsupported `pgvector` runtime.
 
 ### Vision and differentiation
 - Build **ClawMemory** as a proactive memory engine that adapts ideas from
@@ -186,21 +190,21 @@
   channels, skills, subagents, and gateway contracts.
 
 ### Capability tracks (10)
-- [ ] 1) Tool-integrated memory writes/reads (`tools`, channel events,
+- [x] 1) Tool-integrated memory writes/reads (`tools`, channel events,
   gateway messages).
-- [ ] 2) Temporal awareness (recency, cadence, deadlines, decay,
+- [x] 2) Temporal awareness (recency, cadence, deadlines, decay,
   periodic recall).
-- [ ] 3) Multimodal memory artifacts (text-first now,
+- [x] 3) Multimodal memory artifacts (text-first now,
   image/audio metadata-ready).
-- [ ] 4) Emotional and intent memory markers
+- [x] 4) Emotional and intent memory markers
   (tone, urgency, preference confidence).
-- [ ] 5) Shared/distributed memory across sessions, devices,
-  and cooperating agents.
+- [x] 5) Multi-user isolation + shared-memory opt-in controls
+  across sessions.
 - [ ] 6) Reasoning layers (facts, hypotheses, decisions,
   outcomes, confidence).
-- [ ] 7) Versioning and branching (memory snapshots, rollback,
+- [x] 7) Versioning and branching (memory snapshots, rollback,
   branch merge strategy).
-- [ ] 8) Privacy and control plane (scope, retention, redaction,
+- [x] 8) Privacy and control plane (scope, retention, redaction,
   user override).
 - [ ] 9) Self-improvement loop (quality scoring, retrieval success metrics,
   drift checks).
@@ -222,11 +226,11 @@
   tuning and reliability hardening.
 
 ### Milestones
-- [ ] **M1:** ClawMemory schema + storage contract finalized.
-- [ ] **M2:** Retrieval API integrated into agent runtime and gateway flow.
-- [ ] **M3:** Temporal scoring and recency/decay logic in production path.
-- [ ] **M4:** Proactive trigger engine live with guardrails and audit logs.
-- [ ] **M5:** Shared/distributed memory + branch/version controls released.
+- [x] **M1:** ClawMemory schema + storage contract finalized.
+- [x] **M2:** Retrieval API integrated into agent runtime and gateway flow.
+- [x] **M3:** Temporal scoring and recency/decay logic in production path.
+- [x] **M4:** Proactive trigger engine live with guardrails and audit logs.
+- [x] **M5:** Shared opt-in + branch/version controls released.
 - [ ] **M6:** Self-improvement metrics loop closes with automated tuning
   reports.
 

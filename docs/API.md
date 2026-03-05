@@ -84,6 +84,14 @@ If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostic
 - `per_channel`: same counter schema keyed by channel name
 - `recent`: bounded per-message outcomes (newest first), including safe delivery metadata such as `outcome`, `idempotency_key`, `dead_letter_reason`, `last_error`, `send_result`, `receipt`, and replay marker
 
+`memory_monitor` is additive and reports proactive memory monitor telemetry:
+
+- `enabled`: monitor activation status (`agents.defaults.memory.proactive` + runtime wiring)
+- counters: `scans`, `generated`, `deduped`, `low_priority_skipped`, `cooldown_skipped`, `sent`, `failed`
+- queue/state: `pending`, `cooldown_seconds`, `suggestions_path`
+
+Purpose: operational visibility for proactive memory suggestions (generation, suppression, and delivery outcomes) without exposing raw memory content.
+
 When `gateway.diagnostics.include_config=true`, `environment` may include additive engine persistence telemetry, session-recovery telemetry under `environment.engine.session_recovery`, memory-store durability/recovery telemetry under `environment.engine.memory_store`, nested session-store durability/recovery diagnostics, tool execution telemetry under `environment.engine.tools` (`total` + `per_tool` counters), and provider telemetry under `environment.engine.provider`.
 
 Provider telemetry keys are additive and may include: `requests`, `successes`, `retries`, `timeouts`, `network_errors`, `http_errors`, `auth_errors`, `rate_limit_errors`, `server_errors`, `circuit_open`, `circuit_open_count`, `circuit_close_count`, `consecutive_failures`, `last_error`, `last_status_code`.
@@ -154,6 +162,8 @@ Example response:
 ```
 
 If heartbeat is disabled (`gateway.heartbeat.enabled=false`), returns `409` with `{"error":"heartbeat_disabled","status":409}`.
+
+When proactive memory is enabled, the same trigger path may also scan and deliver memory suggestions (including next-step follow-up suggestions) through channel delivery. This side effect is fail-soft and does not change heartbeat decision semantics.
 
 ## `POST /v1/control/autonomy/trigger`
 
@@ -437,6 +447,7 @@ Campos baseline de contrato:
 - `uptime_s`: uptime do processo do gateway em segundos.
 - `contract_version`: versao estavel do contrato HTTP do gateway.
 - `channels_delivery`: contadores de entrega agregados do `ChannelManager` (`total` e `per_channel`).
+- `memory_monitor`: telemetria do monitor proativo de memoria (`enabled`, contadores de scan/geracao/entrega, pendencias, cooldown e path do backlog).
 - `channels_delivery.recent`: snapshots por mensagem (mais recentes primeiro) com outcome e recibo seguro por envio, sem texto da mensagem.
   Inclui contadores aditivos de confirmacao/falha final e supressao de duplicatas (`delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`).
 - `http`: telemetria HTTP em memoria (aditiva) com `total_requests`,

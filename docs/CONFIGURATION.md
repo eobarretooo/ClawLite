@@ -8,6 +8,7 @@ Main fields (summary):
 - `auth.providers.openai_codex` (OAuth token/account for Codex provider path)
 - `provider` reliability controls: retry (`retry_*`), circuit breaker (`circuit_*`), optional `fallback_model`
 - `agents.defaults` (model, limits, temperature)
+- `agents.defaults.memory` (semantic retrieval, proactive monitor, privacy/profile behavior, backend)
 - `gateway.host`, `gateway.port`
 - `gateway.auth` (API auth control)
 - `gateway.diagnostics` (exposure and protection of `/v1/diagnostics`)
@@ -101,6 +102,41 @@ Compatibility: if legacy `gateway.token` exists, the loader migrates it to `gate
 - Current preference: `gateway.heartbeat.interval_s`.
 - Legacy field: `scheduler.heartbeat_interval_seconds`.
 - If `gateway.heartbeat.interval_s` is not explicitly set, the loader uses the legacy value from `scheduler`.
+
+## Memory config (`agents.defaults.memory`)
+
+Supported keys:
+- `agents.defaults.memory.semantic_search` (default: `false`): enables hybrid ranking (`BM25 + vector`) during retrieval.
+- `agents.defaults.memory.auto_categorize` (default: `false`): enables category assignment heuristics during memorize/consolidation.
+- `agents.defaults.memory.proactive` (default: `false`): enables `MemoryMonitor` integration in gateway runtime (heartbeat scans + proactive delivery).
+- `agents.defaults.memory.emotional_tracking` (default: `false`): stores emotional tone markers on memory records.
+- `agents.defaults.memory.backend` (default: `sqlite`; accepted: `sqlite`, `pgvector`; legacy `jsonl` normalizes to `sqlite`).
+- `agents.defaults.memory.pgvector_url` (default: empty): PostgreSQL DSN for pgvector backend.
+
+Fallback and runtime behavior:
+- Unknown `backend` values are normalized to `sqlite`.
+- `semantic_search=false` keeps lexical-only retrieval behavior.
+- Gateway runtime validates `pgvector`: if `backend=pgvector` and URL/driver support is missing, startup fails with an explicit runtime error telling the operator to configure `pgvector_url` or switch to `sqlite`.
+- Memory store backend operations are fail-soft (embedding upsert/query/delete exceptions do not crash turns); retrieval falls back to local embedding/BM25 paths when backend similarity calls are unavailable.
+
+Example:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "memory": {
+        "semantic_search": true,
+        "auto_categorize": true,
+        "proactive": true,
+        "emotional_tracking": true,
+        "backend": "sqlite",
+        "pgvector_url": ""
+      }
+    }
+  }
+}
+```
 
 ## Runtime supervisor
 

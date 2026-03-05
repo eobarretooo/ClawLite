@@ -21,6 +21,7 @@ It is designed for practical day-to-day automation with explicit control surface
 - HTTP and WebSocket access for external integration.
 - Scheduled jobs and heartbeat checks.
 - Persistent memory with diagnostics and repair paths.
+- Hybrid memory retrieval (semantic + BM25), versioning/branches, and proactive suggestions.
 - Provider routing (including deterministic `openai-codex/*` handling).
 
 ## How It Compares
@@ -192,6 +193,29 @@ Current delivery surface:
 - Discord/Slack/WhatsApp: outbound adapters.
 - Additional channels: placeholders/skeletons.
 
+## Tool Policy
+
+All tools are enabled by default, including channel-triggered execution paths. Restrict tools by opting out with `tools.safety` in `~/.clawlite/config.json`.
+
+Example policy to block risky tools on selected channels:
+
+```json
+{
+  "tools": {
+    "safety": {
+      "enabled": true,
+      "risky_tools": ["exec", "run_skill", "web_fetch", "web_search", "mcp"],
+      "blocked_channels": ["telegram"],
+      "allowed_channels": []
+    }
+  }
+}
+```
+
+Available tool keys for restriction policies: `web`, `exec`, `files`, `memory`, `cron`, `mcp`, `skill`, `spawn`, `message`.
+
+Template updates in this area affect newly generated workspaces created by `clawlite onboard`.
+
 ## Commands Reference
 
 Core runtime:
@@ -215,8 +239,22 @@ Provider lifecycle:
 - `clawlite provider logout [openai-codex]`
 
 Memory and scheduler:
+- `clawlite memory`
 - `clawlite memory doctor [--repair]`
 - `clawlite memory eval [--limit N]`
+- `clawlite memory profile`
+- `clawlite memory suggest [--no-refresh]`
+- `clawlite memory snapshot [--tag <tag>]`
+- `clawlite memory version`
+- `clawlite memory rollback <id>`
+- `clawlite memory privacy`
+- `clawlite memory export [--out <file>]`
+- `clawlite memory import <file>`
+- `clawlite memory branches`
+- `clawlite memory branch <name> [--from-version <id>] [--checkout]`
+- `clawlite memory checkout <name>`
+- `clawlite memory merge --source <name> --target <name> [--tag <tag>]`
+- `clawlite memory share-optin --user <user_id> --enabled <true|false>`
 - `clawlite skills check`
 - `clawlite cron add --session-id <id> --expression "<expr>" --prompt "<text>" [--name <name>]`
 - `clawlite cron list --session-id <id>`

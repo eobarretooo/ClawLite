@@ -8,6 +8,7 @@ Relevant ClawLite changes.
 - Markdown documentation cleanup to reflect only the current runtime.
 - Updated README, CONTRIBUTING, SECURITY, and ROADMAP for current commands/flows.
 - Updated documentation to remove stale legacy pages.
+- ClawMemory hardening shipped: hybrid semantic+BM25 retrieval, async memorize/retrieve APIs, proactive monitor integrated with heartbeat/diagnostics, multimodal ingest fallback, memory profile/privacy/versioning controls, branch/checkout/merge lifecycle, and optional backend embedding sync (`sqlite` default, `pgvector` optional).
 
 ### Removed
 - Legacy internal analysis/context files that are not part of public documentation.
