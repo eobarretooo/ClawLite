@@ -412,14 +412,20 @@ def test_telegram_drop_pending_updates_on_startup() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_command_help_is_handled_locally() -> None:
+def test_telegram_command_help_is_handled_locally(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
 
         class FakeBot:
             def __init__(self) -> None:
@@ -455,14 +461,20 @@ def test_telegram_command_help_is_handled_locally() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_command_stop_is_forwarded_with_metadata() -> None:
+def test_telegram_command_stop_is_forwarded_with_metadata(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
 
         user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
         chat = SimpleNamespace(type="private")
@@ -493,14 +505,20 @@ def test_telegram_command_stop_is_forwarded_with_metadata() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_edited_message_duplicate_is_deduped() -> None:
+def test_telegram_edited_message_duplicate_is_deduped(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
 
         user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
         chat = SimpleNamespace(type="private")
@@ -530,14 +548,20 @@ def test_telegram_edited_message_duplicate_is_deduped() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_reply_metadata_is_emitted() -> None:
+def test_telegram_reply_metadata_is_emitted(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
 
         user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
         reply_user = SimpleNamespace(id=9, username="bob")
@@ -602,6 +626,38 @@ def test_telegram_inbound_metadata_includes_message_thread_id() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_supergroup_topic_message_uses_topic_session_id() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="supergroup")
+        message = SimpleNamespace(
+            text="topic hello",
+            caption=None,
+            chat_id=-10042,
+            message_thread_id=11,
+            from_user=user,
+            message_id=10,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+
+        await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "telegram:-10042:topic:11"
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
@@ -641,6 +697,50 @@ def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
         assert metadata["media_types"] == ["photo", "voice"]
         assert metadata["media_counts"] == {"photo": 2, "voice": 1}
         assert metadata["media_total_count"] == 3
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_media_placeholder_covers_extended_media_types() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            video=SimpleNamespace(file_id="v1"),
+            animation=SimpleNamespace(file_id="a1"),
+            video_note=SimpleNamespace(file_id="vn1"),
+            sticker=SimpleNamespace(file_id="s1"),
+            contact=SimpleNamespace(phone_number="+15550001111"),
+            location=SimpleNamespace(latitude=1.0, longitude=2.0),
+            photo=None,
+            voice=None,
+            audio=None,
+            document=None,
+            chat_id=42,
+            from_user=user,
+            message_id=12,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=102, message=message, edited_message=None, effective_message=message)
+
+        await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        _, _, text, metadata = emitted[0]
+        assert text == "[telegram media message: animation, contact, location, sticker, video, video_note]"
+        assert metadata["media_types"] == ["animation", "contact", "location", "sticker", "video", "video_note"]
 
     asyncio.run(_scenario())
 
@@ -713,6 +813,77 @@ def test_telegram_callback_query_is_forwarded_and_acknowledged() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_callback_query_supergroup_topic_uses_topic_session_id() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+
+        class FakeBot:
+            async def answer_callback_query(self, **kwargs):
+                return kwargs
+
+        channel.bot = FakeBot()
+        callback_query = SimpleNamespace(
+            id="cq-topic",
+            data="action:topic",
+            chat_instance="inst-topic",
+            from_user=SimpleNamespace(id=7, username="alice"),
+            message=SimpleNamespace(
+                message_id=55,
+                message_thread_id=4,
+                chat=SimpleNamespace(id=-10077, type="supergroup"),
+                chat_id=-10077,
+            ),
+        )
+        update = SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+
+        await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "telegram:-10077:topic:4"
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_message_reaction_supergroup_topic_uses_topic_session_id() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "reaction_notifications": "all"},
+            on_message=_on_message,
+        )
+        update = SimpleNamespace(
+            update_id=110,
+            callback_query=None,
+            message_reaction=SimpleNamespace(
+                chat=SimpleNamespace(id=-10011, type="supergroup"),
+                message_thread_id=7,
+                message_id=99,
+                user=SimpleNamespace(id=9, username="guest", is_bot=False),
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="🔥")],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "telegram:-10011:topic:7"
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_callback_query_blocked_by_allowlist_does_not_emit() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
@@ -762,6 +933,169 @@ def test_telegram_callback_query_blocked_by_allowlist_does_not_emit() -> None:
         signals = channel.signals()
         assert signals["callback_query_received_count"] == 1
         assert signals["callback_query_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_callback_signing_accepts_valid_signed_callback() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "callback_signing_enabled": True,
+                "callback_signing_secret": "secret-1",
+            },
+            on_message=_on_message,
+        )
+
+        class FakeBot:
+            async def answer_callback_query(self, **kwargs):
+                return kwargs
+
+        channel.bot = FakeBot()
+        signed = channel._callback_sign_payload("approve:1")
+        callback_query = SimpleNamespace(
+            id="cq-sign-ok",
+            data=signed,
+            chat_instance="inst-sign",
+            from_user=SimpleNamespace(id=7, username="alice"),
+            message=SimpleNamespace(message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42),
+        )
+
+        await channel._handle_update(
+            SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+        )
+
+        assert len(emitted) == 1
+        assert emitted[0][2] == "approve:1"
+        assert emitted[0][3]["callback_data"] == "approve:1"
+        assert emitted[0][3]["callback_signed"] is True
+        signals = channel.signals()
+        assert signals["callback_query_signature_accepted_count"] == 1
+        assert signals["callback_query_signature_blocked_count"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_callback_signing_blocks_tampered_signed_callback() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "callback_signing_enabled": True,
+                "callback_signing_secret": "secret-1",
+            },
+            on_message=_on_message,
+        )
+
+        class FakeBot:
+            async def answer_callback_query(self, **kwargs):
+                return kwargs
+
+        channel.bot = FakeBot()
+        signed = channel._callback_sign_payload("approve:1")
+        tampered = signed[:-1] + ("A" if signed[-1] != "A" else "B")
+        callback_query = SimpleNamespace(
+            id="cq-sign-bad",
+            data=tampered,
+            chat_instance="inst-sign",
+            from_user=SimpleNamespace(id=7, username="alice"),
+            message=SimpleNamespace(message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42),
+        )
+
+        await channel._handle_update(
+            SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+        )
+
+        assert emitted == []
+        signals = channel.signals()
+        assert signals["callback_query_signature_blocked_count"] == 1
+        assert signals["callback_query_blocked_count"] >= 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_callback_require_signed_controls_unsigned_behavior() -> None:
+    async def _scenario() -> None:
+        allow_emitted: list[tuple[str, str, str, dict]] = []
+        block_emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _allow_handler(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            allow_emitted.append((session_id, user_id, text, metadata))
+
+        async def _block_handler(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            block_emitted.append((session_id, user_id, text, metadata))
+
+        allow_channel = TelegramChannel(
+            config={"token": "x:token", "callback_require_signed": False},
+            on_message=_allow_handler,
+        )
+        block_channel = TelegramChannel(
+            config={"token": "x:token", "callback_require_signed": True},
+            on_message=_block_handler,
+        )
+
+        class FakeBot:
+            async def answer_callback_query(self, **kwargs):
+                return kwargs
+
+        allow_channel.bot = FakeBot()
+        block_channel.bot = FakeBot()
+
+        callback_query = SimpleNamespace(
+            id="cq-unsigned",
+            data="plain:callback",
+            chat_instance="inst-unsigned",
+            from_user=SimpleNamespace(id=7, username="alice"),
+            message=SimpleNamespace(message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42),
+        )
+        update = SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+
+        await allow_channel._handle_update(update)
+        await block_channel._handle_update(update)
+
+        assert len(allow_emitted) == 1
+        assert block_emitted == []
+        assert allow_channel.signals()["callback_query_unsigned_allowed_count"] == 1
+        assert block_channel.signals()["callback_query_signature_blocked_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_update_dedupe_state_persists_across_restarts(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        dedupe_path = tmp_path / "telegram-dedupe.json"
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+                "update_dedupe_limit": 8,
+            }
+        )
+
+        assert channel._remember_update_dedupe_key("update:101", source="polling") is True
+        assert channel._remember_update_dedupe_key("update:102", source="polling") is True
+        await channel._persist_update_dedupe_state()
+
+        reloaded = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+                "update_dedupe_limit": 8,
+            }
+        )
+        assert reloaded._remember_update_dedupe_key("update:101", source="polling") is False
+        assert reloaded._remember_update_dedupe_key("update:103", source="polling") is True
 
     asyncio.run(_scenario())
 
@@ -1251,7 +1585,7 @@ def test_telegram_send_auth_circuit_breaker_cooldown_then_recover() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_offset_commits_after_successful_processing() -> None:
+def test_telegram_offset_commits_after_successful_processing(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
@@ -1259,7 +1593,14 @@ def test_telegram_offset_commits_after_successful_processing() -> None:
             del session_id, user_id, metadata
             emitted.append(text)
 
-        channel = TelegramChannel(config={"token": "x:token", "poll_interval_s": 0.01}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "poll_interval_s": 0.01,
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
         saved: list[int] = []
         channel._save_offset = lambda: saved.append(channel._offset)  # type: ignore[method-assign]
 
@@ -1304,14 +1645,21 @@ def test_telegram_offset_commits_after_successful_processing() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_offset_not_committed_when_processing_fails() -> None:
+def test_telegram_offset_not_committed_when_processing_fails(tmp_path: Path) -> None:
     async def _scenario() -> None:
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
             del session_id, user_id, text, metadata
             channel._running = False
             raise RuntimeError("boom")
 
-        channel = TelegramChannel(config={"token": "x:token", "poll_interval_s": 0.01}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "poll_interval_s": 0.01,
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
         saved: list[int] = []
         channel._save_offset = lambda: saved.append(channel._offset)  # type: ignore[method-assign]
 
@@ -1377,7 +1725,7 @@ def test_telegram_save_offset_writes_v2_payload_with_fingerprint(tmp_path: Path)
     assert channel.signals()["offset_persist_error_count"] == 0
 
 
-def test_telegram_polling_transient_failure_recovers_and_processes_update() -> None:
+def test_telegram_polling_transient_failure_recovers_and_processes_update(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
@@ -1392,6 +1740,7 @@ def test_telegram_polling_transient_failure_recovers_and_processes_update() -> N
                 "poll_interval_s": 0.01,
                 "reconnect_initial_s": 0.01,
                 "reconnect_max_s": 0.01,
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
             },
             on_message=_on_message,
         )
@@ -1444,7 +1793,7 @@ def test_telegram_polling_transient_failure_recovers_and_processes_update() -> N
     asyncio.run(_scenario())
 
 
-def test_telegram_polling_soak_recovery_reconnects_then_stabilizes() -> None:
+def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
@@ -1458,6 +1807,7 @@ def test_telegram_polling_soak_recovery_reconnects_then_stabilizes() -> None:
                 "poll_interval_s": 0.01,
                 "reconnect_initial_s": 0.01,
                 "reconnect_max_s": 0.02,
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
             },
             on_message=_on_message,
         )
@@ -1945,7 +2295,7 @@ def test_telegram_send_mixed_chaos_chunking_retry_after_timeout_then_success() -
     asyncio.run(_scenario())
 
 
-def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_updates() -> None:
+def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_updates(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
@@ -1959,6 +2309,7 @@ def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_update
                 "poll_interval_s": 0.01,
                 "reconnect_initial_s": 0.01,
                 "reconnect_max_s": 0.02,
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
             },
             on_message=_on_message,
         )
@@ -2028,7 +2379,7 @@ def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_update
     asyncio.run(_scenario())
 
 
-def test_telegram_polling_stale_update_is_skipped_and_counted() -> None:
+def test_telegram_polling_stale_update_is_skipped_and_counted(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
@@ -2036,7 +2387,14 @@ def test_telegram_polling_stale_update_is_skipped_and_counted() -> None:
             del session_id, user_id, metadata
             emitted.append(text)
 
-        channel = TelegramChannel(config={"token": "x:token", "poll_interval_s": 0.01}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "poll_interval_s": 0.01,
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
         channel._save_offset = lambda: None  # type: ignore[method-assign]
         channel._offset = 200
 
@@ -2193,14 +2551,20 @@ def test_telegram_webhook_missing_config_falls_back_to_polling() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes() -> None:
+def test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
 
         class FakeBot:
             def __init__(self) -> None:
@@ -2248,14 +2612,20 @@ def test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes(
     asyncio.run(_scenario())
 
 
-def test_telegram_dedupe_skips_duplicate_callback_query_without_update_id() -> None:
+def test_telegram_dedupe_skips_duplicate_callback_query_without_update_id(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
 
         class FakeBot:
             def __init__(self) -> None:
@@ -2287,14 +2657,20 @@ def test_telegram_dedupe_skips_duplicate_callback_query_without_update_id() -> N
     asyncio.run(_scenario())
 
 
-def test_telegram_dedupe_skips_duplicate_message_key_without_update_id() -> None:
+def test_telegram_dedupe_skips_duplicate_message_key_without_update_id(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
         payload = {
             "message": {
                 "message_id": 90,
@@ -2403,14 +2779,20 @@ def test_telegram_edited_channel_post_is_forwarded_as_edit() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_handle_webhook_update_normalizes_channel_post_payload() -> None:
+def test_telegram_handle_webhook_update_normalizes_channel_post_payload(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
         async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
-        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
         payload = {
             "update_id": 901,
             "channel_post": {

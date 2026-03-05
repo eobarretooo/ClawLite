@@ -449,6 +449,11 @@ def test_channel_manager_send_outbound_uses_session_routing() -> None:
     asyncio.run(_scenario())
 
 
+def test_channel_manager_target_from_session_id_parses_telegram_topic_format() -> None:
+    target = ChannelManager._target_from_session_id("telegram", "telegram:-10042:topic:9")
+    assert target == "-10042:9"
+
+
 def test_channel_manager_dispatch_preserves_telegram_thread_target() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()

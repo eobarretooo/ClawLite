@@ -324,7 +324,12 @@ class ChannelManager:
             return ""
         if channel_name == "telegram":
             if raw.startswith("telegram:"):
-                return raw.split(":", 1)[1].strip()
+                payload = raw.split(":", 1)[1].strip()
+                if ":topic:" in payload:
+                    chat_id, _, thread_id = payload.partition(":topic:")
+                    thread = thread_id.strip()
+                    return f"{chat_id.strip()}:{thread}" if thread else chat_id.strip()
+                return payload
             if raw.startswith("tg_"):
                 raw = raw[3:]
                 if ":topic:" in raw:

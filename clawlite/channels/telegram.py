@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import html
 import hashlib
+import hmac
 import json
 import math
 import random
@@ -361,6 +363,12 @@ class TelegramChannel(BaseChannel):
             1,
             int(config.get("reaction_own_cache_limit", config.get("reactionOwnCacheLimit", 4096)) or 4096),
         )
+        self.dedupe_state_path = self._normalize_state_path(
+            str(getattr(telegram_config, "dedupe_state_path", "") or "")
+        )
+        self.callback_signing_enabled = bool(getattr(telegram_config, "callback_signing_enabled", False))
+        self.callback_signing_secret = str(getattr(telegram_config, "callback_signing_secret", "") or "")
+        self.callback_require_signed = bool(getattr(telegram_config, "callback_require_signed", False))
         self._send_retry_policy = TelegramRetryPolicy(
             max_attempts=self.send_retry_attempts,
             base_backoff_s=self.send_backoff_base_s,
@@ -391,6 +399,9 @@ class TelegramChannel(BaseChannel):
             "callback_query_received_count": 0,
             "callback_query_blocked_count": 0,
             "callback_query_ack_error_count": 0,
+            "callback_query_signature_accepted_count": 0,
+            "callback_query_signature_blocked_count": 0,
+            "callback_query_unsigned_allowed_count": 0,
             "webhook_set_count": 0,
             "webhook_delete_count": 0,
             "webhook_fallback_to_polling_count": 0,
@@ -398,6 +409,8 @@ class TelegramChannel(BaseChannel):
             "webhook_update_duplicate_count": 0,
             "webhook_update_parse_error_count": 0,
             "update_duplicate_skip_count": 0,
+            "update_dedupe_state_load_error_count": 0,
+            "update_dedupe_state_save_error_count": 0,
             "polling_stale_update_skip_count": 0,
             "offset_persist_error_count": 0,
             "offset_load_error_count": 0,
@@ -422,12 +435,134 @@ class TelegramChannel(BaseChannel):
         )
         self._seen_update_keys: set[str] = set()
         self._seen_update_order: deque[str] = deque()
+        self._dedupe_persist_task: asyncio.Task[Any] | None = None
         self._own_sent_message_keys: set[tuple[str, int]] = set()
         self._own_sent_message_order: deque[tuple[str, int]] = deque()
         self._message_signatures: dict[tuple[str, int], str] = {}
         self._signature_limit = 4096
         self._send_auth_breaker_seen_open = False
         self._typing_auth_breaker_seen_open = False
+        self._load_update_dedupe_state()
+
+    @staticmethod
+    def _normalize_state_path(raw: str) -> Path:
+        value = str(raw or "").strip()
+        if not value:
+            return Path.home() / ".clawlite" / "state" / "telegram-dedupe.json"
+        return Path(value).expanduser()
+
+    @property
+    def _callback_signing_active(self) -> bool:
+        return self.callback_signing_enabled and bool(self.callback_signing_secret)
+
+    def _session_id_for_chat(self, *, chat_id: str, chat_type: str = "", message_thread_id: int | None = None) -> str:
+        normalized_chat_id = str(chat_id or "").strip()
+        thread_id = self._coerce_thread_id(message_thread_id)
+        normalized_chat_type = str(chat_type or "").strip().lower()
+        if normalized_chat_type == "supergroup" and thread_id is not None:
+            return f"telegram:{normalized_chat_id}:topic:{thread_id}"
+        return f"telegram:{normalized_chat_id}"
+
+    def _dedupe_state_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            "keys": list(self._seen_update_order),
+        }
+
+    def _load_update_dedupe_state(self) -> None:
+        path = self.dedupe_state_path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            keys_raw = data.get("keys", []) if isinstance(data, dict) else []
+            if not isinstance(keys_raw, list):
+                return
+            normalized: deque[str] = deque(maxlen=self._update_dedupe_limit)
+            seen_local: set[str] = set()
+            for item in keys_raw:
+                key = str(item or "").strip()
+                if not key or key in seen_local:
+                    continue
+                seen_local.add(key)
+                normalized.append(key)
+            self._seen_update_order = deque(normalized)
+            self._seen_update_keys = set(self._seen_update_order)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            self._signals["update_dedupe_state_load_error_count"] += 1
+            logger.warning("telegram dedupe state load failed path={} error={}", path, exc)
+
+    async def _persist_update_dedupe_state(self) -> None:
+        path = self.dedupe_state_path
+        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = self._dedupe_state_payload()
+            tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+            tmp_path.replace(path)
+        except (OSError, TypeError, ValueError) as exc:
+            self._signals["update_dedupe_state_save_error_count"] += 1
+            logger.debug("telegram dedupe state persist failed path={} error={}", path, exc)
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+
+    def _schedule_dedupe_state_persist(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._dedupe_persist_task is not None and not self._dedupe_persist_task.done():
+            return
+        self._dedupe_persist_task = loop.create_task(self._persist_update_dedupe_state())
+
+    def _callback_sign_payload(self, callback_data: str) -> str:
+        nonce = base64.urlsafe_b64encode(hashlib.sha256(str(time.monotonic()).encode("utf-8")).digest()[:6]).decode("ascii").rstrip("=")
+        data = str(callback_data or "")
+        encoded_data = base64.urlsafe_b64encode(data.encode("utf-8")).decode("ascii").rstrip("=")
+        digest = hmac.new(
+            self.callback_signing_secret.encode("utf-8"),
+            f"{nonce}.{encoded_data}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        signature = base64.urlsafe_b64encode(digest[:12]).decode("ascii").rstrip("=")
+        return f"s1.{nonce}.{encoded_data}.{signature}"
+
+    @staticmethod
+    def _urlsafe_b64decode(data: str) -> bytes:
+        padded = data + ("=" * ((4 - len(data) % 4) % 4))
+        return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+    def _callback_verify_payload(self, callback_data: str) -> tuple[bool, str, bool]:
+        raw = str(callback_data or "")
+        if not raw.startswith("s1."):
+            return False, raw, False
+        parts = raw.split(".", 3)
+        if len(parts) != 4:
+            return False, "", True
+        _, nonce, encoded_data, provided_signature = parts
+        if not nonce or not encoded_data or not provided_signature or not self.callback_signing_secret:
+            return False, "", True
+        try:
+            decoded_data = self._urlsafe_b64decode(encoded_data).decode("utf-8")
+        except Exception:
+            return False, "", True
+        digest = hmac.new(
+            self.callback_signing_secret.encode("utf-8"),
+            f"{nonce}.{encoded_data}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        expected_signature = base64.urlsafe_b64encode(digest[:12]).decode("ascii").rstrip("=")
+        if not hmac.compare_digest(expected_signature, provided_signature):
+            return False, "", True
+        return True, decoded_data, True
 
     def _sync_auth_breaker_signal_transition(self, *, breaker: TelegramAuthCircuitBreaker, key_prefix: str) -> None:
         seen_open_attr = f"_{key_prefix}_auth_breaker_seen_open"
@@ -595,16 +730,19 @@ class TelegramChannel(BaseChannel):
         key = str(dedupe_key or "").strip()
         if not key:
             return True
-        if key in self._seen_update_keys:
+        normalized_source = str(source or "").strip().lower() or "unknown"
+        store_key = f"{normalized_source}:{key}"
+        if store_key in self._seen_update_keys:
             self._signals["update_duplicate_skip_count"] += 1
-            if source == "webhook":
+            if normalized_source == "webhook":
                 self._signals["webhook_update_duplicate_count"] += 1
             return False
-        self._seen_update_keys.add(key)
-        self._seen_update_order.append(key)
+        self._seen_update_keys.add(store_key)
+        self._seen_update_order.append(store_key)
         while len(self._seen_update_order) > self._update_dedupe_limit:
             oldest = self._seen_update_order.popleft()
             self._seen_update_keys.discard(oldest)
+        self._schedule_dedupe_state_persist()
         return True
 
     async def _ensure_bot(self) -> Any:
@@ -1134,13 +1272,45 @@ class TelegramChannel(BaseChannel):
                 )
                 return True
 
-            session_id = f"telegram:{callback_chat_id}"
+            callback_valid, callback_normalized_data, callback_signed = self._callback_verify_payload(callback_data)
+            callback_blocked = False
+            if callback_signed:
+                if callback_valid:
+                    callback_data = callback_normalized_data
+                    callback_text = callback_data.strip() or "[telegram callback_query]"
+                    self._signals["callback_query_signature_accepted_count"] += 1
+                else:
+                    callback_blocked = True
+            else:
+                if self.callback_require_signed:
+                    callback_blocked = True
+                else:
+                    self._signals["callback_query_unsigned_allowed_count"] += 1
+
+            if callback_blocked:
+                self._signals["callback_query_blocked_count"] += 1
+                self._signals["callback_query_signature_blocked_count"] += 1
+                logger.debug(
+                    "telegram callback_query blocked signature chat={} id={} signed={} require_signed={}",
+                    callback_chat_id,
+                    callback_query_id,
+                    callback_signed,
+                    self.callback_require_signed,
+                )
+                return True
+
+            session_id = self._session_id_for_chat(
+                chat_id=callback_chat_id,
+                chat_type=callback_chat_type,
+                message_thread_id=callback_thread_id,
+            )
             metadata: dict[str, Any] = {
                 "channel": "telegram",
                 "chat_id": callback_chat_id,
                 "is_callback_query": True,
                 "callback_query_id": callback_query_id,
                 "callback_data": callback_data,
+                "callback_signed": callback_signed,
                 "callback_chat_instance": str(getattr(callback_query, "chat_instance", "") or ""),
                 "user_id": int(getattr(callback_from_user, "id", 0) or 0),
                 "username": callback_username,
@@ -1228,7 +1398,11 @@ class TelegramChannel(BaseChannel):
             reaction_old_tokens = self._reaction_tokens(old_reaction)
             reaction_marker = " ".join(reaction_added)
             reaction_text = f"[telegram reaction] {reaction_marker}".strip()
-            session_id = f"telegram:{chat_id}"
+            session_id = self._session_id_for_chat(
+                chat_id=chat_id,
+                chat_type=reaction_chat_type,
+                message_thread_id=reaction_thread_id,
+            )
             metadata = {
                 "channel": "telegram",
                 "chat_id": chat_id,
@@ -1316,7 +1490,11 @@ class TelegramChannel(BaseChannel):
                 self._remember_message_signature(msg_key=msg_key, signature=signature)
                 return True
 
-        session_id = f"telegram:{chat_id}"
+        session_id = self._session_id_for_chat(
+            chat_id=chat_id,
+            chat_type=chat_type,
+            message_thread_id=message_thread_id,
+        )
         metadata = self._build_metadata(
             item=item,
             message=message,
@@ -1402,7 +1580,17 @@ class TelegramChannel(BaseChannel):
         if photos:
             counts["photo"] = len(photos)
 
-        for media_type in ("voice", "audio", "document"):
+        for media_type in (
+            "voice",
+            "audio",
+            "document",
+            "video",
+            "animation",
+            "video_note",
+            "sticker",
+            "contact",
+            "location",
+        ):
             if getattr(message, media_type, None) is not None:
                 counts[media_type] = counts.get(media_type, 0) + 1
 
@@ -1467,6 +1655,8 @@ class TelegramChannel(BaseChannel):
         if self._webhook_mode_active:
             await self._try_delete_webhook(reason="webhook_stop")
         await cancel_task(self._task)
+        await cancel_task(self._dedupe_persist_task)
+        self._dedupe_persist_task = None
         self._task = None
         self._webhook_mode_active = False
         self._connected = False
@@ -1765,7 +1955,10 @@ class TelegramChannel(BaseChannel):
                     return None
                 inline_button: dict[str, str] = {"text": text}
                 if callback_data:
-                    inline_button["callback_data"] = str(callback_data)
+                    callback_raw = str(callback_data)
+                    if self._callback_signing_active:
+                        callback_raw = self._callback_sign_payload(callback_raw)
+                    inline_button["callback_data"] = callback_raw
                 if url:
                     inline_button["url"] = str(url)
                 inline_row.append(inline_button)

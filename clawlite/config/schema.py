@@ -524,6 +524,7 @@ class TelegramChannelConfig(BaseChannelConfig):
     webhook_path: str = "/api/webhooks/telegram"
     webhook_url: str = ""
     update_dedupe_limit: int = 4096
+    dedupe_state_path: str = ""
     poll_interval_s: float = 1.0
     poll_timeout_s: int = 20
     reconnect_initial_s: float = 2.0
@@ -550,6 +551,9 @@ class TelegramChannelConfig(BaseChannelConfig):
     group_allow_from: list[str] = field(default_factory=list)
     topic_allow_from: list[str] = field(default_factory=list)
     group_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    callback_signing_enabled: bool = False
+    callback_signing_secret: str = ""
+    callback_require_signed: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> TelegramChannelConfig:
@@ -583,6 +587,7 @@ class TelegramChannelConfig(BaseChannelConfig):
                     or 4096
                 ),
             ),
+            dedupe_state_path=str(data.get("dedupe_state_path", data.get("dedupeStatePath", "")) or "").strip(),
             poll_interval_s=float(data.get("poll_interval_s", data.get("pollIntervalS", 1.0)) or 1.0),
             poll_timeout_s=int(data.get("poll_timeout_s", data.get("pollTimeoutS", 20)) or 20),
             reconnect_initial_s=float(data.get("reconnect_initial_s", data.get("reconnectInitialS", 2.0)) or 2.0),
@@ -616,6 +621,15 @@ class TelegramChannelConfig(BaseChannelConfig):
             group_allow_from=cls._allow_from({"allow_from": data.get("group_allow_from", data.get("groupAllowFrom", []))}),
             topic_allow_from=cls._allow_from({"allow_from": data.get("topic_allow_from", data.get("topicAllowFrom", []))}),
             group_overrides=group_overrides,
+            callback_signing_enabled=bool(
+                data.get("callback_signing_enabled", data.get("callbackSigningEnabled", False))
+            ),
+            callback_signing_secret=str(
+                data.get("callback_signing_secret", data.get("callbackSigningSecret", "")) or ""
+            ).strip(),
+            callback_require_signed=bool(
+                data.get("callback_require_signed", data.get("callbackRequireSigned", False))
+            ),
         )
 
 
