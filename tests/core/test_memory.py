@@ -1395,3 +1395,140 @@ def test_memory_quality_state_history_is_bounded(tmp_path: Path, monkeypatch) ->
         "2026-03-05T10:03:00+00:00",
         "2026-03-05T10:04:00+00:00",
     ]
+
+
+def test_memory_integration_policy_defaults_to_normal_on_empty_quality_state(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+
+    policy = store.integration_policy("agent")
+
+    assert policy["mode"] == "normal"
+    assert policy["reason"] == "quality_state_uninitialized"
+    assert policy["allow_memory_write"] is True
+    assert policy["allow_skill_exec"] is True
+    assert policy["allow_subagent_spawn"] is True
+    assert policy["recommended_search_limit"] == 8
+    assert policy["quality"]["has_report"] is False
+
+
+def test_memory_integration_policy_uses_quality_state_for_degraded_and_severe_modes(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.quality_state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-05T12:00:00+00:00",
+                "baseline": {},
+                "current": {
+                    "score": 62,
+                    "drift": {"assessment": "stable"},
+                },
+                "history": [],
+                "tuning": {"degrading_streak": 2, "last_error": ""},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    degraded = store.integration_policy("agent")
+    delegated = store.integration_policy("subagent")
+
+    assert degraded["mode"] == "degraded"
+    assert degraded["allow_memory_write"] is True
+    assert degraded["allow_skill_exec"] is False
+    assert degraded["allow_subagent_spawn"] is False
+    assert degraded["recommended_search_limit"] == 4
+    assert delegated["recommended_search_limit"] == 3
+    assert delegated["allow_subagent_spawn"] is False
+
+    store.quality_state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-05T12:30:00+00:00",
+                "baseline": {},
+                "current": {
+                    "score": 38,
+                    "drift": {"assessment": "degrading"},
+                },
+                "history": [],
+                "tuning": {"degrading_streak": 4, "last_error": ""},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    severe = store.integration_policy("agent")
+
+    assert severe["mode"] == "severe"
+    assert severe["allow_memory_write"] is False
+    assert severe["allow_skill_exec"] is False
+    assert severe["allow_subagent_spawn"] is False
+    assert severe["recommended_search_limit"] == 2
+
+
+def test_memory_integration_hint_is_empty_for_normal_and_present_for_risk_modes(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+
+    assert store.integration_hint("agent") == ""
+
+    store.quality_state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-05T12:05:00+00:00",
+                "baseline": {},
+                "current": {
+                    "score": 68,
+                    "drift": {"assessment": "degrading"},
+                },
+                "history": [],
+                "tuning": {"degrading_streak": 1, "last_error": ""},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    degraded_hint = store.integration_hint("agent")
+    assert degraded_hint
+
+    store.quality_state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-05T12:06:00+00:00",
+                "baseline": {},
+                "current": {
+                    "score": 80,
+                    "drift": {"assessment": "stable"},
+                },
+                "history": [],
+                "tuning": {"degrading_streak": 0, "last_error": "loop timeout"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    severe_hint = store.integration_hint("agent")
+    assert severe_hint
+    assert "severe" in severe_hint.lower()
+
+
+def test_memory_integration_policies_snapshot_returns_expected_shape(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+
+    snapshot = store.integration_policies_snapshot(session_id="sess-123")
+
+    assert snapshot["session_id"] == "sess-123"
+    assert snapshot["mode"] == "normal"
+    assert isinstance(snapshot["quality"], dict)
+    policies = snapshot["policies"]
+    assert set(policies.keys()) == {"system", "agent", "subagent", "tool"}
+    for actor, payload in policies.items():
+        assert payload["actor"] == actor
+        assert "allow_memory_write" in payload
+        assert "allow_skill_exec" in payload
+        assert "allow_subagent_spawn" in payload
+        assert "recommended_search_limit" in payload

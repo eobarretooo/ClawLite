@@ -661,7 +661,6 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     tools.register(CronTool(_CronAPI(cron)))
     tools.register(MCPTool(config.tools.mcp))
     skills = SkillsLoader()
-    tools.register(SkillTool(loader=skills, registry=tools))
 
     sessions = SessionStore(
         root=Path(config.state_path) / "sessions",
@@ -692,6 +691,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         memory_backend_name=str(config.agents.defaults.memory.backend or "sqlite"),
         memory_backend_url=str(config.agents.defaults.memory.pgvector_url or ""),
     )
+    tools.register(SkillTool(loader=skills, registry=tools, memory=memory))
     memory_monitor = MemoryMonitor(memory) if bool(getattr(config.agents.defaults.memory, "proactive", False)) else None
     tools.register(MemoryRecallTool(memory))
     tools.register(MemoryLearnTool(memory))
@@ -724,7 +724,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         result = await engine.run(session_id=session_id, user_text=task)
         return result.text
 
-    tools.register(SpawnTool(engine.subagents, _subagent_runner))
+    tools.register(SpawnTool(engine.subagents, _subagent_runner, memory=memory))
 
     bus = MessageQueue()
     channels = ChannelManager(bus=bus, engine=engine)
@@ -1946,6 +1946,29 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 memory_quality_cache["payload"] = dict(memory_quality_payload)
 
         engine_payload["memory_quality"] = memory_quality_payload
+        memory_integration_payload: dict[str, Any] = {"available": False}
+        memory_integration_snapshot = getattr(memory_store, "integration_policies_snapshot", None)
+        if callable(memory_integration_snapshot):
+            try:
+                try:
+                    raw_memory_integration_payload = memory_integration_snapshot(session_id="")
+                except TypeError:
+                    raw_memory_integration_payload = memory_integration_snapshot()
+            except Exception as exc:
+                memory_integration_payload = {
+                    "available": True,
+                    "error": str(exc),
+                }
+            else:
+                if isinstance(raw_memory_integration_payload, dict):
+                    memory_integration_payload = dict(raw_memory_integration_payload)
+                else:
+                    memory_integration_payload = {
+                        "available": True,
+                        "error": "invalid_memory_integration_payload",
+                    }
+                memory_integration_payload.setdefault("available", True)
+        engine_payload["memory_integration"] = memory_integration_payload
         if cfg.gateway.diagnostics.include_provider_telemetry:
             engine_payload["provider"] = _provider_telemetry_snapshot(runtime.engine.provider)
         monitor_payload: dict[str, Any]

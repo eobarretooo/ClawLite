@@ -702,12 +702,63 @@ class AgentEngine:
         except TypeError:
             return search_fn(query, limit=limit)
 
+    def _memory_integration_policy(self, *, actor: str, session_id: str = "") -> dict[str, Any]:
+        policy_fn = getattr(self.memory, "integration_policy", None)
+        if not callable(policy_fn):
+            return {}
+        try:
+            payload = policy_fn(actor, session_id=session_id)
+        except TypeError:
+            try:
+                payload = policy_fn(actor)
+            except Exception:
+                return {}
+        except Exception:
+            return {}
+        if inspect.isawaitable(payload):
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, bool):
+            return {"allow_memory_write": payload}
+        return {}
+
+    @staticmethod
+    def _clamp_memory_search_limit(raw: Any, *, default: int = 6) -> int:
+        try:
+            value = int(raw)
+        except Exception:
+            value = int(default)
+        return max(1, min(32, value))
+
+    async def _memory_integration_hint(self, *, actor: str, session_id: str) -> str:
+        hint_fn = getattr(self.memory, "integration_hint", None)
+        if not callable(hint_fn):
+            return ""
+        try:
+            value = hint_fn(actor, session_id=session_id)
+        except TypeError:
+            try:
+                value = hint_fn(actor)
+            except Exception:
+                return ""
+        except Exception:
+            return ""
+        if inspect.isawaitable(value):
+            try:
+                value = await value
+            except Exception:
+                return ""
+        return str(value or "").strip()
+
     def _plan_memory_snippets(self, *, session_id: str = "", user_id: str = "", user_text: str, run_log: Any) -> list[str]:
         route = self._MEMORY_ROUTE_NO_RETRIEVE
         selected_query = ""
         attempts = 0
         hits = 0
         rewrites = 0
+        policy = self._memory_integration_policy(actor="agent", session_id=session_id)
+        search_limit = self._clamp_memory_search_limit(policy.get("recommended_search_limit", 6), default=6)
         try:
             if not self._is_memory_retrieval_candidate(user_text):
                 run_log.debug("memory planner route={} query=- rows=0", route)
@@ -723,7 +774,12 @@ class AgentEngine:
             route = self._MEMORY_ROUTE_RETRIEVE
             selected_query = " ".join(str(user_text or "").split()).strip()
             started = time.perf_counter()
-            first_rows = self._memory_search(query=selected_query, limit=6, user_id=user_id, include_shared=True)
+            first_rows = self._memory_search(
+                query=selected_query,
+                limit=search_limit,
+                user_id=user_id,
+                include_shared=True,
+            )
             attempts += 1
             self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
             if first_rows:
@@ -737,7 +793,12 @@ class AgentEngine:
                     selected_query = rewritten
                     rewrites += 1
                     started = time.perf_counter()
-                    second_rows = self._memory_search(query=rewritten, limit=6, user_id=user_id, include_shared=True)
+                    second_rows = self._memory_search(
+                        query=rewritten,
+                        limit=search_limit,
+                        user_id=user_id,
+                        include_shared=True,
+                    )
                     attempts += 1
                     self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
                     if second_rows:
@@ -1049,6 +1110,7 @@ class AgentEngine:
         budget = self._resolve_turn_budget(turn_budget)
         progress_counter = [0]
         history = self.sessions.read(session_id, limit=self.memory_window)
+        memory_policy = self._memory_integration_policy(actor="agent", session_id=session_id)
         memories = self._plan_memory_snippets(
             session_id=session_id,
             user_id=runtime_chat_id,
@@ -1091,6 +1153,9 @@ class AgentEngine:
                 guidance = ""
             if str(guidance or "").strip():
                 messages.append({"role": "system", "content": str(guidance).strip()})
+        integration_hint = await self._memory_integration_hint(actor="agent", session_id=session_id)
+        if integration_hint:
+            messages.append({"role": "system", "content": integration_hint})
         if prompt.history_messages:
             messages.extend(prompt.history_messages)
         if prompt.runtime_context:
@@ -1389,33 +1454,37 @@ class AgentEngine:
         if not graceful_error:
             self.sessions.append(session_id, "assistant", final.text)
             memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
-            memorize_fn = getattr(self.memory, "memorize", None)
-            if callable(memorize_fn):
-                try:
-                    memorize_kwargs: dict[str, Any] = {
-                        "messages": memory_messages,
-                        "source": f"session:{session_id}",
-                    }
-                    if self._accepts_parameter(memorize_fn, "user_id"):
-                        memorize_kwargs["user_id"] = runtime_chat_id
-                    if self._accepts_parameter(memorize_fn, "shared"):
-                        memorize_kwargs["shared"] = False
-                    try:
-                        memorize_result = memorize_fn(**memorize_kwargs)
-                    except TypeError:
-                        memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
-                    if inspect.isawaitable(memorize_result):
-                        await memorize_result
-                except Exception as exc:
-                    run_log.warning("memory memorize failed session={} error={}", session_id or "-", exc)
+            allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
+            if not allow_memory_write:
+                run_log.info("memory persistence skipped by integration policy session={}", session_id or "-")
             else:
-                try:
-                    self.memory.consolidate(
-                        memory_messages,
-                        source=f"session:{session_id}",
-                    )
-                except Exception as exc:
-                    run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)
+                memorize_fn = getattr(self.memory, "memorize", None)
+                if callable(memorize_fn):
+                    try:
+                        memorize_kwargs: dict[str, Any] = {
+                            "messages": memory_messages,
+                            "source": f"session:{session_id}",
+                        }
+                        if self._accepts_parameter(memorize_fn, "user_id"):
+                            memorize_kwargs["user_id"] = runtime_chat_id
+                        if self._accepts_parameter(memorize_fn, "shared"):
+                            memorize_kwargs["shared"] = False
+                        try:
+                            memorize_result = memorize_fn(**memorize_kwargs)
+                        except TypeError:
+                            memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
+                        if inspect.isawaitable(memorize_result):
+                            await memorize_result
+                    except Exception as exc:
+                        run_log.warning("memory memorize failed session={} error={}", session_id or "-", exc)
+                else:
+                    try:
+                        self.memory.consolidate(
+                            memory_messages,
+                            source=f"session:{session_id}",
+                        )
+                    except Exception as exc:
+                        run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)
         else:
             run_log.info("skipping assistant persistence after provider failure")
         if final.model == "engine/stop":

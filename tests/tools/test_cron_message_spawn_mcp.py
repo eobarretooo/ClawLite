@@ -62,6 +62,16 @@ class FakeMsgAPI:
         return f"sent:{channel}:{target}:{text}"
 
 
+class FakeMemory:
+    def __init__(self, verdict) -> None:
+        self.verdict = verdict
+        self.calls: list[tuple[str, str]] = []
+
+    def integration_policy(self, kind: str, *, session_id: str):
+        self.calls.append((kind, session_id))
+        return self.verdict
+
+
 async def _runner(_session_id: str, task: str) -> str:
     return f"done:{task}"
 
@@ -260,5 +270,33 @@ def test_spawn_tool_surfaces_queue_limits(tmp_path) -> None:
 
         gate.set()
         await asyncio.sleep(0)
+
+    asyncio.run(_scenario())
+
+
+def test_spawn_tool_allows_when_memory_policy_allows() -> None:
+    async def _scenario() -> None:
+        manager = SubagentManager()
+        memory = FakeMemory({"allowed": True})
+        tool = SpawnTool(manager, _runner, memory=memory)
+        run_id = await tool.run({"task": "analyze"}, ToolContext(session_id="s-policy-allow"))
+        assert run_id
+        assert memory.calls == [("subagent", "s-policy-allow")]
+
+    asyncio.run(_scenario())
+
+
+def test_spawn_tool_blocks_when_memory_policy_denies() -> None:
+    async def _scenario() -> None:
+        manager = SubagentManager()
+        memory = FakeMemory({"allowed": False, "reason": "subagent_disabled"})
+        tool = SpawnTool(manager, _runner, memory=memory)
+
+        try:
+            await tool.run({"task": "analyze"}, ToolContext(session_id="s-policy-block"))
+            raise AssertionError("expected ValueError for memory policy block")
+        except ValueError as exc:
+            assert str(exc) == "subagent_spawn_blocked_by_memory_policy:subagent_disabled"
+        assert memory.calls == [("subagent", "s-policy-block")]
 
     asyncio.run(_scenario())

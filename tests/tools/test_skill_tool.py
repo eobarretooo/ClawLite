@@ -32,6 +32,16 @@ class FakeExecTool(Tool):
         return f"exec:{arguments.get('command', '')}:{ctx.channel}:{ctx.user_id}"
 
 
+class FakeMemory:
+    def __init__(self, verdict):
+        self.verdict = verdict
+        self.calls: list[tuple[str, str]] = []
+
+    def integration_policy(self, kind: str, *, session_id: str):
+        self.calls.append((kind, session_id))
+        return self.verdict
+
+
 def _write_skill(root: Path, slug: str, frontmatter: str, body: str = "body") -> None:
     skill_dir = root / slug
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -238,5 +248,47 @@ def test_run_skill_command_uses_exec_tool_in_cli_context(tmp_path: Path) -> None
             ToolContext(session_id="cli:skill", channel="cli", user_id="7"),
         )
         assert out == "exec:echo 'hello world':cli:7"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_allows_execution_when_memory_policy_allows(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "echo-skill",
+        "name: echo-skill\ndescription: echo\ncommand: echo",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        memory = FakeMemory({"allowed": True})
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg, memory=memory)
+        out = await tool.run(
+            {"name": "echo-skill", "input": "hello"},
+            ToolContext(session_id="s8"),
+        )
+        assert "exit=0" in out
+        assert memory.calls == [("skill", "s8")]
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_blocks_execution_when_memory_policy_denies(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "echo-skill",
+        "name: echo-skill\ndescription: echo\ncommand: echo",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        memory = FakeMemory({"allowed": False, "reason": "maintenance"})
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg, memory=memory)
+        out = await tool.run(
+            {"name": "echo-skill", "input": "hello"},
+            ToolContext(session_id="s9"),
+        )
+        assert out == "skill_blocked:echo-skill:memory_policy:maintenance"
+        assert memory.calls == [("skill", "s9")]
 
     asyncio.run(_scenario())

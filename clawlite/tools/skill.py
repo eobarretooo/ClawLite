@@ -9,6 +9,7 @@ from __future__ import annotations
 """
 
 import asyncio
+import inspect
 import shlex
 from pathlib import Path
 from typing import Any
@@ -39,9 +40,50 @@ class SkillTool(Tool):
     MAX_SKILL_ARGS = 32
     MAX_ARG_CHARS = 4000
 
-    def __init__(self, *, loader: SkillsLoader, registry: ToolRegistry) -> None:
+    def __init__(self, *, loader: SkillsLoader, registry: ToolRegistry, memory: Any | None = None) -> None:
         self.loader = loader
         self.registry = registry
+        self.memory = memory
+
+    @staticmethod
+    def _policy_reason(raw: Any) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return "unspecified"
+        return text.replace("\n", " ").replace("\r", " ")
+
+    async def _memory_policy_allows(self, *, session_id: str) -> tuple[bool, str]:
+        memory = self.memory
+        if memory is None:
+            return True, ""
+
+        policy_fn = getattr(memory, "integration_policy", None)
+        if not callable(policy_fn):
+            return True, ""
+
+        try:
+            verdict = policy_fn("skill", session_id=session_id)
+            if inspect.isawaitable(verdict):
+                verdict = await verdict
+        except Exception:
+            return True, ""
+
+        if isinstance(verdict, bool):
+            return verdict, "" if verdict else "blocked"
+
+        if isinstance(verdict, dict):
+            allowed_raw = verdict.get("allowed", verdict.get("allow", verdict.get("ok", True)))
+            allowed = bool(allowed_raw)
+            reason = self._policy_reason(verdict.get("reason", verdict.get("message", verdict.get("detail", ""))))
+            return allowed, reason if not allowed else ""
+
+        allowed_attr = getattr(verdict, "allowed", None)
+        if allowed_attr is not None:
+            allowed = bool(allowed_attr)
+            reason = self._policy_reason(getattr(verdict, "reason", ""))
+            return allowed, reason if not allowed else ""
+
+        return True, ""
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -201,6 +243,10 @@ class SkillTool(Tool):
         args_guard_error = self._guard_extra_args(extra_args)
         if args_guard_error:
             return f"skill_blocked:{spec.name}:{args_guard_error}"
+
+        allowed, reason = await self._memory_policy_allows(session_id=ctx.session_id)
+        if not allowed:
+            return f"skill_blocked:{spec.name}:memory_policy:{reason}"
 
         timeout = self._timeout_value(arguments)
 

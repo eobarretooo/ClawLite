@@ -1581,6 +1581,7 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "retrieval_metrics" in payload["engine"]
         assert "turn_metrics" in payload["engine"]
         assert "memory" in payload["engine"]
+        assert "memory_integration" in payload["engine"]
         assert "memory_quality" in payload["engine"]
         assert "provider" in payload["engine"]
         memory_diag = payload["engine"]["memory"]
@@ -1589,6 +1590,11 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert memory_diag["backend_supported"] is True
         assert memory_diag["backend_initialized"] is True
         assert memory_diag["backend_init_error"] == ""
+        memory_integration = payload["engine"]["memory_integration"]
+        assert memory_integration["available"] is True
+        assert set(memory_integration.keys()) >= {"mode", "policies", "quality", "session_id", "available"}
+        assert isinstance(memory_integration["policies"], dict)
+        assert set(memory_integration["policies"].keys()) >= {"system", "agent", "subagent", "tool"}
         memory_quality = payload["engine"]["memory_quality"]
         assert memory_quality["available"] is True
         assert memory_quality["updated"] is True
