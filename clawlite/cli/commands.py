@@ -31,6 +31,7 @@ from clawlite.cli.ops import provider_login_openai_codex
 from clawlite.cli.ops import provider_logout_openai_codex
 from clawlite.cli.ops import provider_status
 from clawlite.cli.ops import provider_use_model
+from clawlite.cli.onboarding import run_onboarding_wizard
 from clawlite.config.loader import load_config
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import save_config
@@ -133,6 +134,26 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_onboard(args: argparse.Namespace) -> int:
     cfg = _ensure_config_materialized(args.config)
+    if bool(getattr(args, "wizard", False)):
+        payload = run_onboarding_wizard(
+            cfg,
+            config_path=args.config,
+            overwrite=bool(args.overwrite),
+            variables={
+                "assistant_name": args.assistant_name,
+                "assistant_emoji": args.assistant_emoji,
+                "assistant_creature": args.assistant_creature,
+                "assistant_vibe": args.assistant_vibe,
+                "assistant_backstory": args.assistant_backstory,
+                "user_name": args.user_name,
+                "user_timezone": args.user_timezone,
+                "user_context": args.user_context,
+                "user_preferences": args.user_preferences,
+            },
+        )
+        _print_json(payload)
+        return 0 if bool(payload.get("ok", False)) else 2
+
     loader = WorkspaceLoader(workspace_path=cfg.workspace_path)
     created = loader.bootstrap(
         overwrite=args.overwrite,
@@ -575,6 +596,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_onboard.add_argument("--user-context", default="Personal operations and software projects")
     p_onboard.add_argument("--user-preferences", default="Clear answers, direct actions, concise updates")
     p_onboard.add_argument("--overwrite", action="store_true")
+    p_onboard.add_argument("--wizard", action="store_true", help="Run interactive onboarding wizard")
     p_onboard.set_defaults(handler=cmd_onboard)
 
     p_validate = sub.add_parser("validate", help="Validate provider/channel/onboarding readiness")

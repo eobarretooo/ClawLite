@@ -37,6 +37,51 @@ def test_cli_onboard_generates_workspace_files(tmp_path: Path) -> None:
     assert "Atlas" in content
 
 
+def test_cli_onboard_wizard_mode_routes_to_runner(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    called: dict[str, bool] = {"ok": False}
+
+    def _fake_wizard(config, *, config_path, overwrite, variables):
+        called["ok"] = True
+        assert overwrite is True
+        assert str(config.agents.defaults.model).startswith("openai/")
+        assert variables["assistant_name"] == "Fox"
+        return {
+            "ok": True,
+            "mode": "wizard",
+            "final": {"gateway_url": "http://127.0.0.1:8787", "gateway_token": "tok-test-123"},
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.run_onboarding_wizard", _fake_wizard)
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "onboard",
+            "--wizard",
+            "--overwrite",
+            "--assistant-name",
+            "Fox",
+        ]
+    )
+    assert rc == 0
+    assert called["ok"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "wizard"
+
+
 def test_cli_skills_list_and_show(capsys) -> None:
     rc_list = main(["skills", "list"])
     assert rc_list == 0
