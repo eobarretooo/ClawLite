@@ -50,6 +50,68 @@ setup_logging()
 GATEWAY_CONTRACT_VERSION = "2026-03-04"
 TELEGRAM_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 
+_TUNING_DEFAULT_ACTION_BY_SEVERITY: dict[str, str] = {
+    "low": "notify_operator",
+    "medium": "semantic_backfill",
+    "high": "memory_snapshot",
+}
+
+_TUNING_REASONING_LAYER_ALIASES: dict[str, str] = {
+    "factual": "fact",
+    "procedural": "decision",
+    "episodic": "outcome",
+}
+
+_TUNING_LAYER_ACTION_PLAYBOOKS: dict[str, dict[str, str]] = {
+    "fact": {
+        "low": "semantic_backfill",
+        "medium": "semantic_backfill",
+        "high": "memory_snapshot",
+    },
+    "hypothesis": {
+        "low": "notify_operator",
+        "medium": "semantic_backfill",
+        "high": "memory_snapshot",
+    },
+    "decision": {
+        "low": "notify_operator",
+        "medium": "memory_snapshot",
+        "high": "memory_snapshot",
+    },
+    "outcome": {
+        "low": "notify_operator",
+        "medium": "semantic_backfill",
+        "high": "memory_snapshot",
+    },
+}
+
+
+def _normalize_reasoning_layer(layer: str) -> str:
+    normalized_layer = str(layer or "").strip().lower()
+    if not normalized_layer:
+        return ""
+    return _TUNING_REASONING_LAYER_ALIASES.get(normalized_layer, normalized_layer)
+
+
+def _select_tuning_action_playbook(*, severity: str, weakest_layer: str) -> tuple[str, str]:
+    normalized_severity = str(severity or "").strip().lower()
+    if normalized_severity not in _TUNING_DEFAULT_ACTION_BY_SEVERITY:
+        normalized_severity = "low"
+
+    default_action = _TUNING_DEFAULT_ACTION_BY_SEVERITY[normalized_severity]
+    normalized_layer = _normalize_reasoning_layer(weakest_layer)
+    if not normalized_layer:
+        return default_action, f"severity_default_{normalized_severity}_v1"
+
+    layer_playbook = _TUNING_LAYER_ACTION_PLAYBOOKS.get(normalized_layer)
+    if not isinstance(layer_playbook, dict):
+        return default_action, f"severity_default_{normalized_severity}_v1"
+
+    action = str(layer_playbook.get(normalized_severity, "") or "").strip()
+    if not action:
+        action = default_action
+    return action, f"layer_{normalized_layer}_{normalized_severity}_v1"
+
 
 def _normalize_webhook_path(value: str, *, default: str = "/api/webhooks/telegram") -> str:
     raw = str(value or "").strip() or default
@@ -1326,6 +1388,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             action = ""
             action_status = "noop"
             action_reason = ""
+            action_metadata: dict[str, Any] = {}
             tick_error = ""
             next_wait_seconds = tuning_loop_interval_seconds
 
@@ -1364,7 +1427,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 reasoning_report = report.get("reasoning_layers", {}) if isinstance(report, dict) else {}
                 weakest_layer = ""
                 if isinstance(reasoning_report, dict):
-                    weakest_layer = str(reasoning_report.get("weakest_layer", "") or "").strip()
+                    weakest_layer = _normalize_reasoning_layer(str(reasoning_report.get("weakest_layer", "") or ""))
                 degrading_streak = int(tuning_state.get("degrading_streak", 0) or 0)
                 if drift == "degrading":
                     degrading_streak += 1
@@ -1372,6 +1435,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     degrading_streak = 0
 
                 if drift == "degrading":
+                    severity = ""
+                    playbook_id = ""
                     if degrading_streak >= (tuning_degrading_streak_threshold + 2) or score <= 40:
                         severity = "high"
                     elif degrading_streak >= tuning_degrading_streak_threshold:
@@ -1379,18 +1444,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     else:
                         severity = "low"
 
-                    if severity == "high":
-                        action = "memory_snapshot"
-                        action_reason = "quality_drift_high"
-                    elif severity == "medium":
-                        action = "semantic_backfill"
-                        action_reason = "quality_drift_medium"
-                    else:
-                        action = "notify_operator"
-                        action_reason = "quality_drift_low"
-
+                    action, playbook_id = _select_tuning_action_playbook(
+                        severity=severity,
+                        weakest_layer=weakest_layer,
+                    )
+                    action_reason = f"quality_drift_{severity}:playbook_id={playbook_id}:severity={severity}"
                     if weakest_layer:
                         action_reason = f"{action_reason}:weakest_layer={weakest_layer}"
+
+                    action_metadata = {
+                        "severity": severity,
+                        "playbook_id": playbook_id,
+                    }
+                    if weakest_layer:
+                        action_metadata["weakest_layer"] = weakest_layer
 
                     last_action_at = _parse_iso(str(tuning_state.get("last_action_at", "") or ""))
                     in_cooldown = (
@@ -1422,19 +1489,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     else:
                         if action == "notify_operator":
                             channel, target = await _latest_memory_route(memory_store)
+                            layer_suffix = f" layer={weakest_layer}." if weakest_layer else ""
                             await runtime.channels.send(
                                 channel=channel,
                                 target=target,
                                 text=(
-                                    "Memory quality drift detected (low). "
-                                    f"score={score} streak={degrading_streak}. Monitoring in progress."
+                                    f"Memory quality drift detected ({severity}). "
+                                    f"score={score} streak={degrading_streak}.{layer_suffix} Monitoring in progress."
                                 ),
                                 metadata={
                                     "source": "memory_quality_tuning",
                                     "trigger": "quality_loop",
-                                    "severity": "low",
                                     "drift": drift,
-                                    **({"weakest_layer": weakest_layer} if weakest_layer else {}),
+                                    **action_metadata,
                                 },
                             )
                             action_status = "ok"
@@ -1468,7 +1535,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                         "status": action_status,
                         "reason": action_reason,
                         "at": now_iso,
-                        **({"metadata": {"weakest_layer": weakest_layer}} if weakest_layer else {}),
+                        "metadata": dict(action_metadata),
                     }
 
                 if action_status == "ok":
@@ -1538,8 +1605,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                         break
                 first_tick = False
 
-                tuning_runner_state["ticks"] = int(tuning_runner_state.get("ticks", 0) or 0) + 1
                 await _tick()
+                tuning_runner_state["ticks"] = int(tuning_runner_state.get("ticks", 0) or 0) + 1
 
         tuning_task = asyncio.create_task(_loop())
         bind_event("memory.quality.tuning").info(

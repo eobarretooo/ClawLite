@@ -2001,7 +2001,9 @@ def test_gateway_tuning_loop_cooldown_skip_does_not_advance_last_action_at(tmp_p
 
     with TestClient(app) as client:
         first_last_action_at = ""
-        for _ in range(40):
+        deadline = time.monotonic() + 5.0
+        payload: dict[str, object] = {}
+        while time.monotonic() < deadline:
             payload = client.get("/v1/diagnostics").json()
             first_last_action_at = str(fake_memory.tuning.get("last_action_at", "") or "")
             if int(payload["memory_quality_tuning"]["ticks"]) >= 1 and first_last_action_at:
@@ -2011,12 +2013,22 @@ def test_gateway_tuning_loop_cooldown_skip_does_not_advance_last_action_at(tmp_p
         assert first_last_action_at
 
         final_payload = payload
-        for _ in range(50):
+        cooldown_seen = False
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
             final_payload = client.get("/v1/diagnostics").json()
-            if int(final_payload["memory_quality_tuning"]["ticks"]) >= 2:
+            ticks = int(final_payload["memory_quality_tuning"]["ticks"])
+            skipped_entries = [
+                entry
+                for entry in fake_memory.tuning.get("recent_actions", [])
+                if isinstance(entry, dict) and str(entry.get("status", "")) == "cooldown_skipped"
+            ]
+            if ticks >= 2 and skipped_entries:
+                cooldown_seen = True
                 break
             time.sleep(0.05)
 
+        assert cooldown_seen is True
         assert int(final_payload["memory_quality_tuning"]["ticks"]) >= 2
         skipped_entries = [
             entry
@@ -2025,6 +2037,96 @@ def test_gateway_tuning_loop_cooldown_skip_does_not_advance_last_action_at(tmp_p
         ]
         assert skipped_entries
         assert str(fake_memory.tuning.get("last_action_at", "") or "") == first_last_action_at
+
+
+def test_gateway_tuning_loop_stage17_layer_playbook_selects_non_default_action(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+            "autonomy": {
+                "tuning_loop_enabled": True,
+                "tuning_degrading_streak_threshold": 2,
+                "tuning_loop_cooldown_s": 0,
+            },
+        },
+        channels={},
+    )
+    cfg.gateway.autonomy.tuning_loop_interval_s = 1
+    app = create_app(cfg)
+    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="fact", degrade_score=70)
+    backfill_calls: list[int] = []
+
+    def _backfill_embeddings(*, limit: int) -> int:
+        backfill_calls.append(int(limit))
+        return int(limit)
+
+    fake_memory.backfill_embeddings = _backfill_embeddings
+    app.state.runtime.engine.memory = fake_memory
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            payload = client.get("/v1/diagnostics").json()
+            ticks = int(payload["memory_quality_tuning"]["ticks"])
+            if ticks >= 1 and str(fake_memory.tuning.get("last_action", "") or ""):
+                break
+            time.sleep(0.05)
+
+        assert str(fake_memory.tuning.get("last_action", "") or "") == "semantic_backfill"
+        assert backfill_calls
+        app.state.runtime.channels.send.assert_not_awaited()
+
+
+def test_gateway_tuning_loop_stage17_action_metadata_includes_playbook_layer_and_severity(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+            "autonomy": {
+                "tuning_loop_enabled": True,
+                "tuning_degrading_streak_threshold": 2,
+                "tuning_loop_cooldown_s": 0,
+            },
+        },
+        channels={},
+    )
+    cfg.gateway.autonomy.tuning_loop_interval_s = 1
+    app = create_app(cfg)
+    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="decision", degrade_score=70)
+    app.state.runtime.engine.memory = fake_memory
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            payload = client.get("/v1/diagnostics").json()
+            ticks = int(payload["memory_quality_tuning"]["ticks"])
+            if ticks >= 1 and app.state.runtime.channels.send.await_count >= 1:
+                break
+            time.sleep(0.05)
+
+        send_kwargs = app.state.runtime.channels.send.await_args.kwargs
+        metadata = dict(send_kwargs["metadata"])
+        assert metadata["weakest_layer"] == "decision"
+        assert metadata["severity"] == "low"
+        assert metadata["playbook_id"] == "layer_decision_low_v1"
+        assert "playbook_id=layer_decision_low_v1" in str(fake_memory.tuning.get("last_reason", "") or "")
+        assert "weakest_layer=decision" in str(fake_memory.tuning.get("last_reason", "") or "")
+
+        recent_actions = fake_memory.tuning.get("recent_actions", [])
+        assert recent_actions
+        last_entry = recent_actions[-1]
+        assert last_entry["metadata"]["weakest_layer"] == "decision"
+        assert last_entry["metadata"]["severity"] == "low"
+        assert last_entry["metadata"]["playbook_id"] == "layer_decision_low_v1"
 
 
 def test_gateway_diagnostics_memory_quality_cache_hit_refreshes_tuning_from_state(tmp_path: Path) -> None:
@@ -2121,9 +2223,9 @@ def test_gateway_diagnostics_memory_quality_cache_fingerprint_includes_reasoning
     def _analysis_stats() -> dict[str, object]:
         calls["analysis_stats"] += 1
         if calls["analysis_stats"] <= 2:
-            reasoning_layers = {"fact": 5, "procedural": 5}
+            reasoning_layers = {"fact": 5, "decision": 5}
         else:
-            reasoning_layers = {"fact": 9, "procedural": 1}
+            reasoning_layers = {"fact": 9, "decision": 1}
         return {
             "semantic": {
                 "enabled": True,
@@ -2191,7 +2293,7 @@ def test_gateway_tuning_loop_annotates_action_reason_and_metadata_with_weakest_l
     )
     cfg.gateway.autonomy.tuning_loop_interval_s = 1
     app = create_app(cfg)
-    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="procedural", degrade_score=70)
+    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="decision", degrade_score=70)
     app.state.runtime.engine.memory = fake_memory
     app.state.runtime.channels.send = AsyncMock(return_value="ok")
 
@@ -2205,12 +2307,49 @@ def test_gateway_tuning_loop_annotates_action_reason_and_metadata_with_weakest_l
 
         assert int(payload["memory_quality_tuning"]["ticks"]) >= 1
         send_kwargs = app.state.runtime.channels.send.await_args.kwargs
-        assert send_kwargs["metadata"]["weakest_layer"] == "procedural"
-        assert "weakest_layer=procedural" in str(fake_memory.tuning.get("last_reason", "") or "")
+        assert send_kwargs["metadata"]["weakest_layer"] == "decision"
+        assert "weakest_layer=decision" in str(fake_memory.tuning.get("last_reason", "") or "")
         recent_actions = fake_memory.tuning.get("recent_actions", [])
         assert recent_actions
         last_entry = recent_actions[-1]
-        assert last_entry["metadata"]["weakest_layer"] == "procedural"
+        assert last_entry["metadata"]["weakest_layer"] == "decision"
+
+
+def test_gateway_tuning_loop_stage17_normalizes_legacy_reasoning_layer_aliases(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+            "autonomy": {
+                "tuning_loop_enabled": True,
+                "tuning_degrading_streak_threshold": 2,
+                "tuning_loop_cooldown_s": 0,
+            },
+        },
+        channels={},
+    )
+    cfg.gateway.autonomy.tuning_loop_interval_s = 1
+    app = create_app(cfg)
+    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="procedural", degrade_score=70)
+    app.state.runtime.engine.memory = fake_memory
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            payload = client.get("/v1/diagnostics").json()
+            ticks = int(payload["memory_quality_tuning"]["ticks"])
+            if ticks >= 1 and app.state.runtime.channels.send.await_count >= 1:
+                break
+            time.sleep(0.05)
+
+        send_kwargs = app.state.runtime.channels.send.await_args.kwargs
+        metadata = dict(send_kwargs["metadata"])
+        assert metadata["weakest_layer"] == "decision"
+        assert metadata["playbook_id"] == "layer_decision_low_v1"
 
 
 def test_gateway_tuning_loop_fail_soft_on_action_and_state_update_exceptions(tmp_path: Path) -> None:
