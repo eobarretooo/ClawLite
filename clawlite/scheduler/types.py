@@ -40,3 +40,7 @@ class CronJob:
     last_error: str = ""
     consecutive_failures: int = 0
     run_count: int = 0
+    lease_token: str = ""
+    lease_owner: str = ""
+    lease_expires_iso: str = ""
+    lease_claimed_iso: str = ""

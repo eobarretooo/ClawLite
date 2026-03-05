@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,11 @@ from clawlite.utils.logging import bind_event, setup_logging
 setup_logging()
 
 try:
+    import fcntl
+except Exception:  # pragma: no cover
+    fcntl = None
+
+try:
     from croniter import croniter
 except Exception:  # pragma: no cover
     croniter = None
@@ -26,13 +33,21 @@ JobCallback = Callable[[CronJob], Awaitable[str | None]]
 
 
 class CronService:
-    def __init__(self, store_path: str | Path | None = None, default_timezone: str = "UTC") -> None:
+    def __init__(
+        self,
+        store_path: str | Path | None = None,
+        default_timezone: str = "UTC",
+        lease_seconds: int = 30,
+    ) -> None:
         self.path = Path(store_path) if store_path else (Path.home() / ".clawlite" / "state" / "cron_jobs.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_path = self.path.with_name(f"{self.path.name}.lock")
         self._jobs: dict[str, CronJob] = {}
         self._task: asyncio.Task[Any] | None = None
         self._on_job: JobCallback | None = None
         self.default_timezone = self._normalize_timezone(default_timezone)
+        self._instance_id = uuid.uuid4().hex
+        self._lease_seconds = max(5, int(lease_seconds or 30))
         self._diag: dict[str, int | str] = {
             "load_attempts": 0,
             "load_success": 0,
@@ -44,6 +59,11 @@ class CronService:
             "job_success_count": 0,
             "job_failure_count": 0,
             "schedule_error_count": 0,
+            "lease_claimed": 0,
+            "lease_skipped_active": 0,
+            "lease_stale_recovered": 0,
+            "lease_finalize_mismatch": 0,
+            "lease_finalize_missing": 0,
             "last_load_error": "",
             "last_save_error": "",
         }
@@ -60,44 +80,14 @@ class CronService:
 
     def _load(self) -> None:
         self._diag["load_attempts"] = int(self._diag.get("load_attempts", 0) or 0) + 1
-        if not self.path.exists():
-            self._diag["load_success"] = int(self._diag.get("load_success", 0) or 0) + 1
-            self._diag["last_load_error"] = ""
-            return
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
+            with self._store_lock():
+                self._jobs = self._read_jobs_unlocked()
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
             self._diag["load_failures"] = int(self._diag.get("load_failures", 0) or 0) + 1
             self._diag["last_load_error"] = str(exc)
             bind_event("cron.state").error("cron load failed path={} error={}", self.path, exc)
             return
-        if not isinstance(data, list):
-            self._diag["load_failures"] = int(self._diag.get("load_failures", 0) or 0) + 1
-            self._diag["last_load_error"] = "invalid_payload"
-            bind_event("cron.state").error("cron load failed path={} error=invalid_payload", self.path)
-            return
-        for row in data:
-            try:
-                schedule = CronSchedule(**row["schedule"])
-                schedule.timezone = self._normalize_timezone(schedule.timezone or self.default_timezone)
-                payload = CronPayload(**row["payload"])
-                job = CronJob(
-                    id=row["id"],
-                    name=row["name"],
-                    session_id=row["session_id"],
-                    schedule=schedule,
-                    payload=payload,
-                    enabled=bool(row.get("enabled", True)),
-                    next_run_iso=str(row.get("next_run_iso", "")),
-                    last_run_iso=str(row.get("last_run_iso", "")),
-                    last_status=str(row.get("last_status", "idle") or "idle"),
-                    last_error=str(row.get("last_error", "") or ""),
-                    consecutive_failures=int(row.get("consecutive_failures", 0) or 0),
-                    run_count=int(row.get("run_count", 0) or 0),
-                )
-            except Exception:
-                continue
-            self._jobs[job.id] = job
         self._diag["load_success"] = int(self._diag.get("load_success", 0) or 0) + 1
         self._diag["last_load_error"] = ""
         if self._jobs:
@@ -105,30 +95,95 @@ class CronService:
 
     def _save(self) -> None:
         items = [asdict(job) for job in self._jobs.values()]
-        payload = json.dumps(items, ensure_ascii=False, indent=2)
-        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
         for attempt in range(2):
             self._diag["save_attempts"] = int(self._diag.get("save_attempts", 0) or 0) + 1
             if attempt > 0:
                 self._diag["save_retries"] = int(self._diag.get("save_retries", 0) or 0) + 1
             try:
-                tmp_path.write_text(payload, encoding="utf-8")
-                tmp_path.replace(self.path)
+                with self._store_lock():
+                    self._write_rows_unlocked(items)
             except OSError as exc:
                 self._diag["save_failures"] = int(self._diag.get("save_failures", 0) or 0) + 1
                 self._diag["last_save_error"] = str(exc)
                 bind_event("cron.state").error("cron save failed attempt={} path={} error={}", attempt + 1, self.path, exc)
-                try:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                except OSError:
-                    pass
                 if attempt == 0:
                     continue
                 return
             self._diag["save_success"] = int(self._diag.get("save_success", 0) or 0) + 1
             self._diag["last_save_error"] = ""
             return
+
+    @contextlib.contextmanager
+    def _store_lock(self):
+        fd: int | None = None
+        lock_file = None
+        try:
+            lock_file = self._lock_path.open("a+", encoding="utf-8")
+            fd = lock_file.fileno()
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            if fd is not None and fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            if lock_file is not None:
+                lock_file.close()
+
+    def _read_rows_unlocked(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("jobs"), list):
+            rows = raw["jobs"]
+        elif isinstance(raw, list):
+            rows = raw
+        else:
+            raise ValueError("invalid_payload")
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                out.append(row)
+        return out
+
+    def _read_jobs_unlocked(self) -> dict[str, CronJob]:
+        jobs: dict[str, CronJob] = {}
+        for row in self._read_rows_unlocked():
+            job = self._job_from_row(row)
+            if job is not None:
+                jobs[job.id] = job
+        return jobs
+
+    def _write_rows_unlocked(self, rows: list[dict[str, Any]]) -> None:
+        payload = json.dumps(rows, ensure_ascii=False, indent=2)
+        tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(self.path)
+
+    def _job_from_row(self, row: dict[str, Any]) -> CronJob | None:
+        try:
+            schedule = CronSchedule(**row["schedule"])
+            schedule.timezone = self._normalize_timezone(schedule.timezone or self.default_timezone)
+            payload = CronPayload(**row["payload"])
+            return CronJob(
+                id=row["id"],
+                name=row["name"],
+                session_id=row["session_id"],
+                schedule=schedule,
+                payload=payload,
+                enabled=bool(row.get("enabled", True)),
+                next_run_iso=str(row.get("next_run_iso", "")),
+                last_run_iso=str(row.get("last_run_iso", "")),
+                last_status=str(row.get("last_status", "idle") or "idle"),
+                last_error=str(row.get("last_error", "") or ""),
+                consecutive_failures=int(row.get("consecutive_failures", 0) or 0),
+                run_count=int(row.get("run_count", 0) or 0),
+                lease_token=str(row.get("lease_token", "") or ""),
+                lease_owner=str(row.get("lease_owner", "") or ""),
+                lease_expires_iso=str(row.get("lease_expires_iso", "") or ""),
+                lease_claimed_iso=str(row.get("lease_claimed_iso", "") or ""),
+            )
+        except Exception:
+            return None
 
     @staticmethod
     def _now() -> datetime:
@@ -198,6 +253,11 @@ class CronService:
             "job_success_count": int(self._diag.get("job_success_count", 0) or 0),
             "job_failure_count": int(self._diag.get("job_failure_count", 0) or 0),
             "schedule_error_count": int(self._diag.get("schedule_error_count", 0) or 0),
+            "lease_claimed": int(self._diag.get("lease_claimed", 0) or 0),
+            "lease_skipped_active": int(self._diag.get("lease_skipped_active", 0) or 0),
+            "lease_stale_recovered": int(self._diag.get("lease_stale_recovered", 0) or 0),
+            "lease_finalize_mismatch": int(self._diag.get("lease_finalize_mismatch", 0) or 0),
+            "lease_finalize_missing": int(self._diag.get("lease_finalize_missing", 0) or 0),
             "last_load_error": str(self._diag.get("last_load_error", "") or ""),
             "last_save_error": str(self._diag.get("last_save_error", "") or ""),
         }
@@ -215,6 +275,124 @@ class CronService:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
+
+    def _is_lease_active(self, job: CronJob, now: datetime) -> bool:
+        if not job.lease_token or not job.lease_expires_iso:
+            return False
+        try:
+            expires = self._normalize_datetime(job.lease_expires_iso)
+        except ValueError:
+            return False
+        return expires > now
+
+    def _clear_lease(self, job: CronJob) -> None:
+        job.lease_token = ""
+        job.lease_owner = ""
+        job.lease_expires_iso = ""
+        job.lease_claimed_iso = ""
+
+    def _try_claim_due_job(self, job_id: str, now: datetime) -> CronJob | None:
+        token = uuid.uuid4().hex
+        claimed: CronJob | None = None
+        with self._store_lock():
+            jobs = self._read_jobs_unlocked()
+            job = jobs.get(job_id)
+            if job is None:
+                self._diag["lease_finalize_missing"] = int(self._diag.get("lease_finalize_missing", 0) or 0) + 1
+                self._jobs = jobs
+                return None
+            if not job.enabled or not job.next_run_iso:
+                self._jobs = jobs
+                return None
+            try:
+                next_run = self._normalize_datetime(job.next_run_iso)
+            except ValueError:
+                self._jobs = jobs
+                return None
+            if next_run > now:
+                self._jobs = jobs
+                return None
+            stale_recovered = False
+            if self._is_lease_active(job, now):
+                self._diag["lease_skipped_active"] = int(self._diag.get("lease_skipped_active", 0) or 0) + 1
+                self._jobs = jobs
+                return None
+            if job.lease_token and job.lease_expires_iso:
+                stale_recovered = True
+            job.lease_token = token
+            job.lease_owner = self._instance_id
+            job.lease_claimed_iso = now.isoformat()
+            job.lease_expires_iso = (now + timedelta(seconds=self._lease_seconds)).isoformat()
+            jobs[job.id] = job
+            self._write_rows_unlocked([asdict(item) for item in jobs.values()])
+            self._jobs = jobs
+            claimed = job
+        self._diag["lease_claimed"] = int(self._diag.get("lease_claimed", 0) or 0) + 1
+        if stale_recovered:
+            self._diag["lease_stale_recovered"] = int(self._diag.get("lease_stale_recovered", 0) or 0) + 1
+        return claimed
+
+    def _commit_job_result(
+        self,
+        *,
+        job_id: str,
+        lease_token: str,
+        now: datetime,
+        callback_failed: bool,
+        claimed_job: CronJob,
+    ) -> bool:
+        committed = False
+        with self._store_lock():
+            jobs = self._read_jobs_unlocked()
+            job = jobs.get(job_id)
+            if job is None:
+                self._diag["lease_finalize_missing"] = int(self._diag.get("lease_finalize_missing", 0) or 0) + 1
+                self._jobs = jobs
+                return False
+            if job.lease_token != lease_token:
+                self._diag["lease_finalize_mismatch"] = int(self._diag.get("lease_finalize_mismatch", 0) or 0) + 1
+                self._jobs = jobs
+                return False
+            job.last_status = claimed_job.last_status
+            job.last_error = claimed_job.last_error
+            job.consecutive_failures = int(claimed_job.consecutive_failures or 0)
+            job.run_count = int(job.run_count or 0) + 1
+            if callback_failed:
+                try:
+                    after_failed = self._compute_next(job.schedule, now)
+                    job.next_run_iso = after_failed.isoformat() if after_failed else ""
+                except Exception as exc:
+                    self._mark_schedule_error(job, exc)
+                    job.next_run_iso = ""
+                self._clear_lease(job)
+                jobs[job.id] = job
+                self._write_rows_unlocked([asdict(item) for item in jobs.values()])
+                self._jobs = jobs
+                return True
+            job.last_run_iso = now.isoformat()
+            run_once = bool(job.payload.metadata.get("run_once"))
+            if run_once:
+                jobs.pop(job.id, None)
+                bind_event("cron.job", session=job.session_id).info("cron job auto-removed after run_once id={}", job.id)
+                self._write_rows_unlocked([asdict(item) for item in jobs.values()])
+                self._jobs = jobs
+                return True
+            try:
+                after = self._compute_next(job.schedule, now)
+            except Exception as exc:
+                self._mark_schedule_error(job, exc)
+                after = None
+            if job.schedule.kind == "at":
+                job.enabled = False
+                job.next_run_iso = ""
+            else:
+                job.next_run_iso = after.isoformat() if after else ""
+            self._clear_lease(job)
+            jobs[job.id] = job
+            self._write_rows_unlocked([asdict(item) for item in jobs.values()])
+            self._jobs = jobs
+            committed = True
+        return committed
 
     async def _loop(self) -> None:
         while True:
@@ -243,54 +421,37 @@ class CronService:
                     continue
                 if next_run > now:
                     continue
+                claimed = self._try_claim_due_job(job.id, now)
+                if claimed is None:
+                    continue
                 callback_failed = False
                 if self._on_job is not None:
-                    logger.info("cron job executing id={} session={} name={}", job.id, job.session_id, job.name)
-                    job.run_count = int(job.run_count or 0) + 1
+                    logger.info("cron job executing id={} session={} name={}", claimed.id, claimed.session_id, claimed.name)
                     try:
-                        await self._on_job(job)
-                        logger.info("cron job executed id={} session={}", job.id, job.session_id)
-                        job.last_status = "success"
-                        job.last_error = ""
-                        job.consecutive_failures = 0
+                        await self._on_job(claimed)
+                        logger.info("cron job executed id={} session={}", claimed.id, claimed.session_id)
+                        claimed.last_status = "success"
+                        claimed.last_error = ""
+                        claimed.consecutive_failures = 0
                         self._diag["job_success_count"] = int(self._diag.get("job_success_count", 0) or 0) + 1
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
                         callback_failed = True
-                        job.last_status = "failed"
-                        job.last_error = str(exc)
-                        job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+                        claimed.last_status = "failed"
+                        claimed.last_error = str(exc)
+                        claimed.consecutive_failures = int(claimed.consecutive_failures or 0) + 1
                         self._diag["job_failure_count"] = int(self._diag.get("job_failure_count", 0) or 0) + 1
-                        logger.error("cron job failed id={} session={} error={}", job.id, job.session_id, exc)
-                if callback_failed:
-                    try:
-                        after_failed = self._compute_next(job.schedule, now)
-                        job.next_run_iso = after_failed.isoformat() if after_failed else ""
-                    except Exception as exc:
-                        self._mark_schedule_error(job, exc)
-                        job.next_run_iso = ""
-                    changed = True
+                        logger.error("cron job failed id={} session={} error={}", claimed.id, claimed.session_id, exc)
+                committed = self._commit_job_result(
+                    job_id=claimed.id,
+                    lease_token=claimed.lease_token,
+                    now=now,
+                    callback_failed=callback_failed,
+                    claimed_job=claimed,
+                )
+                if not committed:
                     continue
-                job.last_run_iso = now.isoformat()
-                run_once = bool(job.payload.metadata.get("run_once"))
-                if run_once:
-                    self._jobs.pop(job.id, None)
-                    bind_event("cron.job", session=job.session_id).info("cron job auto-removed after run_once id={}", job.id)
-                    changed = True
-                    continue
-                try:
-                    after = self._compute_next(job.schedule, now)
-                except Exception as exc:
-                    self._mark_schedule_error(job, exc)
-                    after = None
-                # one-shot jobs (at) disable after first run
-                if job.schedule.kind == "at":
-                    job.enabled = False
-                    job.next_run_iso = ""
-                else:
-                    job.next_run_iso = after.isoformat() if after else ""
-                changed = True
             if changed:
                 self._save()
             await asyncio.sleep(1)
@@ -385,11 +546,13 @@ class CronService:
             job.last_status = "failed"
             job.last_error = str(exc)
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+            self._clear_lease(job)
             self._diag["job_failure_count"] = int(self._diag.get("job_failure_count", 0) or 0) + 1
             self._save()
             raise
         now = self._now()
         job.last_run_iso = now.isoformat()
+        self._clear_lease(job)
         run_once = bool(job.payload.metadata.get("run_once"))
         if run_once:
             self._jobs.pop(job.id, None)

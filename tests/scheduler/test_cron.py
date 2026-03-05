@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -254,5 +255,80 @@ def test_cron_save_retry_diagnostics_and_persisted_store(monkeypatch, tmp_path: 
         reloaded = CronService(store)
         listed = reloaded.list_jobs(session_id="s1")
         assert listed and listed[0]["id"] == job_id
+
+    asyncio.run(_scenario())
+
+
+def test_cron_multi_instance_claims_due_job_once(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = tmp_path / "cron.json"
+        initializer = CronService(store)
+        await initializer.add_job(
+            session_id="s1",
+            expression="every 1",
+            prompt="once",
+            metadata={"run_once": True},
+        )
+
+        service_a = CronService(store, lease_seconds=30)
+        service_b = CronService(store, lease_seconds=30)
+        executed: list[str] = []
+        completed = asyncio.Event()
+
+        async def _on_job(job):
+            executed.append(job.id)
+            await asyncio.sleep(0.2)
+            completed.set()
+            return "ok"
+
+        await service_a.start(_on_job)
+        await service_b.start(_on_job)
+        await asyncio.wait_for(completed.wait(), timeout=4.0)
+        await asyncio.sleep(0.3)
+        await service_a.stop()
+        await service_b.stop()
+
+        assert executed
+        assert len(executed) == 1
+
+    asyncio.run(_scenario())
+
+
+def test_cron_stale_lease_is_recovered(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = tmp_path / "cron.json"
+        initializer = CronService(store)
+        await initializer.add_job(
+            session_id="s1",
+            expression="every 1",
+            prompt="recover stale",
+            metadata={"run_once": True},
+        )
+
+        payload = json.loads(store.read_text(encoding="utf-8"))
+        assert isinstance(payload, list)
+        assert payload
+        stale_now = initializer._now()
+        payload[0]["next_run_iso"] = (stale_now - timedelta(seconds=1)).isoformat()
+        payload[0]["lease_token"] = "stale-token"
+        payload[0]["lease_owner"] = "dead-instance"
+        payload[0]["lease_claimed_iso"] = (stale_now - timedelta(seconds=90)).isoformat()
+        payload[0]["lease_expires_iso"] = (stale_now - timedelta(seconds=30)).isoformat()
+        store.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        recovering = CronService(store, lease_seconds=30)
+        ran = asyncio.Event()
+
+        async def _on_job(_job):
+            ran.set()
+            return "ok"
+
+        await recovering.start(_on_job)
+        await asyncio.wait_for(ran.wait(), timeout=4.0)
+        await asyncio.sleep(0.2)
+        await recovering.stop()
+
+        status = recovering.status()
+        assert status["lease_stale_recovered"] >= 1
 
     asyncio.run(_scenario())
