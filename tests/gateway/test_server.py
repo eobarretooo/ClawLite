@@ -949,6 +949,99 @@ def test_gateway_ws_alias_respects_auth_guard(tmp_path: Path) -> None:
             assert payload["text"] == "pong"
 
 
+def test_gateway_ws_envelope_hello_and_ping_contract(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/ws") as socket:
+            socket.send_json({"type": "hello"})
+            ready_payload = socket.receive_json()
+            assert ready_payload["type"] == "ready"
+            assert ready_payload["contract_version"] == "2026-03-04"
+            assert isinstance(ready_payload["server_time"], str) and ready_payload["server_time"]
+
+            socket.send_json({"type": "ping"})
+            pong_payload = socket.receive_json()
+            assert pong_payload["type"] == "pong"
+            assert isinstance(pong_payload["server_time"], str) and pong_payload["server_time"]
+
+
+def test_gateway_ws_envelope_message_result_and_request_id(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as socket:
+            socket.send_json(
+                {
+                    "type": "message",
+                    "session_id": "cli:ws-envelope",
+                    "text": "ping",
+                    "request_id": "req-123",
+                }
+            )
+            payload = socket.receive_json()
+            assert payload == {
+                "type": "message_result",
+                "session_id": "cli:ws-envelope",
+                "text": "pong",
+                "model": "fake/test",
+                "request_id": "req-123",
+            }
+
+
+def test_gateway_ws_envelope_error_path_returns_structured_error(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/ws") as socket:
+            socket.send_json({"type": "message", "session_id": "cli:ws-envelope", "request_id": "req-err"})
+            payload = socket.receive_json()
+            assert payload == {
+                "type": "error",
+                "error": "session_id and text are required",
+                "status_code": 400,
+                "request_id": "req-err",
+            }
+
+
+def test_gateway_ws_legacy_payload_without_type_keeps_legacy_contract(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/ws") as socket:
+            socket.send_json({"session_id": "cli:ws-legacy", "text": "ping"})
+            payload = socket.receive_json()
+            assert payload == {"text": "pong", "model": "fake/test"}
+
+
 def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),

@@ -1310,6 +1310,16 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return {"ok": removed, "status": "removed" if removed else "not_found"}
 
     async def _ws_chat(socket: WebSocket, *, path_label: str) -> None:
+        def _ws_envelope_error(*, error: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
+            payload: dict[str, Any] = {
+                "type": "error",
+                "error": str(error or "invalid_request"),
+                "status_code": int(status_code),
+            }
+            if request_id:
+                payload["request_id"] = request_id
+            return payload
+
         if not await auth_guard.check_ws(socket=socket, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth):
             return
         await socket.accept()
@@ -1317,6 +1327,77 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         try:
             while True:
                 payload = await socket.receive_json()
+                if not isinstance(payload, dict):
+                    await socket.send_json({"error": "session_id and text are required"})
+                    continue
+
+                message_type = str(payload.get("type", "") or "").strip().lower()
+                if message_type:
+                    request_id = str(payload.get("request_id", "") or "").strip() or None
+                    if message_type == "hello":
+                        await socket.send_json(
+                            {
+                                "type": "ready",
+                                "contract_version": GATEWAY_CONTRACT_VERSION,
+                                "server_time": _utc_now_iso(),
+                            }
+                        )
+                        continue
+                    if message_type == "ping":
+                        await socket.send_json({"type": "pong", "server_time": _utc_now_iso()})
+                        continue
+                    if message_type != "message":
+                        await socket.send_json(
+                            _ws_envelope_error(
+                                error="unsupported_message_type",
+                                status_code=400,
+                                request_id=request_id,
+                            )
+                        )
+                        continue
+
+                    session_id = str(payload.get("session_id", "") or "").strip()
+                    text = str(payload.get("text", "") or "").strip()
+                    if not session_id or not text:
+                        await socket.send_json(
+                            _ws_envelope_error(
+                                error="session_id and text are required",
+                                status_code=400,
+                                request_id=request_id,
+                            )
+                        )
+                        continue
+
+                    try:
+                        out = await runtime.engine.run(session_id=session_id, user_text=text)
+                    except RuntimeError as exc:
+                        status_code, detail = _provider_error_payload(exc)
+                        bind_event("gateway.ws", session=session_id, channel="ws").error(
+                            "websocket request failed status={} detail={}",
+                            status_code,
+                            detail,
+                        )
+                        await socket.send_json(
+                            _ws_envelope_error(error=detail, status_code=status_code, request_id=request_id)
+                        )
+                        continue
+
+                    _finalize_bootstrap_for_user_turn(session_id)
+                    response_payload: dict[str, Any] = {
+                        "type": "message_result",
+                        "session_id": session_id,
+                        "text": out.text,
+                        "model": out.model,
+                    }
+                    if request_id:
+                        response_payload["request_id"] = request_id
+                    await socket.send_json(response_payload)
+                    bind_event("gateway.ws", session=session_id, channel="ws").debug(
+                        "websocket response sent model={}",
+                        out.model,
+                    )
+                    continue
+
                 session_id = str(payload.get("session_id", "")).strip()
                 text = str(payload.get("text", "")).strip()
                 if not session_id or not text:
