@@ -1326,13 +1326,72 @@ def memory_quality_snapshot(
                 gateway_block["ok"] = False
                 gateway_block["error"] = str(exc)
 
-        report = store.update_quality_state(
-            retrieval_metrics=retrieval_metrics,
-            turn_stability_metrics=turn_stability_metrics,
-            semantic_metrics=semantic_metrics,
-            gateway_metrics=gateway_metrics,
+        analysis_reasoning_layers = (
+            dict(analysis.get("reasoning_layers", {}))
+            if isinstance(analysis.get("reasoning_layers"), dict)
+            else {}
         )
+        analysis_confidence = (
+            dict(analysis.get("confidence", {}))
+            if isinstance(analysis.get("confidence"), dict)
+            else {}
+        )
+        analysis_counts = (
+            dict(analysis.get("counts", {}))
+            if isinstance(analysis.get("counts"), dict)
+            else {}
+        )
+        reasoning_layer_metrics: dict[str, Any] = {
+            "reasoning_layers": analysis_reasoning_layers,
+            "confidence": analysis_confidence,
+            "total_records": int(analysis_counts.get("total", 0) or 0),
+        }
+
+        try:
+            report = store.update_quality_state(
+                retrieval_metrics=retrieval_metrics,
+                turn_stability_metrics=turn_stability_metrics,
+                semantic_metrics=semantic_metrics,
+                reasoning_layer_metrics=reasoning_layer_metrics,
+                gateway_metrics=gateway_metrics,
+            )
+        except TypeError as exc:
+            if "reasoning_layer_metrics" not in str(exc):
+                raise
+            report = store.update_quality_state(
+                retrieval_metrics=retrieval_metrics,
+                turn_stability_metrics=turn_stability_metrics,
+                semantic_metrics=semantic_metrics,
+                gateway_metrics=gateway_metrics,
+            )
         state = store.quality_state_snapshot()
+
+        reasoning_quality = report.get("reasoning_layers", {}) if isinstance(report.get("reasoning_layers", {}), dict) else {}
+        analysis_payload: dict[str, Any] = {
+            "reasoning_layers": analysis_reasoning_layers,
+            "confidence": analysis_confidence,
+        }
+        if reasoning_quality:
+            distribution_payload = (
+                reasoning_quality.get("distribution", {})
+                if isinstance(reasoning_quality.get("distribution", {}), dict)
+                else {}
+            )
+            compact_distribution = {
+                str(layer): {
+                    "count": int((values or {}).get("count", 0) or 0),
+                    "ratio": float((values or {}).get("ratio", 0.0) or 0.0),
+                }
+                for layer, values in distribution_payload.items()
+                if isinstance(values, dict)
+            }
+            analysis_payload["quality_highlights"] = {
+                "total_records": int(reasoning_quality.get("total_records", 0) or 0),
+                "balance_score": float(reasoning_quality.get("balance_score", 0.0) or 0.0),
+                "weakest_layer": str(reasoning_quality.get("weakest_layer", "") or ""),
+                "weakest_ratio": float(reasoning_quality.get("weakest_ratio", 0.0) or 0.0),
+                "distribution": compact_distribution,
+            }
 
         return {
             "ok": True,
@@ -1345,14 +1404,7 @@ def memory_quality_snapshot(
                 "failed": int(eval_snapshot.get("failed", 0) or 0),
             },
             "gateway_probe": gateway_block,
-            "analysis": {
-                "reasoning_layers": dict(analysis.get("reasoning_layers", {}))
-                if isinstance(analysis.get("reasoning_layers"), dict)
-                else {},
-                "confidence": dict(analysis.get("confidence", {}))
-                if isinstance(analysis.get("confidence"), dict)
-                else {},
-            },
+            "analysis": analysis_payload,
         }
     except Exception as exc:
         return {

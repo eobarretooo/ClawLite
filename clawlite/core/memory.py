@@ -607,6 +607,110 @@ class MemoryStore:
             raw = default
         return max(minimum, raw)
 
+    @staticmethod
+    def _quality_reasoning_layer_key(value: Any) -> str | None:
+        clean = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "fact": "fact",
+            "facts": "fact",
+            "factual": "fact",
+            "hypothesis": "hypothesis",
+            "hypotheses": "hypothesis",
+            "guess": "hypothesis",
+            "decision": "decision",
+            "decisions": "decision",
+            "choice": "decision",
+            "outcome": "outcome",
+            "outcomes": "outcome",
+            "result": "outcome",
+            "results": "outcome",
+        }
+        mapped = aliases.get(clean)
+        if mapped in REASONING_LAYER_SET:
+            return mapped
+        return None
+
+    @classmethod
+    def _quality_reasoning_metrics_payload(cls, raw: Any) -> dict[str, Any]:
+        payload = dict(raw) if isinstance(raw, dict) else {}
+
+        layer_candidates: list[dict[str, Any]] = []
+        for key in ("reasoning_layers", "reasoningLayers", "layers", "distribution"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                layer_candidates.append(value)
+        layer_candidates.append(payload)
+
+        counts: dict[str, int] = {layer: 0 for layer in REASONING_LAYERS}
+        for candidate in layer_candidates:
+            for key, value in candidate.items():
+                mapped = cls._quality_reasoning_layer_key(key)
+                if mapped is None:
+                    continue
+                counts[mapped] = cls._quality_int(value)
+
+        sum_counts = sum(int(value) for value in counts.values())
+        total_records = cls._quality_int(
+            payload.get("total_records", payload.get("totalRecords", payload.get("records_total", sum_counts))),
+            default=sum_counts,
+        )
+        if total_records < sum_counts:
+            total_records = sum_counts
+
+        confidence_payload = payload.get("confidence", payload.get("conf", payload.get("confidence_summary", {})))
+        confidence_raw = confidence_payload if isinstance(confidence_payload, dict) else {}
+        confidence_average = cls._quality_float(
+            confidence_raw.get("average", confidence_raw.get("avg", confidence_raw.get("mean", 0.0))),
+            default=0.0,
+        )
+        confidence_minimum = cls._quality_float(
+            confidence_raw.get("minimum", confidence_raw.get("min", 0.0)),
+            default=0.0,
+        )
+        confidence_maximum = cls._quality_float(
+            confidence_raw.get("maximum", confidence_raw.get("max", 0.0)),
+            default=0.0,
+        )
+        confidence_has_any = any(
+            key in confidence_raw for key in ("average", "avg", "mean", "minimum", "min", "maximum", "max")
+        )
+
+        distribution: dict[str, dict[str, float | int]] = {}
+        for layer in REASONING_LAYERS:
+            count = int(counts.get(layer, 0))
+            ratio = (float(count) / float(total_records)) if total_records else 0.0
+            distribution[layer] = {"count": count, "ratio": round(max(0.0, min(1.0, ratio)), 6)}
+
+        weakest_layer = min(REASONING_LAYERS, key=lambda layer: (int(counts.get(layer, 0)), REASONING_LAYERS.index(layer)))
+        weakest_ratio = float(distribution[weakest_layer]["ratio"])
+
+        if total_records:
+            expected = 1.0 / float(len(REASONING_LAYERS))
+            divergence = sum(abs(float(distribution[layer]["ratio"]) - expected) for layer in REASONING_LAYERS)
+            max_divergence = 2.0 * (1.0 - expected)
+            balance_score = 1.0 - (divergence / max_divergence if max_divergence > 0 else 0.0)
+        else:
+            balance_score = 0.0
+        balance_score = round(max(0.0, min(1.0, balance_score)), 6)
+
+        provided = bool(payload)
+        has_distribution_signal = total_records > 0
+        return {
+            "provided": provided,
+            "has_distribution_signal": has_distribution_signal,
+            "has_confidence_signal": confidence_has_any,
+            "total_records": int(total_records),
+            "distribution": distribution,
+            "balance_score": balance_score,
+            "weakest_layer": weakest_layer,
+            "weakest_ratio": round(max(0.0, min(1.0, weakest_ratio)), 6),
+            "confidence": {
+                "average": round(confidence_average, 6),
+                "minimum": round(confidence_minimum, 6),
+                "maximum": round(confidence_maximum, 6),
+            },
+        }
+
     def quality_state_snapshot(self) -> dict[str, Any]:
         payload = self._load_json_dict(self.quality_state_path, self._default_quality_state())
         history_raw = payload.get("history", [])
@@ -846,6 +950,7 @@ class MemoryStore:
         retrieval_metrics: dict[str, Any] | None = None,
         turn_stability_metrics: dict[str, Any] | None = None,
         semantic_metrics: dict[str, Any] | None = None,
+        reasoning_layer_metrics: dict[str, Any] | None = None,
         gateway_metrics: dict[str, Any] | None = None,
         sampled_at: str = "",
         tuning_patch: dict[str, Any] | None = None,
@@ -856,6 +961,7 @@ class MemoryStore:
         retrieval_raw = retrieval_metrics if isinstance(retrieval_metrics, dict) else {}
         turn_raw = turn_stability_metrics if isinstance(turn_stability_metrics, dict) else {}
         semantic_raw = semantic_metrics if isinstance(semantic_metrics, dict) else {}
+        reasoning_raw = reasoning_layer_metrics if isinstance(reasoning_layer_metrics, dict) else {}
 
         attempts = self._quality_int(retrieval_raw.get("attempts"))
         hits = self._quality_int(retrieval_raw.get("hits"))
@@ -874,8 +980,27 @@ class MemoryStore:
         error_rate = self._quality_float(1.0 - success_rate)
 
         semantic_coverage = self._quality_float(semantic_raw.get("coverage_ratio", 0.0))
+        reasoning_payload = self._quality_reasoning_metrics_payload(reasoning_raw)
 
-        score_float = (hit_rate * 55.0) + (success_rate * 30.0) + (semantic_coverage * 15.0)
+        reasoning_present = bool(
+            reasoning_payload["provided"]
+            and (reasoning_payload["has_distribution_signal"] or reasoning_payload["has_confidence_signal"])
+        )
+        confidence_average = float(reasoning_payload["confidence"]["average"])
+        if not bool(reasoning_payload["has_confidence_signal"]):
+            confidence_average = 0.5
+        balance_score = float(reasoning_payload["balance_score"])
+        weakest_ratio = float(reasoning_payload["weakest_ratio"])
+        imbalance_penalty = 0.0
+        if reasoning_present and weakest_ratio < 0.12:
+            imbalance_penalty = min(1.0, (0.12 - weakest_ratio) / 0.12)
+
+        reasoning_adjustment = 0.0
+        if reasoning_present:
+            reasoning_adjustment = ((balance_score - 0.5) * 3.0) + ((confidence_average - 0.5) * 3.0) - (imbalance_penalty * 2.0)
+            reasoning_adjustment = max(-6.0, min(6.0, reasoning_adjustment))
+
+        score_float = (hit_rate * 55.0) + (success_rate * 30.0) + (semantic_coverage * 15.0) + reasoning_adjustment
         score = self._quality_int(round(score_float), minimum=0)
         if score > 100:
             score = 100
@@ -896,10 +1021,46 @@ class MemoryStore:
         hit_rate_delta_prev = round(hit_rate - previous_hit_rate, 6)
         hit_rate_delta_baseline = round(hit_rate - baseline_hit_rate, 6)
 
+        previous_reasoning = previous.get("reasoning_layers", {}) if isinstance(previous.get("reasoning_layers", {}), dict) else {}
+        previous_balance = self._quality_float(previous_reasoning.get("balance_score", balance_score), default=balance_score)
+        previous_confidence_payload = previous_reasoning.get("confidence", {}) if isinstance(previous_reasoning.get("confidence", {}), dict) else {}
+        previous_confidence_average = self._quality_float(
+            previous_confidence_payload.get("average", confidence_average),
+            default=confidence_average,
+        )
+        previous_weakest_ratio = self._quality_float(previous_reasoning.get("weakest_ratio", weakest_ratio), default=weakest_ratio)
+
+        reasoning_balance_delta = round(balance_score - previous_balance, 6) if reasoning_present and bool(previous) else 0.0
+        reasoning_confidence_delta = (
+            round(confidence_average - previous_confidence_average, 6) if reasoning_present and bool(previous) else 0.0
+        )
+        reasoning_weakest_ratio_delta = (
+            round(weakest_ratio - previous_weakest_ratio, 6) if reasoning_present and bool(previous) else 0.0
+        )
+
+        reasoning_degrading = bool(
+            reasoning_present
+            and bool(previous)
+            and (
+                reasoning_balance_delta <= -0.1
+                or reasoning_confidence_delta <= -0.12
+                or reasoning_weakest_ratio_delta <= -0.1
+            )
+        )
+        reasoning_improving = bool(
+            reasoning_present
+            and bool(previous)
+            and reasoning_balance_delta >= 0.1
+            and reasoning_confidence_delta >= 0.08
+            and reasoning_weakest_ratio_delta >= 0.08
+        )
+
         if previous:
-            if score_delta_prev <= -5 or hit_rate_delta_prev <= -0.08:
+            score_degrading_threshold = -4 if reasoning_present else -5
+            score_improving_threshold = 4 if reasoning_present else 5
+            if score_delta_prev <= score_degrading_threshold or hit_rate_delta_prev <= -0.08 or reasoning_degrading:
                 drift_assessment = "degrading"
-            elif score_delta_prev >= 5 or hit_rate_delta_prev >= 0.08:
+            elif score_delta_prev >= score_improving_threshold or hit_rate_delta_prev >= 0.08 or reasoning_improving:
                 drift_assessment = "improving"
             else:
                 drift_assessment = "stable"
@@ -915,6 +1076,14 @@ class MemoryStore:
             recommendations.append("Reduce turn error rate by investigating recent memory and privacy failures.")
         if bool(semantic_raw.get("enabled", False)) and semantic_coverage < 0.6:
             recommendations.append("Run semantic embedding backfill to improve retrieval coverage.")
+        if reasoning_present and weakest_ratio < 0.15:
+            recommendations.append(
+                f"Strengthen {reasoning_payload['weakest_layer']} reasoning coverage to rebalance memory quality signals."
+            )
+        if reasoning_present and balance_score < 0.65:
+            recommendations.append("Rebalance reasoning layers by increasing underrepresented records in recent sessions.")
+        if reasoning_present and confidence_average < 0.6:
+            recommendations.append("Raise confidence quality by validating uncertain memories before promotion.")
         if drift_assessment == "degrading":
             recommendations.append("Quality drift detected; review memory diagnostics and recent regressions.")
         if not recommendations:
@@ -941,10 +1110,21 @@ class MemoryStore:
                 "score_delta_baseline": score_delta_baseline,
                 "hit_rate_delta_previous": hit_rate_delta_prev,
                 "hit_rate_delta_baseline": hit_rate_delta_baseline,
+                "reasoning_balance_delta_previous": reasoning_balance_delta,
+                "reasoning_confidence_delta_previous": reasoning_confidence_delta,
+                "reasoning_weakest_ratio_delta_previous": reasoning_weakest_ratio_delta,
             },
             "semantic": {
                 "enabled": bool(semantic_raw.get("enabled", False)),
                 "coverage_ratio": round(semantic_coverage, 6),
+            },
+            "reasoning_layers": {
+                "total_records": int(reasoning_payload["total_records"]),
+                "distribution": reasoning_payload["distribution"],
+                "balance_score": float(reasoning_payload["balance_score"]),
+                "weakest_layer": str(reasoning_payload["weakest_layer"]),
+                "weakest_ratio": float(reasoning_payload["weakest_ratio"]),
+                "confidence": reasoning_payload["confidence"],
             },
             "recommendations": recommendations,
         }

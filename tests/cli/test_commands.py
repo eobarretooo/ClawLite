@@ -863,6 +863,23 @@ def test_cli_memory_quality_generates_and_persists_report(tmp_path: Path, capsys
     assert 0 <= int(report["score"]) <= 100
     assert set(report["retrieval"].keys()) == {"attempts", "hits", "rewrites", "hit_rate"}
     assert set(report["turn_stability"].keys()) == {"successes", "errors", "success_rate", "error_rate"}
+    assert "reasoning_layers" in report
+    reasoning_layers = report["reasoning_layers"]
+    assert set(reasoning_layers.keys()) == {
+        "total_records",
+        "distribution",
+        "balance_score",
+        "weakest_layer",
+        "weakest_ratio",
+        "confidence",
+    }
+    assert isinstance(reasoning_layers["distribution"], dict)
+    assert set(reasoning_layers["distribution"].keys()) == {"fact", "hypothesis", "decision", "outcome"}
+    for layer_payload in reasoning_layers["distribution"].values():
+        assert isinstance(layer_payload, dict)
+        assert set(layer_payload.keys()) == {"count", "ratio"}
+    assert isinstance(reasoning_layers["confidence"], dict)
+    assert set(reasoning_layers["confidence"].keys()) == {"average", "minimum", "maximum"}
     assert "drift" in report
     assert isinstance(report["recommendations"], list)
     assert payload["state"]["current"]["score"] == report["score"]
@@ -870,6 +887,8 @@ def test_cli_memory_quality_generates_and_persists_report(tmp_path: Path, capsys
     assert "analysis" in payload
     assert isinstance(payload["analysis"]["reasoning_layers"], dict)
     assert isinstance(payload["analysis"]["confidence"], dict)
+    assert "quality_highlights" in payload["analysis"]
+    assert payload["analysis"]["quality_highlights"]["total_records"] == reasoning_layers["total_records"]
 
 
 def test_cli_memory_profile_returns_schema_fields(tmp_path: Path, capsys) -> None:

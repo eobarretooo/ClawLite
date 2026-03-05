@@ -1219,13 +1219,34 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "total_records": int(semantic_raw.get("total_records", 0) or 0),
         }
 
-    async def _collect_semantic_metrics() -> dict[str, Any]:
+    def _reasoning_layer_metrics_from_payload(payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+
+        reasoning_raw = payload.get("reasoning_layers")
+        if reasoning_raw is None:
+            reasoning_raw = payload.get("reasoningLayers")
+        if reasoning_raw is None:
+            reasoning_raw = payload.get("layers")
+
+        reasoning_payload: dict[str, Any] = {}
+        if isinstance(reasoning_raw, dict) and reasoning_raw:
+            reasoning_payload["reasoning_layers"] = dict(reasoning_raw)
+
+        confidence_raw = payload.get("confidence")
+        if isinstance(confidence_raw, dict) and confidence_raw:
+            reasoning_payload["confidence"] = dict(confidence_raw)
+
+        return reasoning_payload
+
+    async def _collect_memory_analysis_metrics() -> tuple[dict[str, Any], dict[str, Any]]:
         semantic_metrics = {
             "enabled": False,
             "coverage_ratio": 0.0,
             "missing_records": 0,
             "total_records": 0,
         }
+        reasoning_layer_metrics: dict[str, Any] = {}
         memory_store = getattr(runtime.engine, "memory", None)
         diagnostics_payload: dict[str, Any] = {}
 
@@ -1255,9 +1276,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     diagnostics_payload = raw_payload
 
         semantic_metrics.update(_semantic_metrics_from_payload(diagnostics_payload))
-        return semantic_metrics
+        reasoning_layer_metrics = _reasoning_layer_metrics_from_payload(diagnostics_payload)
+        return semantic_metrics, reasoning_layer_metrics
 
-    async def _collect_memory_quality_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    async def _collect_memory_quality_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         retrieval_metrics_snapshot = runtime.engine.retrieval_metrics_snapshot()
         turn_metrics_snapshot = runtime.engine.turn_metrics_snapshot()
         retrieval_metrics = {
@@ -1271,9 +1293,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             + int(turn_metrics_snapshot.get("turns_cancelled", 0) or 0),
         }
 
-        semantic_metrics = await _collect_semantic_metrics()
+        semantic_metrics, reasoning_layer_metrics = await _collect_memory_analysis_metrics()
 
-        return retrieval_metrics, turn_metrics, semantic_metrics
+        return retrieval_metrics, turn_metrics, semantic_metrics, reasoning_layer_metrics
 
     async def _start_memory_quality_tuning() -> None:
         nonlocal tuning_task, tuning_running
@@ -1308,18 +1330,30 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             next_wait_seconds = tuning_loop_interval_seconds
 
             try:
-                retrieval_metrics, turn_metrics, semantic_metrics = await _collect_memory_quality_inputs()
-                report = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        update_quality_fn,
-                        retrieval_metrics=retrieval_metrics,
-                        turn_stability_metrics=turn_metrics,
-                        semantic_metrics={
+                retrieval_metrics, turn_metrics, semantic_metrics, reasoning_layer_metrics = await _collect_memory_quality_inputs()
+
+                def _call_quality_update_tuning() -> Any:
+                    kwargs = {
+                        "retrieval_metrics": retrieval_metrics,
+                        "turn_stability_metrics": turn_metrics,
+                        "semantic_metrics": {
                             "enabled": bool(semantic_metrics.get("enabled", False)),
                             "coverage_ratio": float(semantic_metrics.get("coverage_ratio", 0.0) or 0.0),
                         },
-                        sampled_at=now_iso,
-                    ),
+                        "sampled_at": now_iso,
+                    }
+                    if reasoning_layer_metrics:
+                        try:
+                            return update_quality_fn(
+                                **kwargs,
+                                reasoning_layer_metrics=reasoning_layer_metrics,
+                            )
+                        except TypeError:
+                            return update_quality_fn(**kwargs)
+                    return update_quality_fn(**kwargs)
+
+                report = await asyncio.wait_for(
+                    asyncio.to_thread(_call_quality_update_tuning),
                     timeout=tuning_loop_timeout_seconds,
                 )
                 snapshot = await asyncio.wait_for(asyncio.to_thread(snapshot_fn), timeout=tuning_loop_timeout_seconds)
@@ -1327,6 +1361,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
                 drift = str((report.get("drift", {}) if isinstance(report, dict) else {}).get("assessment", "") or "")
                 score = int((report.get("score", 0) if isinstance(report, dict) else 0) or 0)
+                reasoning_report = report.get("reasoning_layers", {}) if isinstance(report, dict) else {}
+                weakest_layer = ""
+                if isinstance(reasoning_report, dict):
+                    weakest_layer = str(reasoning_report.get("weakest_layer", "") or "").strip()
                 degrading_streak = int(tuning_state.get("degrading_streak", 0) or 0)
                 if drift == "degrading":
                     degrading_streak += 1
@@ -1350,6 +1388,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     else:
                         action = "notify_operator"
                         action_reason = "quality_drift_low"
+
+                    if weakest_layer:
+                        action_reason = f"{action_reason}:weakest_layer={weakest_layer}"
 
                     last_action_at = _parse_iso(str(tuning_state.get("last_action_at", "") or ""))
                     in_cooldown = (
@@ -1393,6 +1434,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                                     "trigger": "quality_loop",
                                     "severity": "low",
                                     "drift": drift,
+                                    **({"weakest_layer": weakest_layer} if weakest_layer else {}),
                                 },
                             )
                             action_status = "ok"
@@ -1426,6 +1468,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                         "status": action_status,
                         "reason": action_reason,
                         "at": now_iso,
+                        **({"metadata": {"weakest_layer": weakest_layer}} if weakest_layer else {}),
                     }
 
                 if action_status == "ok":
@@ -1887,7 +1930,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "errors": int(turn_metrics_snapshot.get("turns_provider_errors", 0) or 0)
                 + int(turn_metrics_snapshot.get("turns_cancelled", 0) or 0),
             }
-            semantic_raw = await _collect_semantic_metrics()
+            semantic_raw, reasoning_layer_metrics = await _collect_memory_analysis_metrics()
             semantic_metrics = {
                 "enabled": bool(semantic_raw.get("enabled", False)),
                 "coverage_ratio": float(semantic_raw.get("coverage_ratio", 0.0) or 0.0),
@@ -1897,6 +1940,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "retrieval": retrieval_metrics,
                 "turn": turn_metrics,
                 "semantic": semantic_metrics,
+                "reasoning_layers": reasoning_layer_metrics,
             }
             try:
                 fingerprint = json.dumps(fingerprint_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -1928,12 +1972,24 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     pass
             else:
                 try:
-                    report = quality_update(
-                        retrieval_metrics=retrieval_metrics,
-                        turn_stability_metrics=turn_metrics,
-                        semantic_metrics=semantic_metrics,
-                        sampled_at=generated_at,
-                    )
+                    def _call_quality_update_diagnostics() -> Any:
+                        kwargs = {
+                            "retrieval_metrics": retrieval_metrics,
+                            "turn_stability_metrics": turn_metrics,
+                            "semantic_metrics": semantic_metrics,
+                            "sampled_at": generated_at,
+                        }
+                        if reasoning_layer_metrics:
+                            try:
+                                return quality_update(
+                                    **kwargs,
+                                    reasoning_layer_metrics=reasoning_layer_metrics,
+                                )
+                            except TypeError:
+                                return quality_update(**kwargs)
+                        return quality_update(**kwargs)
+
+                    report = _call_quality_update_diagnostics()
                     snapshot = quality_snapshot()
                     memory_quality_payload = {
                         "available": True,

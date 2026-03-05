@@ -1369,6 +1369,64 @@ def test_memory_quality_state_update_persists_report_with_drift_and_recommendati
     assert store.quality_state_path.exists()
 
 
+def test_memory_quality_state_reasoning_layers_report_structure_and_recommendations(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+
+    report = store.update_quality_state(
+        retrieval_metrics={"attempts": 10, "hits": 8, "rewrites": 1},
+        turn_stability_metrics={"successes": 9, "errors": 1},
+        semantic_metrics={"enabled": True, "coverage_ratio": 0.75},
+        reasoning_layer_metrics={
+            "reasoning_layers": {"facts": 8, "hypothesis": 1, "decision": 0, "outcomes": 1},
+            "confidence": {"avg": 0.42, "min": 0.2, "max": 0.7},
+            "totalRecords": 10,
+        },
+        sampled_at="2026-03-05T12:00:00+00:00",
+    )
+
+    reasoning = report["reasoning_layers"]
+    assert reasoning["total_records"] == 10
+    assert set(reasoning["distribution"].keys()) == {"fact", "hypothesis", "decision", "outcome"}
+    assert reasoning["distribution"]["fact"]["count"] == 8
+    assert reasoning["distribution"]["decision"]["count"] == 0
+    assert reasoning["distribution"]["fact"]["ratio"] == 0.8
+    assert reasoning["weakest_layer"] == "decision"
+    assert reasoning["weakest_ratio"] == 0.0
+    assert 0.0 <= reasoning["balance_score"] <= 1.0
+    assert reasoning["confidence"] == {"average": 0.42, "minimum": 0.2, "maximum": 0.7}
+
+    recommendations = report["recommendations"]
+    assert any("decision" in item.lower() for item in recommendations)
+    assert any("confidence" in item.lower() for item in recommendations)
+
+
+def test_memory_quality_state_legacy_call_without_reasoning_metrics_keeps_score_and_defaults(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+
+    report = store.update_quality_state(
+        retrieval_metrics={"attempts": 10, "hits": 8, "rewrites": 1},
+        turn_stability_metrics={"successes": 9, "errors": 1},
+        semantic_metrics={"enabled": True, "coverage_ratio": 0.75},
+        sampled_at="2026-03-05T12:30:00+00:00",
+    )
+
+    assert report["score"] == 82
+    reasoning = report["reasoning_layers"]
+    assert reasoning == {
+        "total_records": 0,
+        "distribution": {
+            "fact": {"count": 0, "ratio": 0.0},
+            "hypothesis": {"count": 0, "ratio": 0.0},
+            "decision": {"count": 0, "ratio": 0.0},
+            "outcome": {"count": 0, "ratio": 0.0},
+        },
+        "balance_score": 0.0,
+        "weakest_layer": "fact",
+        "weakest_ratio": 0.0,
+        "confidence": {"average": 0.0, "minimum": 0.0, "maximum": 0.0},
+    }
+
+
 def test_memory_quality_state_snapshot_normalizes_tuning_defaults_and_legacy_shapes(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.jsonl")
     store.quality_state_path.write_text(

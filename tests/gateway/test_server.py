@@ -73,10 +73,20 @@ class ProviderWithUnsafeDiagnostics:
 
 
 class _FakeTuningMemory:
-    def __init__(self, *, degrade: bool = True, fail_update: bool = False, fail_tuning_update: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        degrade: bool = True,
+        fail_update: bool = False,
+        fail_tuning_update: bool = False,
+        weakest_layer: str = "",
+        degrade_score: int = 20,
+    ) -> None:
         self.degrade = degrade
         self.fail_update = fail_update
         self.fail_tuning_update = fail_tuning_update
+        self.weakest_layer = str(weakest_layer or "").strip()
+        self.degrade_score = int(degrade_score)
         self.snapshot_calls = 0
         self.tuning = {
             "degrading_streak": 0,
@@ -113,9 +123,9 @@ class _FakeTuningMemory:
         del retrieval_metrics, turn_stability_metrics, semantic_metrics
         if self.fail_update:
             raise RuntimeError("tuning-update-failed")
-        return {
+        payload = {
             "sampled_at": sampled_at,
-            "score": 20 if self.degrade else 88,
+            "score": self.degrade_score if self.degrade else 88,
             "retrieval": {"attempts": 10, "hits": 1, "rewrites": 0, "hit_rate": 0.1},
             "turn_stability": {"successes": 1, "errors": 3, "success_rate": 0.25, "error_rate": 0.75},
             "drift": {
@@ -128,6 +138,13 @@ class _FakeTuningMemory:
             "semantic": {"enabled": True, "coverage_ratio": 0.1},
             "recommendations": ["x"],
         }
+        if self.weakest_layer:
+            payload["reasoning_layers"] = {
+                "weakest_layer": self.weakest_layer,
+                "distribution": {self.weakest_layer: 1},
+                "confidence": {"average": 0.5},
+            }
+        return payload
 
     def quality_state_snapshot(self) -> dict[str, object]:
         return {
@@ -1613,7 +1630,13 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
             "turn_stability",
             "drift",
             "semantic",
+            "reasoning_layers",
             "recommendations",
+        }
+        assert set(memory_quality["report"]["reasoning_layers"].keys()) >= {
+            "distribution",
+            "weakest_layer",
+            "confidence",
         }
         retrieval = payload["engine"]["retrieval_metrics"]
         assert set(retrieval.keys()) == {
@@ -2077,6 +2100,117 @@ def test_gateway_diagnostics_memory_quality_cache_hit_refreshes_tuning_from_stat
         assert second_quality["tuning"]["last_action_at"] == "2026-03-05T10:30:00+00:00"
         assert second_quality["state"]["tuning"]["last_action"] == "memory_snapshot"
         assert second_quality["report"]["tuning"]["last_action"] == "memory_snapshot"
+
+
+def test_gateway_diagnostics_memory_quality_cache_fingerprint_includes_reasoning_layers(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+            "autonomy": {"tuning_loop_enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    memory = app.state.runtime.engine.memory
+    calls = {"quality_update": 0, "analysis_stats": 0}
+
+    def _analysis_stats() -> dict[str, object]:
+        calls["analysis_stats"] += 1
+        if calls["analysis_stats"] <= 2:
+            reasoning_layers = {"fact": 5, "procedural": 5}
+        else:
+            reasoning_layers = {"fact": 9, "procedural": 1}
+        return {
+            "semantic": {
+                "enabled": True,
+                "coverage_ratio": 0.5,
+                "missing_records": 50,
+                "total_records": 100,
+            },
+            "reasoning_layers": reasoning_layers,
+            "confidence": {"average": 0.66},
+        }
+
+    def _quality_update(*, retrieval_metrics, turn_stability_metrics, semantic_metrics, sampled_at, reasoning_layer_metrics=None):
+        del retrieval_metrics, turn_stability_metrics, semantic_metrics, sampled_at
+        calls["quality_update"] += 1
+        reasoning_payload = dict(reasoning_layer_metrics or {})
+        reasoning_layers = reasoning_payload.get("reasoning_layers", {})
+        weakest_layer = ""
+        if isinstance(reasoning_layers, dict):
+            weakest_layer = min(reasoning_layers.keys(), key=lambda key: int(reasoning_layers.get(key, 0) or 0))
+        return {
+            "semantic": {"enabled": True, "coverage_ratio": 0.5},
+            "drift": {"assessment": "stable"},
+            "score": 90,
+            "reasoning_layers": {
+                "distribution": dict(reasoning_layers),
+                "weakest_layer": weakest_layer,
+                "confidence": dict(reasoning_payload.get("confidence", {})),
+            },
+            "recommendations": [],
+        }
+
+    def _quality_snapshot() -> dict[str, object]:
+        return {"tuning": {}}
+
+    memory.analysis_stats = _analysis_stats
+    memory.update_quality_state = _quality_update
+    memory.quality_state_snapshot = _quality_snapshot
+
+    with TestClient(app) as client:
+        first = client.get("/v1/diagnostics").json()
+        second = client.get("/v1/diagnostics").json()
+
+    assert calls["quality_update"] == 2
+    assert (
+        first["engine"]["memory_quality"]["report"]["reasoning_layers"]["weakest_layer"]
+        != second["engine"]["memory_quality"]["report"]["reasoning_layers"]["weakest_layer"]
+    )
+
+
+def test_gateway_tuning_loop_annotates_action_reason_and_metadata_with_weakest_layer(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+            "autonomy": {
+                "tuning_loop_enabled": True,
+                "tuning_degrading_streak_threshold": 2,
+                "tuning_loop_cooldown_s": 0,
+            },
+        },
+        channels={},
+    )
+    cfg.gateway.autonomy.tuning_loop_interval_s = 1
+    app = create_app(cfg)
+    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="procedural", degrade_score=70)
+    app.state.runtime.engine.memory = fake_memory
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        payload = {}
+        for _ in range(40):
+            payload = client.get("/v1/diagnostics").json()
+            if int(payload["memory_quality_tuning"]["ticks"]) >= 1 and app.state.runtime.channels.send.await_count >= 1:
+                break
+            time.sleep(0.05)
+
+        assert int(payload["memory_quality_tuning"]["ticks"]) >= 1
+        send_kwargs = app.state.runtime.channels.send.await_args.kwargs
+        assert send_kwargs["metadata"]["weakest_layer"] == "procedural"
+        assert "weakest_layer=procedural" in str(fake_memory.tuning.get("last_reason", "") or "")
+        recent_actions = fake_memory.tuning.get("recent_actions", [])
+        assert recent_actions
+        last_entry = recent_actions[-1]
+        assert last_entry["metadata"]["weakest_layer"] == "procedural"
 
 
 def test_gateway_tuning_loop_fail_soft_on_action_and_state_update_exceptions(tmp_path: Path) -> None:
