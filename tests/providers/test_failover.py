@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from clawlite.providers.base import LLMResult
-from clawlite.providers.failover import FailoverProvider
+from clawlite.providers.failover import FailoverCooldownError, FailoverProvider
 
 
 class _Provider:
@@ -29,6 +29,33 @@ class _Provider:
             "token": "test_token_value",
             "counters": {"requests": self.calls},
         }
+
+
+class _SequenceProvider:
+    def __init__(self, outcomes: list[str]) -> None:
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    async def complete(self, *, messages, tools, max_tokens=None, temperature=None, reasoning_effort=None):
+        self.calls += 1
+        outcome = self.outcomes.pop(0) if self.outcomes else "ok:default"
+        if outcome.startswith("err:"):
+            raise RuntimeError(outcome.removeprefix("err:"))
+        return LLMResult(text=outcome.removeprefix("ok:"), model="test/model", tool_calls=[], metadata={"provider": "test"})
+
+    def get_default_model(self) -> str:
+        return "test/model"
+
+
+class _Clock:
+    def __init__(self, start: float = 1000.0) -> None:
+        self.value = start
+
+    def now(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += float(seconds)
 
 
 def test_failover_provider_uses_fallback_for_retryable_primary_failure() -> None:
@@ -115,3 +142,106 @@ def test_failover_provider_diagnostics_contract_and_secret_safety() -> None:
     assert "token" not in diag["fallback"]
     encoded = json.dumps(diag).lower()
     assert "test_token_value" not in encoded
+
+
+def test_failover_provider_primary_cooldown_skips_primary_and_uses_fallback() -> None:
+    async def _scenario() -> None:
+        clock = _Clock()
+        primary = _SequenceProvider(["err:provider_network_error:timeout", "ok:from primary"])
+        fallback = _SequenceProvider(["ok:from fallback", "ok:from fallback again"])
+        provider = FailoverProvider(
+            primary=primary,
+            fallback=fallback,
+            fallback_model="openai/gpt-4.1-mini",
+            cooldown_seconds=30.0,
+            now_fn=clock.now,
+        )
+
+        out1 = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+        assert out1.text == "from fallback"
+        assert primary.calls == 1
+        assert fallback.calls == 1
+
+        out2 = await provider.complete(messages=[{"role": "user", "content": "hi again"}], tools=[])
+        assert out2.text == "from fallback again"
+        assert primary.calls == 1
+        assert fallback.calls == 2
+
+        diag = provider.diagnostics()
+        assert diag["primary_skipped_due_cooldown"] == 1
+        assert diag["fallback_attempts"] == 2
+        assert diag["primary_in_cooldown"] is True
+        assert diag["primary_cooldown_remaining_s"] > 0
+
+    asyncio.run(_scenario())
+
+
+def test_failover_provider_fallback_cooldown_avoids_repeated_attempts() -> None:
+    async def _scenario() -> None:
+        clock = _Clock()
+        primary = _Provider(error="provider_network_error:timeout")
+        fallback = _Provider(error="provider_http_error:503:temporary")
+        provider = FailoverProvider(
+            primary=primary,
+            fallback=fallback,
+            fallback_model="openai/gpt-4.1-mini",
+            cooldown_seconds=45.0,
+            now_fn=clock.now,
+        )
+
+        try:
+            await provider.complete(messages=[{"role": "user", "content": "first"}], tools=[])
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("expected first fallback failure")
+
+        try:
+            await provider.complete(messages=[{"role": "user", "content": "second"}], tools=[])
+        except FailoverCooldownError as exc:
+            assert "provider_failover_cooldown:both_providers_cooling_down" in str(exc)
+        else:
+            raise AssertionError("expected cooldown fast-fail")
+
+        assert primary.calls == 1
+        assert fallback.calls == 1
+        diag = provider.diagnostics()
+        assert diag["fallback_cooldown_activations"] == 1
+        assert diag["fallback_skipped_due_cooldown"] == 1
+        assert diag["both_in_cooldown_fail_fast"] == 1
+        assert diag["fallback_attempts"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_failover_provider_cooldown_expires_and_primary_is_retried() -> None:
+    async def _scenario() -> None:
+        clock = _Clock()
+        primary = _SequenceProvider(["err:provider_network_error:timeout", "ok:from primary"])
+        fallback = _Provider(result="from fallback")
+        provider = FailoverProvider(
+            primary=primary,
+            fallback=fallback,
+            fallback_model="openai/gpt-4.1-mini",
+            cooldown_seconds=5.0,
+            now_fn=clock.now,
+        )
+
+        out1 = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+        assert out1.text == "from fallback"
+        assert primary.calls == 1
+        assert fallback.calls == 1
+
+        clock.advance(5.1)
+
+        out2 = await provider.complete(messages=[{"role": "user", "content": "hi again"}], tools=[])
+        assert out2.text == "from primary"
+        assert primary.calls == 2
+        assert fallback.calls == 1
+        assert "fallback_used" not in out2.metadata
+
+        diag = provider.diagnostics()
+        assert diag["primary_in_cooldown"] is False
+        assert diag["primary_cooldown_remaining_s"] == 0.0
+
+    asyncio.run(_scenario())
