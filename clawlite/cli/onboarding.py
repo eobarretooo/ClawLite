@@ -236,17 +236,23 @@ def run_onboarding_wizard(
         current_base = str(config.provider.litellm_base_url or "").strip()
         base_default = current_base or provider_default_base
         base_url = base_default
+        selected_model = ""
         if step_1_mode == "advanced":
             base_url = Prompt.ask(f"{provider} base URL", default=base_default)
+            current_model = str(config.provider.model or "").strip()
+            model_default = current_model or DEFAULT_PROVIDER_MODELS[provider]
+            selected_model = Prompt.ask(f"{provider} model", default=model_default)
         api_key = ""
         if provider != "ollama":
             api_key = Prompt.ask(f"{provider} API key", password=True)
         provider_probe = probe_provider(provider, api_key=api_key, base_url=base_url)
+        persisted_model = str(selected_model or "").strip() or DEFAULT_PROVIDER_MODELS[provider]
         payload["steps"].append(
             {
                 "step": 2,
                 "name": "provider",
                 "provider": provider,
+                "model": persisted_model,
                 "probe_ok": bool(provider_probe.get("ok", False)),
                 "base_url": str(provider_probe.get("base_url", "") or ""),
                 "api_key_masked": str(provider_probe.get("api_key_masked", "") or ""),
@@ -266,6 +272,7 @@ def run_onboarding_wizard(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
+            model=selected_model,
         )
 
         telegram_enabled = Confirm.ask("Step 3/5 - enable Telegram channel?", default=False)
