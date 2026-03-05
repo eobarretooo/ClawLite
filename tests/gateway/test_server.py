@@ -456,15 +456,49 @@ def test_run_heartbeat_contract_skips_on_heartbeat_ok() -> None:
 
 
 def test_run_heartbeat_contract_runs_on_actionable_output() -> None:
+    class _Memory:
+        def all(self):
+            return [SimpleNamespace(source="session:telegram:chat42", created_at="2026-03-05T00:00:00+00:00")]
+
     class _Engine:
+        def __init__(self) -> None:
+            self.memory = _Memory()
+
         async def run(self, *, session_id: str, user_text: str):
             return SimpleNamespace(text="Alert: queue backlog is growing")
 
     async def _scenario() -> None:
-        runtime = SimpleNamespace(engine=_Engine())
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels)
         decision = await _run_heartbeat(runtime)
         assert decision.action == "run"
-        assert decision.reason == "actionable_response"
+        assert decision.reason == "actionable_dispatched"
+        channels.send.assert_awaited_once()
+        kwargs = channels.send.await_args.kwargs
+        assert kwargs["channel"] == "telegram"
+        assert kwargs["target"] == "chat42"
+        assert kwargs["text"] == "Alert: queue backlog is growing"
+        assert kwargs["metadata"]["source"] == "heartbeat"
+        assert kwargs["metadata"]["trigger"] == "heartbeat_loop"
+
+    asyncio.run(_scenario())
+
+
+def test_run_heartbeat_actionable_dispatch_failure_marks_reason() -> None:
+    class _Engine:
+        async def run(self, *, session_id: str, user_text: str):
+            del session_id, user_text
+            return SimpleNamespace(text="Alert: dispatch this")
+
+    async def _scenario() -> None:
+        channels = SimpleNamespace(send=AsyncMock(side_effect=RuntimeError("channel down")))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels)
+
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "run"
+        assert decision.reason == "actionable_dispatch_failed"
+        channels.send.assert_awaited_once()
 
     asyncio.run(_scenario())
 
@@ -645,6 +679,9 @@ def test_run_heartbeat_next_step_retrieve_fail_soft() -> None:
 
 def test_run_heartbeat_skips_low_priority_suggestions() -> None:
     class _Engine:
+        def __init__(self) -> None:
+            self.memory = None
+
         async def run(self, *, session_id: str, user_text: str):
             return SimpleNamespace(text="Alert: review now")
 
@@ -676,7 +713,11 @@ def test_run_heartbeat_skips_low_priority_suggestions() -> None:
         decision = await _run_heartbeat(runtime)
 
         assert decision.action == "run"
-        channels.send.assert_not_awaited()
+        assert decision.reason == "actionable_dispatched"
+        channels.send.assert_awaited_once()
+        kwargs = channels.send.await_args.kwargs
+        assert kwargs["channel"] == "cli"
+        assert kwargs["target"] == "profile"
 
     asyncio.run(_scenario())
 
@@ -996,6 +1037,7 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
             "latency_buckets",
             "last_outcome",
             "last_model",
+            "diagnostic_switches",
         }
         assert set(turn_metrics["latency_buckets"].keys()) == {
             "lt_1s",

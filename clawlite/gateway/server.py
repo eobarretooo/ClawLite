@@ -650,9 +650,61 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
     bind_event("heartbeat.tick", session="heartbeat:system").debug("heartbeat callback completed")
     decision = HeartbeatDecision.from_result(result.text)
 
-    monitor = getattr(runtime, "memory_monitor", None)
     channels = getattr(runtime, "channels", None)
     memory_store = getattr(getattr(runtime, "engine", None), "memory", None)
+
+    def _default_heartbeat_route() -> tuple[str, str]:
+        return "cli", "profile"
+
+    async def _latest_memory_route() -> tuple[str, str]:
+        channel, target = _default_heartbeat_route()
+        if memory_store is None or not hasattr(memory_store, "all"):
+            return channel, target
+        try:
+            history_rows = await asyncio.to_thread(memory_store.all)
+        except Exception:
+            return channel, target
+        latest_source = ""
+        latest_stamp = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+        for row in history_rows:
+            source = str(getattr(row, "source", "") or "").strip()
+            created_raw = str(getattr(row, "created_at", "") or "")
+            try:
+                created_at = dt.datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=dt.timezone.utc)
+            except Exception:
+                created_at = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+            if source and created_at >= latest_stamp:
+                latest_stamp = created_at
+                latest_source = source
+        if latest_source:
+            return MemoryMonitor._delivery_route_from_source(latest_source)
+        return channel, target
+
+    if decision.action == "run" and decision.text:
+        channel, target = await _latest_memory_route()
+        metadata = {
+            "source": "heartbeat",
+            "trigger": "heartbeat_loop",
+            "decision_reason": decision.reason,
+        }
+        try:
+            if channels is None:
+                raise RuntimeError("channels_unavailable")
+            await channels.send(channel=channel, target=target, text=decision.text, metadata=metadata)
+        except Exception as exc:
+            bind_event("heartbeat.tick", session="heartbeat:system").warning(
+                "actionable heartbeat dispatch failed channel={} target={} error={}",
+                channel,
+                target,
+                exc,
+            )
+            decision = HeartbeatDecision(action="run", reason="actionable_dispatch_failed", text=decision.text)
+        else:
+            decision = HeartbeatDecision(action="run", reason="actionable_dispatched", text=decision.text)
+
+    monitor = getattr(runtime, "memory_monitor", None)
     if monitor is not None and channels is not None:
         try:
             suggestions = await monitor.scan()

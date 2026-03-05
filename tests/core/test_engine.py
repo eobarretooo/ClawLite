@@ -8,6 +8,7 @@ import clawlite.core.engine as engine_module
 from clawlite.config.schema import ToolSafetyPolicyConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings, ProviderResult, ToolCall, TurnBudget
 from clawlite.core.memory import MemoryRecord
+from clawlite.core.subagent import SubagentRun
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logging import bind_event
@@ -161,6 +162,40 @@ class FakeMemoryWithContextKwargs(FakeMemory):
         return {"status": "ok"}
 
 
+class FakeSubagentManagerForDigest:
+    def __init__(self) -> None:
+        self.list_calls = 0
+        self.mark_calls: list[dict[str, Any]] = []
+
+    def list_completed_unsynthesized(self, session_id: str, limit: int = 8) -> list[SubagentRun]:
+        self.list_calls += 1
+        del limit
+        return [
+            SubagentRun(
+                run_id="run-1234567890",
+                session_id=session_id,
+                task="collect context",
+                status="done",
+                result="Collected all required details.",
+                finished_at="2026-03-05T12:00:00+00:00",
+            )
+        ]
+
+    def mark_synthesized(self, run_ids: list[str], *, digest_id: str = "") -> int:
+        self.mark_calls.append({"run_ids": list(run_ids), "digest_id": digest_id})
+        return len(run_ids)
+
+
+class FakeSubagentSynthesizer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def summarize(self, runs: list[Any]) -> str:
+        self.calls += 1
+        del runs
+        return "- run-1234 [done] task=collect context | excerpt=Collected all required details."
+
+
 class FakePlannerMemory:
     def __init__(
         self,
@@ -239,6 +274,47 @@ class FakeLoopingToolProvider:
             tool_calls=[ToolCall(name="echo", arguments={"text": "same"})],
             model="fake/model",
         )
+
+
+class FakeDiagnosticSwitchProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        self.snapshots.append(list(messages))
+        if self.calls == 1:
+            return ProviderResult(
+                text="try tool repeatedly",
+                tool_calls=[
+                    ToolCall(name="echo", arguments={"text": "same"}),
+                    ToolCall(name="echo", arguments={"text": "same"}),
+                    ToolCall(name="echo", arguments={"text": "same"}),
+                ],
+                model="fake/model",
+            )
+        return ProviderResult(text="final after diagnostic", tool_calls=[], model="fake/model")
+
+
+class FakeWhitespaceVariantFailTools:
+    def __init__(self) -> None:
+        self.calls = 0
+        self._errors = [
+            "boom   failed",
+            "boom failed",
+            "  boom failed   ",
+        ]
+
+    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+        del name, arguments, session_id, channel, user_id
+        message = self._errors[min(self.calls, len(self._errors) - 1)]
+        self.calls += 1
+        raise RuntimeError(message)
+
+    def schema(self):
+        return [{"name": "echo", "description": "echo text", "arguments": {"text": "string"}}]
 
 
 class FakeNeverCalledProvider:
@@ -336,6 +412,29 @@ def test_engine_runs_tool_roundtrip() -> None:
         assert metrics["turns_cancelled"] == 0
         assert metrics["last_outcome"] == "success"
         assert metrics["last_model"] == "fake/model"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_injects_subagent_digest_once_and_marks_synthesized() -> None:
+    async def _scenario() -> None:
+        subagents = FakeSubagentManagerForDigest()
+        synthesizer = FakeSubagentSynthesizer()
+        engine = AgentEngine(
+            provider=FakePromptCaptureProvider(),
+            tools=FakeTools(),
+            subagents=subagents,
+            synthesizer=synthesizer,
+        )
+
+        out = await engine.run(session_id="cli:subagent-digest", user_text="hello")
+        assert out.text.count("[Subagent Digest]") == 1
+        assert "run-1234 [done]" in out.text
+        assert subagents.list_calls == 1
+        assert len(subagents.mark_calls) == 1
+        assert subagents.mark_calls[0]["run_ids"] == ["run-1234567890"]
+        assert subagents.mark_calls[0]["digest_id"]
+        assert synthesizer.calls == 1
 
     asyncio.run(_scenario())
 
@@ -980,6 +1079,39 @@ def test_engine_detects_repeated_non_progress_tool_loops() -> None:
         assert "loop detection" in out.text.lower()
         assert provider.calls < 20
         assert "loop_detected" in stages
+
+    asyncio.run(_scenario())
+
+
+def test_engine_switches_to_diagnostic_mode_after_repeated_identical_tool_failures() -> None:
+    async def _scenario() -> None:
+        provider = FakeDiagnosticSwitchProvider()
+        tools = FakeWhitespaceVariantFailTools()
+        diagnostic_events: list[dict[str, Any]] = []
+
+        def _hook(event) -> None:
+            if event.stage == "diagnostic_switch":
+                diagnostic_events.append(event.metadata or {})
+
+        engine = AgentEngine(provider=provider, tools=tools)
+        out = await engine.run(session_id="cli:diagnostic-switch", user_text="run", progress_hook=_hook)
+        assert out.text == "final after diagnostic"
+        assert provider.calls == 2
+        assert len(diagnostic_events) == 1
+        assert diagnostic_events[0]["tool"] == "echo"
+        assert diagnostic_events[0]["repeats"] == 3
+        assert diagnostic_events[0]["threshold"] == 3
+
+        second_round = provider.snapshots[1]
+        diagnostic_rows = [
+            row
+            for row in second_round
+            if row.get("role") == "system" and "Repeated identical tool failure detected" in str(row.get("content", ""))
+        ]
+        assert diagnostic_rows
+
+        metrics = engine.turn_metrics_snapshot()
+        assert metrics["diagnostic_switches"] > 0
 
     asyncio.run(_scenario())
 

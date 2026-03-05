@@ -328,6 +328,47 @@ class SubagentManager:
             values = [item for item in values if item.status in {"running", "queued"}]
         return sorted(values, key=lambda item: item.started_at, reverse=True)
 
+    def list_completed_unsynthesized(self, session_id: str, limit: int = 8) -> list[SubagentRun]:
+        clean_session_id = str(session_id or "").strip()
+        if not clean_session_id:
+            return []
+        max_items = max(1, int(limit))
+        completed_statuses = {"done", "error", "cancelled", "interrupted"}
+
+        rows = [
+            run
+            for run in self._runs.values()
+            if run.session_id == clean_session_id
+            and run.status in completed_statuses
+            and not bool(run.metadata.get("synthesized", False))
+        ]
+        rows.sort(key=lambda item: (item.finished_at or "", item.run_id))
+        return rows[:max_items]
+
+    def mark_synthesized(self, run_ids: list[str], *, digest_id: str = "") -> int:
+        now_iso = _utc_now()
+        clean_digest = str(digest_id or "").strip()
+        count = 0
+        seen: set[str] = set()
+        for run_id in run_ids:
+            clean_run_id = str(run_id or "").strip()
+            if not clean_run_id or clean_run_id in seen:
+                continue
+            seen.add(clean_run_id)
+            run = self._runs.get(clean_run_id)
+            if run is None:
+                continue
+            run.metadata["synthesized"] = True
+            run.metadata["synthesized_at"] = now_iso
+            if clean_digest:
+                run.metadata["synthesized_digest_id"] = clean_digest
+            run.updated_at = now_iso
+            count += 1
+
+        if count > 0:
+            self._save_state()
+        return count
+
     def cancel(self, run_id: str) -> bool:
         clean_run_id = str(run_id or "").strip()
         task = self._tasks.get(clean_run_id)

@@ -14,6 +14,7 @@ from clawlite.core.memory import MemoryRecord, MemoryStore
 from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager
+from clawlite.core.subagent_synthesizer import SubagentSynthesizer
 from clawlite.session.store import SessionStore
 from clawlite.utils.logging import bind_event, setup_logging
 
@@ -244,6 +245,7 @@ class AgentEngine:
             "your",
         }
     )
+    _DIAGNOSTIC_SWITCH_THRESHOLD = 3
 
     def __init__(
         self,
@@ -255,6 +257,7 @@ class AgentEngine:
         prompt_builder: PromptBuilder | None = None,
         skills_loader: SkillsLoader | None = None,
         subagents: SubagentManager | None = None,
+        synthesizer: SubagentSynthesizer | None = None,
         subagent_state_path: str | Path | None = None,
         subagent_max_concurrent_runs: int = 2,
         subagent_max_queued_runs: int = 32,
@@ -281,6 +284,7 @@ class AgentEngine:
             max_queued_runs=subagent_max_queued_runs,
             per_session_quota=subagent_per_session_quota,
         )
+        self.synthesizer = synthesizer or SubagentSynthesizer()
         self.max_iterations = max(1, int(max_iterations))
         self.max_tokens = max(1, int(max_tokens))
         self.temperature = float(temperature)
@@ -324,6 +328,7 @@ class AgentEngine:
         self._turns_provider_errors = 0
         self._turns_cancelled = 0
         self._tool_calls_executed = 0
+        self._diagnostic_switches = 0
         self._turn_latency_buckets: dict[str, int] = {
             "lt_1s": 0,
             "1_3s": 0,
@@ -428,6 +433,7 @@ class AgentEngine:
             "turns_provider_errors": int(self._turns_provider_errors),
             "turns_cancelled": int(self._turns_cancelled),
             "tool_calls_executed": int(self._tool_calls_executed),
+            "diagnostic_switches": int(self._diagnostic_switches),
             "latency_buckets": {
                 "lt_1s": int(self._turn_latency_buckets.get("lt_1s", 0)),
                 "1_3s": int(self._turn_latency_buckets.get("1_3s", 0)),
@@ -490,6 +496,23 @@ class AgentEngine:
         text = str(result)
         digest = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
         return digest
+
+    @staticmethod
+    def _normalize_error_text(text: str) -> str:
+        return " ".join(str(text or "").split()).strip()
+
+    @classmethod
+    def _failure_fingerprint(cls, *, tool_signature: str, tool_result: Any) -> tuple[str, str] | None:
+        text = str(tool_result or "")
+        if not text.startswith("tool_error:"):
+            return None
+        payload = text[len("tool_error:") :]
+        tool_name, separator, error = payload.partition(":")
+        if not separator:
+            return None
+        normalized_error = cls._normalize_error_text(error)
+        fingerprint = f"{tool_signature}::{normalized_error}"
+        return fingerprint, str(tool_name).strip()
 
     def _detect_tool_loop(self, history: list[_ToolExecutionRecord], signature: str) -> tuple[bool, str, int]:
         streak = 0
@@ -873,6 +896,83 @@ class AgentEngine:
             max_progress_events=max(1, int(budget.max_progress_events)) if budget.max_progress_events is not None else self.max_progress_events_per_turn,
         )
 
+    @staticmethod
+    def _append_subagent_digest(text: str, digest: str) -> str:
+        clean_digest = str(digest or "").strip()
+        if not clean_digest:
+            return str(text or "")
+        block = f"[Subagent Digest]\n{clean_digest}"
+        clean_text = str(text or "").rstrip()
+        if not clean_text:
+            return block
+        return f"{clean_text}\n\n{block}"
+
+    async def _inject_subagent_digest(
+        self,
+        *,
+        final: ProviderResult,
+        session_id: str,
+        run_log: Any,
+    ) -> ProviderResult:
+        list_fn = getattr(self.subagents, "list_completed_unsynthesized", None)
+        if not callable(list_fn):
+            return final
+
+        try:
+            completed_runs = list_fn(session_id, limit=8)
+        except TypeError:
+            try:
+                completed_runs = list_fn(session_id)
+            except Exception as exc:
+                run_log.warning("subagent digest listing failed session={} error={}", session_id or "-", exc)
+                return final
+        except Exception as exc:
+            run_log.warning("subagent digest listing failed session={} error={}", session_id or "-", exc)
+            return final
+
+        if not completed_runs:
+            return final
+
+        summarize_fn = getattr(self.synthesizer, "summarize", None)
+        if not callable(summarize_fn):
+            return final
+
+        try:
+            digest_value = summarize_fn(completed_runs)
+            if inspect.isawaitable(digest_value):
+                digest_value = await digest_value
+            digest = str(digest_value or "").strip()
+        except Exception as exc:
+            run_log.warning("subagent digest summarize failed session={} error={}", session_id or "-", exc)
+            return final
+
+        if not digest:
+            return final
+
+        updated = ProviderResult(
+            text=self._append_subagent_digest(final.text, digest),
+            tool_calls=list(final.tool_calls),
+            model=final.model,
+        )
+
+        mark_fn = getattr(self.subagents, "mark_synthesized", None)
+        if callable(mark_fn):
+            run_ids = [str(getattr(item, "run_id", "") or "").strip() for item in completed_runs]
+            run_ids = [item for item in run_ids if item]
+            if run_ids:
+                digest_id = hashlib.sha256(digest.encode("utf-8", errors="ignore")).hexdigest()[:12]
+                try:
+                    mark_fn(run_ids, digest_id=digest_id)
+                except TypeError:
+                    try:
+                        mark_fn(run_ids)
+                    except Exception as exc:
+                        run_log.warning("subagent digest mark failed session={} error={}", session_id or "-", exc)
+                except Exception as exc:
+                    run_log.warning("subagent digest mark failed session={} error={}", session_id or "-", exc)
+
+        return updated
+
     @classmethod
     def _truncate_tool_result(cls, value: Any, max_chars: int) -> tuple[str, bool]:
         text = str(value)
@@ -1005,6 +1105,9 @@ class AgentEngine:
         iteration = 0
         resolved_reasoning_effort = self._resolve_reasoning_effort(user_text, self.reasoning_effort_default)
         tool_history: list[_ToolExecutionRecord] = []
+        diagnostic_threshold = self._DIAGNOSTIC_SWITCH_THRESHOLD
+        failure_fingerprint_counts: dict[str, int] = {}
+        diagnostic_switched_fingerprints: set[str] = set()
 
         await self._emit_progress(
             progress_hook=progress_hook,
@@ -1174,6 +1277,8 @@ class AgentEngine:
                         tool_result = f"tool_error:{name}:{exc}"
                     tool_calls_executed += 1
 
+                    failure_fingerprint = self._failure_fingerprint(tool_signature=signature, tool_result=tool_result)
+
                     normalized_result, was_truncated = self._truncate_tool_result(
                         tool_result,
                         budget.max_tool_result_chars or self.max_tool_result_chars,
@@ -1220,6 +1325,49 @@ class AgentEngine:
                         if len(tool_history) > max_history:
                             del tool_history[:-max_history]
 
+                    if failure_fingerprint is not None:
+                        fingerprint, failed_tool_name = failure_fingerprint
+                        repeats = int(failure_fingerprint_counts.get(fingerprint, 0)) + 1
+                        failure_fingerprint_counts[fingerprint] = repeats
+                        if repeats >= diagnostic_threshold and fingerprint not in diagnostic_switched_fingerprints:
+                            diagnostic_switched_fingerprints.add(fingerprint)
+                            self._diagnostic_switches += 1
+                            run_log.warning(
+                                "diagnostic switch iteration={} tool={} repeats={} threshold={}",
+                                iteration,
+                                failed_tool_name or name,
+                                repeats,
+                                diagnostic_threshold,
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "[Diagnostic] Repeated identical tool failure detected in this turn. "
+                                        "Do not repeat the same tool call with unchanged inputs. "
+                                        "Replan using an alternative approach or request missing constraints explicitly."
+                                    ),
+                                }
+                            )
+                            await self._emit_progress(
+                                progress_hook=progress_hook,
+                                event=ProgressEvent(
+                                    stage="diagnostic_switch",
+                                    session_id=session_id,
+                                    iteration=iteration,
+                                    message="diagnostic strategy switch",
+                                    tool_name=failed_tool_name or name,
+                                    metadata={
+                                        "tool": failed_tool_name or name,
+                                        "repeats": repeats,
+                                        "threshold": diagnostic_threshold,
+                                    },
+                                ),
+                                counter=progress_counter,
+                                limit=budget.max_progress_events or 1,
+                            )
+                            break
+
                 if final.text:
                     break
                 continue
@@ -1234,6 +1382,8 @@ class AgentEngine:
                 tool_calls=[],
                 model="engine/fallback",
             )
+
+        final = await self._inject_subagent_digest(final=final, session_id=session_id, run_log=run_log)
 
         self.sessions.append(session_id, "user", user_text)
         if not graceful_error:
