@@ -323,6 +323,30 @@ def test_gateway_runtime_disables_memory_monitor_when_proactive_false(tmp_path: 
     assert runtime.memory_monitor is None
 
 
+def test_build_runtime_heartbeat_state_path_uses_workspace_memory_dir(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+
+    assert Path(runtime.heartbeat.state_path) == (tmp_path / "workspace" / "memory" / "heartbeat-state.json")
+
+
+def test_build_runtime_heartbeat_interval_accepts_120_from_scheduler(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=120),
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+
+    assert runtime.heartbeat.interval_seconds == 120
+
+
 def test_run_heartbeat_skips_suggestions_when_memory_monitor_missing() -> None:
     class _Engine:
         async def run(self, *, session_id: str, user_text: str):
@@ -489,6 +513,35 @@ def test_run_heartbeat_contract_runs_on_actionable_output() -> None:
         assert kwargs["text"] == "Alert: queue backlog is growing"
         assert kwargs["metadata"]["source"] == "heartbeat"
         assert kwargs["metadata"]["trigger"] == "heartbeat_loop"
+
+    asyncio.run(_scenario())
+
+
+def test_run_heartbeat_injects_workspace_content_when_available() -> None:
+    class _Engine:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        async def run(self, *, session_id: str, user_text: str):
+            self.calls.append((session_id, user_text))
+            return SimpleNamespace(text="HEARTBEAT_OK")
+
+    async def _scenario() -> None:
+        engine = _Engine()
+        runtime = SimpleNamespace(
+            engine=engine,
+            workspace=SimpleNamespace(heartbeat_prompt=lambda: "- check inbox\n- prune stale tasks"),
+        )
+
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "skip"
+        assert engine.calls
+        session_id, user_text = engine.calls[0]
+        assert session_id == "heartbeat:system"
+        assert "HEARTBEAT.md content:" in user_text
+        assert "check inbox" in user_text
+        assert "prune stale tasks" in user_text
 
     asyncio.run(_scenario())
 

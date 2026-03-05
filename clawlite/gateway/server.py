@@ -505,8 +505,12 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         store_path=Path(config.state_path) / "cron_jobs.json",
         default_timezone=config.scheduler.timezone,
     )
+    heartbeat_interval = int(config.gateway.heartbeat.interval_s or 1800)
+    scheduler_interval = int(getattr(config.scheduler, "heartbeat_interval_seconds", heartbeat_interval) or heartbeat_interval)
+    if heartbeat_interval == 1800 and scheduler_interval != 1800:
+        heartbeat_interval = scheduler_interval
     heartbeat = HeartbeatService(
-        interval_seconds=config.gateway.heartbeat.interval_s,
+        interval_seconds=heartbeat_interval,
         state_path=workspace_path / "memory" / "heartbeat-state.json",
     )
 
@@ -645,6 +649,16 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
         "Do not infer or repeat old tasks from prior chats. "
         "If nothing needs attention, reply HEARTBEAT_OK."
     )
+    workspace_heartbeat = ""
+    workspace = getattr(runtime, "workspace", None)
+    workspace_heartbeat_prompt = getattr(workspace, "heartbeat_prompt", None)
+    if callable(workspace_heartbeat_prompt):
+        try:
+            workspace_heartbeat = str(workspace_heartbeat_prompt() or "").strip()
+        except Exception:
+            workspace_heartbeat = ""
+    if workspace_heartbeat:
+        heartbeat_prompt = f"{heartbeat_prompt}\n\nHEARTBEAT.md content:\n{workspace_heartbeat}"
     session_id = "heartbeat:system"
     bind_event("heartbeat.tick", session="heartbeat:system").debug("heartbeat callback running")
     result = await runtime.engine.run(session_id=session_id, user_text=heartbeat_prompt)
