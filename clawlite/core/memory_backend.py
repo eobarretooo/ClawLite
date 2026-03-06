@@ -381,6 +381,10 @@ class PgvectorMemoryBackend:
             return 0.0
         return float(dot / ((left_norm * right_norm) ** 0.5))
 
+    @staticmethod
+    def _to_vector_literal(embedding: list[float]) -> str:
+        return json.dumps([float(item) for item in embedding], ensure_ascii=True, separators=(",", ":"))
+
     def _is_valid_pg_url(self) -> bool:
         raw_url = str(self.pgvector_url or "").strip()
         if not raw_url:
@@ -750,6 +754,60 @@ class PgvectorMemoryBackend:
         if normalized_query is None:
             return []
         bounded_limit = max(1, int(limit or 1))
+
+        sql_hits: list[dict[str, Any]] | None = None
+        conn = self._open_connection()
+        if conn is not None:
+            with self._lock:
+                cursor = None
+                try:
+                    vector_literal = self._to_vector_literal(normalized_query)
+                    params: list[Any] = [vector_literal]
+                    query = (
+                        "SELECT record_id, (1 - (embedding::vector <=> %s::vector)) AS score "
+                        "FROM embeddings"
+                    )
+
+                    clean_ids = [str(item).strip() for item in (record_ids or []) if str(item).strip()]
+                    if clean_ids:
+                        placeholders = ", ".join("%s" for _ in clean_ids)
+                        query += f" WHERE record_id IN ({placeholders})"
+                        params.extend(clean_ids)
+
+                    query += " ORDER BY embedding::vector <=> %s::vector ASC, record_id DESC LIMIT %s"
+                    params.append(vector_literal)
+                    params.append(bounded_limit)
+
+                    cursor = conn.cursor()
+                    cursor.execute(query, tuple(params))
+                    rows = cursor.fetchall()
+
+                    sql_hits = []
+                    for row in rows:
+                        row_id = str(row[0] or "").strip() if len(row) >= 1 else ""
+                        if not row_id:
+                            continue
+                        try:
+                            score = float(row[1]) if len(row) >= 2 else 0.0
+                        except Exception:
+                            score = 0.0
+                        sql_hits.append({"record_id": row_id, "score": score})
+                except Exception:
+                    sql_hits = None
+                finally:
+                    if cursor is not None:
+                        try:
+                            cursor.close()
+                        except Exception:
+                            pass
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+        if sql_hits is not None:
+            return sql_hits[:bounded_limit]
+
         embeddings = self.fetch_embeddings(record_ids=record_ids, limit=max(bounded_limit, 5000))
         if not embeddings:
             return []

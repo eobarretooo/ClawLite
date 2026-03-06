@@ -124,3 +124,90 @@ def test_pgvector_support_detection_requires_valid_url_and_driver(monkeypatch) -
     )
     assert backend_missing_drivers.is_supported() is False
     assert attempted_imports == ["psycopg", "psycopg2"]
+
+
+def test_pgvector_query_similar_embeddings_uses_sql_path(monkeypatch) -> None:
+    backend = resolve_memory_backend(
+        "pgvector",
+        pgvector_url="postgresql://user:pass@localhost:5432/clawlite",
+    )
+
+    class FakeCursor:
+        def __init__(self) -> None:
+            self.executed_query: str = ""
+            self.executed_params: tuple[object, ...] = ()
+
+        def execute(self, query: str, params: tuple[object, ...]) -> None:
+            self.executed_query = query
+            self.executed_params = params
+
+        def fetchall(self):
+            return [("alpha", 0.95), ("beta", 0.80)]
+
+        def close(self) -> None:
+            return None
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self._cursor = FakeCursor()
+            self.closed = False
+
+        def cursor(self) -> FakeCursor:
+            return self._cursor
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_conn = FakeConnection()
+    monkeypatch.setattr(type(backend), "_open_connection", lambda self: fake_conn)
+
+    def fail_if_fallback_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("python fallback should not be used when SQL path succeeds")
+
+    monkeypatch.setattr(type(backend), "fetch_embeddings", lambda self, record_ids=None, limit=5000: fail_if_fallback_called())
+
+    hits = backend.query_similar_embeddings([1.0, 0.0], record_ids=["alpha", "beta"], limit=1)
+
+    assert hits == [{"record_id": "alpha", "score": 0.95}]
+    assert "embedding::vector <=> %s::vector" in fake_conn._cursor.executed_query
+    assert "record_id IN (%s, %s)" in fake_conn._cursor.executed_query
+    assert fake_conn._cursor.executed_params[-1] == 1
+    assert fake_conn.closed is True
+
+
+def test_pgvector_query_similar_embeddings_falls_back_when_sql_fails(monkeypatch) -> None:
+    backend = resolve_memory_backend(
+        "pgvector",
+        pgvector_url="postgresql://user:pass@localhost:5432/clawlite",
+    )
+
+    class BrokenCursor:
+        def execute(self, query: str, params: tuple[object, ...]) -> None:
+            del query, params
+            raise RuntimeError("sql path unavailable")
+
+        def close(self) -> None:
+            return None
+
+    class BrokenConnection:
+        def cursor(self) -> BrokenCursor:
+            return BrokenCursor()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(type(backend), "_open_connection", lambda self: BrokenConnection())
+    monkeypatch.setattr(
+        type(backend),
+        "fetch_embeddings",
+        lambda self, record_ids=None, limit=5000: {
+            "alpha": [1.0, 0.0],
+            "beta": [0.0, 1.0],
+        },
+    )
+
+    hits = backend.query_similar_embeddings([0.9, 0.1], record_ids=["alpha", "beta"], limit=2)
+
+    assert [item["record_id"] for item in hits] == ["alpha", "beta"]
+    assert float(hits[0]["score"]) > float(hits[1]["score"])
