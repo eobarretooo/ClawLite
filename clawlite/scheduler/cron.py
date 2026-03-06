@@ -162,8 +162,20 @@ class CronService:
     def _write_rows_unlocked(self, rows: list[dict[str, Any]]) -> None:
         payload = json.dumps(rows, ensure_ascii=False, indent=2)
         tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        tmp_path.write_text(payload, encoding="utf-8")
-        tmp_path.replace(self.path)
+        with tmp_path.open("w", encoding="utf-8") as tmp_file:
+            tmp_file.write(payload)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        os.replace(tmp_path, self.path)
+        dir_fd: int | None = None
+        try:
+            dir_fd = os.open(self.path.parent, os.O_RDONLY)
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
 
     def _job_from_row(self, row: dict[str, Any]) -> CronJob | None:
         try:

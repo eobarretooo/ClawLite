@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from datetime import timedelta
@@ -311,16 +312,16 @@ def test_cron_save_retry_diagnostics_and_persisted_store(monkeypatch, tmp_path: 
         store = tmp_path / "cron.json"
         service = CronService(store)
 
-        original_replace = Path.replace
+        original_replace = os.replace
         calls = {"count": 0}
 
-        def _flaky_replace(self: Path, target: Path) -> Path:
+        def _flaky_replace(src, dst):
             calls["count"] += 1
             if calls["count"] == 1:
                 raise OSError("replace failed once")
-            return original_replace(self, target)
+            return original_replace(src, dst)
 
-        monkeypatch.setattr(Path, "replace", _flaky_replace)
+        monkeypatch.setattr("clawlite.scheduler.cron.os.replace", _flaky_replace)
 
         job_id = await service.add_job(session_id="s1", expression="every 60", prompt="persist me")
         status = service.status()
@@ -336,6 +337,36 @@ def test_cron_save_retry_diagnostics_and_persisted_store(monkeypatch, tmp_path: 
         assert listed and listed[0]["id"] == job_id
 
     asyncio.run(_scenario())
+
+
+def test_cron_write_rows_durable_path_calls_replace_and_fsync(monkeypatch, tmp_path: Path) -> None:
+    service = CronService(tmp_path / "cron.json")
+    rows = [{"id": "job-1", "name": "job"}]
+
+    original_replace = os.replace
+    fsync_calls: list[int] = []
+    replace_calls: list[tuple[str, str]] = []
+
+    def _tracked_fsync(fd: int) -> None:
+        fsync_calls.append(fd)
+
+    def _tracked_replace(src, dst) -> None:
+        replace_calls.append((str(src), str(dst)))
+        original_replace(src, dst)
+
+    monkeypatch.setattr("clawlite.scheduler.cron.os.fsync", _tracked_fsync)
+    monkeypatch.setattr("clawlite.scheduler.cron.os.replace", _tracked_replace)
+
+    service._write_rows_unlocked(rows)
+
+    assert len(replace_calls) == 1
+    replaced_src, replaced_dst = replace_calls[0]
+    assert replaced_dst == str(service.path)
+    assert replaced_src.endswith(".tmp")
+    assert len(fsync_calls) >= 2
+
+    persisted = json.loads(service.path.read_text(encoding="utf-8"))
+    assert persisted == rows
 
 
 def test_cron_multi_instance_claims_due_job_once(tmp_path: Path) -> None:
