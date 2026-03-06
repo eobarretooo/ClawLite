@@ -32,9 +32,24 @@ class SubagentSynthesizer:
         metadata = dict(getattr(run, "metadata", {}) or {})
         result = self._compact(getattr(run, "result", ""), self._MAX_EXCERPT_CHARS)
         error = self._compact(getattr(run, "error", ""), self._MAX_EXCERPT_CHARS)
+        continuation = self._compact(metadata.get("continuation_digest_summary", ""), self._MAX_EXCERPT_CHARS)
         episodic = self._compact(metadata.get("episodic_digest_summary", ""), self._MAX_EXCERPT_CHARS)
         if error:
             return error
+        if continuation and continuation != episodic and episodic and result:
+            return self._compact(
+                f"continued from {continuation} | current={episodic} | result={result}",
+                self._MAX_EXCERPT_CHARS,
+            )
+        if continuation and continuation != episodic and episodic:
+            return self._compact(
+                f"continued from {continuation} | current={episodic}",
+                self._MAX_EXCERPT_CHARS,
+            )
+        if continuation and continuation != episodic and result:
+            return self._compact(f"continued from {continuation} | result={result}", self._MAX_EXCERPT_CHARS)
+        if continuation and continuation != episodic:
+            return self._compact(f"continued from {continuation}", self._MAX_EXCERPT_CHARS)
         if episodic and result:
             return self._compact(f"{episodic} | result={result}", self._MAX_EXCERPT_CHARS)
         if episodic:

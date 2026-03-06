@@ -148,6 +148,88 @@ def test_sessions_send_timeout_returns_deterministic_failed_json() -> None:
     asyncio.run(_scenario())
 
 
+def test_sessions_send_applies_continuation_context_from_memory() -> None:
+    async def _scenario() -> None:
+        calls: list[tuple[str, str]] = []
+
+        class MemoryStub:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def retrieve(
+                self,
+                query: str,
+                *,
+                limit: int = 5,
+                method: str = "rag",
+                user_id: str = "",
+                session_id: str = "",
+                include_shared: bool = False,
+            ) -> dict[str, object]:
+                self.calls.append(
+                    {
+                        "query": query,
+                        "limit": limit,
+                        "method": method,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "include_shared": include_shared,
+                    }
+                )
+                return {
+                    "status": "ok",
+                    "episodic_digest": {
+                        "session_id": session_id,
+                        "count": 2,
+                        "summary": f"current:{session_id} -> blocker triaged",
+                    },
+                }
+
+        async def _runner(session_id: str, task: str):
+            calls.append((session_id, task))
+            return SimpleNamespace(text="ok:contextualized", model="fake/model")
+
+        memory = MemoryStub()
+        tool = SessionsSendTool(_runner, memory=memory)
+        payload = json.loads(
+            await tool.run(
+                {
+                    "sessionId": "cli:target",
+                    "message": "ping",
+                },
+                ToolContext(session_id="cli:caller", user_id="u-1"),
+            )
+        )
+
+        assert payload["status"] == "ok"
+        assert payload["continuation_context_applied"] is True
+        assert payload["continuation_digest_summary"] == "current:cli:target -> blocker triaged"
+        assert payload["continuation_digest_session_id"] == "cli:target"
+        assert payload["continuation_digest_count"] == 2
+        assert memory.calls == [
+            {
+                "query": "ping",
+                "limit": 3,
+                "method": "rag",
+                "user_id": "u-1",
+                "session_id": "cli:target",
+                "include_shared": True,
+            }
+        ]
+        assert calls == [
+            (
+                "cli:target",
+                "[Continuation Context]\n"
+                "Session: cli:target\n"
+                "Summary: current:cli:target -> blocker triaged\n\n"
+                "[Task]\n"
+                "ping",
+            )
+        ]
+
+    asyncio.run(_scenario())
+
+
 def test_sessions_spawn_success_and_subagents_list_kill(tmp_path) -> None:
     async def _scenario() -> None:
         gate = asyncio.Event()
@@ -191,6 +273,96 @@ def test_sessions_spawn_success_and_subagents_list_kill(tmp_path) -> None:
 
         gate.set()
         await asyncio.sleep(0)
+
+    asyncio.run(_scenario())
+
+
+def test_sessions_spawn_applies_continuation_context_and_persists_metadata(tmp_path) -> None:
+    async def _scenario() -> None:
+        calls: list[tuple[str, str]] = []
+
+        class MemoryStub:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def retrieve(
+                self,
+                query: str,
+                *,
+                limit: int = 5,
+                method: str = "rag",
+                user_id: str = "",
+                session_id: str = "",
+                include_shared: bool = False,
+            ) -> dict[str, object]:
+                self.calls.append(
+                    {
+                        "query": query,
+                        "limit": limit,
+                        "method": method,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "include_shared": include_shared,
+                    }
+                )
+                return {
+                    "status": "ok",
+                    "episodic_digest": {
+                        "session_id": session_id,
+                        "count": 1,
+                        "summary": f"current:{session_id} -> blocker triaged",
+                    },
+                }
+
+        async def _runner(session_id: str, task: str):
+            calls.append((session_id, task))
+            return SimpleNamespace(text=f"{session_id}:{task}", model="spawn/model")
+
+        memory = MemoryStub()
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_queued_runs=8, per_session_quota=4)
+        spawn_tool = SessionsSpawnTool(manager, _runner, memory=memory)
+
+        payload = json.loads(
+            await spawn_tool.run(
+                {"task": "delegate task"},
+                ToolContext(session_id="cli:owner", user_id="u-1"),
+            )
+        )
+        await asyncio.sleep(0)
+
+        assert payload["status"] == "ok"
+        assert payload["target_session_id"] == "cli:owner:subagent"
+        assert payload["continuation_context_applied"] is True
+        assert payload["continuation_digest_summary"] == "current:cli:owner:subagent -> blocker triaged"
+        assert payload["continuation_digest_session_id"] == "cli:owner:subagent"
+        assert payload["continuation_digest_count"] == 1
+        assert memory.calls == [
+            {
+                "query": "delegate task",
+                "limit": 3,
+                "method": "rag",
+                "user_id": "u-1",
+                "session_id": "cli:owner:subagent",
+                "include_shared": True,
+            }
+        ]
+        assert calls == [
+            (
+                "cli:owner:subagent",
+                "[Continuation Context]\n"
+                "Session: cli:owner:subagent\n"
+                "Summary: current:cli:owner:subagent -> blocker triaged\n\n"
+                "[Task]\n"
+                "delegate task",
+            )
+        ]
+        runs = manager.list_runs(session_id="cli:owner")
+        assert runs
+        assert runs[0].task == "delegate task"
+        assert runs[0].metadata["continuation_context_applied"] is True
+        assert runs[0].metadata["continuation_digest_summary"] == "current:cli:owner:subagent -> blocker triaged"
+        assert runs[0].metadata["continuation_digest_session_id"] == "cli:owner:subagent"
+        assert runs[0].metadata["continuation_digest_count"] == 1
 
     asyncio.run(_scenario())
 

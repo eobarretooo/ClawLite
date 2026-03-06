@@ -10,6 +10,7 @@ from clawlite.config.schema import ToolSafetyPolicyConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings, ProviderResult, ToolCall, TurnBudget
 from clawlite.core.memory import MemoryRecord
 from clawlite.core.subagent import SubagentRun
+from clawlite.core.subagent_synthesizer import SubagentSynthesizer
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logging import bind_event
@@ -402,6 +403,29 @@ class FakeSubagentManagerForDigestWithTargetSession(FakeSubagentManagerForDigest
             )
         ]
         return self.last_runs
+
+
+class FakeSubagentManagerForDigestWithContinuation(FakeSubagentManagerForDigest):
+    def list_completed_unsynthesized(self, session_id: str, limit: int = 8) -> list[SubagentRun]:
+        self.list_calls += 1
+        del limit
+        return [
+            SubagentRun(
+                run_id="run-cont-1234",
+                session_id=session_id,
+                task="continue blocker triage",
+                status="done",
+                result="Confirmed owner and next action.",
+                finished_at="2026-03-05T12:10:00+00:00",
+                metadata={
+                    "target_session_id": f"{session_id}:subagent",
+                    "continuation_context_applied": True,
+                    "continuation_digest_summary": f"current:{session_id}:subagent -> blocker triaged",
+                    "continuation_digest_session_id": f"{session_id}:subagent",
+                    "continuation_digest_count": 1,
+                },
+            )
+        ]
 
 
 class FakeSubagentSynthesizer:
@@ -969,6 +993,26 @@ def test_engine_enriches_subagent_digest_with_target_session_memory() -> None:
         assert synthesizer.metadata_snapshots[0]["episodic_digest_summary"] == "current:cli:owner:subagent -> blocker triaged"
         assert subagents.last_runs[0].metadata["digest_memory_persisted"] is True
         assert subagents.last_runs[0].metadata["digest_memory_source"] == "subagent-digest:cli:owner"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_subagent_digest_mentions_continuation_context_between_executions() -> None:
+    async def _scenario() -> None:
+        subagents = FakeSubagentManagerForDigestWithContinuation()
+        engine = AgentEngine(
+            provider=FakePromptCaptureProvider(),
+            tools=FakeTools(),
+            memory=FakeMemory([]),
+            subagents=subagents,
+            synthesizer=SubagentSynthesizer(),
+        )
+
+        out = await engine.run(session_id="cli:owner", user_text="hello")
+        assert out.text.count("[Subagent Digest]") == 1
+        assert "session=cli:owner:subagent" in out.text
+        assert "continued from current:cli:owner:subagent -> blocker triaged" in out.text
+        assert "result=Confirmed owner and next action." in out.text
 
     asyncio.run(_scenario())
 

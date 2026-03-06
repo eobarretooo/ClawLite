@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import inspect
 import json
 from pathlib import Path
@@ -14,6 +15,18 @@ from clawlite.tools.base import Tool, ToolContext
 Runner = Callable[[str, str], Awaitable[Any]]
 
 
+@dataclass(slots=True)
+class _ContinuationContext:
+    summary: str = ""
+    session_id: str = ""
+    count: int = 0
+    query: str = ""
+
+    @property
+    def applied(self) -> bool:
+        return bool(self.summary)
+
+
 def _json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
@@ -24,6 +37,14 @@ def _preview(role: str, content: str, *, max_chars: int = 120) -> str:
     if len(clean_text) > max_chars:
         clean_text = f"{clean_text[:max_chars]}..."
     return f"{clean_role}: {clean_text}" if clean_text else clean_role
+
+
+def _compact(value: Any, *, max_chars: int) -> str:
+    clean = " ".join(str(value or "").strip().split())
+    if len(clean) <= max_chars:
+        return clean
+    keep = max(1, max_chars - 3)
+    return f"{clean[:keep]}..."
 
 
 def _resolve_session_id(arguments: dict[str, Any], *, required: bool) -> str:
@@ -74,6 +95,105 @@ def _coerce_timeout(value: Any, *, default: float, minimum: float = 0.1, maximum
     if timeout > maximum:
         return maximum
     return timeout
+
+
+def _accepts_parameter(func: Any, parameter: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    if parameter in signature.parameters:
+        return True
+    return any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
+
+
+async def _lookup_continuation_context(
+    memory: Any | None,
+    *,
+    session_id: str,
+    user_id: str,
+    message: str,
+) -> _ContinuationContext:
+    retrieve_fn = getattr(memory, "retrieve", None)
+    if not callable(retrieve_fn):
+        return _ContinuationContext()
+
+    query = _compact(message, max_chars=240)
+    if not query:
+        return _ContinuationContext()
+
+    kwargs: dict[str, Any] = {"limit": 3, "method": "rag"}
+    if _accepts_parameter(retrieve_fn, "session_id"):
+        kwargs["session_id"] = session_id
+    if user_id and _accepts_parameter(retrieve_fn, "user_id"):
+        kwargs["user_id"] = user_id
+    if _accepts_parameter(retrieve_fn, "include_shared"):
+        kwargs["include_shared"] = True
+
+    try:
+        payload = retrieve_fn(query, **kwargs)
+        if inspect.isawaitable(payload):
+            payload = await payload
+    except TypeError:
+        try:
+            payload = retrieve_fn(query, limit=3, method="rag")
+            if inspect.isawaitable(payload):
+                payload = await payload
+        except Exception:
+            return _ContinuationContext()
+    except Exception:
+        return _ContinuationContext()
+
+    if not isinstance(payload, dict):
+        return _ContinuationContext()
+
+    episodic_digest = payload.get("episodic_digest")
+    if not isinstance(episodic_digest, dict):
+        return _ContinuationContext()
+
+    summary = _compact(episodic_digest.get("summary", ""), max_chars=240)
+    if not summary:
+        return _ContinuationContext()
+
+    digest_session_id = _compact(episodic_digest.get("session_id", session_id), max_chars=96) or session_id
+    try:
+        count = int(episodic_digest.get("count", 0) or 0)
+    except Exception:
+        count = 0
+    return _ContinuationContext(
+        summary=summary,
+        session_id=digest_session_id,
+        count=max(0, count),
+        query=query,
+    )
+
+
+def _apply_continuation_context(message: str, continuation: _ContinuationContext) -> str:
+    clean_message = str(message or "").strip()
+    if not continuation.applied or not clean_message:
+        return clean_message
+    if clean_message.startswith("[Continuation Context]"):
+        return clean_message
+    lines = ["[Continuation Context]"]
+    if continuation.session_id:
+        lines.append(f"Session: {continuation.session_id}")
+    lines.append(f"Summary: {continuation.summary}")
+    lines.extend(["", "[Task]", clean_message])
+    return "\n".join(lines).strip()
+
+
+def _continuation_payload(continuation: _ContinuationContext) -> dict[str, Any]:
+    if not continuation.applied:
+        return {}
+    payload: dict[str, Any] = {
+        "continuation_context_applied": True,
+        "continuation_digest_summary": continuation.summary,
+    }
+    if continuation.session_id:
+        payload["continuation_digest_session_id"] = continuation.session_id
+    if continuation.count > 0:
+        payload["continuation_digest_count"] = continuation.count
+    return payload
 
 
 def _session_file_path(sessions: SessionStore, session_id: str) -> Path:
@@ -222,9 +342,10 @@ class SessionsSendTool(Tool):
     name = "sessions_send"
     description = "Run a message against a target session."
 
-    def __init__(self, runner: Runner, *, runner_timeout_s: float = 60.0) -> None:
+    def __init__(self, runner: Runner, *, runner_timeout_s: float = 60.0, memory: Any | None = None) -> None:
         self.runner = runner
         self.runner_timeout_s = max(0.1, float(runner_timeout_s or 60.0))
+        self.memory = memory
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -260,8 +381,15 @@ class SessionsSendTool(Tool):
             ),
             default=self.runner_timeout_s,
         )
+        continuation = await _lookup_continuation_context(
+            self.memory,
+            session_id=session_id,
+            user_id=str(ctx.user_id or "").strip(),
+            message=message,
+        )
+        delegated_message = _apply_continuation_context(message, continuation)
         try:
-            result = await asyncio.wait_for(self.runner(session_id, message), timeout=timeout_s)
+            result = await asyncio.wait_for(self.runner(session_id, delegated_message), timeout=timeout_s)
         except asyncio.TimeoutError:
             return _json(
                 {
@@ -281,14 +409,14 @@ class SessionsSendTool(Tool):
 
         text = str(getattr(result, "text", result) or "")
         model = str(getattr(result, "model", "") or "")
-        return _json(
-            {
-                "status": "ok",
-                "session_id": session_id,
-                "text": text,
-                "model": model,
-            }
-        )
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "session_id": session_id,
+            "text": text,
+            "model": model,
+        }
+        payload.update(_continuation_payload(continuation))
+        return _json(payload)
 
 
 class SessionsSpawnTool(Tool):
@@ -350,8 +478,18 @@ class SessionsSpawnTool(Tool):
                     }
                 )
 
+        continuation = await _lookup_continuation_context(
+            self.memory,
+            session_id=target_session_id,
+            user_id=str(ctx.user_id or "").strip(),
+            message=task,
+        )
+
         async def _target_runner(_owner_session_id: str, delegated_task: str) -> str:
-            result = self.runner(target_session_id, delegated_task)
+            result = self.runner(
+                target_session_id,
+                _apply_continuation_context(delegated_task, continuation),
+            )
             if inspect.isawaitable(result):
                 result = await result
             return str(getattr(result, "text", result) or "")
@@ -363,6 +501,13 @@ class SessionsSpawnTool(Tool):
             spawn_metadata["share_scope"] = share_scope
         if str(ctx.user_id or "").strip():
             spawn_metadata["target_user_id"] = str(ctx.user_id).strip()
+        if continuation.applied:
+            spawn_metadata["continuation_context_applied"] = True
+            spawn_metadata["continuation_digest_summary"] = continuation.summary
+            if continuation.session_id:
+                spawn_metadata["continuation_digest_session_id"] = continuation.session_id
+            if continuation.count > 0:
+                spawn_metadata["continuation_digest_count"] = continuation.count
 
         try:
             run = await self.manager.spawn(
@@ -381,16 +526,16 @@ class SessionsSpawnTool(Tool):
                 }
             )
 
-        return _json(
-            {
-                "status": "ok",
-                "run_id": run.run_id,
-                "session_id": run.session_id,
-                "target_session_id": target_session_id,
-                "share_scope": share_scope or "",
-                "state": run.status,
-            }
-        )
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "run_id": run.run_id,
+            "session_id": run.session_id,
+            "target_session_id": target_session_id,
+            "share_scope": share_scope or "",
+            "state": run.status,
+        }
+        payload.update(_continuation_payload(continuation))
+        return _json(payload)
 
 
 class SubagentsTool(Tool):
