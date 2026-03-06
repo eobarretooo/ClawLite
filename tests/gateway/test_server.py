@@ -238,7 +238,7 @@ def test_latest_memory_route_prefers_history_tail_and_skips_full_scan(tmp_path: 
     assert route == ("telegram", "chat42")
 
 
-def test_latest_memory_route_caches_full_scan_result(tmp_path: Path) -> None:
+def test_latest_memory_route_caches_default_route_without_full_scan(tmp_path: Path) -> None:
     del tmp_path
     _LATEST_MEMORY_ROUTE_CACHE.clear()
 
@@ -248,15 +248,15 @@ def test_latest_memory_route_caches_full_scan_result(tmp_path: Path) -> None:
 
         def all(self):
             self.calls += 1
-            return [SimpleNamespace(source="session:telegram:chat99", created_at="2026-03-04T00:00:00+00:00")]
+            raise AssertionError("full_scan_should_not_run")
 
     memory = _Memory()
     first = asyncio.run(_latest_memory_route(memory))
     second = asyncio.run(_latest_memory_route(memory))
 
-    assert first == ("telegram", "chat99")
-    assert second == ("telegram", "chat99")
-    assert memory.calls == 1
+    assert first == ("cli", "profile")
+    assert second == ("cli", "profile")
+    assert memory.calls == 0
 
 
 def test_normalize_background_task_treats_done_and_running_tasks_correctly() -> None:
@@ -985,14 +985,20 @@ def test_run_heartbeat_contract_skips_on_heartbeat_ok() -> None:
     asyncio.run(_scenario())
 
 
-def test_run_heartbeat_contract_runs_on_actionable_output() -> None:
+def test_run_heartbeat_contract_runs_on_actionable_output(tmp_path: Path) -> None:
+    history_path = tmp_path / "memory.jsonl"
+    history_path.write_text(
+        json.dumps({"source": "session:telegram:chat42", "created_at": "2026-03-05T00:00:00+00:00"}) + "\n",
+        encoding="utf-8",
+    )
+
     class _Memory:
-        def all(self):
-            return [SimpleNamespace(source="session:telegram:chat42", created_at="2026-03-05T00:00:00+00:00")]
+        def __init__(self, path: Path) -> None:
+            self.history_path = path
 
     class _Engine:
         def __init__(self) -> None:
-            self.memory = _Memory()
+            self.memory = _Memory(history_path)
 
         async def run(self, *, session_id: str, user_text: str):
             return SimpleNamespace(text="Alert: queue backlog is growing")
@@ -1128,8 +1134,17 @@ def test_run_proactive_monitor_sends_high_priority_memory_suggestions() -> None:
     asyncio.run(_scenario())
 
 
-def test_run_proactive_monitor_sends_next_step_query_proactive_suggestion() -> None:
+def test_run_proactive_monitor_sends_next_step_query_proactive_suggestion(tmp_path: Path) -> None:
+    history_path = tmp_path / "memory.jsonl"
+    history_path.write_text(
+        json.dumps({"source": "session:telegram:chat42", "created_at": "2026-03-05T00:00:00+00:00"}) + "\n",
+        encoding="utf-8",
+    )
+
     class _Memory:
+        def __init__(self, path: Path) -> None:
+            self.history_path = path
+
         async def retrieve(self, query: str, *, method: str = "rag", limit: int = 5):
             assert query
             assert method == "llm"
@@ -1140,12 +1155,9 @@ def test_run_proactive_monitor_sends_next_step_query_proactive_suggestion() -> N
                 "next_step_query": "Should we confirm the deployment owner?",
             }
 
-        def all(self):
-            return [SimpleNamespace(source="session:telegram:chat42", created_at="2026-03-05T00:00:00+00:00")]
-
     class _Engine:
         def __init__(self) -> None:
-            self.memory = _Memory()
+            self.memory = _Memory(history_path)
 
     class _Monitor:
         def __init__(self) -> None:

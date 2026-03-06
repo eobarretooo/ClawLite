@@ -1091,30 +1091,6 @@ def _latest_source_from_history_tail(memory_store: Any, *, tail_bytes: int = LAT
     return ""
 
 
-def _latest_source_from_full_scan(memory_store: Any) -> str:
-    if memory_store is None or not hasattr(memory_store, "all"):
-        return ""
-    try:
-        history_rows = memory_store.all()
-    except Exception:
-        return ""
-    latest_source = ""
-    latest_stamp = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-    for row in history_rows:
-        source = str(getattr(row, "source", "") or "").strip()
-        created_raw = str(getattr(row, "created_at", "") or "")
-        try:
-            created_at = dt.datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=dt.timezone.utc)
-        except Exception:
-            created_at = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-        if source and created_at >= latest_stamp:
-            latest_stamp = created_at
-            latest_source = source
-    return latest_source
-
-
 async def _latest_memory_route(memory_store: Any) -> tuple[str, str]:
     channel, target = _default_heartbeat_route()
     if memory_store is None:
@@ -1131,8 +1107,6 @@ async def _latest_memory_route(memory_store: Any) -> tuple[str, str]:
     source = ""
     try:
         source = await asyncio.to_thread(_latest_source_from_history_tail, memory_store)
-        if not source:
-            source = await asyncio.to_thread(_latest_source_from_full_scan, memory_store)
     except Exception:
         return channel, target
 
