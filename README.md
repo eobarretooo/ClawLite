@@ -1,79 +1,117 @@
-# ClawLite
 
-Portable runtime-first autonomous assistant for Linux.
+# ClawLite ✨
 
-## What ClawLite is
+<!-- Um assistente autônomo portátil e runtime-first para Linux. -->
 
-ClawLite is a Python agent runtime centered on CLI + gateway operation:
+ClawLite é um **assistente autônomo portátil e runtime-first** projetado para Linux, focado em operações via CLI e gateway. Ele oferece um ambiente robusto para agentes inteligentes, com um conjunto de funcionalidades que incluem roteamento de inferência multi-provedor, um subsistema de memória avançado e serviços de agendamento.
 
-- FastAPI gateway (`/v1/*` + compatibility aliases under `/api/*`)
-- WebSocket + HTTP chat entrypoints
-- Scheduler services (cron + heartbeat + supervision)
-- Multi-provider inference routing and provider auth lifecycle commands
-- Memory subsystem with diagnostics, versioning, branching, and quality tuning
+---
 
-The runtime does not depend on a dashboard UI. The gateway root (`GET /`) serves a minimal static HTML entrypoint for endpoint visibility.
+## 🚀 Visão Geral
 
-## Current status snapshot (through Stage 18)
+ClawLite é o coração de um sistema de agente Python, centrado na operação via linha de comando (CLI) e um gateway eficiente. Ele não depende de uma interface de usuário gráfica (dashboard), servindo um ponto de entrada HTML estático mínimo para visibilidade dos endpoints. Sua arquitetura modular e extensível permite a criação de agentes autônomos com capacidades de memória, agendamento e interação com diversos canais.
 
-Major shipped capabilities visible in current code/tests:
+### Principais Funcionalidades:
 
-- Production-grade gateway contract with auth modes (`off|optional|required`), diagnostics, token masking, HTTP/WS telemetry, and compatibility aliases.
-- Runtime scheduler and control-plane paths for heartbeat and cron (`/v1/control/heartbeat/trigger`, `/v1/cron/*`).
-- Provider operations in CLI (`provider login/status/logout/use/set-auth/clear-auth`) and release preflight checks.
-- ClawMemory lifecycle controls (`doctor`, `quality`, snapshot/version/rollback, branches/merge, export/import, privacy/share-optin).
-- Stage 15/16/17/18 memory-quality/autonomy progression:
-  - Stage 15: reasoning-layer quality signals (`fact/hypothesis/decision/outcome`) included in quality state/reporting.
-  - Stage 16: autonomous memory-quality tuning loop with cooldown/rate limits and persisted tuning state.
-  - Stage 17: layer-aware tuning playbooks with action metadata (`playbook_id`, `weakest_layer`, `severity`) and legacy layer alias normalization.
-  - Stage 18: layer-specific execution metadata and telemetry (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`; `actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
+*   **Gateway FastAPI**: Oferece endpoints `/v1/*` e aliases de compatibilidade `/api/*` para interação flexível.
+*   **Pontos de Entrada de Chat**: Suporte a WebSocket e HTTP para comunicação de chat.
+*   **Serviços de Agendamento**: Inclui cron, heartbeat e supervisão para automação e monitoramento.
+*   **Roteamento de Inferência Multi-provedor**: Gerencia o roteamento e o ciclo de vida de autenticação de provedores de inferência.
+*   **Subsistema de Memória Avançado**: Diagnósticos, versionamento, ramificação e ajuste de qualidade para uma memória de agente inteligente.
 
-## Quickstart
+---
 
-Prerequisite: Python 3.10+.
+## 🛠️ Tecnologias Utilizadas
 
-1) Install locally
+*   **Python 3.10+**: Linguagem de programação principal.
+*   **FastAPI**: Framework web para o gateway de alta performance.
+*   **WebSocket**: Para comunicação de chat em tempo real.
+*   **CLI (Command Line Interface)**: Para interação e controle do agente.
+*   **Litellm**: Para roteamento de inferência multi-provedor.
 
-```bash
-pip install -e .
+---
+
+## 🏗️ Arquitetura
+
+A arquitetura do ClawLite é modular e bem definida, com os seguintes componentes principais:
+
+```text
+clawlite/
+├── core/         # engine, prompt, memory, skills, subagent
+├── tools/        # tool abc, registry, and built-in tools
+├── bus/          # events and async queue
+├── channels/     # manager + channels (full telegram, other adapters)
+├── gateway/      # FastAPI + WebSocket
+├── scheduler/    # cron + heartbeat
+├── providers/    # litellm/custom/codex/transcription
+├── session/      # JSONL store per session
+├── config/       # schema + loader
+├── workspace/    # loader + identity templates
+├── skills/       # built-in markdown skills (SKILL.md)
+├── cli/          # start/run/onboard/cron commands
+└── utils/        # shared helpers
 ```
 
-2) Generate workspace templates / onboarding baseline
+**Fluxo Principal:**
 
-```bash
-clawlite onboard
-# interactive wizard variant:
-clawlite onboard --wizard
-```
+1.  A mensagem entra via `channels` ou `gateway`.
+2.  `core.engine` constrói o prompt (workspace + memória + histórico + skills).
+3.  O provedor responde; se houver chamadas de ferramentas, `tools.registry` as executa.
+4.  A resposta final é entregue primeiro; a persistência (`session.store` append + `core.memory` consolidate) é executada em modo de melhor esforço e registra falhas de armazenamento degradadas sem abortar a execução.
+5.  `scheduler.cron` e `scheduler.heartbeat` acionam execuções proativas.
 
-3) Configure provider (example)
+---
 
-```bash
-export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
-export CLAWLITE_LITELLM_API_KEY="<your-key>"
-```
+## ⚡ Quickstart
 
-4) Start gateway
+**Pré-requisito:** Python 3.10+
 
-```bash
-clawlite start --host 127.0.0.1 --port 8787
-# alias:
-clawlite gateway --host 127.0.0.1 --port 8787
-```
+Siga os passos abaixo para colocar o ClawLite em funcionamento rapidamente:
 
-5) Send a chat request
+1.  **Instalar localmente:**
 
-```bash
-curl -sS http://127.0.0.1:8787/v1/chat \
-  -H 'content-type: application/json' \
-  -d '{"session_id":"cli:quickstart","text":"hello"}'
-```
+    ```bash
+    pip install -e .
+    ```
 
-If auth mode is required, include bearer token (header or query param, per config).
+2.  **Gerar templates de workspace / baseline de onboarding:**
 
-## Key CLI commands
+    ```bash
+    clawlite onboard
+    # variante interativa:
+    clawlite onboard --wizard
+    ```
 
-Provider + validation:
+3.  **Configurar provedor (exemplo):**
+
+    ```bash
+    export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
+    export CLAWLITE_LITELLM_API_KEY="<sua-chave>"
+    ```
+
+4.  **Iniciar o gateway:**
+
+    ```bash
+    clawlite start --host 127.0.0.1 --port 8787
+    # alias:
+    clawlite gateway --host 127.0.0.1 --port 8787
+    ```
+
+5.  **Enviar uma requisição de chat:**
+
+    ```bash
+    curl -sS http://127.0.0.1:8787/v1/chat \
+      -H 'content-type: application/json' \
+      -d '{"session_id":"cli:quickstart","text":"hello"}'
+    ```
+
+    *Se o modo de autenticação for necessário, inclua o token do portador (cabeçalho ou parâmetro de consulta, conforme a configuração).* 
+
+---
+
+## ⚙️ Comandos CLI Essenciais
+
+### Provedor e Validação:
 
 ```bash
 clawlite provider status
@@ -84,7 +122,7 @@ clawlite validate config
 clawlite validate preflight --gateway-url http://127.0.0.1:8787
 ```
 
-Diagnostics + memory + scheduler + skills:
+### Diagnósticos, Memória, Agendador e Skills:
 
 ```bash
 clawlite diagnostics --gateway-url http://127.0.0.1:8787
@@ -97,58 +135,98 @@ clawlite skills list
 clawlite skills check
 ```
 
-## Gateway endpoints (v1 + compatibility aliases)
+---
 
-| Method | Endpoint | Notes |
+## 🌐 Endpoints do Gateway (v1 + Aliases de Compatibilidade)
+
+| Método | Endpoint | Notas |
 |---|---|---|
-| GET | `/` | Minimal static gateway entrypoint (no dashboard dependency) |
-| GET | `/health` | Health/readiness snapshot |
-| GET | `/v1/status` | Control-plane status |
-| GET | `/api/status` | Alias of `/v1/status` |
-| GET | `/v1/diagnostics` | Runtime diagnostics snapshot |
-| GET | `/api/diagnostics` | Alias of `/v1/diagnostics` |
-| POST | `/v1/chat` | Main HTTP chat endpoint |
-| POST | `/api/message` | Alias of `/v1/chat` |
-| GET | `/api/token` | Masked token diagnostics |
-| POST | `/v1/control/heartbeat/trigger` | Trigger heartbeat cycle |
-| POST | `/v1/cron/add` | Create cron job |
-| GET | `/v1/cron/list` | List cron jobs by session |
-| DELETE | `/v1/cron/{job_id}` | Remove cron job |
-| WS | `/v1/ws` | Main WebSocket chat |
-| WS | `/ws` | Alias of `/v1/ws` |
+| `GET` | `/` | Ponto de entrada mínimo estático do gateway (sem dependência de dashboard) |
+| `GET` | `/health` | Snapshot de saúde/prontidão |
+| `GET` | `/v1/status` | Status do plano de controle |
+| `GET` | `/api/status` | Alias de `/v1/status` |
+| `GET` | `/v1/diagnostics` | Snapshot de diagnósticos de runtime |
+| `GET` | `/api/diagnostics` | Alias de `/v1/diagnostics` |
+| `POST` | `/v1/chat` | Endpoint principal de chat HTTP |
+| `POST` | `/api/message` | Alias de `/v1/chat` |
+| `GET` | `/api/token` | Diagnósticos de token mascarado |
+| `POST` | `/v1/control/heartbeat/trigger` | Aciona o ciclo de heartbeat |
+| `POST` | `/v1/cron/add` | Cria um trabalho cron |
+| `GET` | `/v1/cron/list` | Lista trabalhos cron por sessão |
+| `DELETE` | `/v1/cron/{job_id}` | Remove um trabalho cron |
+| `WS` | `/v1/ws` | Chat principal WebSocket |
+| `WS` | `/ws` | Alias de `/v1/ws` |
 
-## Memory and autonomy highlights
+---
 
-- Hybrid memory retrieval and quality tracking are integrated into runtime diagnostics and CLI operations.
-- Memory quality state persists scoring, drift assessment, recommendations, and tuning history.
-- Tuning loop runs as an autonomous runtime component when enabled, with fail-soft behavior, cooldown, and rate limiting.
-- Layer-aware playbooks pick actions based on drift severity and weakest reasoning layer.
-- Layer-specific execution details are persisted for auditability (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) together with playbook fields.
-- Diagnostics expose tuning telemetry maps and latest action context (`actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
+## 🧠 Destaques de Memória e Autonomia
 
-## Testing and CI commands
+*   A recuperação de memória híbrida e o rastreamento de qualidade são integrados aos diagnósticos de runtime e operações CLI.
+*   O estado de qualidade da memória persiste a pontuação, avaliação de desvio, recomendações e histórico de ajuste.
+*   O loop de ajuste é executado como um componente autônomo de runtime quando habilitado, com comportamento fail-soft, cooldown e limitação de taxa.
+*   Playbooks cientes da camada escolhem ações com base na gravidade do desvio e na camada de raciocínio mais fraca.
+*   Detalhes de execução específicos da camada são persistidos para auditabilidade (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) juntamente com os campos do playbook.
+*   Os diagnósticos expõem mapas de telemetria de ajuste e o contexto da última ação (`actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
 
-Local checks:
+---
+
+## 💡 Skills (Habilidades)
+
+ClawLite utiliza **skills em Markdown (`SKILL.md`)** com descoberta automática. As skills são carregadas de fontes como `builtin` (repositório), `user workspace` e `marketplace local`, com uma política de resolução determinística para duplicatas.
+
+### Skills Built-in Atuais:
+
+*   `cron`
+*   `memory`
+*   `github`
+*   `summarize`
+*   `skill-creator`
+*   `web-search`
+*   `weather`
+*   `tmux`
+*   `hub`
+*   `clawhub`
+
+---
+
+## 🧪 Testes e CI
+
+### Verificações Locais:
 
 ```bash
 pytest -q tests
-ruff check clawlite/ --select E9,F --ignore F401,F811
+truff check clawlite/ --select E9,F --ignore F401,F811
 bash scripts/smoke_test.sh
 clawlite validate preflight --gateway-url http://127.0.0.1:8787
 ```
 
-CI workflows in `.github/workflows/`:
+### Workflows de CI (`.github/workflows/`):
 
-- `ci.yml` (pytest matrix, lint, smoke, autonomy contract)
-- `coverage.yml` (pytest + coverage XML)
-- `secret-scan.yml` (gitleaks)
+*   `ci.yml` (matriz pytest, lint, smoke, contrato de autonomia)
+*   `coverage.yml` (pytest + cobertura XML)
+*   `secret-scan.yml` (gitleaks)
 
-## Docs index
+---
 
-- `docs/QUICKSTART.md`
-- `docs/API.md`
-- `docs/ARCHITECTURE.md`
-- `docs/CONFIGURATION.md`
-- `docs/OPERATIONS.md`
-- `docs/SKILLS.md`
-- `docs/TELEGRAM_RELIABILITY_SEMANTICS.md`
+## 🤝 Contribuição
+
+Contribuições são **muito bem-vindas**! Para contribuir com o ClawLite, por favor, siga as diretrizes em [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## 📝 Licença
+
+Este projeto é distribuído sob a licença [MIT License](LICENSE). Veja o arquivo `LICENSE` para mais detalhes.
+
+---
+
+## 👤 Autores
+
+*   **eobarretooo** - *Desenvolvimento Inicial* - [GitHub](https://github.com/eobarretooo)
+
+---
+
+## 🌟 Agradecimentos
+
+*   A todos os contribuidores e mantenedores do projeto [awesome-readme](https://github.com/matiassingers/awesome-readme) pela inspiração e melhores práticas.
+*   À comunidade de código aberto por suas ferramentas e bibliotecas incríveis.
