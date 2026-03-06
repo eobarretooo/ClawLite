@@ -33,10 +33,17 @@ from clawlite.session.store import SessionStore
 from clawlite.runtime import AutonomyWakeCoordinator
 from clawlite.tools.cron import CronTool
 from clawlite.tools.exec import ExecTool
-from clawlite.tools.files import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from clawlite.tools.files import EditFileTool, EditTool, ListDirTool, ReadFileTool, ReadTool, WriteFileTool, WriteTool
 from clawlite.tools.mcp import MCPTool
 from clawlite.tools.message import MessageTool
-from clawlite.tools.memory import MemoryAnalyzeTool, MemoryForgetTool, MemoryLearnTool, MemoryRecallTool
+from clawlite.tools.memory import (
+    MemoryAnalyzeTool,
+    MemoryForgetTool,
+    MemoryGetTool,
+    MemoryLearnTool,
+    MemoryRecallTool,
+    MemorySearchTool,
+)
 from clawlite.tools.registry import ToolRegistry
 from clawlite.tools.skill import SkillTool
 from clawlite.tools.spawn import SpawnTool
@@ -826,6 +833,9 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     tools.register(ReadFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(WriteFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(EditFileTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
+    tools.register(ReadTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
+    tools.register(WriteTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
+    tools.register(EditTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(ListDirTool(workspace_path=workspace_path, restrict_to_workspace=config.tools.restrict_to_workspace))
     tools.register(
         WebFetchTool(
@@ -875,6 +885,8 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     tools.register(SkillTool(loader=skills, registry=tools, memory=memory))
     memory_monitor = MemoryMonitor(memory) if bool(getattr(config.agents.defaults.memory, "proactive", False)) else None
     tools.register(MemoryRecallTool(memory))
+    tools.register(MemorySearchTool(memory))
+    tools.register(MemoryGetTool(workspace_path=workspace_path))
     tools.register(MemoryLearnTool(memory))
     tools.register(MemoryForgetTool(memory))
     tools.register(MemoryAnalyzeTool(memory))

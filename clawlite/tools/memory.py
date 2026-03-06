@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+from pathlib import Path
 from typing import Any
 
 from clawlite.core.memory import MemoryRecord, MemoryStore
@@ -203,6 +204,90 @@ class MemoryRecallTool(Tool):
             "results": results,
         }
         return _dump_json(payload)
+
+
+class MemorySearchTool(MemoryRecallTool):
+    name = "memory_search"
+
+
+class MemoryGetTool(Tool):
+    name = "memory_get"
+    description = "Read workspace memory files with OpenClaw-compatible slicing args."
+
+    def __init__(self, *, workspace_path: str | Path) -> None:
+        self.workspace_path = Path(workspace_path).expanduser().resolve()
+
+    def args_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "from": {"type": "integer", "minimum": 1, "default": 1},
+                "lines": {"type": "integer", "minimum": 1, "maximum": 500, "default": 120},
+            },
+            "required": ["path"],
+        }
+
+    @staticmethod
+    def _clamp_lines(value: Any) -> int:
+        return _clamp_int(value, default=120, minimum=1, maximum=500)
+
+    @staticmethod
+    def _parse_from(value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 1
+        return max(1, parsed)
+
+    def _resolve_candidate_path(self, raw_path: str) -> Path:
+        path_value = str(raw_path or "").strip()
+        if not path_value:
+            raise ValueError("path is required")
+        candidate = Path(path_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.workspace_path / candidate
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(self.workspace_path)
+        except ValueError as exc:
+            raise PermissionError("path is outside workspace scope") from exc
+        return resolved
+
+    def _assert_allowed_scope(self, target_path: Path) -> None:
+        memory_root = self.workspace_path / "memory"
+        allowed_memory_md = self.workspace_path / "MEMORY.md"
+        if target_path == allowed_memory_md:
+            return
+        if target_path.parent == memory_root and target_path.suffix.lower() == ".md":
+            return
+        raise PermissionError("path is outside allowed memory scope")
+
+    async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
+        del ctx
+        target = self._resolve_candidate_path(str(arguments.get("path", "")))
+        self._assert_allowed_scope(target)
+        if not target.exists():
+            raise FileNotFoundError(str(target))
+        if not target.is_file():
+            raise ValueError("path is not a regular file")
+
+        start_line = self._parse_from(arguments.get("from"))
+        line_count = self._clamp_lines(arguments.get("lines"))
+
+        content = target.read_text(encoding="utf-8", errors="ignore").splitlines()
+        start_idx = max(0, start_line - 1)
+        end_idx = start_idx + line_count
+        text = "\n".join(content[start_idx:end_idx])
+
+        return _dump_json(
+            {
+                "path": str(target),
+                "text": text,
+                "from": start_line,
+                "lines": line_count,
+            }
+        )
 
 
 class MemoryLearnTool(Tool):

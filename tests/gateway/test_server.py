@@ -545,6 +545,19 @@ def test_build_runtime_heartbeat_interval_accepts_120_from_scheduler(tmp_path: P
     assert runtime.heartbeat.interval_seconds == 120
 
 
+def test_build_runtime_registers_openclaw_compatibility_alias_tools(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+
+    schema_names = {row["name"] for row in runtime.engine.tools.schema()}
+    assert {"read", "write", "edit", "memory_search", "memory_get"}.issubset(schema_names)
+
+
 def test_run_heartbeat_skips_suggestions_when_memory_monitor_missing() -> None:
     class _Engine:
         async def run(self, *, session_id: str, user_text: str):

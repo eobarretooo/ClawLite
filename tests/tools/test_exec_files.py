@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from clawlite.tools.exec import ExecTool
-from clawlite.tools.files import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from clawlite.tools.files import EditFileTool, EditTool, ListDirTool, ReadFileTool, ReadTool, WriteFileTool, WriteTool
 from clawlite.tools.base import ToolContext
 
 
@@ -148,5 +148,30 @@ def test_file_tools_restrict_to_workspace_blocks_outside_path(tmp_path: Path) ->
         writer = WriteFileTool(workspace_path=tmp_path, restrict_to_workspace=True)
         with pytest.raises(PermissionError):
             await writer.run({"path": str(outside), "content": "x"}, ToolContext(session_id="s"))
+
+    asyncio.run(_scenario())
+
+
+def test_file_alias_tools_reuse_existing_behavior(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        target = tmp_path / "alias.txt"
+        writer = WriteTool()
+        reader = ReadTool()
+        editor = EditTool()
+
+        assert writer.name == "write"
+        assert reader.name == "read"
+        assert editor.name == "edit"
+
+        await writer.run({"path": str(target), "content": "hello alias"}, ToolContext(session_id="s"))
+        content = await reader.run({"path": str(target)}, ToolContext(session_id="s"))
+        assert content == "hello alias"
+        changed = await editor.run(
+            {"path": str(target), "search": "alias", "replace": "tool"},
+            ToolContext(session_id="s"),
+        )
+        assert changed == "ok"
+        updated = await reader.run({"path": str(target)}, ToolContext(session_id="s"))
+        assert updated == "hello tool"
 
     asyncio.run(_scenario())

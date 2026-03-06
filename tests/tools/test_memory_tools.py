@@ -7,7 +7,14 @@ import pytest
 
 from clawlite.core.memory import MemoryStore
 from clawlite.tools.base import ToolContext
-from clawlite.tools.memory import MemoryAnalyzeTool, MemoryForgetTool, MemoryLearnTool, MemoryRecallTool
+from clawlite.tools.memory import (
+    MemoryAnalyzeTool,
+    MemoryForgetTool,
+    MemoryGetTool,
+    MemoryLearnTool,
+    MemoryRecallTool,
+    MemorySearchTool,
+)
 
 
 def test_memory_learn_success(tmp_path) -> None:
@@ -95,6 +102,105 @@ def test_memory_recall_without_metadata(tmp_path) -> None:
         assert "id" not in first
         assert "source" not in first
         assert "created_at" not in first
+
+    asyncio.run(_scenario())
+
+
+def test_memory_search_alias_reuses_recall_behavior(tmp_path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(db_path=tmp_path / "memory.jsonl")
+        store.add("alias memory payload", source="seed:test")
+        tool = MemorySearchTool(store)
+
+        payload = json.loads(await tool.run({"query": "alias"}, ToolContext(session_id="s1")))
+        assert tool.name == "memory_search"
+        assert payload["status"] == "ok"
+        assert payload["count"] >= 1
+        assert payload["results"][0]["text"] == "alias memory payload"
+
+    asyncio.run(_scenario())
+
+
+def test_memory_get_reads_workspace_memory_markdown_slice(tmp_path) -> None:
+    async def _scenario() -> None:
+        workspace = tmp_path / "workspace"
+        memory_dir = workspace / "memory"
+        memory_dir.mkdir(parents=True)
+        target = memory_dir / "notes.md"
+        target.write_text("l1\nl2\nl3\nl4\nl5\n", encoding="utf-8")
+
+        tool = MemoryGetTool(workspace_path=workspace)
+        payload = json.loads(await tool.run({"path": "memory/notes.md", "from": 2, "lines": 2}, ToolContext(session_id="s1")))
+
+        assert payload["path"] == str(target.resolve())
+        assert payload["from"] == 2
+        assert payload["lines"] == 2
+        assert payload["text"] == "l2\nl3"
+
+    asyncio.run(_scenario())
+
+
+def test_memory_get_supports_workspace_memory_md(tmp_path) -> None:
+    async def _scenario() -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        target = workspace / "MEMORY.md"
+        target.write_text("alpha\nbeta\n", encoding="utf-8")
+
+        tool = MemoryGetTool(workspace_path=workspace)
+        payload = json.loads(await tool.run({"path": "MEMORY.md"}, ToolContext(session_id="s1")))
+
+        assert payload["path"] == str(target.resolve())
+        assert payload["from"] == 1
+        assert payload["lines"] == 120
+        assert payload["text"] == "alpha\nbeta"
+
+    asyncio.run(_scenario())
+
+
+def test_memory_get_clamps_lines_to_safe_range(tmp_path) -> None:
+    async def _scenario() -> None:
+        workspace = tmp_path / "workspace"
+        memory_dir = workspace / "memory"
+        memory_dir.mkdir(parents=True)
+        target = memory_dir / "long.md"
+        target.write_text("\n".join(f"line-{idx}" for idx in range(1, 701)), encoding="utf-8")
+
+        tool = MemoryGetTool(workspace_path=workspace)
+        payload = json.loads(await tool.run({"path": "memory/long.md", "lines": 999}, ToolContext(session_id="s1")))
+
+        assert payload["lines"] == 500
+        assert len(payload["text"].splitlines()) == 500
+
+    asyncio.run(_scenario())
+
+
+def test_memory_get_rejects_paths_outside_allowed_scope(tmp_path) -> None:
+    async def _scenario() -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        outside = tmp_path / "outside.md"
+        outside.write_text("nope", encoding="utf-8")
+        (workspace / "memory").mkdir(parents=True)
+        (workspace / "memory" / "notes.txt").write_text("invalid extension", encoding="utf-8")
+        tool = MemoryGetTool(workspace_path=workspace)
+
+        with pytest.raises(PermissionError):
+            await tool.run({"path": str(outside)}, ToolContext(session_id="s1"))
+        with pytest.raises(PermissionError):
+            await tool.run({"path": "memory/notes.txt"}, ToolContext(session_id="s1"))
+
+    asyncio.run(_scenario())
+
+
+def test_memory_get_not_found_is_deterministic(tmp_path) -> None:
+    async def _scenario() -> None:
+        workspace = tmp_path / "workspace"
+        (workspace / "memory").mkdir(parents=True)
+        tool = MemoryGetTool(workspace_path=workspace)
+
+        with pytest.raises(FileNotFoundError):
+            await tool.run({"path": "memory/missing.md"}, ToolContext(session_id="s1"))
 
     asyncio.run(_scenario())
 

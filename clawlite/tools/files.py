@@ -301,6 +301,18 @@ class EditFileTool(Tool):
         return "ok"
 
 
+class ReadTool(ReadFileTool):
+    name = "read"
+
+
+class WriteTool(WriteFileTool):
+    name = "write"
+
+
+class EditTool(EditFileTool):
+    name = "edit"
+
+
 class ListDirTool(Tool):
     name = "list_dir"
     description = "List files from directory."
