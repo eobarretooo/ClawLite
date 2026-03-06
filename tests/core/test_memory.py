@@ -964,6 +964,22 @@ def test_memory_infers_event_type_happened_at_and_structured_metadata(tmp_path: 
     assert retrieved["hits"][0]["happened_at"] == "2026-05-10T09:30:00+00:00"
 
 
+def test_memory_default_decay_rate_varies_by_memory_type(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    profile = store.add("I prefer concise answers", source="session:profile", memory_type="profile")
+    knowledge = store.add("Project alpha documentation reference", source="session:knowledge", memory_type="knowledge")
+    future_event = store.add(
+        "Launch deadline on 2026-05-10",
+        source="session:event",
+        memory_type="event",
+        happened_at="2026-05-10T00:00:00+00:00",
+    )
+
+    assert profile.decay_rate < knowledge.decay_rate
+    assert future_event.decay_rate < knowledge.decay_rate
+    assert future_event.decay_rate <= 0.06
+
+
 def test_memory_consolidate_infers_profile_type_for_preferences(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.jsonl")
     row = store.consolidate(
@@ -1018,6 +1034,43 @@ def test_memory_search_and_retrieve_support_reasoning_layer_and_min_confidence_f
         assert all(float(hit["confidence"]) >= 0.8 for hit in retrieved["hits"])
 
     asyncio.run(_scenario())
+
+
+def test_memory_search_decay_penalty_demotes_stale_high_decay_record_on_tie(tmp_path: Path, monkeypatch) -> None:
+    class _FakeBM25:
+        def __init__(self, _corpus: object) -> None:
+            pass
+
+        def get_scores(self, _query_tokens: object) -> list[float]:
+            return [0.0, 0.0]
+
+    monkeypatch.setattr("clawlite.core.memory.BM25Okapi", _FakeBM25)
+
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    old_stamp = (datetime.now(timezone.utc) - timedelta(days=140)).isoformat()
+    rows = [
+        {
+            "id": "high-decay",
+            "text": "project alpha notes",
+            "source": "session:a",
+            "created_at": old_stamp,
+            "decay_rate": 0.22,
+            "metadata": {"content_hash": "decay-a", "scope_key": "user:default"},
+        },
+        {
+            "id": "low-decay",
+            "text": "project alpha notes",
+            "source": "session:b",
+            "created_at": old_stamp,
+            "decay_rate": 0.01,
+            "metadata": {"content_hash": "decay-b", "scope_key": "user:default"},
+        },
+    ]
+    store.history_path.write_text("\n".join(json.dumps(item) for item in rows) + "\n", encoding="utf-8")
+
+    found = store.search("project alpha", limit=2)
+    assert found
+    assert found[0].id == "low-decay"
 
 
 def test_memory_analysis_stats_include_reasoning_layer_distribution_and_confidence_summary(tmp_path: Path) -> None:
@@ -1523,6 +1576,26 @@ def test_memory_profile_prompt_hint_summarizes_learned_preferences(tmp_path: Pat
         assert "Recurring interests: viagens" in hint
 
     asyncio.run(_scenario())
+
+
+def test_memory_profile_tracks_upcoming_events_from_event_memory(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.add(
+        "Product launch deadline",
+        source="session:event",
+        memory_type="event",
+        happened_at="2026-05-10T09:30:00+00:00",
+    )
+
+    profile = json.loads(store.profile_path.read_text(encoding="utf-8"))
+    upcoming = profile["upcoming_events"]
+    assert upcoming
+    assert upcoming[0]["title"] == "Product launch deadline"
+    assert upcoming[0]["happened_at"] == "2026-05-10T09:30:00+00:00"
+
+    hint = store.profile_prompt_hint()
+    assert "Upcoming events:" in hint
+    assert "2026-05-10 Product launch deadline" in hint
 
 
 def test_memory_emotional_tracking_flag_controls_add_tone_detection(tmp_path: Path) -> None:

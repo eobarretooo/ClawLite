@@ -214,6 +214,8 @@ class MemoryStore:
     _RANKING_REASONING_BOOST_MAX = 0.14
     _SALIENCE_MAX_BOOST = 0.55
     _SALIENCE_RECENCY_DECAY_DAYS = 30.0
+    _DECAY_MAX_PENALTY = 0.55
+    _UPCOMING_EVENT_MAX_BOOST = 0.35
     _ENTITY_MATCH_WEIGHTS: dict[str, float] = {
         "urls": 0.45,
         "emails": 0.35,
@@ -313,11 +315,56 @@ class MemoryStore:
         return numeric
 
     @staticmethod
+    def _normalize_decay_rate(value: Any, *, default: float = 0.0) -> float:
+        try:
+            numeric = float(value)
+        except Exception:
+            numeric = default
+        if not math.isfinite(numeric):
+            return default
+        return max(0.0, min(0.5, numeric))
+
+    @staticmethod
     def _normalize_memory_type(value: Any) -> str:
         clean = str(value or "").strip().lower()
         if clean in MEMORY_TYPE_SET:
             return clean
         return "knowledge"
+
+    @classmethod
+    def _default_decay_rate(cls, *, memory_type: str, category: str = "", happened_at: str = "") -> float:
+        base_map = {
+            "profile": 0.015,
+            "behavior": 0.03,
+            "skill": 0.04,
+            "tool": 0.05,
+            "knowledge": 0.08,
+            "event": 0.12,
+        }
+        normalized_type = cls._normalize_memory_type(memory_type)
+        normalized_category = str(category or "").strip().lower()
+        base = float(base_map.get(normalized_type, 0.08))
+
+        if normalized_category == "context":
+            base += 0.03
+        elif normalized_category in {"facts", "preferences"}:
+            base = min(base, 0.03)
+
+        if normalized_type == "event":
+            stamp = cls._parse_iso_timestamp(str(happened_at or ""))
+            if stamp.year > 1:
+                now = datetime.now(timezone.utc)
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                delta_days = float((stamp - now).total_seconds()) / 86400.0
+                if delta_days >= 0.0:
+                    if delta_days <= 30.0:
+                        base = min(base, 0.035)
+                    elif delta_days <= 180.0:
+                        base = min(base, 0.06)
+                elif abs(delta_days) >= 120.0:
+                    base = max(base, 0.18)
+        return cls._normalize_decay_rate(base, default=0.08)
 
     @classmethod
     def _normalize_metadata_value(cls, value: Any, *, depth: int = 0) -> Any:
@@ -472,6 +519,50 @@ class MemoryStore:
         return max(0.0, min(cls._SALIENCE_MAX_BOOST, round(score, 6)))
 
     @classmethod
+    def _record_decay_anchor(cls, row: MemoryRecord) -> str:
+        metadata = cls._normalize_memory_metadata(getattr(row, "metadata", {}))
+        reinforced_at = cls._metadata_last_reinforced_at(metadata)
+        if reinforced_at:
+            return reinforced_at
+        return str(getattr(row, "updated_at", "") or getattr(row, "created_at", "") or "")
+
+    @classmethod
+    def _decay_penalty(cls, row: MemoryRecord) -> float:
+        decay_rate = cls._normalize_decay_rate(getattr(row, "decay_rate", 0.0), default=0.0)
+        if decay_rate <= 0.0:
+            return 0.0
+        anchor = cls._parse_iso_timestamp(cls._record_decay_anchor(row))
+        if anchor.year <= 1:
+            return 0.0
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=timezone.utc)
+        age_days = max(0.0, float((datetime.now(timezone.utc) - anchor).total_seconds()) / 86400.0)
+        if age_days <= 0.0:
+            return 0.0
+        penalty = cls._DECAY_MAX_PENALTY * (1.0 - math.exp(-(decay_rate * age_days) / 30.0))
+        return max(0.0, min(cls._DECAY_MAX_PENALTY, round(penalty, 6)))
+
+    @classmethod
+    def _upcoming_event_boost(cls, row: MemoryRecord) -> float:
+        if cls._normalize_memory_type(getattr(row, "memory_type", "knowledge")) != "event":
+            return 0.0
+        happened_at = cls._parse_iso_timestamp(str(getattr(row, "happened_at", "") or ""))
+        if happened_at.year <= 1:
+            return 0.0
+        if happened_at.tzinfo is None:
+            happened_at = happened_at.replace(tzinfo=timezone.utc)
+        delta_days = float((happened_at - datetime.now(timezone.utc)).total_seconds()) / 86400.0
+        if delta_days < -1.0:
+            return 0.0
+        if delta_days <= 30.0:
+            score = cls._UPCOMING_EVENT_MAX_BOOST * math.exp(-max(0.0, delta_days) / 30.0)
+            return max(0.0, min(cls._UPCOMING_EVENT_MAX_BOOST, round(score, 6)))
+        if delta_days <= 180.0:
+            score = (cls._UPCOMING_EVENT_MAX_BOOST * 0.45) * math.exp(-(delta_days - 30.0) / 120.0)
+            return max(0.0, min(cls._UPCOMING_EVENT_MAX_BOOST * 0.45, round(score, 6)))
+        return 0.0
+
+    @classmethod
     def _bounded_confidence_score(cls, value: Any) -> float:
         normalized = cls._normalize_confidence(value, default=1.0)
         return max(0.0, min(1.0, normalized))
@@ -515,10 +606,7 @@ class MemoryStore:
             return None
 
         confidence = cls._normalize_confidence(payload.get("confidence", 1.0), default=1.0)
-        try:
-            decay_rate = float(payload.get("decay_rate", payload.get("decayRate", 0.0)) or 0.0)
-        except Exception:
-            decay_rate = 0.0
+        decay_rate = cls._normalize_decay_rate(payload.get("decay_rate", payload.get("decayRate", 0.0)), default=0.0)
 
         return MemoryRecord(
             id=str(payload.get("id", "")),
@@ -1106,6 +1194,26 @@ class MemoryStore:
         interests = [str(item).strip() for item in interests_raw if str(item).strip()] if isinstance(interests_raw, list) else []
         if interests:
             lines.append(f"- Recurring interests: {', '.join(interests[:5])}")
+
+        upcoming_raw = profile.get("upcoming_events", [])
+        if isinstance(upcoming_raw, list):
+            formatted: list[str] = []
+            now = datetime.now(timezone.utc)
+            for item in upcoming_raw[:3]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", "") or "").strip()
+                happened_at = str(item.get("happened_at", "") or "").strip()
+                stamp = self._parse_iso_timestamp(happened_at)
+                if not title or stamp.year <= 1:
+                    continue
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                if stamp < now - timedelta(days=1):
+                    continue
+                formatted.append(f"{stamp.date().isoformat()} {title[:80]}")
+            if formatted:
+                lines.append(f"- Upcoming events: {'; '.join(formatted)}")
 
         if not lines:
             return ""
@@ -1915,9 +2023,12 @@ class MemoryStore:
             importance = float(row.get("importance", 1.0))
         except Exception:
             importance = 1.0
-        confidence = cls._normalize_confidence(row.get("confidence", 1.0), default=1.0)
-        reasoning_layer = cls._normalize_reasoning_layer(row.get("reasoning_layer", row.get("reasoningLayer", "fact")))
         memory_type = cls._normalize_memory_type(row.get("memory_type", row.get("memoryType", "knowledge")))
+        confidence = cls._normalize_confidence(row.get("confidence", 1.0), default=1.0)
+        decay_rate = cls._normalize_decay_rate(
+            row.get("decay_rate", row.get("decayRate", cls._default_decay_rate(memory_type=memory_type)))
+        )
+        reasoning_layer = cls._normalize_reasoning_layer(row.get("reasoning_layer", row.get("reasoningLayer", "fact")))
         happened_at = str(row.get("happened_at", row.get("happenedAt", "")) or "")
         metadata = cls._normalize_memory_metadata(row.get("metadata", {}))
 
@@ -1941,6 +2052,7 @@ class MemoryStore:
             "sessions": sessions[-cls._MAX_CURATED_SESSIONS_PER_FACT :],
             "importance": max(0.1, importance),
             "confidence": confidence,
+            "decay_rate": decay_rate,
             "reasoning_layer": reasoning_layer,
             "memory_type": memory_type,
             "happened_at": happened_at,
@@ -2767,15 +2879,92 @@ class MemoryStore:
             profile["updated_at"] = self._utcnow_iso()
             self._write_json_dict(self.profile_path, profile)
 
+    def _update_profile_upcoming_events(self, record: MemoryRecord) -> None:
+        if self._normalize_memory_type(getattr(record, "memory_type", "knowledge")) != "event":
+            return
+        happened_at = self._parse_iso_timestamp(str(getattr(record, "happened_at", "") or ""))
+        if happened_at.year <= 1:
+            return
+        if happened_at.tzinfo is None:
+            happened_at = happened_at.replace(tzinfo=timezone.utc)
+        if happened_at < datetime.now(timezone.utc) - timedelta(days=1):
+            return
+
+        profile = self._load_json_dict(self.profile_path, self._default_profile())
+        upcoming_raw = profile.get("upcoming_events", [])
+        upcoming_events = list(upcoming_raw) if isinstance(upcoming_raw, list) else []
+        event_id = self._metadata_content_hash(getattr(record, "metadata", {})) or str(record.id or uuid.uuid4().hex)
+        title = self._compact_whitespace(str(record.text or ""))[:160]
+        if not title:
+            return
+
+        filtered: list[dict[str, Any]] = []
+        changed = False
+        for item in upcoming_events:
+            if not isinstance(item, dict):
+                continue
+            existing_id = str(item.get("id", "") or "").strip()
+            existing_stamp = self._parse_iso_timestamp(str(item.get("happened_at", "") or ""))
+            if existing_stamp.year > 1 and existing_stamp.tzinfo is None:
+                existing_stamp = existing_stamp.replace(tzinfo=timezone.utc)
+            if existing_stamp.year > 1 and existing_stamp < datetime.now(timezone.utc) - timedelta(days=1):
+                changed = True
+                continue
+            if existing_id == event_id:
+                changed = True
+                continue
+            filtered.append(item)
+
+        filtered.append(
+            {
+                "id": event_id,
+                "memory_id": str(record.id or ""),
+                "title": title,
+                "happened_at": happened_at.isoformat(),
+                "source": str(record.source or ""),
+                "category": str(record.category or "events"),
+            }
+        )
+        filtered.sort(key=lambda item: str(item.get("happened_at", "") or ""))
+        filtered = filtered[:12]
+
+        if filtered != upcoming_events:
+            profile["upcoming_events"] = filtered
+            profile["updated_at"] = self._utcnow_iso()
+            if not str(profile.get("learned_at", "")).strip():
+                profile["learned_at"] = self._utcnow_iso()
+            self._write_json_dict(self.profile_path, profile)
+
+    def _update_profile_from_record(self, record: MemoryRecord) -> None:
+        self._update_profile_from_text(str(getattr(record, "text", "") or ""))
+        self._update_profile_upcoming_events(record)
+
     def _curated_rank(self, row: dict[str, object]) -> tuple[float, int, int, datetime, datetime, str, str]:
         importance = float(row.get("importance", 0.0))
         mentions = int(row.get("mentions", 0))
         session_count = int(row.get("session_count", 0))
         last_seen = self._parse_iso_timestamp(str(row.get("last_seen_at", "")))
         created = self._parse_iso_timestamp(str(row.get("created_at", "")))
+        row_decay = self._normalize_decay_rate(row.get("decay_rate", row.get("decayRate", 0.0)), default=0.0)
+        memory_type = self._normalize_memory_type(row.get("memory_type", row.get("memoryType", "knowledge")))
+        happened_at = str(row.get("happened_at", row.get("happenedAt", "")) or "")
         text = str(row.get("text", ""))
         rid = str(row.get("id", ""))
-        return (importance, mentions, session_count, last_seen, created, text, rid)
+        temp_row = MemoryRecord(
+            id=rid,
+            text=text,
+            source=str(row.get("source", "curated") or "curated"),
+            created_at=str(row.get("created_at", "") or ""),
+            category=str(row.get("category", "context") or "context"),
+            updated_at=str(row.get("last_seen_at", "") or ""),
+            confidence=self._normalize_confidence(row.get("confidence", 1.0), default=1.0),
+            decay_rate=row_decay,
+            memory_type=memory_type,
+            happened_at=happened_at,
+            metadata=self._normalize_memory_metadata(row.get("metadata", {})),
+        )
+        adjusted_importance = importance + self._upcoming_event_boost(temp_row) - self._decay_penalty(temp_row)
+        return (adjusted_importance, mentions, session_count, last_seen, created, text, rid)
 
     def _prune_history(self) -> None:
         with self._locked_file(self.history_path, "r+", exclusive=True) as fh:
@@ -2901,8 +3090,16 @@ class MemoryStore:
     def _source_session_key(source: str) -> str:
         return str(source or "").strip().lower() or "unknown"
 
-    @staticmethod
-    def _candidate_importance(*, role: str, text: str, repeated_count: int) -> float:
+    @classmethod
+    def _candidate_importance(
+        cls,
+        *,
+        role: str,
+        text: str,
+        repeated_count: int,
+        memory_type: str = "knowledge",
+        happened_at: str = "",
+    ) -> float:
         score = 1.0
         if role == "user":
             score += 0.5
@@ -2910,6 +3107,22 @@ class MemoryStore:
             score += 1.0
         score += min(0.8, len(text) / 320.0)
         score += min(2.0, max(0, repeated_count - 1) * 0.35)
+        normalized_type = cls._normalize_memory_type(memory_type)
+        if normalized_type == "profile":
+            score += 0.8
+        elif normalized_type == "behavior":
+            score += 0.45
+        elif normalized_type in {"skill", "tool"}:
+            score += 0.25
+        elif normalized_type == "event":
+            score += 0.15
+            stamp = cls._parse_iso_timestamp(str(happened_at or ""))
+            if stamp.year > 1:
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                delta_days = float((stamp - datetime.now(timezone.utc)).total_seconds()) / 86400.0
+                if -1.0 <= delta_days <= 45.0:
+                    score += 0.45
         return score
 
     def _curate_candidates(
@@ -2923,6 +3136,7 @@ class MemoryStore:
         confidence: float | None = None,
         memory_type: str | None = None,
         happened_at: str | None = None,
+        decay_rate: float | None = None,
     ) -> None:
         if self.curated_path is None or not candidates:
             return
@@ -2939,6 +3153,14 @@ class MemoryStore:
                 continue
             inferred_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(candidate, source))
             inferred_happened_at = str(happened_at or self._infer_happened_at(candidate) or "")
+            inferred_decay_rate = self._normalize_decay_rate(
+                decay_rate,
+                default=self._default_decay_rate(
+                    memory_type=inferred_memory_type,
+                    category=self._categorize_memory(candidate, source),
+                    happened_at=inferred_happened_at,
+                ),
+            )
             inferred_metadata = self._prepare_memory_metadata(
                 text=candidate,
                 source=source,
@@ -2957,9 +3179,16 @@ class MemoryStore:
                     "mentions": 1,
                     "session_count": 1,
                     "sessions": [source_session],
-                    "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
+                    "importance": self._candidate_importance(
+                        role=role,
+                        text=candidate,
+                        repeated_count=repeated_count,
+                        memory_type=inferred_memory_type,
+                        happened_at=inferred_happened_at,
+                    ),
                     "reasoning_layer": resolved_reasoning_layer,
                     "confidence": resolved_confidence,
+                    "decay_rate": inferred_decay_rate,
                     "memory_type": inferred_memory_type,
                     "happened_at": inferred_happened_at,
                     "metadata": inferred_metadata,
@@ -2991,9 +3220,19 @@ class MemoryStore:
                 role=role,
                 text=candidate,
                 repeated_count=repeated_count,
+                memory_type=inferred_memory_type,
+                happened_at=inferred_happened_at,
             ) * 0.35
             existing["reasoning_layer"] = resolved_reasoning_layer
             existing["confidence"] = resolved_confidence
+            existing["decay_rate"] = self._normalize_decay_rate(
+                min(
+                    self._normalize_decay_rate(existing.get("decay_rate", existing.get("decayRate", inferred_decay_rate)), default=inferred_decay_rate),
+                    inferred_decay_rate,
+                )
+                * 0.9,
+                default=inferred_decay_rate,
+            )
             existing["memory_type"] = inferred_memory_type
             existing["happened_at"] = inferred_happened_at
             existing["metadata"] = self._normalize_memory_metadata(
@@ -3197,6 +3436,12 @@ class MemoryStore:
             scope_key=scope_key,
             reinforced_at=reinforced_at,
         )
+        existing_decay = self._normalize_decay_rate(getattr(existing, "decay_rate", 0.0), default=0.0)
+        incoming_decay = self._normalize_decay_rate(getattr(incoming, "decay_rate", 0.0), default=existing_decay or 0.0)
+        if existing_decay > 0.0 and incoming_decay > 0.0:
+            reinforced_decay = self._normalize_decay_rate(min(existing_decay, incoming_decay) * 0.9, default=min(existing_decay, incoming_decay))
+        else:
+            reinforced_decay = self._normalize_decay_rate(existing_decay or incoming_decay, default=0.0)
         return MemoryRecord(
             id=str(existing.id or incoming.id or uuid.uuid4().hex),
             text=text,
@@ -3212,7 +3457,7 @@ class MemoryStore:
                 self._normalize_confidence(getattr(existing, "confidence", 1.0), default=1.0),
                 self._normalize_confidence(getattr(incoming, "confidence", 1.0), default=1.0),
             ),
-            decay_rate=float(getattr(existing, "decay_rate", 0.0) or 0.0),
+            decay_rate=reinforced_decay,
             emotional_tone=str(existing.emotional_tone or incoming.emotional_tone or "neutral"),
             memory_type=self._normalize_memory_type(getattr(existing, "memory_type", incoming.memory_type)),
             happened_at=str(existing.happened_at or incoming.happened_at or ""),
@@ -3801,6 +4046,7 @@ class MemoryStore:
         confidence: float | None = None,
         memory_type: str | None = None,
         happened_at: str | None = None,
+        decay_rate: float | None = None,
     ) -> MemoryRecord:
         clean = text.strip()
         if not clean:
@@ -3810,6 +4056,14 @@ class MemoryStore:
         memory_basis = str(raw_resource_text or clean)
         resolved_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(memory_basis, source, category=category))
         resolved_happened_at = str(happened_at or self._infer_happened_at(memory_basis) or "")
+        resolved_decay_rate = self._normalize_decay_rate(
+            decay_rate,
+            default=self._default_decay_rate(
+                memory_type=resolved_memory_type,
+                category=category,
+                happened_at=resolved_happened_at,
+            ),
+        )
         reinforced_at = datetime.now(timezone.utc).isoformat()
         scope_key = self._memory_scope_key(user_id=clean_user, shared=shared)
         resolved_metadata = self._prepare_memory_metadata(
@@ -3836,6 +4090,7 @@ class MemoryStore:
             reasoning_layer=self._normalize_reasoning_layer(reasoning_layer),
             modality=str(modality or "text").strip().lower() or "text",
             confidence=self._normalize_confidence(confidence, default=1.0),
+            decay_rate=resolved_decay_rate,
             emotional_tone=self._detect_emotional_tone(clean) if self.emotional_tracking else "neutral",
             memory_type=resolved_memory_type,
             happened_at=resolved_happened_at,
@@ -3907,6 +4162,7 @@ class MemoryStore:
                     pass
         else:
             self._diagnostics["reinforcement_hits"] = int(self._diagnostics["reinforcement_hits"]) + 1
+        self._update_profile_from_record(row)
         self._prune_history()
         return row
 
@@ -3967,6 +4223,7 @@ class MemoryStore:
                 layer=self._normalize_layer(item.get("layer", MemoryLayer.ITEM.value)),
                 reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                 confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                decay_rate=self._normalize_decay_rate(item.get("decay_rate", item.get("decayRate", self._default_decay_rate(memory_type=item.get("memory_type", item.get("memoryType", "knowledge")))))),
                 memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
                 happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
                 metadata=self._normalize_memory_metadata(item.get("metadata", {})),
@@ -4068,6 +4325,7 @@ class MemoryStore:
         confidence: float | None = None,
         memory_type: str | None = None,
         happened_at: str | None = None,
+        decay_rate: float | None = None,
     ) -> dict[str, Any]:
         _ = include_shared
         try:
@@ -4097,10 +4355,10 @@ class MemoryStore:
                 confidence=confidence,
                 memory_type=memory_type,
                 happened_at=happened_at,
+                decay_rate=decay_rate,
             )
             if record is None:
                 return {"status": "skipped", "mode": "consolidate", "record": None}
-            self._update_profile_from_text(record.text)
             return {"status": "ok", "mode": "consolidate", "record": asdict(record)}
 
         resolved_modality = str(modality or "text").strip().lower() or "text"
@@ -4142,8 +4400,8 @@ class MemoryStore:
             confidence=confidence,
             memory_type=memory_type,
             happened_at=happened_at,
+            decay_rate=decay_rate,
         )
-        self._update_profile_from_text(clean)
         return {"status": "ok", "mode": "add", "record": asdict(record)}
 
     @staticmethod
@@ -4211,6 +4469,7 @@ class MemoryStore:
                     user_id=scope_user_id,
                     reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                     confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    decay_rate=self._normalize_decay_rate(item.get("decay_rate", item.get("decayRate", self._default_decay_rate(memory_type=item.get("memory_type", item.get("memoryType", "knowledge")))))),
                     memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
                     happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
                     metadata=self._normalize_memory_metadata(item.get("metadata", {})),
@@ -4781,6 +5040,8 @@ class MemoryStore:
             confidence_boost = self._bounded_confidence_score(records[idx].confidence) * self._RANKING_CONFIDENCE_BOOST_MAX
             reasoning_layer = self._normalize_reasoning_layer(getattr(records[idx], "reasoning_layer", "fact"))
             reasoning_boost = reasoning_boosts.get(reasoning_layer, 0.0)
+            decay_penalty = self._decay_penalty(records[idx])
+            upcoming_boost = self._upcoming_event_boost(records[idx])
             relevance_signal = bool(
                 overlap > 0
                 or bm25_scores[idx] > 0.0
@@ -4790,8 +5051,8 @@ class MemoryStore:
             salience_boost = self._salience_boost(getattr(records[idx], "metadata", {})) if relevance_signal else 0.0
 
             ranking_score = bm25_scores[idx]
-            ranking_score += confidence_boost + reasoning_boost + entity_score + salience_boost
-            tie_breaker = temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score + salience_boost
+            ranking_score += confidence_boost + reasoning_boost + entity_score + salience_boost + upcoming_boost - decay_penalty
+            tie_breaker = temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score + salience_boost + upcoming_boost - decay_penalty
             if semantic_active:
                 ranking_score = (
                     self._SEMANTIC_BM25_WEIGHT * bm25_scores[idx]
@@ -4800,8 +5061,10 @@ class MemoryStore:
                     + reasoning_boost
                     + entity_score
                     + salience_boost
+                    + upcoming_boost
+                    - decay_penalty
                 )
-                tie_breaker = curated_boost + temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score + salience_boost
+                tie_breaker = curated_boost + temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score + salience_boost + upcoming_boost - decay_penalty
                 scored.append((float(overlap) + entity_score, ranking_score, tie_breaker, idx))
             else:
                 scored.append((float(overlap) + curated_boost + entity_score, ranking_score, tie_breaker, idx))
@@ -4878,6 +5141,7 @@ class MemoryStore:
                     user_id=clean_user,
                     reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                     confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    decay_rate=self._normalize_decay_rate(item.get("decay_rate", item.get("decayRate", self._default_decay_rate(memory_type=item.get("memory_type", item.get("memoryType", "knowledge")))))),
                     memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
                     happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
                     metadata=self._normalize_memory_metadata(item.get("metadata", {})),
@@ -4904,6 +5168,7 @@ class MemoryStore:
                     user_id="shared",
                     reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                     confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    decay_rate=self._normalize_decay_rate(item.get("decay_rate", item.get("decayRate", self._default_decay_rate(memory_type=item.get("memory_type", item.get("memoryType", "knowledge")))))),
                     memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
                     happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
                     metadata=self._normalize_memory_metadata(item.get("metadata", {})),
@@ -4940,6 +5205,7 @@ class MemoryStore:
         confidence: float | None = None,
         memory_type: str | None = None,
         happened_at: str | None = None,
+        decay_rate: float | None = None,
     ) -> MemoryRecord | None:
         self._ensure_scope_paths(scope)
         lines = self._extract_consolidation_lines(messages)
@@ -4991,6 +5257,7 @@ class MemoryStore:
                 confidence=confidence,
                 memory_type=memory_type,
                 happened_at=happened_at,
+                decay_rate=decay_rate,
             )
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
@@ -5042,6 +5309,14 @@ class MemoryStore:
                 continue
             inferred_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(candidate, source))
             inferred_happened_at = str(happened_at or self._infer_happened_at(candidate) or "")
+            inferred_decay_rate = self._normalize_decay_rate(
+                decay_rate,
+                default=self._default_decay_rate(
+                    memory_type=inferred_memory_type,
+                    category=self._categorize_memory(candidate, source),
+                    happened_at=inferred_happened_at,
+                ),
+            )
             inferred_metadata = self._prepare_memory_metadata(
                 text=candidate,
                 source=source,
@@ -5061,9 +5336,16 @@ class MemoryStore:
                         "mentions": 1,
                         "session_count": 1,
                         "sessions": [source_session],
-                        "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
+                        "importance": self._candidate_importance(
+                            role=role,
+                            text=candidate,
+                            repeated_count=repeated_count,
+                            memory_type=inferred_memory_type,
+                            happened_at=inferred_happened_at,
+                        ),
                         "reasoning_layer": resolved_reasoning_layer,
                         "confidence": resolved_confidence,
+                        "decay_rate": inferred_decay_rate,
                         "memory_type": inferred_memory_type,
                         "happened_at": inferred_happened_at,
                         "metadata": inferred_metadata,
@@ -5094,9 +5376,19 @@ class MemoryStore:
                 role=role,
                 text=candidate,
                 repeated_count=repeated_count,
+                memory_type=inferred_memory_type,
+                happened_at=inferred_happened_at,
             ) * 0.35
             existing["reasoning_layer"] = resolved_reasoning_layer
             existing["confidence"] = resolved_confidence
+            existing["decay_rate"] = self._normalize_decay_rate(
+                min(
+                    self._normalize_decay_rate(existing.get("decay_rate", existing.get("decayRate", inferred_decay_rate)), default=inferred_decay_rate),
+                    inferred_decay_rate,
+                )
+                * 0.9,
+                default=inferred_decay_rate,
+            )
             existing["memory_type"] = inferred_memory_type
             existing["happened_at"] = inferred_happened_at
             existing["metadata"] = self._normalize_memory_metadata(
@@ -5122,6 +5414,7 @@ class MemoryStore:
         confidence: float | None = None,
         memory_type: str | None = None,
         happened_at: str | None = None,
+        decay_rate: float | None = None,
     ) -> MemoryRecord | None:
         clean_user = self._normalize_user_id(user_id)
         if shared or clean_user != "default":
@@ -5137,6 +5430,7 @@ class MemoryStore:
                 confidence=confidence,
                 memory_type=memory_type,
                 happened_at=happened_at,
+                decay_rate=decay_rate,
             )
 
         lines = self._extract_consolidation_lines(messages)
@@ -5185,6 +5479,7 @@ class MemoryStore:
                 confidence=confidence,
                 memory_type=memory_type,
                 happened_at=happened_at,
+                decay_rate=decay_rate,
             )
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
@@ -5250,6 +5545,7 @@ class MemoryStore:
             confidence=confidence,
             memory_type=memory_type,
             happened_at=happened_at,
+            decay_rate=decay_rate,
         )
         return row
 
