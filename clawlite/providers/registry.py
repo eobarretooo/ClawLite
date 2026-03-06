@@ -8,6 +8,7 @@ from clawlite.providers.base import LLMProvider
 from clawlite.providers.codex import CodexProvider
 from clawlite.providers.codex_auth import load_codex_auth_file
 from clawlite.providers.custom import CustomProvider
+from clawlite.providers.discovery import detect_local_runtime, normalize_local_runtime_base_url
 from clawlite.providers.failover import FailoverCandidate, FailoverProvider
 from clawlite.providers.litellm import LiteLLMProvider
 
@@ -120,6 +121,24 @@ SPECS: tuple[ProviderSpec, ...] = (
         default_base_url=OPENAI_DEFAULT_BASE_URL,
         openai_compatible=True,
         is_oauth=True,
+    ),
+    ProviderSpec(
+        name="ollama",
+        aliases=(),
+        keywords=("ollama",),
+        model_prefixes=("ollama/",),
+        key_envs=(),
+        default_base_url="http://127.0.0.1:11434/v1",
+        base_url_keywords=("ollama",),
+    ),
+    ProviderSpec(
+        name="vllm",
+        aliases=(),
+        keywords=("vllm",),
+        model_prefixes=("vllm/",),
+        key_envs=(),
+        default_base_url="http://127.0.0.1:8000/v1",
+        base_url_keywords=("vllm",),
     ),
 )
 
@@ -294,6 +313,12 @@ def detect_provider_name(
     if gateway_spec is not None:
         return gateway_spec.name
 
+    local_runtime = detect_local_runtime(base_url)
+    if local_runtime:
+        local_spec = _find_spec(local_runtime)
+        if local_spec is not None:
+            return local_spec.name
+
     if provider_name:
         explicit = _find_spec(provider_name)
         if explicit is not None:
@@ -429,6 +454,8 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
     model_lower = model.lower()
     providers_cfg = dict(config.get("providers") or {})
     litellm_cfg = _provider_cfg(providers_cfg, "litellm")
+    litellm_api_key = _cfg_value(litellm_cfg, "api_key", "apiKey")
+    litellm_base_url = _cfg_value(litellm_cfg, "base_url", "baseUrl")
     reliability = _reliability_settings(config)
 
     if model_lower.startswith(("openai-codex/", "openai_codex/")):
@@ -450,7 +477,7 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
             **reliability,
         )
 
-    predicted_name = detect_provider_name(model, api_key="", base_url="")
+    predicted_name = detect_provider_name(model, api_key=litellm_api_key, base_url=litellm_base_url)
     selected_cfg = _provider_cfg(providers_cfg, predicted_name)
     selected_api_key = _cfg_value(selected_cfg, "api_key", "apiKey")
     selected_api_base = _cfg_value(selected_cfg, "api_base", "apiBase")
@@ -463,13 +490,17 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
 
     extra_headers_raw = selected_cfg.get("extra_headers", selected_cfg.get("extraHeaders", {}))
     extra_headers = dict(extra_headers_raw) if isinstance(extra_headers_raw, dict) else {}
+    runtime_base_url = resolved.base_url
+    if resolved.name in {"ollama", "vllm"}:
+        runtime_base_url = normalize_local_runtime_base_url(resolved.name, resolved.base_url)
 
     return LiteLLMProvider(
-        base_url=resolved.base_url,
+        base_url=runtime_base_url,
         api_key=resolved.api_key,
         model=resolved.model,
         provider_name=resolved.name,
         openai_compatible=resolved.openai_compatible,
+        allow_empty_api_key=resolved.name in {"ollama", "vllm"},
         extra_headers=extra_headers,
         **reliability,
     )

@@ -12,6 +12,7 @@ from rich.prompt import Prompt
 
 from clawlite.config.loader import save_config
 from clawlite.config.schema import AppConfig
+from clawlite.providers.discovery import normalize_local_runtime_base_url
 from clawlite.workspace.loader import WorkspaceLoader
 
 SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "groq", "ollama")
@@ -70,7 +71,12 @@ def apply_provider_selection(
         raise ValueError(f"unsupported_provider:{provider_key}")
 
     selected_model = str(model or "").strip() or DEFAULT_PROVIDER_MODELS[provider_key]
-    selected_base_url = str(base_url or "").strip() or DEFAULT_PROVIDER_BASE_URLS[provider_key]
+    raw_base_url = str(base_url or "").strip() or DEFAULT_PROVIDER_BASE_URLS[provider_key]
+    selected_base_url = (
+        normalize_local_runtime_base_url(provider_key, raw_base_url)
+        if provider_key == "ollama"
+        else raw_base_url
+    )
     selected_api_key = str(api_key or "").strip()
 
     config.provider.model = selected_model
@@ -87,6 +93,9 @@ def apply_provider_selection(
     elif provider_key == "anthropic":
         config.providers.anthropic.api_key = selected_api_key
         config.providers.anthropic.api_base = selected_base_url
+    elif provider_key == "ollama":
+        config.providers.ollama.api_key = selected_api_key
+        config.providers.ollama.api_base = selected_base_url
 
     return {
         "provider": provider_key,
@@ -100,6 +109,8 @@ def probe_provider(provider: str, *, api_key: str, base_url: str, timeout_s: flo
     provider_key = str(provider or "").strip().lower()
     key = str(api_key or "").strip()
     resolved_base = str(base_url or "").strip() or DEFAULT_PROVIDER_BASE_URLS.get(provider_key, "")
+    if provider_key == "ollama" and resolved_base.endswith("/v1"):
+        resolved_base = resolved_base[: -len("/v1")]
 
     if provider_key in {"openai", "groq"}:
         url = _join_base(resolved_base, "/models")

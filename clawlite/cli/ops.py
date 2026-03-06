@@ -37,6 +37,8 @@ SUPPORTED_PROVIDER_AUTH: tuple[str, ...] = (
     "deepseek",
     "anthropic",
     "openrouter",
+    "ollama",
+    "vllm",
     "custom",
 )
 
@@ -366,6 +368,8 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
         "deepseek",
         "anthropic",
         "openrouter",
+        "ollama",
+        "vllm",
         "custom",
     }
 
@@ -424,11 +428,14 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
         base_url = spec.default_base_url
         base_url_source = f"spec:{spec.name}.default_base_url"
 
+    auth_mode = "none" if spec.name in {"ollama", "vllm"} else "api_key"
+    configured = bool(base_url) if auth_mode == "none" else bool(api_key)
+
     return {
         "ok": True,
         "provider": spec.name,
-        "configured": bool(api_key),
-        "auth_mode": "api_key",
+        "configured": configured,
+        "auth_mode": auth_mode,
         "api_key_masked": _mask_secret(api_key),
         "api_key_source": api_key_source,
         "base_url": base_url,
@@ -836,14 +843,31 @@ def provider_use_model(
 
 def provider_validation(config: AppConfig) -> dict[str, Any]:
     model = str(config.agents.defaults.model or config.provider.model).strip() or config.provider.model
-    provider_name = detect_provider_name(model)
+    model_hint_name = detect_provider_name(model)
+    hint_selected = getattr(config.providers, model_hint_name, None)
+    hint_api_key = str(getattr(hint_selected, "api_key", "") or "")
+    hint_api_base = str(getattr(hint_selected, "api_base", "") or "")
+    local_base_hint = ""
+    for local_name in ("ollama", "vllm"):
+        local_selected = getattr(config.providers, local_name, None)
+        local_candidate = str(getattr(local_selected, "api_base", "") or "")
+        if local_candidate.strip():
+            local_base_hint = local_candidate
+            break
+    global_api_key = str(config.provider.litellm_api_key or "")
+    global_base_url = str(config.provider.litellm_base_url or "")
+    provider_name = detect_provider_name(
+        model,
+        api_key=hint_api_key or global_api_key,
+        base_url=hint_api_base or global_base_url or local_base_hint,
+    )
     spec = next((row for row in SPECS if row.name == provider_name), None)
-    selected = getattr(config.providers, provider_name, None)
+    selected = getattr(config.providers, provider_name, None) or hint_selected
 
     provider_api_key = str(getattr(selected, "api_key", "") or "")
     provider_api_base = str(getattr(selected, "api_base", "") or "")
-    resolved_api_key = provider_api_key or str(config.provider.litellm_api_key or "")
-    resolved_base_url = provider_api_base or str(config.provider.litellm_base_url or "")
+    resolved_api_key = provider_api_key or global_api_key
+    resolved_base_url = provider_api_base or global_base_url
 
     env_hits: dict[str, bool] = {}
     env_names: list[str] = []
@@ -904,13 +928,14 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
                 }
             )
     else:
-        has_key = bool(resolved_api_key) or any(env_hits.values())
+        key_optional = provider_name in {"ollama", "vllm"}
+        has_key = bool(resolved_api_key) or any(env_hits.values()) or key_optional
         if has_key:
             checks.append(
                 {
                     "name": "api_key",
                     "status": "ok",
-                    "detail": "API key configured via config or environment.",
+                    "detail": "API key optional for local runtime." if key_optional else "API key configured via config or environment.",
                 }
             )
         else:

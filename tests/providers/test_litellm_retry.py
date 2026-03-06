@@ -122,6 +122,28 @@ def test_litellm_provider_quota_429_fails_fast_without_retry() -> None:
     asyncio.run(_scenario())
 
 
+def test_litellm_provider_allows_local_runtime_without_api_key() -> None:
+    async def _scenario() -> None:
+        provider = LiteLLMProvider(
+            base_url="http://127.0.0.1:11434/v1",
+            api_key="",
+            model="llama3.2",
+            provider_name="ollama",
+            allow_empty_api_key=True,
+            retry_max_attempts=1,
+        )
+
+        post_mock = AsyncMock(return_value=_FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]}))
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+        assert out.text == "ok"
+        headers = post_mock.await_args.kwargs["headers"]
+        assert "authorization" not in {str(key).lower(): value for key, value in headers.items()}
+
+    asyncio.run(_scenario())
+
+
 def test_litellm_provider_circuit_opens_then_closes_after_cooldown() -> None:
     async def _scenario() -> None:
         provider = LiteLLMProvider(

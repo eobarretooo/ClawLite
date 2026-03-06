@@ -332,6 +332,8 @@ class ProvidersConfig:
     anthropic: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
     deepseek: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
     groq: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    ollama: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
+    vllm: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
     custom: ProviderOverrideConfig = field(default_factory=ProviderOverrideConfig)
 
     @classmethod
@@ -344,6 +346,8 @@ class ProvidersConfig:
             anthropic=ProviderOverrideConfig.from_dict(dict(data.get("anthropic") or {})),
             deepseek=ProviderOverrideConfig.from_dict(dict(data.get("deepseek") or {})),
             groq=ProviderOverrideConfig.from_dict(dict(data.get("groq") or {})),
+            ollama=ProviderOverrideConfig.from_dict(dict(data.get("ollama") or {})),
+            vllm=ProviderOverrideConfig.from_dict(dict(data.get("vllm") or {})),
             custom=ProviderOverrideConfig.from_dict(dict(data.get("custom") or {})),
         )
 

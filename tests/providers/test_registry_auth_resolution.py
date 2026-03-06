@@ -148,6 +148,22 @@ def test_build_provider_openai_codex_reads_auth_file_when_env_missing(tmp_path, 
     assert provider.account_id == "org-file"
 
 
+def test_build_provider_detects_ollama_from_local_base_url_without_api_key() -> None:
+    provider = build_provider(
+        {
+            "model": "openai/llama3.2",
+            "providers": {
+                "litellm": {"api_key": "", "base_url": "http://127.0.0.1:11434"},
+            },
+        }
+    )
+
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.provider_name == "ollama"
+    assert provider.base_url == "http://127.0.0.1:11434/v1"
+    assert provider.allow_empty_api_key is True
+
+
 def test_resolve_openai_ignores_incompatible_generic_key_prefix(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("CLAWLITE_LITELLM_API_KEY", "AIza-test-key")

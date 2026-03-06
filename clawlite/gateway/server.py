@@ -789,8 +789,23 @@ class _MessageAPI:
 
 def _provider_config(config: AppConfig) -> dict[str, Any]:
     active_model = str(config.agents.defaults.model or config.provider.model).strip() or config.provider.model
-    provider_name = detect_provider_name(active_model)
-    selected = getattr(config.providers, provider_name, None)
+    model_hint_name = detect_provider_name(active_model)
+    hint_selected = getattr(config.providers, model_hint_name, None)
+    hint_api_key = str(getattr(hint_selected, "api_key", "") or "").strip()
+    hint_api_base = str(getattr(hint_selected, "api_base", "") or "").strip()
+    local_base_hint = ""
+    for local_name in ("ollama", "vllm"):
+        local_selected = getattr(config.providers, local_name, None)
+        local_candidate = str(getattr(local_selected, "api_base", "") or "").strip()
+        if local_candidate:
+            local_base_hint = local_candidate
+            break
+    provider_name = detect_provider_name(
+        active_model,
+        api_key=hint_api_key or str(config.provider.litellm_api_key or "").strip(),
+        base_url=hint_api_base or str(config.provider.litellm_base_url or "").strip() or local_base_hint,
+    )
+    selected = getattr(config.providers, provider_name, None) or hint_selected
     selected_api_key = selected.api_key if selected is not None else ""
     selected_api_base = selected.api_base if selected is not None else ""
 
@@ -839,6 +854,14 @@ def _provider_config(config: AppConfig) -> dict[str, Any]:
             "groq": {
                 "api_key": config.providers.groq.api_key,
                 "api_base": config.providers.groq.api_base,
+            },
+            "ollama": {
+                "api_key": config.providers.ollama.api_key,
+                "api_base": config.providers.ollama.api_base,
+            },
+            "vllm": {
+                "api_key": config.providers.vllm.api_key,
+                "api_base": config.providers.vllm.api_base,
             },
         },
     }

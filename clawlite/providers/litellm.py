@@ -22,6 +22,7 @@ class LiteLLMProvider(LLMProvider):
         model: str,
         provider_name: str = "litellm",
         openai_compatible: bool = True,
+        allow_empty_api_key: bool = False,
         timeout: float = 30.0,
         extra_headers: dict[str, str] | None = None,
         retry_max_attempts: int = 3,
@@ -36,6 +37,7 @@ class LiteLLMProvider(LLMProvider):
         self.model = model
         self.provider_name = provider_name
         self.openai_compatible = openai_compatible
+        self.allow_empty_api_key = bool(allow_empty_api_key)
         self.timeout = timeout
         self.extra_headers = dict(extra_headers or {})
         self.reliability = ReliabilitySettings(
@@ -77,6 +79,7 @@ class LiteLLMProvider(LLMProvider):
             "provider_name": self.provider_name,
             "model": self.model,
             "transport": "openai_compatible" if self.openai_compatible else "native",
+            "auth_optional": self.allow_empty_api_key,
             "counters": counters,
             **counters,
         }
@@ -485,7 +488,7 @@ class LiteLLMProvider(LLMProvider):
             self._record_failure(error=error)
             raise RuntimeError(error)
 
-        if not self.api_key.strip():
+        if not self.api_key.strip() and not self.allow_empty_api_key:
             error = f"provider_auth_error:missing_api_key:{self.provider_name}"
             self._record_failure(error=error, status_code=401)
             raise RuntimeError(error)
@@ -497,7 +500,8 @@ class LiteLLMProvider(LLMProvider):
 
         url = f"{self.base_url}/chat/completions"
         headers = {"content-type": "application/json"}
-        headers["authorization"] = f"Bearer {self.api_key}"
+        if self.api_key.strip():
+            headers["authorization"] = f"Bearer {self.api_key}"
         headers.update(self.extra_headers)
 
         payload: dict[str, Any] = {
