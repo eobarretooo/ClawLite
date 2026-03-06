@@ -32,6 +32,7 @@ from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
 from clawlite.runtime import AutonomyWakeCoordinator
 from clawlite.tools.cron import CronTool
+from clawlite.tools.apply_patch import ApplyPatchTool
 from clawlite.tools.exec import ExecTool
 from clawlite.tools.files import EditFileTool, EditTool, ListDirTool, ReadFileTool, ReadTool, WriteFileTool, WriteTool
 from clawlite.tools.mcp import MCPTool
@@ -45,6 +46,7 @@ from clawlite.tools.memory import (
     MemorySearchTool,
 )
 from clawlite.tools.registry import ToolRegistry
+from clawlite.tools.process import ProcessTool
 from clawlite.tools.skill import SkillTool
 from clawlite.tools.spawn import SpawnTool
 from clawlite.tools.web import WebFetchTool, WebSearchTool
@@ -824,6 +826,23 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
             restrict_to_workspace=config.tools.restrict_to_workspace,
             path_append=config.tools.exec.path_append,
             timeout_seconds=config.tools.exec.timeout,
+            deny_patterns=config.tools.exec.deny_patterns,
+            allow_patterns=config.tools.exec.allow_patterns,
+            deny_path_patterns=config.tools.exec.deny_path_patterns,
+            allow_path_patterns=config.tools.exec.allow_path_patterns,
+        )
+    )
+    tools.register(
+        ApplyPatchTool(
+            workspace_path=workspace_path,
+            restrict_to_workspace=config.tools.restrict_to_workspace,
+        )
+    )
+    tools.register(
+        ProcessTool(
+            workspace_path=workspace_path,
+            restrict_to_workspace=config.tools.restrict_to_workspace,
+            path_append=config.tools.exec.path_append,
             deny_patterns=config.tools.exec.deny_patterns,
             allow_patterns=config.tools.exec.allow_patterns,
             deny_path_patterns=config.tools.exec.deny_path_patterns,

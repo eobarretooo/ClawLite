@@ -555,7 +555,7 @@ def test_build_runtime_registers_openclaw_compatibility_alias_tools(tmp_path: Pa
     runtime = build_runtime(cfg)
 
     schema_names = {row["name"] for row in runtime.engine.tools.schema()}
-    assert {"read", "write", "edit", "memory_search", "memory_get"}.issubset(schema_names)
+    assert {"read", "write", "edit", "memory_search", "memory_get", "apply_patch", "process"}.issubset(schema_names)
 
 
 def test_run_heartbeat_skips_suggestions_when_memory_monitor_missing() -> None:
