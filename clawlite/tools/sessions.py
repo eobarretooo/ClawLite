@@ -287,9 +287,10 @@ class SessionsSpawnTool(Tool):
     name = "sessions_spawn"
     description = "Spawn delegated execution routed to target session."
 
-    def __init__(self, manager: SubagentManager, runner: Runner) -> None:
+    def __init__(self, manager: SubagentManager, runner: Runner, memory: Any | None = None) -> None:
         self.manager = manager
         self.runner = runner
+        self.memory = memory
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -299,6 +300,8 @@ class SessionsSpawnTool(Tool):
                 "session_id": {"type": "string"},
                 "sessionId": {"type": "string"},
                 "sessionKey": {"type": "string"},
+                "share_scope": {"type": "string", "enum": ["private", "parent", "family"]},
+                "shareScope": {"type": "string", "enum": ["private", "parent", "family"]},
             },
             "required": ["task"],
         }
@@ -310,6 +313,34 @@ class SessionsSpawnTool(Tool):
 
         requested_target = _resolve_session_id(arguments, required=False)
         target_session_id = requested_target or f"{ctx.session_id}:subagent"
+        share_scope = str(arguments.get("share_scope", arguments.get("shareScope", "")) or "").strip().lower()
+        if share_scope and share_scope not in {"private", "parent", "family"}:
+            return _json({"status": "failed", "error": "share_scope must be one of private|parent|family"})
+        policy_fn = None
+        if share_scope:
+            policy_fn = getattr(self.memory, "set_working_memory_share_scope", None)
+            if not callable(policy_fn):
+                return _json(
+                    {
+                        "status": "failed",
+                        "session_id": ctx.session_id,
+                        "target_session_id": target_session_id,
+                        "error": "share_scope_unsupported",
+                    }
+                )
+            try:
+                payload = policy_fn(target_session_id, share_scope)
+                if inspect.isawaitable(payload):
+                    await payload
+            except Exception as exc:
+                return _json(
+                    {
+                        "status": "failed",
+                        "session_id": ctx.session_id,
+                        "target_session_id": target_session_id,
+                        "error": str(exc),
+                    }
+                )
 
         async def _target_runner(_owner_session_id: str, delegated_task: str) -> str:
             result = self.runner(target_session_id, delegated_task)
@@ -339,6 +370,7 @@ class SessionsSpawnTool(Tool):
                 "run_id": run.run_id,
                 "session_id": run.session_id,
                 "target_session_id": target_session_id,
+                "share_scope": share_scope or "",
                 "state": run.status,
             }
         )

@@ -1866,6 +1866,94 @@ class MemoryStore:
         return out
 
     @classmethod
+    def _is_working_episode_record(cls, row: MemoryRecord) -> bool:
+        metadata = cls._normalize_memory_metadata(getattr(row, "metadata", {}))
+        if bool(metadata.get("working_memory_promoted", False)):
+            return True
+        return str(getattr(row, "source", "") or "").startswith("working-session:")
+
+    @classmethod
+    def _working_episode_context(cls, row: MemoryRecord) -> dict[str, str]:
+        metadata = cls._normalize_memory_metadata(getattr(row, "metadata", {}))
+        session_id = cls._normalize_session_id(
+            metadata.get("working_memory_session_id", metadata.get("session_id", ""))
+        )
+        if not session_id and str(getattr(row, "source", "") or "").startswith("working-session:"):
+            session_id = cls._normalize_session_id(str(getattr(row, "source", "") or "")[len("working-session:") :])
+        parent_session_id = cls._normalize_session_id(
+            metadata.get("working_memory_parent_session_id", metadata.get("parent_session_id", ""))
+        )
+        if not parent_session_id:
+            parent_session_id = cls._parent_session_id(session_id)
+        share_group = cls._normalize_session_id(
+            metadata.get("working_memory_share_group", metadata.get("share_group", ""))
+        )
+        if not share_group:
+            share_group = cls._working_memory_share_group(session_id)
+        share_scope = cls._normalize_working_memory_share_scope(
+            metadata.get("working_memory_share_scope", metadata.get("share_scope", "")),
+            session_id=session_id,
+        )
+        return {
+            "session_id": session_id,
+            "parent_session_id": parent_session_id,
+            "share_group": share_group,
+            "share_scope": share_scope,
+        }
+
+    @classmethod
+    def _working_episode_visible_in_session(cls, row: MemoryRecord, *, session_id: str) -> bool:
+        clean_session_id = cls._normalize_session_id(session_id)
+        if not cls._is_working_episode_record(row) or not clean_session_id:
+            return True
+        row_ctx = cls._working_episode_context(row)
+        row_session_id = str(row_ctx.get("session_id", "") or "")
+        row_parent_session_id = str(row_ctx.get("parent_session_id", "") or "")
+        row_share_group = str(row_ctx.get("share_group", "") or "")
+        row_share_scope = str(row_ctx.get("share_scope", "") or "")
+        if not row_session_id:
+            return True
+        if row_session_id == clean_session_id:
+            return True
+        current_parent = cls._parent_session_id(clean_session_id)
+        current_group = cls._working_memory_share_group(clean_session_id)
+        if not row_share_group or row_share_group != current_group:
+            return False
+        if row_share_scope == "private":
+            return False
+        if clean_session_id == row_parent_session_id:
+            return row_share_scope in {"parent", "family"}
+        if current_parent and row_session_id == current_parent:
+            return row_share_scope == "family"
+        if row_parent_session_id == clean_session_id:
+            return row_share_scope == "family"
+        if current_parent and row_parent_session_id == current_parent:
+            return row_share_scope == "family"
+        return False
+
+    @classmethod
+    def _episodic_session_boost(cls, row: MemoryRecord, *, session_id: str) -> float:
+        clean_session_id = cls._normalize_session_id(session_id)
+        if not clean_session_id or not cls._is_working_episode_record(row):
+            return 0.0
+        row_ctx = cls._working_episode_context(row)
+        row_session_id = str(row_ctx.get("session_id", "") or "")
+        row_parent_session_id = str(row_ctx.get("parent_session_id", "") or "")
+        row_share_scope = str(row_ctx.get("share_scope", "") or "")
+        if row_session_id == clean_session_id:
+            return 0.6
+        if not cls._working_episode_visible_in_session(row, session_id=clean_session_id):
+            return 0.0
+        current_parent = cls._parent_session_id(clean_session_id)
+        if clean_session_id == row_parent_session_id:
+            return 0.38 if row_share_scope == "parent" else 0.46
+        if row_parent_session_id == clean_session_id:
+            return 0.34 if row_share_scope == "family" else 0.0
+        if current_parent and row_parent_session_id == current_parent and row_share_scope == "family":
+            return 0.28
+        return 0.14
+
+    @classmethod
     def _working_memory_episode_summary(cls, session_id: str, messages: list[dict[str, Any]]) -> str:
         clean_session_id = cls._normalize_session_id(session_id) or "unknown"
         recent = messages[-cls._WORKING_MEMORY_PROMOTION_WINDOW :]
@@ -5041,6 +5129,7 @@ class MemoryStore:
         *,
         user_id: str,
         include_shared: bool,
+        session_id: str,
         reasoning_layers: Iterable[str] | None,
         min_confidence: float | None,
     ) -> tuple[list[MemoryRecord], dict[str, float], dict[str, int], list[dict[str, Path]], bool]:
@@ -5088,6 +5177,8 @@ class MemoryStore:
             records = [row for row in records if self._normalize_reasoning_layer(row.reasoning_layer) in reasoning_filter]
         if min_conf_filter is not None:
             records = [row for row in records if self._normalize_confidence(row.confidence, default=1.0) >= min_conf_filter]
+        if session_id:
+            records = [row for row in records if self._working_episode_visible_in_session(row, session_id=session_id)]
 
         semantic_enabled = bool(self.semantic_enabled and len(scopes) == 1 and scopes[0]["root"] == self.memory_home)
         return records, curated_importance, curated_mentions, scopes, semantic_enabled
@@ -5309,6 +5400,7 @@ class MemoryStore:
         *,
         limit: int,
         user_id: str,
+        session_id: str,
         include_shared: bool,
         reasoning_layers: Iterable[str] | None,
         min_confidence: float | None,
@@ -5318,6 +5410,7 @@ class MemoryStore:
         records, curated_importance, curated_mentions, scopes, semantic_enabled = self._collect_retrieval_records(
             user_id=user_id,
             include_shared=include_shared,
+            session_id=session_id,
             reasoning_layers=reasoning_layers,
             min_confidence=min_confidence,
         )
@@ -5340,6 +5433,7 @@ class MemoryStore:
             curated_mentions=curated_mentions,
             limit=limit,
             semantic_enabled=semantic_enabled,
+            session_id=session_id,
         )
         item_hits = [self._serialize_hit(row) for row in item_records]
         item_sufficiency = self._evaluate_retrieval_sufficiency(
@@ -5481,6 +5575,7 @@ class MemoryStore:
         limit: int = 5,
         method: str = "rag",
         user_id: str = "",
+        session_id: str = "",
         include_shared: bool = False,
         reasoning_layers: Iterable[str] | None = None,
         min_confidence: float | None = None,
@@ -5494,6 +5589,7 @@ class MemoryStore:
             self._build_progressive_retrieval_payload,
             clean_query,
             user_id=resolved_user,
+            session_id=session_id,
             limit=bounded_limit,
             include_shared=include_shared,
             reasoning_layers=reasoning_layers,
@@ -5560,6 +5656,7 @@ class MemoryStore:
         curated_mentions: dict[str, int],
         limit: int,
         semantic_enabled: bool,
+        session_id: str = "",
     ) -> list[MemoryRecord]:
         if not records:
             return []
@@ -5650,10 +5747,31 @@ class MemoryStore:
                 or (semantic_active and semantic_scores[idx] > 0.05)
             )
             salience_boost = self._salience_boost(getattr(records[idx], "metadata", {})) if relevance_signal else 0.0
+            raw_episodic_boost = self._episodic_session_boost(records[idx], session_id=session_id)
+            episodic_boost = raw_episodic_boost if relevance_signal or query_has_temporal_intent else 0.0
+            if not relevance_signal and episodic_boost > 0.0 and query_has_temporal_intent:
+                relevance_signal = True
 
             ranking_score = bm25_scores[idx]
-            ranking_score += confidence_boost + reasoning_boost + entity_score + salience_boost + upcoming_boost - decay_penalty
-            tie_breaker = temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score + salience_boost + upcoming_boost - decay_penalty
+            ranking_score += (
+                confidence_boost
+                + reasoning_boost
+                + entity_score
+                + salience_boost
+                + episodic_boost
+                + upcoming_boost
+                - decay_penalty
+            )
+            tie_breaker = (
+                temporal_score
+                + (confidence_boost * 0.5)
+                + reasoning_boost
+                + entity_score
+                + salience_boost
+                + episodic_boost
+                + upcoming_boost
+                - decay_penalty
+            )
             if semantic_active:
                 ranking_score = (
                     self._SEMANTIC_BM25_WEIGHT * bm25_scores[idx]
@@ -5662,13 +5780,24 @@ class MemoryStore:
                     + reasoning_boost
                     + entity_score
                     + salience_boost
+                    + episodic_boost
                     + upcoming_boost
                     - decay_penalty
                 )
-                tie_breaker = curated_boost + temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score + salience_boost + upcoming_boost - decay_penalty
-                scored.append((float(overlap) + entity_score, ranking_score, tie_breaker, idx))
+                tie_breaker = (
+                    curated_boost
+                    + temporal_score
+                    + (confidence_boost * 0.5)
+                    + reasoning_boost
+                    + entity_score
+                    + salience_boost
+                    + episodic_boost
+                    + upcoming_boost
+                    - decay_penalty
+                )
+                scored.append((float(overlap) + entity_score + episodic_boost, ranking_score, tie_breaker, idx))
             else:
-                scored.append((float(overlap) + curated_boost + entity_score, ranking_score, tie_breaker, idx))
+                scored.append((float(overlap) + curated_boost + entity_score + episodic_boost, ranking_score, tie_breaker, idx))
 
         scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
         picked: list[MemoryRecord] = []
@@ -5686,6 +5815,7 @@ class MemoryStore:
         *,
         limit: int = 5,
         user_id: str = "",
+        session_id: str = "",
         include_shared: bool = False,
         reasoning_layers: Iterable[str] | None = None,
         min_confidence: float | None = None,
@@ -5727,6 +5857,7 @@ class MemoryStore:
                 curated_mentions=curated_mentions,
                 limit=bounded_limit,
                 semantic_enabled=self.semantic_enabled,
+                session_id=session_id,
             )
 
         user_scope = self._scope_paths(user_id=clean_user, shared=False)
@@ -5783,6 +5914,8 @@ class MemoryStore:
             records = [row for row in records if self._normalize_reasoning_layer(row.reasoning_layer) in reasoning_filter]
         if min_conf_filter is not None:
             records = [row for row in records if self._normalize_confidence(row.confidence, default=1.0) >= min_conf_filter]
+        if session_id:
+            records = [row for row in records if self._working_episode_visible_in_session(row, session_id=session_id)]
 
         return self._rank_records(
             query,
@@ -5791,6 +5924,7 @@ class MemoryStore:
             curated_mentions=curated_mentions,
             limit=bounded_limit,
             semantic_enabled=False,
+            session_id=session_id,
         )
 
     def _consolidate_in_scope(

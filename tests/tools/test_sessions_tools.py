@@ -193,6 +193,59 @@ def test_sessions_spawn_success_and_subagents_list_kill(tmp_path) -> None:
     asyncio.run(_scenario())
 
 
+def test_sessions_spawn_applies_explicit_working_memory_share_scope(tmp_path) -> None:
+    async def _scenario() -> None:
+        class MemoryStub:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            def set_working_memory_share_scope(self, session_id: str, share_scope: str) -> dict[str, str]:
+                self.calls.append((session_id, share_scope))
+                return {"session_id": session_id, "share_scope": share_scope}
+
+        async def _runner(session_id: str, task: str):
+            return SimpleNamespace(text=f"{session_id}:{task}", model="spawn/model")
+
+        memory = MemoryStub()
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_queued_runs=8, per_session_quota=4)
+        spawn_tool = SessionsSpawnTool(manager, _runner, memory=memory)
+
+        spawned = json.loads(
+            await spawn_tool.run(
+                {"task": "delegate task", "share_scope": "family"},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+
+        assert spawned["status"] == "ok"
+        assert spawned["target_session_id"] == "cli:owner:subagent"
+        assert spawned["share_scope"] == "family"
+        assert memory.calls == [("cli:owner:subagent", "family")]
+
+    asyncio.run(_scenario())
+
+
+def test_sessions_spawn_fails_closed_when_share_scope_is_requested_without_memory_support(tmp_path) -> None:
+    async def _scenario() -> None:
+        async def _runner(session_id: str, task: str):
+            return SimpleNamespace(text=f"{session_id}:{task}", model="spawn/model")
+
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_queued_runs=8, per_session_quota=4)
+        spawn_tool = SessionsSpawnTool(manager, _runner)
+
+        payload = json.loads(
+            await spawn_tool.run(
+                {"task": "delegate task", "share_scope": "family"},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+
+        assert payload["status"] == "failed"
+        assert payload["error"] == "share_scope_unsupported"
+
+    asyncio.run(_scenario())
+
+
 def test_session_status_fields(tmp_path) -> None:
     async def _scenario() -> None:
         sessions = SessionStore(root=tmp_path / "sessions")

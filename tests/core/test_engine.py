@@ -142,12 +142,21 @@ class FakeMemoryWithContextKwargs(FakeMemory):
         self.search_calls: list[dict[str, Any]] = []
         self.memorize_calls: list[dict[str, Any]] = []
 
-    def search(self, query: str, *, limit: int = 5, user_id: str = "", include_shared: bool = False) -> list[MemoryRecord]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        user_id: str = "",
+        session_id: str = "",
+        include_shared: bool = False,
+    ) -> list[MemoryRecord]:
         self.search_calls.append(
             {
                 "query": query,
                 "limit": limit,
                 "user_id": user_id,
+                "session_id": session_id,
                 "include_shared": include_shared,
             }
         )
@@ -218,12 +227,21 @@ class FakeMemoryWithPolicySearch(FakeMemory):
             "allow_memory_write": True,
         }
 
-    def search(self, query: str, *, limit: int = 5, user_id: str = "", include_shared: bool = False) -> list[MemoryRecord]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        user_id: str = "",
+        session_id: str = "",
+        include_shared: bool = False,
+    ) -> list[MemoryRecord]:
         self.search_calls.append(
             {
                 "query": query,
                 "limit": limit,
                 "user_id": user_id,
+                "session_id": session_id,
                 "include_shared": include_shared,
             }
         )
@@ -936,6 +954,7 @@ def test_engine_passes_runtime_user_context_to_memory_search_and_memorize() -> N
         assert out.text == "ok"
         assert memory.search_calls
         assert memory.search_calls[0]["user_id"] == "42"
+        assert memory.search_calls[0]["session_id"] == "telegram:42"
         assert memory.search_calls[0]["include_shared"] is True
         assert memory.memorize_calls
         assert memory.memorize_calls[0]["user_id"] == "42"

@@ -811,12 +811,15 @@ class AgentEngine:
         query: str,
         limit: int,
         user_id: str,
+        session_id: str,
         include_shared: bool,
     ) -> list[MemoryRecord]:
         search_fn = getattr(self.memory, "search")
         kwargs: dict[str, Any] = {"limit": limit}
         if self._accepts_parameter(search_fn, "user_id"):
             kwargs["user_id"] = user_id
+        if self._accepts_parameter(search_fn, "session_id"):
+            kwargs["session_id"] = session_id
         if self._accepts_parameter(search_fn, "include_shared"):
             kwargs["include_shared"] = include_shared
         try:
@@ -915,6 +918,7 @@ class AgentEngine:
                 query=selected_query,
                 limit=search_limit,
                 user_id=user_id,
+                session_id=session_id,
                 include_shared=True,
             )
             attempts += 1
@@ -934,6 +938,7 @@ class AgentEngine:
                         query=rewritten,
                         limit=search_limit,
                         user_id=user_id,
+                        session_id=session_id,
                         include_shared=True,
                     )
                     attempts += 1

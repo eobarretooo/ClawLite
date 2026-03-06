@@ -837,6 +837,85 @@ def test_memory_working_set_auto_promotes_episode_snapshots_in_batches(tmp_path:
     assert diag["working_memory_promotions"] == 2
 
 
+def test_memory_search_prioritizes_same_session_working_episode(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.add("release checklist blocker still waiting", source="session:generic", user_id="42")
+    store.add(
+        "release checklist blocker still waiting on security review",
+        source="working-session:cli:owner",
+        user_id="42",
+        memory_type="event",
+        metadata={
+            "working_memory_promoted": True,
+            "working_memory_session_id": "cli:owner",
+            "working_memory_share_group": "cli:owner",
+            "working_memory_share_scope": "family",
+            "skip_profile_sync": True,
+        },
+    )
+
+    found = store.search("release checklist blocker", user_id="42", session_id="cli:owner", limit=2)
+
+    assert found
+    assert found[0].source == "working-session:cli:owner"
+
+
+def test_memory_search_hides_parent_only_sibling_episodes_but_allows_family_scope(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    base_metadata = {
+        "working_memory_promoted": True,
+        "working_memory_parent_session_id": "cli:owner",
+        "working_memory_share_group": "cli:owner",
+        "skip_profile_sync": True,
+    }
+    store.add(
+        "release checklist blocker for subagent a",
+        source="working-session:cli:owner:subagent-a",
+        user_id="42",
+        memory_type="event",
+        metadata={
+            **base_metadata,
+            "working_memory_session_id": "cli:owner:subagent-a",
+            "working_memory_share_scope": "parent",
+        },
+    )
+    store.add(
+        "release checklist blocker for subagent b",
+        source="working-session:cli:owner:subagent-b",
+        user_id="42",
+        memory_type="event",
+        metadata={
+            **base_metadata,
+            "working_memory_session_id": "cli:owner:subagent-b",
+            "working_memory_share_scope": "parent",
+        },
+    )
+
+    initial = store.search("release checklist blocker", user_id="42", session_id="cli:owner:subagent-a", limit=5)
+    initial_sources = {row.source for row in initial}
+    assert "working-session:cli:owner:subagent-a" in initial_sources
+    assert "working-session:cli:owner:subagent-b" not in initial_sources
+
+    store.add(
+        "release checklist blocker for subagent b with family sharing",
+        source="working-session:cli:owner:subagent-b",
+        user_id="42",
+        memory_type="event",
+        metadata={
+            **base_metadata,
+            "working_memory_session_id": "cli:owner:subagent-b",
+            "working_memory_share_scope": "family",
+        },
+    )
+
+    updated = store.search("release checklist blocker", user_id="42", session_id="cli:owner:subagent-a", limit=5)
+    assert any(
+        str(row.metadata.get("working_memory_session_id", "") or "") == "cli:owner:subagent-b"
+        and str(row.metadata.get("working_memory_share_scope", "") or "") == "family"
+        for row in updated
+    )
+
+
 def test_memory_delete_by_prefixes_removes_from_history_and_curated(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.jsonl")
     keep = store.add("keep history row", source="session:keep")

@@ -1025,7 +1025,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     tools.register(SessionsListTool(sessions))
     tools.register(SessionsHistoryTool(sessions))
     tools.register(SessionsSendTool(_session_runner))
-    tools.register(SessionsSpawnTool(engine.subagents, _session_runner))
+    tools.register(SessionsSpawnTool(engine.subagents, _session_runner, memory=memory))
     tools.register(SubagentsTool(engine.subagents))
     tools.register(SessionStatusTool(sessions, engine.subagents))
 
