@@ -92,6 +92,19 @@ If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostic
 
 Purpose: operational visibility for proactive memory suggestions (generation, suppression, and delivery outcomes) without exposing raw memory content.
 
+Memory quality tuning diagnostics (stages 15-18) are additive and may appear in:
+
+- top-level `engine.memory_quality`: persisted quality/tuning state summary
+- top-level `memory_quality_tuning`: runtime tuning loop snapshot/counters
+
+`environment` telemetry remains separate from the memory quality payload and is gated by `gateway.diagnostics.include_config=true`.
+
+Expected additive keys include quality layer scores and stage18 tuning telemetry/action metadata:
+
+- reasoning layers: `fact`, `hypothesis`, `decision`, `outcome` (quality scoring context)
+- telemetry maps: `actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`
+- latest action metadata: `last_action_metadata` (for example `template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`, plus playbook context such as `playbook_id`, `weakest_layer`, `severity`)
+
 When `gateway.diagnostics.include_config=true`, `environment` may include additive engine persistence telemetry, session-recovery telemetry under `environment.engine.session_recovery`, memory-store durability/recovery telemetry under `environment.engine.memory_store`, nested session-store durability/recovery diagnostics, tool execution telemetry under `environment.engine.tools` (`total` + `per_tool` counters), and provider telemetry under `environment.engine.provider`.
 
 Provider telemetry keys are additive and may include: `requests`, `successes`, `retries`, `timeouts`, `network_errors`, `http_errors`, `auth_errors`, `rate_limit_errors`, `server_errors`, `circuit_open`, `circuit_open_count`, `circuit_close_count`, `consecutive_failures`, `last_error`, `last_status_code`.

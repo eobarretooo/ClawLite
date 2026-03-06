@@ -33,6 +33,28 @@ clawlite validate preflight --gateway-url http://127.0.0.1:8787 --provider-live 
 bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787
 ```
 
+## Stage 19 release closure checklist
+
+1) Baseline preflight:
+
+```bash
+clawlite validate preflight --gateway-url http://127.0.0.1:8787
+```
+
+2) Memory tuning diagnostics snapshot:
+
+```bash
+curl -sS http://127.0.0.1:8787/v1/diagnostics | python -m json.tool
+clawlite memory quality --gateway-url http://127.0.0.1:8787
+```
+
+3) Confirm additive tuning keys in diagnostics:
+- `memory_quality_tuning`
+- `engine.memory_quality`
+- `environment` (expandido quando `gateway.diagnostics.include_config=true`)
+- `actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`
+- `last_action_metadata` com campos de Stage 18 (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`)
+
 ## Verificar saúde
 
 ```bash

@@ -185,6 +185,10 @@
 - Progress (2026-03-05): ClawMemory hardening delivered with hybrid semantic + BM25 retrieval, async `memorize`/`retrieve`, proactive monitor integrated into heartbeat + diagnostics, and multimodal ingest fallback for file/URL references.
 - Progress (2026-03-05): memory lifecycle controls delivered via CLI (`memory profile/suggest/snapshot/version/rollback/privacy/export/import/branches/branch/checkout/merge/share-optin`) with versioned snapshots and branch metadata.
 - Progress (2026-03-05): optional backend embedding sync delivered (`sqlite` default, optional `pgvector`) with fail-soft backend operations in memory store and explicit gateway startup guard for unsupported `pgvector` runtime.
+- Progress (2026-03-06): Stage 15 delivered reasoning-layer quality signals (`fact/hypothesis/decision/outcome`) in memory quality state/reporting.
+- Progress (2026-03-06): Stage 16 delivered autonomous memory-quality tuning loop with cooldown/rate limits and persisted tuning state.
+- Progress (2026-03-06): Stage 17 delivered layer-aware tuning playbooks with persisted action metadata (`playbook_id`, `weakest_layer`, `severity`) and layer alias normalization.
+- Progress (2026-03-06): Stage 18 delivered layer-specific playbook execution details (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) and additive diagnostics telemetry maps for tuning actions.
 
 ### Vision and differentiation
 - Build **ClawMemory** as a proactive memory engine that adapts ideas from
@@ -206,15 +210,15 @@
   (tone, urgency, preference confidence).
 - [x] 5) Multi-user isolation + shared-memory opt-in controls
   across sessions.
-- [ ] 6) Reasoning layers (facts, hypotheses, decisions,
+- [x] 6) Reasoning layers (facts, hypotheses, decisions,
   outcomes, confidence).
 - [x] 7) Versioning and branching (memory snapshots, rollback,
   branch merge strategy).
 - [x] 8) Privacy and control plane (scope, retention, redaction,
   user override).
-- [ ] 9) Self-improvement loop (quality scoring, retrieval success metrics,
+- [x] 9) Self-improvement loop (quality scoring, retrieval success metrics,
   drift checks).
-- [ ] 10) Native integration with agents/skills/subagents
+- [x] 10) Native integration with agents/skills/subagents
   (first-class APIs + policies).
 
 ### Implementation phases
@@ -237,7 +241,7 @@
 - [x] **M3:** Temporal scoring and recency/decay logic in production path.
 - [x] **M4:** Proactive trigger engine live with guardrails and audit logs.
 - [x] **M5:** Shared opt-in + branch/version controls released.
-- [ ] **M6:** Self-improvement metrics loop closes with automated tuning
+- [x] **M6:** Self-improvement metrics loop closes with automated tuning
   reports.
 
 ### Top 5 differentiators (priority order)

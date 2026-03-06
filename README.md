@@ -14,7 +14,7 @@ ClawLite is a Python agent runtime centered on CLI + gateway operation:
 
 The runtime does not depend on a dashboard UI. The gateway root (`GET /`) serves a minimal static HTML entrypoint for endpoint visibility.
 
-## Current status snapshot (through Stage 17)
+## Current status snapshot (through Stage 18)
 
 Major shipped capabilities visible in current code/tests:
 
@@ -22,10 +22,11 @@ Major shipped capabilities visible in current code/tests:
 - Runtime scheduler and control-plane paths for heartbeat and cron (`/v1/control/heartbeat/trigger`, `/v1/cron/*`).
 - Provider operations in CLI (`provider login/status/logout/use/set-auth/clear-auth`) and release preflight checks.
 - ClawMemory lifecycle controls (`doctor`, `quality`, snapshot/version/rollback, branches/merge, export/import, privacy/share-optin).
-- Stage 15/16/17 memory-quality/autonomy progression:
+- Stage 15/16/17/18 memory-quality/autonomy progression:
   - Stage 15: reasoning-layer quality signals (`fact/hypothesis/decision/outcome`) included in quality state/reporting.
   - Stage 16: autonomous memory-quality tuning loop with cooldown/rate limits and persisted tuning state.
   - Stage 17: layer-aware tuning playbooks with action metadata (`playbook_id`, `weakest_layer`, `severity`) and legacy layer alias normalization.
+  - Stage 18: layer-specific execution metadata and telemetry (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`; `actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
 
 ## Quickstart
 
@@ -122,7 +123,8 @@ clawlite skills check
 - Memory quality state persists scoring, drift assessment, recommendations, and tuning history.
 - Tuning loop runs as an autonomous runtime component when enabled, with fail-soft behavior, cooldown, and rate limiting.
 - Layer-aware playbooks pick actions based on drift severity and weakest reasoning layer.
-- Action metadata is persisted for auditability (`last_action`, `last_reason`, `recent_actions`, `playbook_id`, `weakest_layer`).
+- Layer-specific execution details are persisted for auditability (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) together with playbook fields.
+- Diagnostics expose tuning telemetry maps and latest action context (`actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
 
 ## Testing and CI commands
 

@@ -8,6 +8,8 @@ Relevant ClawLite changes.
 - Markdown documentation cleanup to reflect only the current runtime.
 - Updated README, CONTRIBUTING, SECURITY, and ROADMAP for current commands/flows.
 - Updated documentation to remove stale legacy pages.
+- Stage 18 memory-quality tuning increment documented: layer-specific playbook execution fields (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) and diagnostics telemetry maps (`actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
+- Stage 19 release-closure docs finalized across roadmap/readme/api/operations with conservative completion status for reasoning layers, self-improvement loop, native integration, and milestone M6.
 - ClawMemory hardening shipped: hybrid semantic+BM25 retrieval, async memorize/retrieve APIs, proactive monitor integrated with heartbeat/diagnostics, multimodal ingest fallback, memory profile/privacy/versioning controls, branch/checkout/merge lifecycle, and optional backend embedding sync (`sqlite` default, `pgvector` optional).
 - Operational maturity increment: `clawlite provider set-auth` / `clawlite provider clear-auth` and `clawlite heartbeat trigger` integrated into operator runbooks.
 - Diagnostics now expose WebSocket telemetry visibility for runtime operator checks.
