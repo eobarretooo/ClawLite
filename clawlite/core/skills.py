@@ -7,7 +7,7 @@ import re
 import shlex
 import shutil
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
@@ -345,6 +345,52 @@ class SkillsLoader:
             Path.home() / ".clawlite" / "workspace" / "skills",
             Path.home() / ".clawlite" / "marketplace" / "skills",
         ]
+        self._discovery_signature: tuple[tuple[str, bool, int], ...] | None = None
+        self._discovered_specs: list[SkillSpec] | None = None
+        self._name_index: dict[str, SkillSpec] | None = None
+
+    def _roots_signature(self) -> tuple[tuple[str, bool, int], ...]:
+        signature: list[tuple[str, bool, int]] = []
+        for root in self.roots:
+            exists = root.exists()
+            mtime = root.stat().st_mtime_ns if exists else 0
+            signature.append((str(root), exists, mtime))
+        return tuple(signature)
+
+    @staticmethod
+    def _refresh_runtime_status(spec: SkillSpec) -> SkillSpec:
+        missing = _missing_requirements(spec.requirements)
+        available = (not missing) and (not spec.contract_issues)
+        if spec.missing == missing and spec.available == available:
+            return spec
+        return replace(spec, missing=missing, available=available)
+
+    def _ensure_discovery_cache(self) -> None:
+        signature = self._roots_signature()
+        if (
+            self._discovery_signature == signature
+            and self._discovered_specs is not None
+            and self._name_index is not None
+        ):
+            return
+
+        found: dict[str, SkillSpec] = {}
+        for idx, root in enumerate(self.roots):
+            if not root.exists():
+                continue
+            source = self._source_label(root, idx)
+            for path in root.rglob("SKILL.md"):
+                spec = self._parse_header(path, source=source)
+                if spec is None:
+                    continue
+                current = found.get(spec.name)
+                if current is None or self._is_preferred_candidate(spec, current):
+                    found[spec.name] = spec
+
+        rows = sorted(found.values(), key=lambda item: item.name.lower())
+        self._discovered_specs = rows
+        self._name_index = {item.name.lower(): item for item in rows}
+        self._discovery_signature = signature
 
     @staticmethod
     def _source_label(root: Path, index: int) -> str:
@@ -404,19 +450,9 @@ class SkillsLoader:
         return str(candidate.path) < str(current.path)
 
     def discover(self, *, include_unavailable: bool = True) -> list[SkillSpec]:
-        found: dict[str, SkillSpec] = {}
-        for idx, root in enumerate(self.roots):
-            if not root.exists():
-                continue
-            source = self._source_label(root, idx)
-            for path in root.rglob("SKILL.md"):
-                spec = self._parse_header(path, source=source)
-                if spec is None:
-                    continue
-                current = found.get(spec.name)
-                if current is None or self._is_preferred_candidate(spec, current):
-                    found[spec.name] = spec
-        rows = sorted(found.values(), key=lambda item: item.name.lower())
+        self._ensure_discovery_cache()
+        assert self._discovered_specs is not None
+        rows = [self._refresh_runtime_status(item) for item in self._discovered_specs]
         if include_unavailable:
             return rows
         return [item for item in rows if item.available]
@@ -529,11 +565,13 @@ class SkillsLoader:
         return [item for item in rows if item.always and (item.available or not only_available)]
 
     def get(self, name: str) -> SkillSpec | None:
+        self._ensure_discovery_cache()
+        assert self._name_index is not None
         wanted = name.strip().lower()
-        for row in self.discover(include_unavailable=True):
-            if row.name.lower() == wanted:
-                return row
-        return None
+        row = self._name_index.get(wanted)
+        if row is None:
+            return None
+        return self._refresh_runtime_status(row)
 
     def load_skill_content(self, name: str) -> str | None:
         spec = self.get(name)
