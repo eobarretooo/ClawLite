@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import time
@@ -8,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from clawlite.providers.base import LLMProvider, LLMResult
+from clawlite.providers.base import LLMProvider, LLMResult, ToolCall
 from clawlite.providers.reliability import ReliabilitySettings, classify_provider_error, parse_retry_after_seconds
 
 
@@ -131,6 +132,41 @@ class CodexProvider(LLMProvider):
         capped = min(base, self.reliability.retry_max_backoff_s)
         return max(0.0, capped + random.uniform(0.0, self.reliability.retry_jitter_s))
 
+    @staticmethod
+    def _parse_arguments(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return {}
+            try:
+                payload = json.loads(text)
+            except Exception:
+                return {"raw": text}
+            return payload if isinstance(payload, dict) else {"value": payload}
+        return {}
+
+    @classmethod
+    def _parse_tool_calls(cls, message: dict[str, Any]) -> list[ToolCall]:
+        rows = message.get("tool_calls")
+        if not isinstance(rows, list):
+            return []
+
+        parsed: list[ToolCall] = []
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            fn = row.get("function")
+            fn_payload = fn if isinstance(fn, dict) else {}
+            name = str(fn_payload.get("name") or row.get("name") or "").strip()
+            if not name:
+                continue
+            call_id = str(row.get("id") or f"call_{idx}")
+            arguments = cls._parse_arguments(fn_payload.get("arguments", row.get("arguments", {})))
+            parsed.append(ToolCall(id=call_id, name=name, arguments=arguments))
+        return parsed
+
     async def complete(
         self,
         *,
@@ -178,8 +214,9 @@ class CodexProvider(LLMProvider):
                     data = response.json()
                 message = data.get("choices", [{}])[0].get("message", {})
                 text = str(message.get("content", "")).strip()
+                tool_calls = self._parse_tool_calls(message)
                 self._record_success()
-                return LLMResult(text=text, model=self.model, tool_calls=[], metadata={"provider": "codex"})
+                return LLMResult(text=text, model=self.model, tool_calls=tool_calls, metadata={"provider": "codex"})
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else None
                 self._diagnostics["http_errors"] = int(self._diagnostics["http_errors"]) + 1

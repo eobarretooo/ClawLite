@@ -329,11 +329,13 @@ class LiteLLMProvider(LLMProvider):
             name = str(tool.get("name") or "").strip()
             if not name:
                 continue
+            parameters = tool.get("parameters") if isinstance(tool.get("parameters"), dict) else None
+            arguments = tool.get("arguments") if isinstance(tool.get("arguments"), dict) else None
             rows.append(
                 {
                     "name": name,
                     "description": str(tool.get("description") or ""),
-                    "input_schema": tool.get("arguments") if isinstance(tool.get("arguments"), dict) else {"type": "object", "properties": {}},
+                    "input_schema": parameters or arguments or {"type": "object", "properties": {}},
                 }
             )
         return rows

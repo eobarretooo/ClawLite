@@ -39,11 +39,28 @@ def test_litellm_provider_supports_anthropic_direct() -> None:
                     {"role": "system", "content": "be concise"},
                     {"role": "user", "content": "hi"},
                 ],
-                tools=[{"name": "echo", "description": "echo", "arguments": {"type": "object", "properties": {}}}],
+                tools=[
+                    {
+                        "name": "echo",
+                        "description": "echo",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"text": {"type": "string"}},
+                            "required": ["text"],
+                        },
+                        "arguments": {"type": "object", "properties": {}},
+                    }
+                ],
             )
 
         assert out.text == "hello"
         assert len(out.tool_calls) == 1
         assert out.tool_calls[0].name == "echo"
+        sent_payload = post_mock.call_args.kwargs["json"]
+        assert sent_payload["tools"][0]["input_schema"] == {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        }
 
     asyncio.run(_scenario())

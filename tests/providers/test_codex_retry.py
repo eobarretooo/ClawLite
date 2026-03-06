@@ -131,6 +131,47 @@ def test_codex_provider_passes_reasoning_effort() -> None:
     asyncio.run(_scenario())
 
 
+def test_codex_provider_parses_tool_calls_from_response() -> None:
+    async def _scenario() -> None:
+        provider = CodexProvider(model="codex-5.3", access_token="token", retry_max_attempts=1)
+
+        post_mock = AsyncMock(
+            side_effect=[
+                _FakeResponse(
+                    200,
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_123",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "lookup_user",
+                                                "arguments": '{"user_id": 42}',
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+        assert len(out.tool_calls) == 1
+        assert out.tool_calls[0].id == "call_123"
+        assert out.tool_calls[0].name == "lookup_user"
+        assert out.tool_calls[0].arguments == {"user_id": 42}
+
+    asyncio.run(_scenario())
+
+
 def test_codex_provider_classifies_auth_failure() -> None:
     async def _scenario() -> None:
         provider = CodexProvider(model="codex-5.3", access_token="", retry_max_attempts=1)
