@@ -116,6 +116,22 @@ class HeartbeatService:
     def _utc_now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    def _task_snapshot(self) -> tuple[str, str]:
+        task = self._task
+        if task is None:
+            return ("stopped", "")
+        if task.cancelled():
+            return ("cancelled", "")
+        if not task.done():
+            return ("running", "")
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", "")
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", "")
+
     def _load_state(self) -> None:
         if not self.state_path.exists():
             return
@@ -285,7 +301,13 @@ class HeartbeatService:
 
     async def start(self, on_tick: TickHandler) -> None:
         if self._task is not None:
-            return
+            task_state, task_error = self._task_snapshot()
+            if task_state in {"failed", "cancelled", "done"}:
+                if task_error:
+                    self._state["last_error"] = task_error
+                self._task = None
+            else:
+                return
         self._running = True
         bind_event("heartbeat.lifecycle").info("heartbeat started interval_seconds={}", self.interval_seconds)
 
@@ -344,8 +366,11 @@ class HeartbeatService:
         bind_event("heartbeat.lifecycle").info("heartbeat stopped")
 
     def status(self) -> dict[str, Any]:
+        task_state, task_error = self._task_snapshot()
+        last_error = task_error or str(self._state.get("last_error", "") or "")
         return {
-            "running": self._task is not None and self._running,
+            "running": bool(self._running and task_state == "running"),
+            "worker_state": task_state,
             "interval_seconds": self.interval_seconds,
             "state_path": str(self.state_path),
             "last_decision": {
@@ -357,5 +382,5 @@ class HeartbeatService:
             "run_count": int(self._state.get("run_count", 0) or 0),
             "skip_count": int(self._state.get("skip_count", 0) or 0),
             "error_count": int(self._state.get("error_count", 0) or 0),
-            "last_error": str(self._state.get("last_error", "") or ""),
+            "last_error": last_error,
         }

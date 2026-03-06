@@ -74,6 +74,22 @@ class CronService:
         }
         self._load()
 
+    def _task_snapshot(self) -> tuple[str, str]:
+        task = self._task
+        if task is None:
+            return ("stopped", "")
+        if task.cancelled():
+            return ("cancelled", "")
+        if not task.done():
+            return ("running", "")
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", "")
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", "")
+
     @staticmethod
     def _normalize_timezone(value: str | None) -> str:
         candidate = (value or "UTC").strip() or "UTC"
@@ -241,7 +257,11 @@ class CronService:
     async def start(self, on_job: JobCallback) -> None:
         self._on_job = on_job
         if self._task is not None:
-            return
+            task_state, _task_error = self._task_snapshot()
+            if task_state in {"failed", "cancelled", "done"}:
+                self._task = None
+            else:
+                return
         self._task = asyncio.create_task(self._loop())
         logger.info("cron service started path={}", self.path)
 
@@ -258,8 +278,10 @@ class CronService:
         bind_event("cron.lifecycle").info("cron service stopped")
 
     def status(self) -> dict[str, Any]:
+        task_state, task_error = self._task_snapshot()
         return {
-            "running": self._task is not None,
+            "running": task_state == "running",
+            "worker_state": task_state,
             "jobs": len(self._jobs),
             "store_path": str(self.path),
             "default_timezone": self.default_timezone,
@@ -280,6 +302,7 @@ class CronService:
             "lease_finalize_missing": int(self._diag.get("lease_finalize_missing", 0) or 0),
             "last_load_error": str(self._diag.get("last_load_error", "") or ""),
             "last_save_error": str(self._diag.get("last_save_error", "") or ""),
+            "last_error": task_error,
         }
 
     def _mark_schedule_error(self, job: CronJob, exc: Exception) -> None:

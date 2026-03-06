@@ -835,8 +835,10 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
         alias_payload = client.get("/api/diagnostics").json()
 
         assert "autonomy_wake" in payload
+        assert "supervisor" in payload
         assert set(payload["autonomy_wake"].keys()) >= {
             "running",
+            "worker_state",
             "max_pending",
             "enqueued",
             "coalesced",
@@ -846,9 +848,72 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
             "queue_depth",
             "inflight",
             "max_queue_depth_seen",
+            "last_error",
             "by_kind",
         }
+        assert set(payload["supervisor"].keys()) >= {
+            "running",
+            "worker_state",
+            "interval_s",
+            "cooldown_s",
+            "ticks",
+            "incident_count",
+            "recovery_attempts",
+            "recovery_success",
+            "recovery_failures",
+            "recovery_skipped_cooldown",
+            "component_incidents",
+            "last_incident",
+            "last_recovery_at",
+            "last_error",
+            "consecutive_error_count",
+            "cooldown_active",
+        }
         assert alias_payload["autonomy_wake"] == payload["autonomy_wake"]
+        assert alias_payload["supervisor"] == payload["supervisor"]
+
+
+def test_gateway_supervisor_recovers_crashed_heartbeat_task(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        cfg = AppConfig(
+            workspace_path=str(tmp_path / "workspace"),
+            state_path=str(tmp_path / "state"),
+            scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+            gateway={
+                "heartbeat": {"enabled": True, "interval_s": 9999},
+                "supervisor": {"enabled": False, "interval_s": 60, "cooldown_s": 0},
+            },
+            channels={},
+        )
+        app = create_app(cfg)
+
+        async with app.router.lifespan_context(app):
+            runtime = app.state.runtime
+            assert runtime.supervisor is not None
+
+            heartbeat_task = runtime.heartbeat._task
+            assert heartbeat_task is not None
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+            assert runtime.heartbeat.status()["worker_state"] == "cancelled"
+
+            await runtime.supervisor.run_once()
+
+            replacement_task = runtime.heartbeat._task
+            assert replacement_task is not None
+            assert replacement_task is not heartbeat_task
+            assert runtime.heartbeat.status()["running"] is True
+
+            supervisor_status = runtime.supervisor.status()
+            assert supervisor_status["recovery_attempts"] >= 1
+            assert supervisor_status["recovery_success"] >= 1
+            assert supervisor_status["component_incidents"]["heartbeat"] >= 1
+
+    asyncio.run(_scenario())
 
 
 def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:

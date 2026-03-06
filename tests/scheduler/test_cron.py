@@ -199,6 +199,41 @@ def test_cron_loop_survives_callback_failure_and_tracks_job_health(tmp_path: Pat
     asyncio.run(_scenario())
 
 
+def test_cron_start_restarts_when_previous_task_crashed(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        service = CronService(tmp_path / "cron.json")
+
+        async def _crash() -> None:
+            raise RuntimeError("cron_worker_crash")
+
+        async def _on_job(_job):
+            return "ok"
+
+        crashed_task = asyncio.create_task(_crash())
+        try:
+            await crashed_task
+        except RuntimeError:
+            pass
+
+        service._task = crashed_task
+        crashed_status = service.status()
+        assert crashed_status["running"] is False
+        assert crashed_status["worker_state"] == "failed"
+        assert "cron_worker_crash" in crashed_status["last_error"]
+
+        await service.start(_on_job)
+        replacement_task = service._task
+
+        assert replacement_task is not None
+        assert replacement_task is not crashed_task
+        assert not replacement_task.done()
+        assert service.status()["worker_state"] == "running"
+
+        await service.stop()
+
+    asyncio.run(_scenario())
+
+
 def test_cron_loop_times_out_slow_callback_and_keeps_processing(tmp_path: Path) -> None:
     async def _scenario() -> None:
         service = CronService(tmp_path / "cron.json", callback_timeout_seconds=0.05)

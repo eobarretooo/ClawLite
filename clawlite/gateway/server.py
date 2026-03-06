@@ -33,7 +33,7 @@ from clawlite.providers.discovery import probe_local_provider_runtime
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
-from clawlite.runtime import AutonomyWakeCoordinator
+from clawlite.runtime import AutonomyWakeCoordinator, RuntimeSupervisor, SupervisorIncident
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.tools.cron import CronTool
 from clawlite.tools.apply_patch import ApplyPatchTool
@@ -299,6 +299,7 @@ class DiagnosticsResponse(BaseModel):
     channels_delivery: dict[str, Any] = {}
     cron: dict[str, Any]
     heartbeat: dict[str, Any]
+    supervisor: dict[str, Any] = {}
     autonomy_wake: dict[str, Any] = {}
     bootstrap: dict[str, Any]
     memory_monitor: dict[str, Any] = {}
@@ -601,6 +602,7 @@ class RuntimeContainer:
     autonomy_wake: AutonomyWakeCoordinator
     workspace: WorkspaceLoader
     memory_monitor: MemoryMonitor | None = None
+    supervisor: RuntimeSupervisor | None = None
 
 
 @dataclass(slots=True)
@@ -616,6 +618,7 @@ class GatewayLifecycleState:
                 "channels": {"enabled": True, "running": False, "last_error": ""},
                 "cron": {"enabled": True, "running": False, "last_error": ""},
                 "heartbeat": {"enabled": True, "running": False, "last_error": ""},
+                "supervisor": {"enabled": True, "running": False, "last_error": ""},
                 "proactive_monitor": {"enabled": False, "running": False, "last_error": ""},
                 "memory_quality_tuning": {"enabled": False, "running": False, "last_error": ""},
                 "autonomy_wake": {"enabled": True, "running": False, "last_error": ""},
@@ -1352,6 +1355,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     ws_telemetry = WebSocketTelemetry()
     started_monotonic = time.monotonic()
     lifecycle.components["heartbeat"]["enabled"] = bool(cfg.gateway.heartbeat.enabled)
+    lifecycle.components["supervisor"]["enabled"] = bool(cfg.gateway.supervisor.enabled)
     lifecycle.components["proactive_monitor"]["enabled"] = bool(runtime.memory_monitor is not None)
     lifecycle.components["memory_quality_tuning"]["enabled"] = bool(cfg.gateway.autonomy.tuning_loop_enabled)
     proactive_interval_seconds = max(5, int(cfg.gateway.heartbeat.interval_s or 1800))
@@ -1455,6 +1459,77 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         row["run_count"] = int(status.get("run_count", 0) or 0)
         return status
 
+    def _background_task_snapshot(
+        task: asyncio.Task[Any] | None,
+        *,
+        running: bool,
+        last_error: str = "",
+    ) -> tuple[str, str]:
+        if task is None:
+            return ("missing" if running else "stopped", last_error)
+        if task.cancelled():
+            return ("cancelled", last_error)
+        if not task.done():
+            return ("running", last_error)
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", last_error)
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", last_error)
+
+    def _refresh_runtime_components() -> None:
+        heartbeat_status = runtime.heartbeat.status()
+        lifecycle.mark_component(
+            "heartbeat",
+            running=bool(heartbeat_status.get("running", False)),
+            error=str(heartbeat_status.get("last_error", "") or ""),
+        )
+
+        cron_status = runtime.cron.status()
+        lifecycle.mark_component(
+            "cron",
+            running=bool(cron_status.get("running", False)),
+            error=str(cron_status.get("last_error", "") or ""),
+        )
+
+        autonomy_wake_status = runtime.autonomy_wake.status()
+        lifecycle.mark_component(
+            "autonomy_wake",
+            running=bool(autonomy_wake_status.get("running", False)),
+            error=str(autonomy_wake_status.get("last_error", "") or ""),
+        )
+
+        proactive_state, proactive_error = _background_task_snapshot(
+            proactive_task,
+            running=proactive_running,
+            last_error=str(proactive_runner_state.get("last_error", "") or ""),
+        )
+        lifecycle.mark_component(
+            "proactive_monitor",
+            running=proactive_state == "running",
+            error=proactive_error,
+        )
+
+        tuning_state, tuning_error = _background_task_snapshot(
+            tuning_task,
+            running=tuning_running,
+            last_error=str(tuning_runner_state.get("last_error", "") or ""),
+        )
+        lifecycle.mark_component(
+            "memory_quality_tuning",
+            running=tuning_state == "running",
+            error=tuning_error,
+        )
+
+        supervisor_status = runtime.supervisor.status() if runtime.supervisor is not None else {"running": False, "last_error": ""}
+        lifecycle.mark_component(
+            "supervisor",
+            running=bool(supervisor_status.get("running", False)),
+            error=str(supervisor_status.get("last_error", "") or ""),
+        )
+
     async def _dispatch_autonomy_wake(kind: str, payload: dict[str, Any]) -> Any:
         if kind == "heartbeat":
             return await _run_heartbeat(runtime)
@@ -1544,6 +1619,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     def _control_plane_payload(server_time: str | None = None) -> ControlPlaneResponse:
         now = server_time or _utc_now_iso()
+        _refresh_runtime_components()
         _refresh_bootstrap_component()
         return ControlPlaneResponse(
             ready=bool(lifecycle.ready),
@@ -2044,6 +2120,88 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         proactive_task = None
         bind_event("proactive.lifecycle").info("proactive monitor stopped")
 
+    async def _supervisor_incident_checks() -> list[SupervisorIncident]:
+        incidents: list[SupervisorIncident] = []
+
+        if cfg.gateway.heartbeat.enabled:
+            heartbeat_status = runtime.heartbeat.status()
+            if not heartbeat_status.get("running", False):
+                worker_state = str(heartbeat_status.get("worker_state", "stopped") or "stopped")
+                incidents.append(SupervisorIncident(component="heartbeat", reason=f"heartbeat_{worker_state}"))
+
+        cron_status = runtime.cron.status()
+        if not cron_status.get("running", False):
+            worker_state = str(cron_status.get("worker_state", "stopped") or "stopped")
+            incidents.append(SupervisorIncident(component="cron", reason=f"cron_{worker_state}"))
+
+        autonomy_wake_status = runtime.autonomy_wake.status()
+        if not autonomy_wake_status.get("running", False):
+            worker_state = str(autonomy_wake_status.get("worker_state", "stopped") or "stopped")
+            incidents.append(SupervisorIncident(component="autonomy_wake", reason=f"autonomy_wake_{worker_state}"))
+
+        if runtime.memory_monitor is not None:
+            proactive_state, _proactive_error = _background_task_snapshot(
+                proactive_task,
+                running=proactive_running,
+                last_error=str(proactive_runner_state.get("last_error", "") or ""),
+            )
+            if proactive_state != "running":
+                incidents.append(SupervisorIncident(component="proactive_monitor", reason=f"proactive_monitor_{proactive_state}"))
+
+        if cfg.gateway.autonomy.tuning_loop_enabled:
+            tuning_state, _tuning_error = _background_task_snapshot(
+                tuning_task,
+                running=tuning_running,
+                last_error=str(tuning_runner_state.get("last_error", "") or ""),
+            )
+            if tuning_state != "running":
+                incidents.append(
+                    SupervisorIncident(component="memory_quality_tuning", reason=f"memory_quality_tuning_{tuning_state}")
+                )
+
+        return incidents
+
+    async def _recover_supervised_component(component: str, reason: str) -> bool:
+        bind_event("supervisor.recover").warning("runtime recover component={} reason={}", component, reason)
+        if component == "heartbeat":
+            await runtime.heartbeat.start(_submit_heartbeat_wake)
+            _refresh_runtime_components()
+            return bool(runtime.heartbeat.status().get("running", False))
+        if component == "cron":
+            await runtime.cron.start(_submit_cron_wake)
+            _refresh_runtime_components()
+            return bool(runtime.cron.status().get("running", False))
+        if component == "autonomy_wake":
+            await runtime.autonomy_wake.start(_dispatch_autonomy_wake)
+            _refresh_runtime_components()
+            return bool(runtime.autonomy_wake.status().get("running", False))
+        if component == "proactive_monitor":
+            await _start_proactive_monitor()
+            _refresh_runtime_components()
+            proactive_state, _proactive_error = _background_task_snapshot(
+                proactive_task,
+                running=proactive_running,
+                last_error=str(proactive_runner_state.get("last_error", "") or ""),
+            )
+            return proactive_state == "running"
+        if component == "memory_quality_tuning":
+            await _start_memory_quality_tuning()
+            _refresh_runtime_components()
+            tuning_state, _tuning_error = _background_task_snapshot(
+                tuning_task,
+                running=tuning_running,
+                last_error=str(tuning_runner_state.get("last_error", "") or ""),
+            )
+            return tuning_state == "running"
+        return False
+
+    runtime.supervisor = RuntimeSupervisor(
+        interval_s=cfg.gateway.supervisor.interval_s,
+        cooldown_s=cfg.gateway.supervisor.cooldown_s,
+        incident_checks=_supervisor_incident_checks,
+        recover=_recover_supervised_component,
+    )
+
     async def _start_subsystems() -> None:
         started: list[tuple[str, Any]] = []
         steps: list[tuple[str, Any, Any, bool]] = [
@@ -2053,6 +2211,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             ("heartbeat", runtime.heartbeat.start, runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
             ("proactive_monitor", _start_proactive_monitor, _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
             ("memory_quality_tuning", _start_memory_quality_tuning, _stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
+            ("supervisor", runtime.supervisor.start, runtime.supervisor.stop, bool(cfg.gateway.supervisor.enabled)),
         ]
 
         for name, start_fn, stop_fn, enabled in steps:
@@ -2071,6 +2230,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 elif name == "proactive_monitor":
                     await start_fn()
                 elif name == "memory_quality_tuning":
+                    await start_fn()
+                elif name == "supervisor":
                     await start_fn()
                 else:
                     await start_fn(_submit_heartbeat_wake)
@@ -2093,6 +2254,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     async def _stop_subsystems() -> None:
         steps: list[tuple[str, Any, bool]] = [
+            ("supervisor", runtime.supervisor.stop, bool(cfg.gateway.supervisor.enabled)),
             ("heartbeat", runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
             ("proactive_monitor", _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
             ("memory_quality_tuning", _stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
@@ -2258,6 +2420,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="diagnostics_disabled")
         auth_guard.check_http(request=request, scope="diagnostics", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
         generated_at = _utc_now_iso()
+        _refresh_runtime_components()
         environment: dict[str, Any] = {}
         if cfg.gateway.diagnostics.include_config:
             environment = {
@@ -2484,6 +2647,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             channels_delivery=runtime.channels.delivery_diagnostics(),
             cron=runtime.cron.status(),
             heartbeat=runtime.heartbeat.status(),
+            supervisor=runtime.supervisor.status() if runtime.supervisor is not None else {},
             autonomy_wake=runtime.autonomy_wake.status(),
             bootstrap=_bootstrap_status_snapshot(),
             memory_monitor=monitor_payload,

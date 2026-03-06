@@ -46,6 +46,22 @@ class AutonomyWakeCoordinator:
         self._max_queue_depth_seen = 0
         self._by_kind: dict[str, dict[str, int]] = {}
 
+    def _task_snapshot(self) -> tuple[str, str]:
+        task = self._task
+        if task is None:
+            return ("stopped", "")
+        if task.cancelled():
+            return ("cancelled", "")
+        if not task.done():
+            return ("running", "")
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", "")
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", "")
+
     def _track_kind(self, kind: str, metric: str) -> None:
         row = self._by_kind.setdefault(
             kind,
@@ -101,7 +117,8 @@ class AutonomyWakeCoordinator:
         async with self._lock:
             self._on_wake = on_wake
             if self._task is not None:
-                if self._task.done() or self._task.cancelled():
+                task_state, _task_error = self._task_snapshot()
+                if task_state in {"failed", "cancelled", "done"}:
                     self._task = None
                 else:
                     self._running = True
@@ -189,8 +206,10 @@ class AutonomyWakeCoordinator:
             raise
 
     def status(self) -> dict[str, Any]:
+        task_state, task_error = self._task_snapshot()
         return {
-            "running": bool(self._running and self._task is not None),
+            "running": bool(self._running and task_state == "running"),
+            "worker_state": task_state,
             "max_pending": self.max_pending,
             "enqueued": self._enqueued,
             "coalesced": self._coalesced,
@@ -200,6 +219,7 @@ class AutonomyWakeCoordinator:
             "queue_depth": len(self._queue),
             "inflight": self._inflight,
             "max_queue_depth_seen": self._max_queue_depth_seen,
+            "last_error": task_error,
             "by_kind": {kind: dict(metrics) for kind, metrics in self._by_kind.items()},
         }
 

@@ -56,6 +56,22 @@ class RuntimeSupervisor:
         self._consecutive_error_count = 0
         self._cooldown_until: dict[str, float] = {}
 
+    def _task_snapshot(self) -> tuple[str, str]:
+        task = self._task
+        if task is None:
+            return ("stopped", "")
+        if task.cancelled():
+            return ("cancelled", "")
+        if not task.done():
+            return ("running", "")
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", "")
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", "")
+
     @staticmethod
     def _incident_from_any(row: SupervisorIncident | dict[str, Any]) -> SupervisorIncident | None:
         if isinstance(row, SupervisorIncident):
@@ -168,13 +184,15 @@ class RuntimeSupervisor:
 
     def status(self) -> dict[str, Any]:
         now = self._now_monotonic()
+        task_state, task_error = self._task_snapshot()
         cooldown_active: dict[str, float] = {}
         for component, until in self._cooldown_until.items():
             remaining = max(0.0, float(until) - now)
             if remaining > 0:
                 cooldown_active[component] = round(remaining, 3)
         return {
-            "running": bool(self._running and self._task is not None),
+            "running": bool(self._running and task_state == "running"),
+            "worker_state": task_state,
             "interval_s": self.interval_s,
             "cooldown_s": self.cooldown_s,
             "ticks": self._ticks,
@@ -186,7 +204,7 @@ class RuntimeSupervisor:
             "component_incidents": dict(self._component_incidents),
             "last_incident": dict(self._last_incident),
             "last_recovery_at": self._last_recovery_at,
-            "last_error": self._last_error,
+            "last_error": task_error or self._last_error,
             "consecutive_error_count": self._consecutive_error_count,
             "cooldown_active": cooldown_active,
         }

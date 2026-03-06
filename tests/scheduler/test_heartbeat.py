@@ -310,3 +310,40 @@ def test_heartbeat_loop_supervisor_recovers_from_outer_exceptions() -> None:
         assert len(beats) >= 2
 
     asyncio.run(_scenario())
+
+
+def test_heartbeat_start_restarts_when_previous_task_crashed() -> None:
+    async def _scenario() -> None:
+        hb = HeartbeatService(interval_seconds=60)
+
+        async def _crash() -> None:
+            raise RuntimeError("heartbeat_worker_crash")
+
+        async def _tick() -> HeartbeatDecision:
+            return HeartbeatDecision(action="skip", reason="heartbeat_ok")
+
+        crashed_task = asyncio.create_task(_crash())
+        try:
+            await crashed_task
+        except RuntimeError:
+            pass
+
+        hb._task = crashed_task
+        hb._running = True
+
+        crashed_status = hb.status()
+        assert crashed_status["running"] is False
+        assert crashed_status["worker_state"] == "failed"
+        assert "heartbeat_worker_crash" in crashed_status["last_error"]
+
+        await hb.start(_tick)
+        replacement_task = hb._task
+
+        assert replacement_task is not None
+        assert replacement_task is not crashed_task
+        assert not replacement_task.done()
+        assert hb.status()["worker_state"] == "running"
+
+        await hb.stop()
+
+    asyncio.run(_scenario())
