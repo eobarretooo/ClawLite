@@ -73,6 +73,11 @@ class FakeMemory:
         return self.verdict
 
 
+class FakeMemoryPolicyRaises:
+    def integration_policy(self, _kind: str, *, session_id: str):
+        raise RuntimeError(f"boom:{session_id}")
+
+
 async def _runner(_session_id: str, task: str) -> str:
     return f"done:{task}"
 
@@ -336,5 +341,19 @@ def test_spawn_tool_blocks_when_memory_policy_denies() -> None:
         except ValueError as exc:
             assert str(exc) == "subagent_spawn_blocked_by_memory_policy:subagent_disabled"
         assert memory.calls == [("subagent", "s-policy-block")]
+
+    asyncio.run(_scenario())
+
+
+def test_spawn_tool_blocks_when_memory_policy_check_raises() -> None:
+    async def _scenario() -> None:
+        manager = SubagentManager()
+        tool = SpawnTool(manager, _runner, memory=FakeMemoryPolicyRaises())
+
+        try:
+            await tool.run({"task": "analyze"}, ToolContext(session_id="s-policy-error"))
+            raise AssertionError("expected ValueError for memory policy exception")
+        except ValueError as exc:
+            assert str(exc) == "subagent_spawn_blocked_by_memory_policy:policy_check_exception"
 
     asyncio.run(_scenario())

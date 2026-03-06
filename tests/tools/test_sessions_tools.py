@@ -120,6 +120,34 @@ def test_sessions_send_success_and_same_session_failure() -> None:
     asyncio.run(_scenario())
 
 
+def test_sessions_send_timeout_returns_deterministic_failed_json() -> None:
+    async def _scenario() -> None:
+        gate = asyncio.Event()
+
+        async def _runner(_session_id: str, _task: str):
+            await gate.wait()
+            return SimpleNamespace(text="never", model="never")
+
+        tool = SessionsSendTool(_runner)
+        timeout_payload = json.loads(
+            await tool.run(
+                {
+                    "session_id": "cli:target",
+                    "message": "ping",
+                    "timeout_s": 0.01,
+                },
+                ToolContext(session_id="cli:caller"),
+            )
+        )
+        assert timeout_payload == {
+            "status": "failed",
+            "session_id": "cli:target",
+            "error": "runner_timeout",
+        }
+
+    asyncio.run(_scenario())
+
+
 def test_sessions_spawn_success_and_subagents_list_kill(tmp_path) -> None:
     async def _scenario() -> None:
         gate = asyncio.Event()

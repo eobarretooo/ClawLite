@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from pathlib import Path
@@ -61,6 +62,18 @@ def _coerce_limit(value: Any, *, default: int, minimum: int = 1, maximum: int = 
     if number > maximum:
         return maximum
     return number
+
+
+def _coerce_timeout(value: Any, *, default: float, minimum: float = 0.1, maximum: float = 3600.0) -> float:
+    try:
+        timeout = float(value)
+    except Exception:
+        timeout = default
+    if timeout < minimum:
+        return minimum
+    if timeout > maximum:
+        return maximum
+    return timeout
 
 
 def _session_file_path(sessions: SessionStore, session_id: str) -> Path:
@@ -201,8 +214,9 @@ class SessionsSendTool(Tool):
     name = "sessions_send"
     description = "Run a message against a target session."
 
-    def __init__(self, runner: Runner) -> None:
+    def __init__(self, runner: Runner, *, runner_timeout_s: float = 60.0) -> None:
         self.runner = runner
+        self.runner_timeout_s = max(0.1, float(runner_timeout_s or 60.0))
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -212,6 +226,8 @@ class SessionsSendTool(Tool):
                 "sessionId": {"type": "string"},
                 "sessionKey": {"type": "string"},
                 "message": {"type": "string"},
+                "timeout": {"type": "number", "minimum": 0.1},
+                "timeout_s": {"type": "number", "minimum": 0.1},
             },
             "required": ["message"],
         }
@@ -229,8 +245,23 @@ class SessionsSendTool(Tool):
                     "error": "same_session_not_allowed",
                 }
             )
+        timeout_s = _coerce_timeout(
+            arguments.get(
+                "timeout_s",
+                arguments.get("timeout", self.runner_timeout_s),
+            ),
+            default=self.runner_timeout_s,
+        )
         try:
-            result = await self.runner(session_id, message)
+            result = await asyncio.wait_for(self.runner(session_id, message), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return _json(
+                {
+                    "status": "failed",
+                    "session_id": session_id,
+                    "error": "runner_timeout",
+                }
+            )
         except Exception as exc:
             return _json(
                 {

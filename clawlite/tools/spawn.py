@@ -37,7 +37,7 @@ class SpawnTool(Tool):
             if inspect.isawaitable(verdict):
                 verdict = await verdict
         except Exception:
-            return True, ""
+            return False, "policy_check_exception"
 
         if isinstance(verdict, bool):
             return verdict, "" if verdict else "blocked"
