@@ -172,6 +172,31 @@ class FakeMemoryWithContextKwargs(FakeMemory):
         return {"status": "ok"}
 
 
+class FakeMemoryWithWorkingSetCapture(FakeMemory):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.working_set_writes: list[dict[str, Any]] = []
+
+    def remember_working_set(
+        self,
+        session_id: str,
+        *,
+        role: str,
+        content: str,
+        user_id: str = "default",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.working_set_writes.append(
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "user_id": user_id,
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+
 class FakeMemoryWithPolicySearch(FakeMemory):
     def __init__(self, rows: list[MemoryRecord] | None = None, *, search_limit: int = 6) -> None:
         super().__init__(rows)
@@ -264,12 +289,15 @@ class FakePlannerMemory:
         self,
         routes: dict[str, list[MemoryRecord]] | None = None,
         recovered: list[str] | None = None,
+        working_rows: list[dict[str, Any]] | None = None,
         recover_error: Exception | None = None,
     ) -> None:
         self.routes = routes or {}
         self.recovered = recovered or []
+        self.working_rows = working_rows or []
         self.recover_error = recover_error
         self.search_calls: list[str] = []
+        self.working_calls: list[dict[str, Any]] = []
         self.recovery_calls: list[tuple[str, int]] = []
 
     def search(self, query: str, *, limit: int = 5) -> list[MemoryRecord]:
@@ -280,6 +308,22 @@ class FakePlannerMemory:
     def consolidate(self, messages, *, source: str = "session"):
         del messages, source
         return None
+
+    def get_working_set(
+        self,
+        session_id: str,
+        *,
+        limit: int = 8,
+        include_shared_subagents: bool = True,
+    ) -> list[dict[str, Any]]:
+        self.working_calls.append(
+            {
+                "session_id": session_id,
+                "limit": limit,
+                "include_shared_subagents": include_shared_subagents,
+            }
+        )
+        return self.working_rows[:limit]
 
     def recover_session_context(self, session_id: str, *, limit: int = 4) -> list[str]:
         self.recovery_calls.append((session_id, limit))
@@ -893,6 +937,34 @@ def test_engine_passes_runtime_user_context_to_memory_search_and_memorize() -> N
     asyncio.run(_scenario())
 
 
+def test_engine_records_working_memory_for_user_and_assistant_turns() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithWorkingSetCapture()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="telegram:42", user_text="hello there")
+        assert out.text == "ok"
+        assert memory.working_set_writes == [
+            {
+                "session_id": "telegram:42",
+                "role": "user",
+                "content": "hello there",
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+            },
+            {
+                "session_id": "telegram:42",
+                "role": "assistant",
+                "content": "ok",
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+            },
+        ]
+
+    asyncio.run(_scenario())
+
+
 def test_engine_memory_planner_uses_recommended_search_limit_from_integration_policy() -> None:
     async def _scenario() -> None:
         provider = FakePromptCaptureProvider()
@@ -1100,6 +1172,13 @@ def test_engine_memory_planner_uses_session_recovery_when_retrieval_has_no_hits(
         assert out.text == "ok"
         assert memory.search_calls[0] == query
         assert len(memory.search_calls) >= 1
+        assert memory.working_calls == [
+            {
+                "session_id": "telegram:42",
+                "limit": 4,
+                "include_shared_subagents": True,
+            }
+        ]
         assert memory.recovery_calls == [("telegram:42", 4)]
 
         first_prompt = provider.snapshots[0]
@@ -1107,6 +1186,43 @@ def test_engine_memory_planner_uses_session_recovery_when_retrieval_has_no_hits(
         assert memory_sections
         section = str(memory_sections[0].get("content", ""))
         assert "[src:session-recovery:telegram:42] User timezone is America/Sao_Paulo." in section
+
+    asyncio.run(_scenario())
+
+
+def test_engine_memory_planner_uses_working_set_before_legacy_session_recovery() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        query = "what is my timezone preference"
+        memory = FakePlannerMemory(
+            routes={},
+            working_rows=[
+                {
+                    "session_id": "telegram:42:subagent",
+                    "role": "assistant",
+                    "content": "Subagent confirmed timezone is America/Sao_Paulo.",
+                }
+            ],
+            recovered=["legacy fallback should not run"],
+        )
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="telegram:42", user_text=query)
+        assert out.text == "ok"
+        assert memory.working_calls == [
+            {
+                "session_id": "telegram:42",
+                "limit": 4,
+                "include_shared_subagents": True,
+            }
+        ]
+        assert memory.recovery_calls == []
+
+        first_prompt = provider.snapshots[0]
+        memory_sections = [row for row in first_prompt if row.get("role") == "system" and "[Memory]" in str(row.get("content", ""))]
+        assert memory_sections
+        section = str(memory_sections[0].get("content", ""))
+        assert "[src:session-recovery:telegram:42:subagent] Subagent confirmed timezone is America/Sao_Paulo." in section
 
     asyncio.run(_scenario())
 
@@ -1133,6 +1249,7 @@ def test_engine_memory_planner_skips_session_recovery_when_retrieval_has_hits() 
         out = await engine.run(session_id="telegram:42", user_text=query)
         assert out.text == "ok"
         assert memory.search_calls == [query]
+        assert memory.working_calls == []
         assert memory.recovery_calls == []
 
     asyncio.run(_scenario())

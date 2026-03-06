@@ -44,6 +44,8 @@ def test_memory_scaffolds_hierarchical_home_directories_and_new_default_paths(tm
     assert (store.memory_home / "users").exists()
     assert (store.memory_home / "shared").exists()
     assert store.profile_path == store.memory_home / "emotional" / "profile.json"
+    assert store.working_memory_path == store.memory_home / "working-memory.json"
+    assert store.working_memory_path.exists()
     assert store.privacy_path == store.memory_home / "privacy.json"
     assert store.embeddings_path == store.memory_home / "embeddings" / "embeddings.jsonl"
 
@@ -716,6 +718,67 @@ def test_memory_recover_session_context_uses_history_then_curated_fallback(tmp_p
     diag = store.diagnostics()
     assert diag["session_recovery_attempts"] == 1
     assert diag["session_recovery_hits"] == 1
+
+
+def test_memory_working_set_persists_and_shares_parent_subagent_family(tmp_path: Path) -> None:
+    history_path = tmp_path / "memory.jsonl"
+    store = MemoryStore(history_path)
+    store.remember_working_set("cli:owner", role="user", content="parent session says deploy on friday", user_id="42")
+    store.remember_working_set(
+        "cli:owner:subagent",
+        role="assistant",
+        content="subagent found the release checklist",
+        user_id="42",
+        metadata={"channel": "telegram"},
+    )
+
+    reloaded = MemoryStore(history_path)
+    parent_rows = reloaded.get_working_set("cli:owner", limit=8)
+    child_rows = reloaded.get_working_set("cli:owner:subagent", limit=8)
+
+    assert [row["content"] for row in parent_rows] == [
+        "subagent found the release checklist",
+        "parent session says deploy on friday",
+    ]
+    assert [row["session_id"] for row in parent_rows] == ["cli:owner:subagent", "cli:owner"]
+    assert [row["content"] for row in child_rows] == [
+        "subagent found the release checklist",
+        "parent session says deploy on friday",
+    ]
+    assert all(row["share_group"] == "cli:owner" for row in parent_rows)
+    assert child_rows[0]["metadata"]["channel"] == "telegram"
+
+
+def test_memory_recover_session_context_prefers_working_set_before_history_and_curated(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.remember_working_set("abc", role="assistant", content="working memory summary")
+    store.add("session direct context", source="abc")
+    store.curated_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "facts": [
+                    {
+                        "id": "f1",
+                        "text": "curated fallback context",
+                        "source": "curated:session:abc",
+                        "created_at": "2026-03-03T00:00:02+00:00",
+                        "last_seen_at": "2026-03-03T00:00:02+00:00",
+                        "mentions": 1,
+                        "session_count": 1,
+                        "sessions": ["session:abc"],
+                        "importance": 1.0,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snippets = store.recover_session_context("abc", limit=4)
+
+    assert snippets == ["working memory summary", "session direct context", "curated fallback context"]
 
 
 def test_memory_delete_by_prefixes_removes_from_history_and_curated(tmp_path: Path) -> None:

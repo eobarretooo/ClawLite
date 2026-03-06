@@ -944,6 +944,36 @@ class AgentEngine:
 
             recovery_snippets: list[str] = []
             if not selected_rows:
+                working_set_fn = getattr(self.memory, "get_working_set", None)
+                if callable(working_set_fn):
+                    try:
+                        working_rows = working_set_fn(
+                            session_id,
+                            limit=4,
+                            include_shared_subagents=True,
+                        )
+                        if inspect.isawaitable(working_rows):
+                            working_rows = []
+                        if isinstance(working_rows, list):
+                            for item in working_rows:
+                                if isinstance(item, dict):
+                                    clean = str(item.get("content", item.get("text", "")) or "").strip()
+                                    source_session = str(item.get("session_id", session_id) or session_id).strip() or session_id
+                                else:
+                                    clean = str(item or "").strip()
+                                    source_session = session_id
+                                if clean:
+                                    recovery_snippets.append(
+                                        self._format_session_recovery_snippet(session_id=source_session, text=clean)
+                                    )
+                    except Exception as exc:
+                        run_log.warning(
+                            "memory planner working-set recovery failed session={} error={}",
+                            session_id or "-",
+                            exc,
+                        )
+
+            if not selected_rows and not recovery_snippets:
                 recover_fn = getattr(self.memory, "recover_session_context", None)
                 if callable(recover_fn):
                     try:
@@ -1752,6 +1782,46 @@ class AgentEngine:
         if not graceful_error:
             self.sessions.append(session_id, "assistant", final.text)
             memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
+            remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
+            if callable(remember_working_set_fn):
+                base_working_kwargs: dict[str, Any] = {
+                    "session_id": session_id,
+                }
+                if runtime_chat_id:
+                    base_working_kwargs["user_id"] = runtime_chat_id
+                if runtime_channel:
+                    base_working_kwargs["metadata"] = {"channel": runtime_channel}
+                try:
+                    working_user_result = remember_working_set_fn(
+                        role="user",
+                        content=user_text,
+                        **base_working_kwargs,
+                    )
+                    if inspect.isawaitable(working_user_result):
+                        await working_user_result
+                    working_assistant_result = remember_working_set_fn(
+                        role="assistant",
+                        content=final.text,
+                        **base_working_kwargs,
+                    )
+                    if inspect.isawaitable(working_assistant_result):
+                        await working_assistant_result
+                except TypeError:
+                    try:
+                        working_user_result = remember_working_set_fn(session_id, role="user", content=user_text)
+                        if inspect.isawaitable(working_user_result):
+                            await working_user_result
+                        working_assistant_result = remember_working_set_fn(
+                            session_id,
+                            role="assistant",
+                            content=final.text,
+                        )
+                        if inspect.isawaitable(working_assistant_result):
+                            await working_assistant_result
+                    except Exception as exc:
+                        run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
+                except Exception as exc:
+                    run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
             allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
             if not allow_memory_write:
                 run_log.info("memory persistence skipped by integration policy session={}", session_id or "-")
