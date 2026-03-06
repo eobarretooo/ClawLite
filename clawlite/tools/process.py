@@ -15,6 +15,9 @@ from clawlite.tools.exec import ExecTool
 
 MAX_POLL_WAIT_MS = 120_000
 DEFAULT_LOG_LIMIT = 4000
+DEFAULT_MAX_OUTPUT_CHARS = 1_000_000
+DEFAULT_MAX_FINISHED_SESSIONS = 100
+OUTPUT_TRUNCATION_MARKER = "\n...[output truncated]...\n"
 
 
 @dataclass(slots=True)
@@ -29,6 +32,10 @@ class ProcessSession:
     status: str = "running"
     output_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
+    output_truncated: bool = False
+    stdout_task: asyncio.Task[None] | None = None
+    stderr_task: asyncio.Task[None] | None = None
+    watcher_task: asyncio.Task[None] | None = None
 
 
 class ProcessTool(Tool):
@@ -45,6 +52,8 @@ class ProcessTool(Tool):
         allow_patterns: list[str] | None = None,
         deny_path_patterns: list[str] | None = None,
         allow_path_patterns: list[str] | None = None,
+        max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+        max_finished_sessions: int = DEFAULT_MAX_FINISHED_SESSIONS,
     ) -> None:
         self._guard = ExecTool(
             workspace_path=workspace_path,
@@ -56,6 +65,8 @@ class ProcessTool(Tool):
             allow_path_patterns=allow_path_patterns,
         )
         self._sessions: dict[str, ProcessSession] = {}
+        self._max_output_chars = max(1, int(max_output_chars))
+        self._max_finished_sessions = max(0, int(max_finished_sessions))
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -134,6 +145,7 @@ class ProcessTool(Tool):
             return self._json({"status": "failed", "error": "spawn_failed", "message": str(exc)})
 
         session_id = f"proc_{uuid.uuid4().hex[:12]}"
+        self._prune_finished_sessions()
         session = ProcessSession(
             session_id=session_id,
             command=command,
@@ -141,9 +153,9 @@ class ProcessTool(Tool):
             started_at=asyncio.get_running_loop().time(),
         )
         self._sessions[session_id] = session
-        asyncio.create_task(self._capture_stream(session, process.stdout))
-        asyncio.create_task(self._capture_stream(session, process.stderr))
-        asyncio.create_task(self._watch_process(session))
+        session.stdout_task = asyncio.create_task(self._capture_stream(session, process.stdout))
+        session.stderr_task = asyncio.create_task(self._capture_stream(session, process.stderr))
+        session.watcher_task = asyncio.create_task(self._watch_process(session))
 
         return self._json({"status": "running", "sessionId": session_id, "pid": process.pid})
 
@@ -284,15 +296,55 @@ class ProcessTool(Tool):
             if not chunk:
                 break
             text = chunk.decode("utf-8", errors="ignore")
-            async with session.output_lock:
-                session.output += text
+            await self._append_output(session, text)
 
     async def _watch_process(self, session: ProcessSession) -> None:
         return_code = await session.process.wait()
+        tasks = [task for task in (session.stdout_task, session.stderr_task) if task is not None]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         session.exit_code = return_code
         session.ended_at = asyncio.get_running_loop().time()
         session.status = "completed" if return_code == 0 else "failed"
         session.done_event.set()
+
+    async def _append_output(self, session: ProcessSession, text: str) -> None:
+        if not text:
+            return
+        marker = OUTPUT_TRUNCATION_MARKER
+        marker_len = len(marker)
+        cap = self._max_output_chars
+        async with session.output_lock:
+            base_output = session.output
+            if session.output_truncated and base_output.startswith(marker):
+                base_output = base_output[marker_len:]
+
+            combined = base_output + text
+            if len(combined) <= cap:
+                session.output = f"{marker}{combined}" if session.output_truncated else combined
+                return
+
+            session.output_truncated = True
+            keep = cap - marker_len
+            if keep <= 0:
+                session.output = marker[:cap]
+                return
+            session.output = f"{marker}{combined[-keep:]}"
+
+    def _prune_finished_sessions(self) -> None:
+        finished_sessions = [session for session in self._sessions.values() if session.status != "running"]
+        overflow = len(finished_sessions) - self._max_finished_sessions
+        if overflow <= 0:
+            return
+
+        finished_sessions.sort(
+            key=lambda session: (
+                session.ended_at if session.ended_at is not None else session.started_at,
+                session.session_id,
+            )
+        )
+        for session in finished_sessions[:overflow]:
+            del self._sessions[session.session_id]
 
     @staticmethod
     def _resolve_session_id(arguments: dict[str, Any]) -> str:
