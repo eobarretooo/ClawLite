@@ -279,6 +279,26 @@ def test_run_skill_command_uses_exec_tool_in_cli_context(tmp_path: Path) -> None
     asyncio.run(_scenario())
 
 
+def test_run_skill_command_prefix_dispatches_multiword_binding(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "gh-issues",
+        "name: gh-issues\ndescription: gh issue wrapper\ncommand: gh issue",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        reg.register(FakeExecTool())
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "gh-issues", "args": ["list", "--repo", "openclaw/openclaw", "--limit", "5"]},
+            ToolContext(session_id="cli:gh-issues", channel="cli", user_id="11"),
+        )
+        assert out == "exec:gh issue list --repo openclaw/openclaw --limit 5:cli:11"
+
+    asyncio.run(_scenario())
+
+
 def test_run_skill_allows_execution_when_memory_policy_allows(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,
