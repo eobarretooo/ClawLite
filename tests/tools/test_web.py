@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import patch
 
 from clawlite.tools.base import ToolContext
-from clawlite.tools.web import WebFetchTool, WebSearchTool
+from clawlite.tools.web import WebFetchTool, WebSearchTool, _html_to_markdown, _html_to_text
 
 
 class _FakeResponse:
@@ -151,3 +151,42 @@ def test_web_search_tool_returns_structured_payload() -> None:
             assert payload["result"]["items"][0]["url"] == "https://a.test"
 
     asyncio.run(_scenario())
+
+
+def test_html_extractors_strip_multiline_blocks() -> None:
+    source = """
+    <html>
+      <head>
+        <style>
+          .hidden {
+            display: none;
+          }
+        </style>
+        <script>
+          const x = "should not appear";
+          console.log(x);
+        </script>
+      </head>
+      <body>
+        <noscript>
+          this should also be removed
+        </noscript>
+        <h2>Title</h2>
+        <p>Hello <a href="https://example.com">world</a></p>
+      </body>
+    </html>
+    """
+
+    text = _html_to_text(source)
+    markdown = _html_to_markdown(source)
+
+    assert "should not appear" not in text
+    assert "this should also be removed" not in text
+    assert "display: none" not in text
+    assert "Hello world" in text
+
+    assert "should not appear" not in markdown
+    assert "this should also be removed" not in markdown
+    assert "display: none" not in markdown
+    assert "## Title" in markdown
+    assert "[world](https://example.com)" in markdown

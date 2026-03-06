@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import html
 import json
@@ -147,7 +148,7 @@ class WebFetchTool(Tool):
             raise ValueError("missing host")
 
         ip_literal = _ip_literal(host)
-        ips = [ip_literal] if ip_literal is not None else _resolve_ips(host)
+        ips = [ip_literal] if ip_literal is not None else await _resolve_ips_async(host)
 
         if _matches_rules(host=host, ips=ips, rules=self.denylist):
             raise ValueError("target host denied by policy")
@@ -192,13 +193,14 @@ class WebSearchTool(Tool):
             return _error_payload(self.name, "dependency_error", str(exc))
 
         try:
-            rows: list[dict[str, str]] = []
-            with DDGS(proxy=self.proxy or None, timeout=int(timeout)) as ddgs:
-                for item in ddgs.text(query, max_results=limit):
-                    title = str(item.get("title", "")).strip()
-                    href = str(item.get("href", "")).strip()
-                    body = str(item.get("body", "")).strip()
-                    rows.append({"title": title, "url": href, "snippet": body})
+            rows = await asyncio.to_thread(
+                _search_ddgs_sync,
+                DDGS,
+                query,
+                limit,
+                self.proxy,
+                timeout,
+            )
             text_lines = [f"- {item['title']}\n  {item['url']}\n  {item['snippet']}" for item in rows]
             payload = {
                 "query": query,
@@ -243,6 +245,10 @@ def _resolve_ips(host: str) -> list[ipaddress._BaseAddress]:
     if not rows:
         raise ValueError(f"failed to resolve host: {host}")
     return rows
+
+
+async def _resolve_ips_async(host: str) -> list[ipaddress._BaseAddress]:
+    return await asyncio.to_thread(_resolve_ips, host)
 
 
 def _ip_literal(value: str) -> ipaddress._BaseAddress | None:
@@ -310,10 +316,10 @@ def _extract_content(*, response: httpx.Response, mode: str, mime_type: str) -> 
 
 
 def _html_to_text(raw_html: str) -> str:
-    text = re.sub(r"<script[\\s\\S]*?</script>", "", raw_html, flags=re.I)
-    text = re.sub(r"<style[\\s\\S]*?</style>", "", text, flags=re.I)
-    text = re.sub(r"<noscript[\\s\\S]*?</noscript>", "", text, flags=re.I)
-    text = re.sub(r"<(br|hr)\\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"<script[\s\S]*?</script>", "", raw_html, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.I)
+    text = re.sub(r"<noscript[\s\S]*?</noscript>", "", text, flags=re.I)
+    text = re.sub(r"<(br|hr)\s*/?>", "\n", text, flags=re.I)
     text = re.sub(r"</(p|div|section|article|li|h[1-6])>", "\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
@@ -322,24 +328,24 @@ def _html_to_text(raw_html: str) -> str:
 
 
 def _html_to_markdown(raw_html: str) -> str:
-    text = re.sub(r"<script[\\s\\S]*?</script>", "", raw_html, flags=re.I)
-    text = re.sub(r"<style[\\s\\S]*?</style>", "", text, flags=re.I)
-    text = re.sub(r"<noscript[\\s\\S]*?</noscript>", "", text, flags=re.I)
+    text = re.sub(r"<script[\s\S]*?</script>", "", raw_html, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.I)
+    text = re.sub(r"<noscript[\s\S]*?</noscript>", "", text, flags=re.I)
     text = re.sub(
-        r"<a\\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>([\\s\\S]*?)</a>",
+        r"<a\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</a>",
         lambda m: f"[{_html_to_text(m[2]).strip()}]({m[1]})",
         text,
         flags=re.I,
     )
     text = re.sub(
-        r"<h([1-6])[^>]*>([\\s\\S]*?)</h\\1>",
+        r"<h([1-6])[^>]*>([\s\S]*?)</h\1>",
         lambda m: f"\n{'#' * int(m[1])} {_html_to_text(m[2]).strip()}\n",
         text,
         flags=re.I,
     )
-    text = re.sub(r"<li[^>]*>([\\s\\S]*?)</li>", lambda m: f"\n- {_html_to_text(m[1]).strip()}", text, flags=re.I)
+    text = re.sub(r"<li[^>]*>([\s\S]*?)</li>", lambda m: f"\n- {_html_to_text(m[1]).strip()}", text, flags=re.I)
     text = re.sub(r"</(p|div|section|article)>", "\n\n", text, flags=re.I)
-    text = re.sub(r"<(br|hr)\\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"<(br|hr)\s*/?>", "\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
@@ -358,3 +364,20 @@ def _build_client(*, timeout: float, proxy: str) -> httpx.AsyncClient:
             value = kwargs.pop("proxy")
             kwargs["proxies"] = value
         return httpx.AsyncClient(**kwargs)
+
+
+def _search_ddgs_sync(
+    ddgs_cls: Any,
+    query: str,
+    limit: int,
+    proxy: str,
+    timeout: float,
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    with ddgs_cls(proxy=proxy or None, timeout=int(timeout)) as ddgs:
+        for item in ddgs.text(query, max_results=limit):
+            title = str(item.get("title", "")).strip()
+            href = str(item.get("href", "")).strip()
+            body = str(item.get("body", "")).strip()
+            rows.append({"title": title, "url": href, "snippet": body})
+    return rows
