@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
+import re
 
 from clawlite.core.prompt import PromptBuilder
 
@@ -120,3 +122,20 @@ def test_prompt_builder_adds_always_on_identity_guard_section(tmp_path: Path) ->
     assert "[Identity Guard]" in out.system_prompt
     assert "Always answer as ClawLite." in out.system_prompt
     assert "Never claim to be a provider model" in out.system_prompt
+
+
+def test_prompt_builder_token_estimate_is_deterministic_and_not_len_div_4() -> None:
+    sample = "a a a a a a a a a a"
+    first = PromptBuilder._estimate_tokens(sample)
+    second = PromptBuilder._estimate_tokens(sample)
+    legacy = max(1, math.ceil(len(sample) / 4))
+
+    assert first == second
+    assert first > 0
+    assert first != legacy
+
+
+def test_prompt_builder_runtime_context_includes_timezone_offset() -> None:
+    context = PromptBuilder._render_runtime_context(channel="telegram", chat_id="42")
+    assert "Current Time:" in context
+    assert re.search(r"UTC[+-]\d{4}", context)

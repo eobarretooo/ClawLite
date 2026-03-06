@@ -335,6 +335,25 @@ class FakeLongToolProvider:
         return ProviderResult(text="done", tool_calls=[], model="fake/model")
 
 
+class FakeManyToolTurnsProvider:
+    def __init__(self, *, tool_turns: int) -> None:
+        self.tool_turns = max(1, int(tool_turns))
+        self.calls = 0
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        self.snapshots.append(list(messages))
+        if self.calls <= self.tool_turns:
+            return ProviderResult(
+                text="looping tool",
+                tool_calls=[ToolCall(name="echo", arguments={"text": "x"})],
+                model="fake/model",
+            )
+        return ProviderResult(text="done", tool_calls=[], model="fake/model")
+
+
 class FakeBurstToolProvider:
     async def complete(self, *, messages, tools):
         return ProviderResult(
@@ -498,6 +517,11 @@ def test_engine_runs_tool_roundtrip() -> None:
         assert metrics["last_model"] == "fake/model"
 
     asyncio.run(_scenario())
+
+
+def test_engine_module_does_not_export_setup_logging_helper() -> None:
+    assert hasattr(engine_module, "bind_event")
+    assert not hasattr(engine_module, "setup_logging")
 
 
 def test_engine_identity_guard_normalizes_provider_intro_on_identity_question() -> None:
@@ -1161,6 +1185,37 @@ def test_engine_truncates_tool_result_payload() -> None:
         content = str(tool_rows[0].get("content", ""))
         assert len(content) <= 32
         assert "truncated" in content.lower()
+
+    asyncio.run(_scenario())
+
+
+def test_engine_prunes_message_growth_in_long_tool_loops() -> None:
+    async def _scenario() -> None:
+        provider = FakeManyToolTurnsProvider(tool_turns=120)
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            max_iterations=220,
+            max_tool_calls_per_turn=500,
+        )
+        out = await engine.run(
+            session_id="cli:message-prune",
+            user_text="run",
+            turn_budget=TurnBudget(max_iterations=220, max_tool_calls=500),
+        )
+        assert out.text == "done"
+        assert provider.calls == 121
+        assert provider.snapshots
+
+        base_message_count = len(provider.snapshots[0])
+        expected_dynamic_cap = min(
+            engine._MAX_DYNAMIC_MESSAGES_PER_TURN,
+            500 * 2 + engine._MESSAGE_PRUNE_PADDING,
+        )
+        expected_total_cap = base_message_count + expected_dynamic_cap
+        max_snapshot_size = max(len(snapshot) for snapshot in provider.snapshots)
+
+        assert max_snapshot_size <= expected_total_cap
 
     asyncio.run(_scenario())
 

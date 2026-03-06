@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 import math
 import re
 from dataclasses import dataclass
@@ -45,6 +44,9 @@ class PromptBuilder:
         "- Never claim to be a provider model or assistant from Google, OpenAI, Anthropic, Groq, Meta, Mistral, xAI, or any vendor.\n"
         "- If asked about identity, state you are ClawLite."
     )
+    _TOKEN_WORD_RE = re.compile(r"[A-Za-z0-9_]+")
+    _TOKEN_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]")
+    _TOKEN_SYMBOL_RE = re.compile(r"[^\sA-Za-z0-9_]")
 
     def __init__(self, workspace_path: str | Path | None = None, *, context_token_budget: int = 7000) -> None:
         self.workspace_loader = WorkspaceLoader(workspace_path=workspace_path)
@@ -112,7 +114,17 @@ class PromptBuilder:
     def _estimate_tokens(text: str) -> int:
         if not text:
             return 0
-        return max(1, math.ceil(len(text) / 4))
+        normalized = str(text).replace("\r\n", "\n")
+        words = len(PromptBuilder._TOKEN_WORD_RE.findall(normalized))
+        cjk_chars = len(PromptBuilder._TOKEN_CJK_RE.findall(normalized))
+        symbols = len(PromptBuilder._TOKEN_SYMBOL_RE.findall(normalized))
+        line_breaks = normalized.count("\n")
+        spacing_hints = max(0, math.ceil((len(normalized) - len(normalized.strip())) / 8))
+
+        estimate = words + symbols + cjk_chars + line_breaks + spacing_hints
+        if estimate <= 0:
+            return max(1, math.ceil(len(normalized) / 6))
+        return estimate
 
     @classmethod
     def _truncate_text(cls, text: str, token_limit: int) -> str:
@@ -200,9 +212,11 @@ class PromptBuilder:
 
     @staticmethod
     def _render_runtime_context(channel: str, chat_id: str) -> str:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-        tz = time.strftime("%Z") or "UTC"
-        lines = [f"Current Time: {now} ({tz})"]
+        aware_now = datetime.now().astimezone()
+        timestamp = aware_now.strftime("%Y-%m-%d %H:%M (%A)")
+        tz_name = aware_now.tzname() or "UTC"
+        tz_offset = aware_now.strftime("%z")
+        lines = [f"Current Time: {timestamp} ({tz_name}, UTC{tz_offset})"]
         if channel and chat_id:
             lines.append(f"Channel: {channel}")
             lines.append(f"Chat ID: {chat_id}")

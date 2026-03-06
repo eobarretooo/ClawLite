@@ -17,9 +17,7 @@ from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager
 from clawlite.core.subagent_synthesizer import SubagentSynthesizer
 from clawlite.session.store import SessionStore
-from clawlite.utils.logging import bind_event, setup_logging
-
-setup_logging()
+from clawlite.utils.logging import bind_event
 
 
 @dataclass(slots=True)
@@ -158,6 +156,8 @@ class AgentEngine:
     """Core autonomous loop used by channels, cron and CLI."""
 
     _TOOL_RESULT_TRUNCATED_SUFFIX = "\n...[tool result truncated]"
+    _MAX_DYNAMIC_MESSAGES_PER_TURN = 192
+    _MESSAGE_PRUNE_PADDING = 16
     _THINK_DIRECTIVE_RE = re.compile(r"(?:^|\s)/(?:thinking|think|t)\s*[:=]?\s*([a-zA-Z][a-zA-Z_\-]*)\b")
     _REASONING_ALIASES: dict[str, str | None] = {
         "off": None,
@@ -611,6 +611,21 @@ class AgentEngine:
             runtime_chat_id = session_id.split(":", 1)[1].strip()
 
         return runtime_channel, runtime_chat_id
+
+    @classmethod
+    def _prune_messages_for_turn(cls, messages: list[dict[str, Any]], *, base_count: int, max_dynamic: int) -> None:
+        anchor = max(0, min(int(base_count), len(messages)))
+        allowed_dynamic = max(1, int(max_dynamic))
+        max_total = anchor + allowed_dynamic
+        if len(messages) <= max_total:
+            return
+        if anchor >= max_total:
+            del messages[max_total:]
+            return
+        keep_tail = max_total - anchor
+        tail = list(messages[-keep_tail:])
+        del messages[anchor:]
+        messages.extend(tail)
 
     @staticmethod
     def _memory_ref(memory_id: str) -> str:
@@ -1271,6 +1286,12 @@ class AgentEngine:
         if prompt.runtime_context:
             messages.append({"role": "user", "content": prompt.runtime_context})
         messages.append({"role": "user", "content": user_text})
+        base_message_count = len(messages)
+        dynamic_message_cap = min(
+            self._MAX_DYNAMIC_MESSAGES_PER_TURN,
+            (budget.max_tool_calls or self.max_tool_calls_per_turn) * 2 + self._MESSAGE_PRUNE_PADDING,
+        )
+        dynamic_message_cap = max(8, int(dynamic_message_cap))
 
         final = ProviderResult(text="", tool_calls=[], model="engine/fallback")
         graceful_error = False
@@ -1356,6 +1377,11 @@ class AgentEngine:
                         "content": step.text or "",
                         "tool_calls": self._assistant_tool_calls(step.tool_calls),
                     }
+                )
+                self._prune_messages_for_turn(
+                    messages,
+                    base_count=base_message_count,
+                    max_dynamic=dynamic_message_cap,
                 )
 
                 for idx, tool_call in enumerate(step.tool_calls):
@@ -1473,6 +1499,11 @@ class AgentEngine:
                             "content": normalized_result,
                         }
                     )
+                    self._prune_messages_for_turn(
+                        messages,
+                        base_count=base_message_count,
+                        max_dynamic=dynamic_message_cap,
+                    )
 
                     await self._emit_progress(
                         progress_hook=progress_hook,
@@ -1523,6 +1554,11 @@ class AgentEngine:
                                         "Replan using an alternative approach or request missing constraints explicitly."
                                     ),
                                 }
+                            )
+                            self._prune_messages_for_turn(
+                                messages,
+                                base_count=base_message_count,
+                                max_dynamic=dynamic_message_cap,
                             )
                             await self._emit_progress(
                                 progress_hook=progress_hook,
