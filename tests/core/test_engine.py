@@ -176,6 +176,11 @@ class FakeMemoryWithWorkingSetCapture(FakeMemory):
     def __init__(self) -> None:
         super().__init__([])
         self.working_set_writes: list[dict[str, Any]] = []
+        self.allow_memory_write = True
+
+    def integration_policy(self, actor: str, *, session_id: str = "") -> dict[str, Any]:
+        del actor, session_id
+        return {"allow_memory_write": self.allow_memory_write}
 
     def remember_working_set(
         self,
@@ -185,6 +190,7 @@ class FakeMemoryWithWorkingSetCapture(FakeMemory):
         content: str,
         user_id: str = "default",
         metadata: dict[str, Any] | None = None,
+        allow_promotion: bool = True,
     ) -> None:
         self.working_set_writes.append(
             {
@@ -193,6 +199,7 @@ class FakeMemoryWithWorkingSetCapture(FakeMemory):
                 "content": content,
                 "user_id": user_id,
                 "metadata": dict(metadata or {}),
+                "allow_promotion": allow_promotion,
             }
         )
 
@@ -952,6 +959,7 @@ def test_engine_records_working_memory_for_user_and_assistant_turns() -> None:
                 "content": "hello there",
                 "user_id": "42",
                 "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
             },
             {
                 "session_id": "telegram:42",
@@ -959,8 +967,23 @@ def test_engine_records_working_memory_for_user_and_assistant_turns() -> None:
                 "content": "ok",
                 "user_id": "42",
                 "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
             },
         ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_disables_working_memory_promotion_when_memory_write_policy_blocks_persistence() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithWorkingSetCapture()
+        memory.allow_memory_write = False
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="telegram:42", user_text="hello there")
+        assert out.text == "ok"
+        assert [row["allow_promotion"] for row in memory.working_set_writes] == [False, False]
 
     asyncio.run(_scenario())
 

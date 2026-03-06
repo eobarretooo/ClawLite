@@ -120,6 +120,9 @@ class MemoryStore:
     _MAX_QUALITY_TUNING_RECENT_ACTIONS = 20
     _WORKING_MEMORY_MAX_MESSAGES_PER_SESSION = 24
     _WORKING_MEMORY_MAX_SESSIONS = 256
+    _WORKING_MEMORY_PROMOTION_MIN_MESSAGES = 4
+    _WORKING_MEMORY_PROMOTION_STEP = 4
+    _WORKING_MEMORY_PROMOTION_WINDOW = 6
     _RECENCY_MAX_BOOST = 0.35
     _RECENCY_HALF_LIFE_HOURS = 24.0 * 21.0
     _TEMPORAL_INTENT_MATCH_BOOST = 0.2
@@ -243,6 +246,7 @@ class MemoryStore:
         re.IGNORECASE,
     )
     _ENTITY_TIME_RE = re.compile(r"(?:\b\d{1,2}:\d{2}(?:\s?(?:am|pm))?\b|\b\d{1,2}\s?(?:am|pm)\b)", re.IGNORECASE)
+    _WORKING_MEMORY_SHARE_SCOPE_SET: frozenset[str] = frozenset({"private", "parent", "family"})
     _RETRIEVAL_REWRITE_STOPWORDS: frozenset[str] = frozenset(
         {
             "what",
@@ -751,6 +755,8 @@ class MemoryStore:
             "reinforcement_creates": 0,
             "session_recovery_attempts": 0,
             "session_recovery_hits": 0,
+            "working_memory_promotions": 0,
+            "working_memory_promotion_skips": 0,
             "privacy_audit_writes": 0,
             "privacy_audit_skipped": 0,
             "privacy_audit_errors": 0,
@@ -1587,6 +1593,37 @@ class MemoryStore:
         return parent or clean
 
     @classmethod
+    def _default_working_memory_share_scope(cls, session_id: str) -> str:
+        return "parent" if cls._parent_session_id(session_id) else "family"
+
+    @classmethod
+    def _normalize_working_memory_share_scope(cls, value: Any, *, session_id: str) -> str:
+        clean = str(value or "").strip().lower()
+        if clean in cls._WORKING_MEMORY_SHARE_SCOPE_SET:
+            return clean
+        return cls._default_working_memory_share_scope(session_id)
+
+    @classmethod
+    def _normalize_working_memory_promotion_state(cls, value: Any) -> dict[str, Any]:
+        payload = value if isinstance(value, dict) else {}
+        try:
+            message_count = int(payload.get("last_promoted_message_count", payload.get("lastPromotedMessageCount", 0)) or 0)
+        except Exception:
+            message_count = 0
+        try:
+            total = int(payload.get("total_promotions", payload.get("totalPromotions", 0)) or 0)
+        except Exception:
+            total = 0
+        return {
+            "last_promoted_signature": str(
+                payload.get("last_promoted_signature", payload.get("lastPromotedSignature", "")) or ""
+            ).strip(),
+            "last_promoted_at": str(payload.get("last_promoted_at", payload.get("lastPromotedAt", "")) or "").strip(),
+            "last_promoted_message_count": max(0, message_count),
+            "total_promotions": max(0, total),
+        }
+
+    @classmethod
     def _default_working_memory_state(cls) -> dict[str, Any]:
         return {
             "version": 1,
@@ -1618,6 +1655,10 @@ class MemoryStore:
         share_group = cls._normalize_session_id(payload.get("share_group", payload.get("shareGroup", "")))
         if not share_group:
             share_group = parent_session_id or clean_session_id
+        share_scope = cls._normalize_working_memory_share_scope(
+            payload.get("share_scope", payload.get("shareScope", "")),
+            session_id=clean_session_id,
+        )
         metadata = cls._normalize_memory_metadata(payload.get("metadata", {}))
         return {
             "session_id": clean_session_id,
@@ -1626,6 +1667,7 @@ class MemoryStore:
             "created_at": created_at,
             "user_id": cls._normalize_user_id(str(payload.get("user_id", payload.get("userId", fallback_user_id)) or fallback_user_id)),
             "share_group": share_group,
+            "share_scope": share_scope,
             "parent_session_id": parent_session_id,
             "metadata": metadata,
         }
@@ -1646,8 +1688,13 @@ class MemoryStore:
         share_group = cls._normalize_session_id(raw.get("share_group", raw.get("shareGroup", "")))
         if not share_group:
             share_group = parent_session_id or clean_session_id
+        share_scope = cls._normalize_working_memory_share_scope(
+            raw.get("share_scope", raw.get("shareScope", "")),
+            session_id=clean_session_id,
+        )
         updated_at = str(raw.get("updated_at", raw.get("updatedAt", "")) or "").strip()
         user_id = cls._normalize_user_id(str(raw.get("user_id", raw.get("userId", "default")) or "default"))
+        promotion = cls._normalize_working_memory_promotion_state(raw.get("promotion", {}))
         messages_raw = raw.get("messages", [])
         messages: list[dict[str, Any]] = []
         if isinstance(messages_raw, list):
@@ -1670,7 +1717,9 @@ class MemoryStore:
             "session_id": clean_session_id,
             "user_id": user_id,
             "share_group": share_group,
+            "share_scope": share_scope,
             "parent_session_id": parent_session_id,
+            "promotion": promotion,
             "updated_at": updated_at,
             "messages": messages,
         }
@@ -1717,6 +1766,236 @@ class MemoryStore:
             json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         )
 
+    def set_working_memory_share_scope(self, session_id: str, share_scope: str) -> dict[str, Any]:
+        clean_session_id = self._normalize_session_id(session_id)
+        if not clean_session_id:
+            raise ValueError("session_id is required")
+        resolved_scope = self._normalize_working_memory_share_scope(share_scope, session_id=clean_session_id)
+        with self._locked_file(self.working_memory_path, "a+", exclusive=True) as fh:
+            fh.seek(0)
+            raw = fh.read()
+            try:
+                payload = json.loads(str(raw or "").strip() or "{}")
+            except Exception:
+                payload = {}
+            state = self._normalize_working_memory_state_payload(payload)
+            sessions = dict(state.get("sessions", {}))
+            existing = self._normalize_working_memory_session(clean_session_id, sessions.get(clean_session_id, {}))
+            if existing is None:
+                existing = {
+                    "session_id": clean_session_id,
+                    "user_id": "default",
+                    "share_group": self._working_memory_share_group(clean_session_id),
+                    "share_scope": self._default_working_memory_share_scope(clean_session_id),
+                    "parent_session_id": self._parent_session_id(clean_session_id),
+                    "promotion": self._normalize_working_memory_promotion_state({}),
+                    "updated_at": "",
+                    "messages": [],
+                }
+            existing["share_scope"] = resolved_scope
+            sessions[clean_session_id] = existing
+            state["sessions"] = sessions
+            state["updated_at"] = self._utcnow_iso()
+            normalized_state = self._normalize_working_memory_state_payload(state)
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps(normalized_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            self._flush_and_fsync(fh)
+        return {
+            "session_id": clean_session_id,
+            "share_scope": resolved_scope,
+        }
+
+    @classmethod
+    def _working_memory_related_sessions(
+        cls,
+        sessions: dict[str, dict[str, Any]],
+        primary: dict[str, Any],
+        *,
+        include_shared_subagents: bool,
+    ) -> list[dict[str, Any]]:
+        if not include_shared_subagents:
+            return [primary]
+        primary_session_id = str(primary.get("session_id", "") or "")
+        share_group = str(primary.get("share_group", "") or "")
+        parent_session_id = str(primary.get("parent_session_id", "") or "")
+        share_scope = cls._normalize_working_memory_share_scope(primary.get("share_scope", ""), session_id=primary_session_id)
+        related = [primary]
+        if share_scope == "private" or not share_group:
+            return related
+
+        for other_session_id, payload in sessions.items():
+            if str(other_session_id or "") == primary_session_id:
+                continue
+            normalized = cls._normalize_working_memory_session(str(other_session_id or ""), payload)
+            if normalized is None:
+                continue
+            if str(normalized.get("share_group", "") or "") != share_group:
+                continue
+            other_id = str(normalized.get("session_id", "") or "")
+            other_scope = cls._normalize_working_memory_share_scope(normalized.get("share_scope", ""), session_id=other_id)
+            is_parent = bool(parent_session_id and other_id == parent_session_id)
+            is_child = bool(primary_session_id and str(normalized.get("parent_session_id", "") or "") == primary_session_id)
+            is_sibling = bool(parent_session_id and str(normalized.get("parent_session_id", "") or "") == parent_session_id)
+
+            if is_parent:
+                related.append(normalized)
+                continue
+            if is_child and share_scope == "family" and other_scope in {"parent", "family"}:
+                related.append(normalized)
+                continue
+            if is_sibling and share_scope == "family" and other_scope == "family":
+                related.append(normalized)
+        return related
+
+    @classmethod
+    def _working_memory_recent_direct_messages(cls, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        messages_raw = entry.get("messages", [])
+        if not isinstance(messages_raw, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for item in messages_raw:
+            normalized = cls._normalize_working_memory_entry(
+                item,
+                session_id=str(entry.get("session_id", "") or ""),
+                fallback_user_id=str(entry.get("user_id", "default") or "default"),
+            )
+            if normalized is None:
+                continue
+            out.append(normalized)
+        return out
+
+    @classmethod
+    def _working_memory_episode_summary(cls, session_id: str, messages: list[dict[str, Any]]) -> str:
+        clean_session_id = cls._normalize_session_id(session_id) or "unknown"
+        recent = messages[-cls._WORKING_MEMORY_PROMOTION_WINDOW :]
+        user_rows = [str(item.get("content", "") or "") for item in recent if str(item.get("role", "") or "") == "user"]
+        assistant_rows = [str(item.get("content", "") or "") for item in recent if str(item.get("role", "") or "") == "assistant"]
+        topics: list[str] = []
+        for item in recent:
+            for topic in cls._extract_topics(str(item.get("content", "") or "")):
+                if topic not in topics:
+                    topics.append(topic)
+        details = [
+            f"Session episode for {clean_session_id} captured {len(recent)} recent messages."
+        ]
+        if topics:
+            details.append(f"Topics: {', '.join(topics[:6])}.")
+        if user_rows:
+            details.append(f"Latest user intent: {cls._compact_whitespace(user_rows[-1])[:180]}.")
+        if assistant_rows:
+            details.append(f"Latest assistant outcome: {cls._compact_whitespace(assistant_rows[-1])[:180]}.")
+        return " ".join(detail for detail in details if detail).strip()
+
+    def _promote_working_memory_locked(
+        self,
+        *,
+        sessions: dict[str, dict[str, Any]],
+        session_id: str,
+        force: bool,
+    ) -> MemoryRecord | None:
+        entry = self._normalize_working_memory_session(session_id, sessions.get(session_id, {}))
+        if entry is None:
+            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
+            return None
+
+        direct_messages = self._working_memory_recent_direct_messages(entry)
+        if len(direct_messages) < self._WORKING_MEMORY_PROMOTION_MIN_MESSAGES and not force:
+            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
+            return None
+        recent = direct_messages[-self._WORKING_MEMORY_PROMOTION_WINDOW :]
+
+        candidate_messages = [
+            {"role": str(item.get("role", "") or ""), "content": str(item.get("content", "") or "")}
+            for item in recent
+        ]
+        if len(self._extract_consolidation_lines(candidate_messages)) < 2 and not force:
+            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
+            return None
+
+        raw_resource_text = "\n".join(
+            f"{str(item.get('role', '') or '').strip().lower()}: {self._compact_whitespace(str(item.get('content', '') or ''))}"
+            for item in recent
+            if self._compact_whitespace(str(item.get("content", "") or ""))
+        ).strip()
+        if not raw_resource_text:
+            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
+            return None
+
+        promotion = self._normalize_working_memory_promotion_state(entry.get("promotion", {}))
+        signature = self._chunk_signature(raw_resource_text.splitlines())
+        message_count = len(direct_messages)
+        if not force:
+            if signature == str(promotion.get("last_promoted_signature", "") or ""):
+                self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
+                return None
+            last_count = int(promotion.get("last_promoted_message_count", 0) or 0)
+            if last_count > 0 and (message_count - last_count) < self._WORKING_MEMORY_PROMOTION_STEP:
+                self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
+                return None
+
+        session_key = str(entry.get("session_id", session_id) or session_id)
+        happened_at = str(recent[-1].get("created_at", "") or self._utcnow_iso())
+        summary = self._working_memory_episode_summary(session_key, recent)
+        metadata = self._normalize_memory_metadata(
+            {
+                "working_memory_promoted": True,
+                "working_memory_session_id": session_key,
+                "working_memory_parent_session_id": str(entry.get("parent_session_id", "") or ""),
+                "working_memory_share_group": str(entry.get("share_group", "") or ""),
+                "working_memory_share_scope": str(entry.get("share_scope", "") or ""),
+                "working_memory_message_count": len(recent),
+                "working_memory_signature": signature,
+                "skip_profile_sync": True,
+            }
+        )
+        record = self.add(
+            summary,
+            source=f"working-session:{session_key}",
+            raw_resource_text=raw_resource_text,
+            user_id=str(entry.get("user_id", "default") or "default"),
+            shared=False,
+            metadata=metadata,
+            reasoning_layer="outcome",
+            confidence=min(0.95, 0.55 + (0.05 * len(recent))),
+            memory_type="event",
+            happened_at=happened_at,
+        )
+        promotion["last_promoted_signature"] = signature
+        promotion["last_promoted_at"] = self._utcnow_iso()
+        promotion["last_promoted_message_count"] = message_count
+        promotion["total_promotions"] = int(promotion.get("total_promotions", 0) or 0) + 1
+        entry["promotion"] = promotion
+        sessions[session_key] = entry
+        self._diagnostics["working_memory_promotions"] = int(self._diagnostics["working_memory_promotions"]) + 1
+        return record
+
+    def promote_working_set(self, session_id: str, *, force: bool = False) -> dict[str, Any]:
+        clean_session_id = self._normalize_session_id(session_id)
+        if not clean_session_id:
+            return {"status": "failed", "error": "session_id is required", "record": None}
+        record: MemoryRecord | None = None
+        with self._locked_file(self.working_memory_path, "a+", exclusive=True) as fh:
+            fh.seek(0)
+            raw = fh.read()
+            try:
+                payload = json.loads(str(raw or "").strip() or "{}")
+            except Exception:
+                payload = {}
+            state = self._normalize_working_memory_state_payload(payload)
+            sessions = dict(state.get("sessions", {}))
+            record = self._promote_working_memory_locked(sessions=sessions, session_id=clean_session_id, force=force)
+            state["sessions"] = sessions
+            state["updated_at"] = self._utcnow_iso()
+            normalized_state = self._normalize_working_memory_state_payload(state)
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps(normalized_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            self._flush_and_fsync(fh)
+        if record is None:
+            return {"status": "skipped", "record": None}
+        return {"status": "ok", "record": asdict(record)}
+
     def remember_working_set(
         self,
         session_id: str,
@@ -1725,6 +2004,7 @@ class MemoryStore:
         content: str,
         user_id: str = "default",
         metadata: dict[str, Any] | None = None,
+        allow_promotion: bool = True,
     ) -> None:
         clean_session_id = self._normalize_session_id(session_id)
         clean_content = " ".join(str(content or "").split())
@@ -1746,7 +2026,9 @@ class MemoryStore:
                     "session_id": clean_session_id,
                     "user_id": self._normalize_user_id(user_id),
                     "share_group": self._working_memory_share_group(clean_session_id),
+                    "share_scope": self._default_working_memory_share_scope(clean_session_id),
                     "parent_session_id": self._parent_session_id(clean_session_id),
+                    "promotion": self._normalize_working_memory_promotion_state({}),
                     "updated_at": "",
                     "messages": [],
                 }
@@ -1758,6 +2040,7 @@ class MemoryStore:
                     "content": clean_content,
                     "user_id": self._normalize_user_id(user_id),
                     "share_group": existing["share_group"],
+                    "share_scope": existing["share_scope"],
                     "parent_session_id": existing["parent_session_id"],
                     "metadata": self._normalize_memory_metadata(metadata),
                     "created_at": self._utcnow_iso(),
@@ -1784,6 +2067,7 @@ class MemoryStore:
                     last["metadata"] = merged_metadata
                     last["created_at"] = str(entry.get("created_at", "") or last.get("created_at", ""))
                     last["share_group"] = str(entry.get("share_group", "") or existing["share_group"])
+                    last["share_scope"] = str(entry.get("share_scope", "") or existing["share_scope"])
                     last["parent_session_id"] = str(entry.get("parent_session_id", "") or existing["parent_session_id"])
                     last["user_id"] = str(entry.get("user_id", "") or existing["user_id"])
                     messages[-1] = last
@@ -1799,8 +2083,19 @@ class MemoryStore:
             existing["updated_at"] = str(messages[-1].get("created_at", "") or self._utcnow_iso())
             existing["user_id"] = str(entry.get("user_id", "") or existing.get("user_id", "default"))
             sessions[clean_session_id] = existing
+            if allow_promotion:
+                promoted = self._promote_working_memory_locked(
+                    sessions=sessions,
+                    session_id=clean_session_id,
+                    force=False,
+                )
+                if promoted is not None:
+                    sessions[clean_session_id] = self._normalize_working_memory_session(
+                        clean_session_id,
+                        sessions.get(clean_session_id, {}),
+                    ) or existing
             state["sessions"] = sessions
-            state["updated_at"] = str(existing["updated_at"] or self._utcnow_iso())
+            state["updated_at"] = self._utcnow_iso()
             normalized_state = self._normalize_working_memory_state_payload(state)
             fh.seek(0)
             fh.truncate()
@@ -1823,21 +2118,14 @@ class MemoryStore:
         sessions_raw = state.get("sessions", {})
         sessions = sessions_raw if isinstance(sessions_raw, dict) else {}
         primary = self._normalize_working_memory_session(clean_session_id, sessions.get(clean_session_id, {}))
+        if primary is None:
+            return []
 
-        candidates: list[dict[str, Any]] = []
-        if primary is not None:
-            candidates.append(primary)
-        share_group = self._working_memory_share_group(clean_session_id)
-        if include_shared_subagents and share_group:
-            for other_session_id, payload in sessions.items():
-                if str(other_session_id or "") == clean_session_id:
-                    continue
-                normalized = self._normalize_working_memory_session(str(other_session_id or ""), payload)
-                if normalized is None:
-                    continue
-                if str(normalized.get("share_group", "") or "") != share_group:
-                    continue
-                candidates.append(normalized)
+        candidates = self._working_memory_related_sessions(
+            sessions,
+            primary,
+            include_shared_subagents=include_shared_subagents,
+        )
 
         entries: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str, str]] = set()
@@ -3246,7 +3534,10 @@ class MemoryStore:
             self._write_json_dict(self.profile_path, profile)
 
     def _update_profile_from_record(self, record: MemoryRecord) -> None:
-        self._update_profile_from_text(str(getattr(record, "text", "") or ""))
+        metadata = self._normalize_memory_metadata(getattr(record, "metadata", {}))
+        skip_profile_sync = bool(metadata.get("skip_profile_sync", False))
+        if not skip_profile_sync:
+            self._update_profile_from_text(str(getattr(record, "text", "") or ""))
         self._update_profile_upcoming_events(record)
 
     def _curated_rank(self, row: dict[str, object]) -> tuple[float, int, int, datetime, datetime, str, str]:
@@ -5927,6 +6218,8 @@ class MemoryStore:
             "consolidate_dedup_hits": int(self._diagnostics["consolidate_dedup_hits"]),
             "session_recovery_attempts": int(self._diagnostics["session_recovery_attempts"]),
             "session_recovery_hits": int(self._diagnostics["session_recovery_hits"]),
+            "working_memory_promotions": int(self._diagnostics["working_memory_promotions"]),
+            "working_memory_promotion_skips": int(self._diagnostics["working_memory_promotion_skips"]),
             "privacy_audit_writes": int(self._diagnostics["privacy_audit_writes"]),
             "privacy_audit_skipped": int(self._diagnostics["privacy_audit_skipped"]),
             "privacy_audit_errors": int(self._diagnostics["privacy_audit_errors"]),

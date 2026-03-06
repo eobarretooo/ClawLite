@@ -749,6 +749,26 @@ def test_memory_working_set_persists_and_shares_parent_subagent_family(tmp_path:
     assert child_rows[0]["metadata"]["channel"] == "telegram"
 
 
+def test_memory_working_set_keeps_siblings_isolated_until_family_share_is_enabled(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.remember_working_set("cli:owner", role="assistant", content="parent context", user_id="42")
+    store.remember_working_set("cli:owner:subagent-a", role="assistant", content="subagent a findings", user_id="42")
+    store.remember_working_set("cli:owner:subagent-b", role="assistant", content="subagent b findings", user_id="42")
+
+    initial = store.get_working_set("cli:owner:subagent-a", limit=8)
+    assert [row["content"] for row in initial] == ["subagent a findings", "parent context"]
+
+    store.set_working_memory_share_scope("cli:owner:subagent-a", "family")
+    store.set_working_memory_share_scope("cli:owner:subagent-b", "family")
+
+    updated = store.get_working_set("cli:owner:subagent-a", limit=8)
+    assert [row["content"] for row in updated] == [
+        "subagent b findings",
+        "subagent a findings",
+        "parent context",
+    ]
+
+
 def test_memory_recover_session_context_prefers_working_set_before_history_and_curated(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.jsonl")
     store.remember_working_set("abc", role="assistant", content="working memory summary")
@@ -779,6 +799,42 @@ def test_memory_recover_session_context_prefers_working_set_before_history_and_c
     snippets = store.recover_session_context("abc", limit=4)
 
     assert snippets == ["working memory summary", "session direct context", "curated fallback context"]
+
+
+def test_memory_working_set_auto_promotes_episode_snapshots_in_batches(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    session_id = "cli:owner"
+    messages = [
+        ("user", "Remember the important deployment summary for Friday at 14:00 UTC and keep it in memory."),
+        ("assistant", "Deployment is scheduled for Friday at 14:00 UTC with one blocker still open."),
+        ("user", "Remember the release checklist status and the security blocker for this project."),
+        ("assistant", "Checklist has five pending items and the blocker is still waiting on review."),
+    ]
+    for role, content in messages:
+        store.remember_working_set(session_id, role=role, content=content, user_id="42")
+
+    first_batch = [row for row in store.all() if row.source == f"working-session:{session_id}"]
+    assert len(first_batch) == 1
+    first = first_batch[0]
+    assert first.memory_type == "event"
+    assert first.user_id == "42"
+    assert first.metadata["working_memory_promoted"] is True
+    assert first.metadata["working_memory_session_id"] == session_id
+    assert first.metadata["working_memory_message_count"] == 4
+    assert first.metadata["skip_profile_sync"] is True
+
+    store.remember_working_set(session_id, role="user", content="Did the important blocker change for this deployment project?", user_id="42")
+    store.remember_working_set(session_id, role="assistant", content="Not yet, it is still waiting on the security review outcome.", user_id="42")
+    mid_batch = [row for row in store.all() if row.source == f"working-session:{session_id}"]
+    assert len(mid_batch) == 1
+
+    store.remember_working_set(session_id, role="user", content="Remember the mitigation path and the exact next deployment steps.", user_id="42")
+    store.remember_working_set(session_id, role="assistant", content="Mitigation is to clear review, rerun tests, and deploy after approval.", user_id="42")
+    final_batch = [row for row in store.all() if row.source == f"working-session:{session_id}"]
+    assert len(final_batch) == 2
+
+    diag = store.diagnostics()
+    assert diag["working_memory_promotions"] == 2
 
 
 def test_memory_delete_by_prefixes_removes_from_history_and_curated(tmp_path: Path) -> None:

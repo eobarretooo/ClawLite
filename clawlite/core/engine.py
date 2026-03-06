@@ -1782,10 +1782,12 @@ class AgentEngine:
         if not graceful_error:
             self.sessions.append(session_id, "assistant", final.text)
             memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
+            allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
             remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
             if callable(remember_working_set_fn):
                 base_working_kwargs: dict[str, Any] = {
                     "session_id": session_id,
+                    "allow_promotion": allow_memory_write,
                 }
                 if runtime_chat_id:
                     base_working_kwargs["user_id"] = runtime_chat_id
@@ -1822,7 +1824,6 @@ class AgentEngine:
                         run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
                 except Exception as exc:
                     run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
-            allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
             if not allow_memory_write:
                 run_log.info("memory persistence skipped by integration policy session={}", session_id or "-")
             else:
