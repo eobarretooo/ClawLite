@@ -239,6 +239,52 @@ class MemoryStore:
         re.IGNORECASE,
     )
     _ENTITY_TIME_RE = re.compile(r"(?:\b\d{1,2}:\d{2}(?:\s?(?:am|pm))?\b|\b\d{1,2}\s?(?:am|pm)\b)", re.IGNORECASE)
+    _RETRIEVAL_REWRITE_STOPWORDS: frozenset[str] = frozenset(
+        {
+            "what",
+            "when",
+            "where",
+            "which",
+            "who",
+            "how",
+            "tell",
+            "me",
+            "about",
+            "please",
+            "show",
+            "find",
+            "need",
+            "know",
+            "does",
+            "do",
+            "is",
+            "are",
+            "the",
+            "a",
+            "an",
+            "o",
+            "a",
+            "os",
+            "as",
+            "de",
+            "do",
+            "da",
+            "dos",
+            "das",
+            "sobre",
+            "qual",
+            "quais",
+            "quando",
+            "onde",
+            "como",
+            "me",
+            "mostre",
+            "preciso",
+            "saber",
+            "temos",
+            "tem",
+        }
+    )
 
     @staticmethod
     def _normalize_layer(value: Any) -> str:
@@ -4121,15 +4167,410 @@ class MemoryStore:
             "metadata": MemoryStore._normalize_memory_metadata(getattr(row, "metadata", {})),
         }
 
-    def _refine_hits_with_llm(self, query: str, hits: list[dict[str, Any]]) -> dict[str, str] | None:
+    def _resolve_retrieval_scopes(self, *, user_id: str, include_shared: bool) -> list[dict[str, Path]]:
+        clean_user = self._normalize_user_id(user_id or "default")
+        scopes: list[dict[str, Path]] = []
+        scopes.append(self._scope_paths(user_id=clean_user, shared=False))
+        if clean_user != "default" and include_shared and self.shared_opt_in(clean_user):
+            scopes.append(self._scope_paths(shared=True))
+        for scope in scopes:
+            self._ensure_scope_paths(scope)
+        return scopes
+
+    def _collect_retrieval_records(
+        self,
+        *,
+        user_id: str,
+        include_shared: bool,
+        reasoning_layers: Iterable[str] | None,
+        min_confidence: float | None,
+    ) -> tuple[list[MemoryRecord], dict[str, float], dict[str, int], list[dict[str, Path]], bool]:
+        clean_user = self._normalize_user_id(user_id or "default")
+        reasoning_filter = self._normalize_reasoning_layers_filter(reasoning_layers)
+        min_conf_filter = self._normalize_confidence(min_confidence, default=0.0) if min_confidence is not None else None
+        scopes = self._resolve_retrieval_scopes(user_id=clean_user, include_shared=include_shared)
+
+        records: list[MemoryRecord] = []
+        curated_importance: dict[str, float] = {}
+        curated_mentions: dict[str, int] = {}
+
+        for scope in scopes:
+            scope_root = scope["root"]
+            scope_user_id = "shared" if scope_root == self.shared_path else clean_user
+            curated_rows = self._read_curated_facts_from(scope["curated"])
+            for item in curated_rows:
+                text = str(item.get("text", "")).strip()
+                if not text:
+                    continue
+                row = MemoryRecord(
+                    id=str(item.get("id", "")),
+                    text=text,
+                    source=str(item.get("source", "curated")),
+                    created_at=str(item.get("created_at", "")),
+                    category=str(item.get("category", "context") or "context"),
+                    user_id=scope_user_id,
+                    reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
+                    confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
+                    happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
+                    metadata=self._normalize_memory_metadata(item.get("metadata", {})),
+                )
+                records.append(row)
+                curated_importance[row.id] = float(item.get("importance", 1.0) or 1.0)
+                try:
+                    curated_mentions[row.id] = int(item.get("mentions", 1) or 1)
+                except Exception:
+                    curated_mentions[row.id] = 1
+
+            records.extend(self._read_history_records_from(scope["history"]))
+
+        if reasoning_filter:
+            records = [row for row in records if self._normalize_reasoning_layer(row.reasoning_layer) in reasoning_filter]
+        if min_conf_filter is not None:
+            records = [row for row in records if self._normalize_confidence(row.confidence, default=1.0) >= min_conf_filter]
+
+        semantic_enabled = bool(self.semantic_enabled and len(scopes) == 1 and scopes[0]["root"] == self.memory_home)
+        return records, curated_importance, curated_mentions, scopes, semantic_enabled
+
+    @classmethod
+    def _rewrite_retrieval_query(cls, query: str) -> str:
+        raw = cls._compact_whitespace(query)
+        if not raw:
+            return ""
+        query_entities = cls._extract_entities(raw)
+        tokens = cls._tokens(raw)
+        if not tokens:
+            return raw
+
+        preserved = [token for token in tokens if token not in cls._RETRIEVAL_REWRITE_STOPWORDS]
+        rewritten = " ".join(preserved).strip() if preserved else raw
+
+        for values in query_entities.values():
+            for value in values:
+                clean_value = cls._compact_whitespace(value)
+                if clean_value and clean_value.lower() not in rewritten.lower():
+                    rewritten = f"{rewritten} {clean_value}".strip()
+
+        if not rewritten:
+            return raw
+        if len(rewritten) + 8 < len(raw):
+            return rewritten
+        return raw
+
+    @classmethod
+    def _query_coverage(cls, query: str, texts: list[str]) -> dict[str, Any]:
+        q_tokens = set(cls._tokens(query))
+        if not q_tokens:
+            return {"covered_tokens": [], "missing_tokens": [], "coverage_ratio": 0.0, "entity_score": 0.0, "temporal_match": False}
+
+        covered: set[str] = set()
+        best_entity_score = 0.0
+        temporal_match = False
+        query_entities = cls._extract_entities(query)
+        temporal_query = cls._query_has_temporal_intent(query)
+
+        for text in texts:
+            covered.update(q_tokens.intersection(cls._tokens(text)))
+            best_entity_score = max(best_entity_score, cls._entity_match_score(query_entities, cls._extract_entities(text)))
+            if temporal_query and cls._memory_has_temporal_markers(text):
+                temporal_match = True
+
+        coverage_ratio = float(len(covered)) / float(len(q_tokens)) if q_tokens else 0.0
+        missing_tokens = sorted(q_tokens.difference(covered))
+        return {
+            "covered_tokens": sorted(covered),
+            "missing_tokens": missing_tokens,
+            "coverage_ratio": round(max(0.0, min(1.0, coverage_ratio)), 6),
+            "entity_score": round(max(0.0, best_entity_score), 6),
+            "temporal_match": temporal_match,
+        }
+
+    def _evaluate_retrieval_sufficiency(self, query: str, texts: list[str], *, stage: str) -> dict[str, Any]:
+        if stage == "category":
+            has_signal = bool(texts)
+            return {
+                "stage": stage,
+                "sufficient": False,
+                "reason": "need_item_level_recall" if has_signal else "no_category_signal",
+                "covered_tokens": [],
+                "missing_tokens": sorted(set(self._tokens(query))),
+                "coverage_ratio": 0.0,
+                "entity_score": 0.0,
+                "temporal_match": False,
+            }
+
+        coverage = self._query_coverage(query, texts)
+        coverage_ratio = float(coverage["coverage_ratio"])
+        entity_score = float(coverage["entity_score"])
+        temporal_match = bool(coverage["temporal_match"])
+        temporal_query = self._query_has_temporal_intent(query)
+        sufficient = bool(
+            coverage_ratio >= 0.8
+            or entity_score >= 0.3
+            or (temporal_query and temporal_match and coverage_ratio >= 0.5)
+        )
+        if not texts:
+            reason = f"no_{stage}_hits"
+        elif sufficient:
+            if coverage_ratio >= 0.8:
+                reason = f"{stage}_coverage_sufficient"
+            elif entity_score >= 0.3:
+                reason = f"{stage}_entity_match_sufficient"
+            else:
+                reason = f"{stage}_temporal_match_sufficient"
+        else:
+            reason = f"{stage}_coverage_incomplete"
+        coverage["stage"] = stage
+        coverage["sufficient"] = sufficient
+        coverage["reason"] = reason
+        return coverage
+
+    def _retrieve_category_hits(self, query: str, records: list[MemoryRecord], *, limit: int) -> list[dict[str, Any]]:
+        q_tokens = set(self._tokens(query))
+        query_entities = self._extract_entities(query)
+        temporal_query = self._query_has_temporal_intent(query)
+        by_category: dict[str, dict[str, Any]] = {}
+
+        for row in records:
+            category = str(row.category or "context")
+            text_tokens = set(self._tokens(row.text))
+            overlap = len(q_tokens.intersection(text_tokens))
+            entity_score = self._entity_match_score(query_entities, self._extract_entities(row.text))
+            category_overlap = len(q_tokens.intersection(self._tokens(category))) * 0.35
+            type_overlap = len(q_tokens.intersection(self._tokens(row.memory_type))) * 0.25
+            temporal_bonus = 0.15 if temporal_query and (row.happened_at or self._memory_has_temporal_markers(row.text)) else 0.0
+            salience_bonus = self._salience_boost(row.metadata) * 0.5
+            score = float(overlap) + entity_score + category_overlap + type_overlap + temporal_bonus + salience_bonus
+            if score <= 0.0:
+                continue
+
+            bucket = by_category.setdefault(
+                category,
+                {
+                    "category": category,
+                    "score": 0.0,
+                    "count": 0,
+                    "sample_text": "",
+                    "memory_types": set(),
+                    "sources": set(),
+                    "top_score": 0.0,
+                },
+            )
+            bucket["score"] = float(bucket["score"]) + score
+            bucket["count"] = int(bucket["count"]) + 1
+            bucket["memory_types"].add(str(row.memory_type or "knowledge"))
+            bucket["sources"].add(str(row.source or "unknown"))
+            if score >= float(bucket["top_score"]):
+                bucket["top_score"] = score
+                bucket["sample_text"] = str(row.text or "").strip()[:160]
+
+        ranked = sorted(
+            by_category.values(),
+            key=lambda item: (float(item["score"]), int(item["count"]), str(item["category"])),
+            reverse=True,
+        )
+        out: list[dict[str, Any]] = []
+        for item in ranked[: max(1, limit)]:
+            out.append(
+                {
+                    "category": str(item["category"]),
+                    "score": round(float(item["score"]), 6),
+                    "count": int(item["count"]),
+                    "sample_text": str(item["sample_text"]),
+                    "memory_types": sorted(str(value) for value in item["memory_types"]),
+                    "sources": sorted(str(value) for value in item["sources"]),
+                }
+            )
+        return out
+
+    @staticmethod
+    def _filter_records_to_categories(records: list[MemoryRecord], categories: list[str]) -> list[MemoryRecord]:
+        allowed = {str(item or "").strip().lower() for item in categories if str(item or "").strip()}
+        if not allowed:
+            return list(records)
+        return [row for row in records if str(row.category or "context").strip().lower() in allowed]
+
+    def _retrieve_resource_hits(
+        self,
+        scopes: list[dict[str, Path]],
+        *,
+        record_ids: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        wanted_ids = {str(item or "").strip() for item in record_ids if str(item or "").strip()}
+        if not wanted_ids:
+            return []
+
+        out: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for scope in scopes:
+            resources_root = scope["resources"]
+            if not resources_root.exists():
+                continue
+            for resource_file in sorted(resources_root.glob("conv_*.jsonl"), reverse=True):
+                try:
+                    with self._locked_file(resource_file, "r", exclusive=False) as fh:
+                        lines = fh.read().splitlines()
+                except Exception:
+                    continue
+                for line in reversed(lines):
+                    raw = str(line or "").strip()
+                    if not raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except Exception:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    row_id = str(payload.get("id", "")).strip()
+                    if not row_id or row_id not in wanted_ids or row_id in seen_ids:
+                        continue
+                    category = str(payload.get("category", "context") or "context")
+                    text = self._decrypt_text_for_category(str(payload.get("text", "") or ""), category)
+                    out.append(
+                        {
+                            "id": row_id,
+                            "text": text,
+                            "source": str(payload.get("source", "") or ""),
+                            "category": category,
+                            "created_at": str(payload.get("created_at", "") or ""),
+                            "layer": MemoryLayer.RESOURCE.value,
+                        }
+                    )
+                    seen_ids.add(row_id)
+                    if len(out) >= limit:
+                        return out
+        return out
+
+    def _build_progressive_retrieval_payload(
+        self,
+        query: str,
+        *,
+        limit: int,
+        user_id: str,
+        include_shared: bool,
+        reasoning_layers: Iterable[str] | None,
+        min_confidence: float | None,
+    ) -> dict[str, Any]:
+        rewritten_query = self._rewrite_retrieval_query(query)
+        active_query = rewritten_query or query
+        records, curated_importance, curated_mentions, scopes, semantic_enabled = self._collect_retrieval_records(
+            user_id=user_id,
+            include_shared=include_shared,
+            reasoning_layers=reasoning_layers,
+            min_confidence=min_confidence,
+        )
+
+        category_hits = self._retrieve_category_hits(active_query, records, limit=max(3, min(6, limit)))
+        selected_categories = [str(item.get("category", "")) for item in category_hits[:3] if str(item.get("category", ""))]
+        category_sufficiency = self._evaluate_retrieval_sufficiency(
+            active_query,
+            [str(item.get("sample_text", "") or "") for item in category_hits if str(item.get("sample_text", "") or "")],
+            stage="category",
+        )
+
+        candidate_records = self._filter_records_to_categories(records, selected_categories)
+        if not candidate_records:
+            candidate_records = list(records)
+        item_records = self._rank_records(
+            active_query,
+            candidate_records,
+            curated_importance=curated_importance,
+            curated_mentions=curated_mentions,
+            limit=limit,
+            semantic_enabled=semantic_enabled,
+        )
+        item_hits = [self._serialize_hit(row) for row in item_records]
+        item_sufficiency = self._evaluate_retrieval_sufficiency(
+            active_query,
+            [str(row.text or "") for row in item_records],
+            stage="item",
+        )
+
+        resource_hits: list[dict[str, Any]] = []
+        resource_sufficiency = {
+            "stage": "resource",
+            "sufficient": False,
+            "reason": "resource_stage_skipped" if item_sufficiency["sufficient"] else "no_resource_hits",
+            "covered_tokens": [],
+            "missing_tokens": list(item_sufficiency.get("missing_tokens", [])),
+            "coverage_ratio": 0.0,
+            "entity_score": 0.0,
+            "temporal_match": False,
+        }
+        if item_records and not item_sufficiency["sufficient"]:
+            resource_hits = self._retrieve_resource_hits(
+                scopes,
+                record_ids=[str(row.id or "") for row in item_records],
+                limit=max(1, limit),
+            )
+            combined_texts = [str(row.text or "") for row in item_records] + [str(item.get("text", "") or "") for item in resource_hits]
+            resource_sufficiency = self._evaluate_retrieval_sufficiency(active_query, combined_texts, stage="resource")
+
+        stages = [
+            {
+                "stage": "category",
+                "query": active_query,
+                "count": len(category_hits),
+                "selected_categories": selected_categories,
+                "sufficiency": category_sufficiency,
+            },
+            {
+                "stage": "item",
+                "query": active_query,
+                "count": len(item_hits),
+                "selected_categories": selected_categories,
+                "sufficiency": item_sufficiency,
+            },
+        ]
+        if resource_hits or not item_sufficiency["sufficient"]:
+            stages.append(
+                {
+                    "stage": "resource",
+                    "query": active_query,
+                    "count": len(resource_hits),
+                    "sufficiency": resource_sufficiency,
+                }
+            )
+
+        return {
+            "query": query,
+            "rewritten_query": rewritten_query,
+            "active_query": active_query,
+            "hits": item_hits,
+            "category_hits": category_hits,
+            "resource_hits": resource_hits,
+            "progressive": {
+                "route": "category_item_resource",
+                "selected_categories": selected_categories,
+                "category_sufficiency": category_sufficiency,
+                "item_sufficiency": item_sufficiency,
+                "resource_sufficiency": resource_sufficiency,
+                "stages": stages,
+            },
+        }
+
+    def _refine_hits_with_llm(
+        self,
+        query: str,
+        hits: list[dict[str, Any]],
+        *,
+        category_hits: list[dict[str, Any]] | None = None,
+        resource_hits: list[dict[str, Any]] | None = None,
+    ) -> dict[str, str] | None:
         if not hits:
             return {"answer": "", "next_step_query": ""}
+        category_payload = category_hits if isinstance(category_hits, list) else []
+        resource_payload = resource_hits if isinstance(resource_hits, list) else []
         prompt = (
             "Use os trechos de memoria abaixo para responder de forma objetiva. "
             "Se os trechos nao forem suficientes, diga isso explicitamente. "
             "Responda APENAS em JSON valido com as chaves: answer (string) e next_step_query (string opcional).\n\n"
             f"PERGUNTA:\n{query}\n\n"
-            f"MEMORIAS:\n{json.dumps(hits, ensure_ascii=False)}"
+            f"CATEGORIAS:\n{json.dumps(category_payload, ensure_ascii=False)}\n\n"
+            f"MEMORIAS:\n{json.dumps(hits, ensure_ascii=False)}\n\n"
+            f"RECURSOS:\n{json.dumps(resource_payload, ensure_ascii=False)}"
         )
         try:
             import litellm  # type: ignore
@@ -4189,25 +4630,31 @@ class MemoryStore:
             raise ValueError("query is required")
         bounded_limit = max(1, int(limit or 1))
         resolved_user = user_id or "default"
-        records = await asyncio.to_thread(
-            self.search,
+        progressive = await asyncio.to_thread(
+            self._build_progressive_retrieval_payload,
             clean_query,
-            limit=bounded_limit,
             user_id=resolved_user,
+            limit=bounded_limit,
             include_shared=include_shared,
             reasoning_layers=reasoning_layers,
             min_confidence=min_confidence,
         )
-        hits = [self._serialize_hit(row) for row in records]
+        hits = progressive["hits"]
+        category_hits = progressive["category_hits"]
+        resource_hits = progressive["resource_hits"]
+        rewritten_query = str(progressive.get("rewritten_query", "") or "")
 
         rag_payload: dict[str, Any] = {
             "status": "ok",
             "method": "rag",
             "query": clean_query,
+            "rewritten_query": rewritten_query,
             "limit": bounded_limit,
             "count": len(hits),
             "hits": hits,
-            "metadata": {"fallback_to_rag": False},
+            "category_hits": category_hits,
+            "resource_hits": resource_hits,
+            "metadata": {"fallback_to_rag": False, "progressive": progressive["progressive"]},
         }
         normalized_method = str(method or "rag").strip().lower()
         if normalized_method == "rag":
@@ -4215,10 +4662,16 @@ class MemoryStore:
         if normalized_method != "llm":
             raise ValueError("method must be 'rag' or 'llm'")
 
-        llm_refinement = await asyncio.to_thread(self._refine_hits_with_llm, clean_query, hits)
+        llm_refinement = await asyncio.to_thread(
+            self._refine_hits_with_llm,
+            clean_query,
+            hits,
+            category_hits=category_hits,
+            resource_hits=resource_hits,
+        )
         if llm_refinement is None:
             rag_payload["method"] = "llm"
-            rag_payload["metadata"] = {"fallback_to_rag": True}
+            rag_payload["metadata"] = {"fallback_to_rag": True, "progressive": progressive["progressive"]}
             rag_payload["answer"] = ""
             rag_payload["next_step_query"] = ""
             return rag_payload
@@ -4227,12 +4680,15 @@ class MemoryStore:
             "status": "ok",
             "method": "llm",
             "query": clean_query,
+            "rewritten_query": rewritten_query,
             "limit": bounded_limit,
             "count": len(hits),
             "hits": hits,
+            "category_hits": category_hits,
+            "resource_hits": resource_hits,
             "answer": str(llm_refinement.get("answer", "") or ""),
             "next_step_query": str(llm_refinement.get("next_step_query", "") or ""),
-            "metadata": {"fallback_to_rag": False},
+            "metadata": {"fallback_to_rag": False, "progressive": progressive["progressive"]},
         }
 
     def _rank_records(

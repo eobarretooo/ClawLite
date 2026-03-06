@@ -1179,6 +1179,8 @@ def test_memory_async_retrieve_rag_and_llm_fallback(tmp_path: Path, monkeypatch)
         assert rag["count"] >= 1
         assert rag["hits"]
         assert rag["metadata"]["fallback_to_rag"] is False
+        assert "progressive" in rag["metadata"]
+        assert rag["metadata"]["progressive"]["stages"][0]["stage"] == "category"
 
         async def _broken_completion(**kwargs):
             del kwargs
@@ -1189,6 +1191,46 @@ def test_memory_async_retrieve_rag_and_llm_fallback(tmp_path: Path, monkeypatch)
         assert llm["method"] == "llm"
         assert llm["hits"]
         assert llm["metadata"]["fallback_to_rag"] is True
+
+    asyncio.run(_scenario())
+
+
+def test_memory_retrieve_progressive_surfaces_category_stage_metadata(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl", memory_auto_categorize=True)
+        store.add("product launch deadline scheduled for 2026-05-10", source="session:event")
+        store.add("prefiro respostas curtas para resumos", source="session:pref")
+
+        retrieved = await store.retrieve("deadline 2026-05-10", method="rag", limit=2)
+
+        assert retrieved["rewritten_query"]
+        assert retrieved["category_hits"]
+        assert retrieved["category_hits"][0]["category"] == "events"
+        progressive = retrieved["metadata"]["progressive"]
+        assert progressive["selected_categories"][0] == "events"
+        assert progressive["item_sufficiency"]["sufficient"] is True
+        assert [stage["stage"] for stage in progressive["stages"][:2]] == ["category", "item"]
+
+    asyncio.run(_scenario())
+
+
+def test_memory_retrieve_progressive_loads_resource_hits_for_partial_item_coverage(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        store.add(
+            "release checklist",
+            raw_resource_text="release checklist rollback owner Alice and deployment channel ops",
+            source="session:resource",
+        )
+
+        retrieved = await store.retrieve("release checklist alice", method="rag", limit=3)
+
+        assert retrieved["hits"]
+        assert retrieved["resource_hits"]
+        assert "alice" in str(retrieved["resource_hits"][0]["text"]).lower()
+        progressive = retrieved["metadata"]["progressive"]
+        assert progressive["item_sufficiency"]["sufficient"] is False
+        assert progressive["resource_sufficiency"]["sufficient"] is True
 
     asyncio.run(_scenario())
 
