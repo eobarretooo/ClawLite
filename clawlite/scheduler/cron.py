@@ -113,6 +113,9 @@ class CronService:
             self._diag["last_save_error"] = ""
             return
 
+    async def _save_async(self) -> None:
+        await asyncio.to_thread(self._save)
+
     @contextlib.contextmanager
     def _store_lock(self):
         fd: int | None = None
@@ -494,7 +497,7 @@ class CronService:
             next_run_iso=next_run.isoformat() if next_run else "",
         )
         self._jobs[job_id] = job
-        self._save()
+        await self._save_async()
         logger.info(
             "cron job created id={} session={} schedule_kind={} name={}",
             job_id,
@@ -549,7 +552,7 @@ class CronService:
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
             self._clear_lease(job)
             self._diag["job_failure_count"] = int(self._diag.get("job_failure_count", 0) or 0) + 1
-            self._save()
+            await self._save_async()
             raise
         now = self._now()
         job.last_run_iso = now.isoformat()
@@ -557,7 +560,7 @@ class CronService:
         run_once = bool(job.payload.metadata.get("run_once"))
         if run_once:
             self._jobs.pop(job.id, None)
-            self._save()
+            await self._save_async()
             bind_event("cron.job", session=job.session_id).info("cron job manually auto-removed after run_once id={}", job.id)
             return out
         try:
@@ -570,7 +573,7 @@ class CronService:
             job.next_run_iso = ""
         else:
             job.next_run_iso = after.isoformat() if after else ""
-        self._save()
+        await self._save_async()
         bind_event("cron.job", session=job.session_id).info("cron job manually executed id={} enabled={}", job.id, job.enabled)
         return out
 
