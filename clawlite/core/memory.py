@@ -854,6 +854,46 @@ class MemoryStore:
             "delegation unless strictly necessary."
         )
 
+    def profile_prompt_hint(self) -> str:
+        profile = self._load_json_dict(self.profile_path, self._default_profile())
+        if not isinstance(profile, dict):
+            return ""
+
+        defaults = self._default_profile()
+        lines: list[str] = []
+
+        response_length = str(profile.get("response_length_preference", defaults.get("response_length_preference", "normal")) or "").strip()
+        if response_length and response_length != str(defaults.get("response_length_preference", "normal")):
+            lines.append(f"- Preferred response length: {response_length}")
+
+        timezone_value = str(profile.get("timezone", defaults.get("timezone", "UTC")) or "").strip()
+        if timezone_value and timezone_value != str(defaults.get("timezone", "UTC")):
+            lines.append(f"- Timezone: {timezone_value}")
+
+        language = str(profile.get("language", defaults.get("language", "pt-BR")) or "").strip()
+        if language and language != str(defaults.get("language", "pt-BR")):
+            lines.append(f"- Preferred language: {language}")
+
+        emotional_baseline = str(profile.get("emotional_baseline", defaults.get("emotional_baseline", "neutral")) or "").strip()
+        if emotional_baseline and emotional_baseline != str(defaults.get("emotional_baseline", "neutral")):
+            lines.append(f"- Emotional baseline: {emotional_baseline}")
+
+        interests_raw = profile.get("interests", [])
+        interests = [str(item).strip() for item in interests_raw if str(item).strip()] if isinstance(interests_raw, list) else []
+        if interests:
+            lines.append(f"- Recurring interests: {', '.join(interests[:5])}")
+
+        if not lines:
+            return ""
+
+        return "\n".join(
+            [
+                "[User Profile]",
+                *lines,
+                "- Apply these preferences when relevant, without repeating them unless useful.",
+            ]
+        )
+
     def _normalize_quality_tuning_state(self, raw: Any) -> dict[str, Any]:
         payload = dict(raw) if isinstance(raw, dict) else {}
         defaults = self._default_quality_tuning_state()

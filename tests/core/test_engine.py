@@ -214,6 +214,17 @@ class FakeMemoryWithIntegrationHint(FakeMemory):
         return "Memory quality is degraded; keep retrieval focused."
 
 
+class FakeMemoryWithProfileHint(FakeMemory):
+    def profile_prompt_hint(self) -> str:
+        return (
+            "[User Profile]\n"
+            "- Preferred response length: curto\n"
+            "- Timezone: America/Sao_Paulo\n"
+            "- Recurring interests: viagens\n"
+            "- Apply these preferences when relevant, without repeating them unless useful."
+        )
+
+
 class FakeSubagentManagerForDigest:
     def __init__(self) -> None:
         self.list_calls = 0
@@ -937,6 +948,30 @@ def test_engine_injects_memory_integration_hint_as_system_message() -> None:
             and "Memory quality is degraded; keep retrieval focused." in str(row.get("content", ""))
         ]
         assert hint_rows
+
+    asyncio.run(_scenario())
+
+
+def test_engine_injects_memory_profile_hint_as_system_message() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithProfileHint()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="cli:profile-hint", user_text="hello")
+        assert out.text == "ok"
+
+        first_prompt = provider.snapshots[0]
+        profile_rows = [
+            row
+            for row in first_prompt
+            if row.get("role") == "system"
+            and "[User Profile]" in str(row.get("content", ""))
+        ]
+        assert profile_rows
+        content = str(profile_rows[0].get("content", ""))
+        assert "Preferred response length: curto" in content
+        assert "Timezone: America/Sao_Paulo" in content
 
     asyncio.run(_scenario())
 

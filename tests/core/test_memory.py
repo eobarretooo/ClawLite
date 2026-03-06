@@ -1216,6 +1216,27 @@ def test_memory_profile_auto_update_from_preferences_timezone_and_topics(tmp_pat
     asyncio.run(_scenario())
 
 
+def test_memory_profile_prompt_hint_is_empty_for_default_profile(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    assert store.profile_prompt_hint() == ""
+
+
+def test_memory_profile_prompt_hint_summarizes_learned_preferences(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.memorize(text="prefiro respostas curtas e moro em Sao Paulo", source="session:profile")
+        await store.memorize(text="gosto de viagens internacionais", source="session:profile")
+        await store.memorize(text="planejando viagens longas em 2026", source="session:profile")
+
+        hint = store.profile_prompt_hint()
+        assert "[User Profile]" in hint
+        assert "Preferred response length: curto" in hint
+        assert "Timezone: America/Sao_Paulo" in hint
+        assert "Recurring interests: viagens" in hint
+
+    asyncio.run(_scenario())
+
+
 def test_memory_emotional_tracking_flag_controls_add_tone_detection(tmp_path: Path) -> None:
     disabled_store = MemoryStore(tmp_path / "disabled.jsonl")
     disabled_row = disabled_store.add("estou triste e ansioso com o prazo", source="user")

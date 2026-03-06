@@ -873,6 +873,21 @@ class AgentEngine:
                 return ""
         return str(value or "").strip()
 
+    async def _memory_profile_hint(self) -> str:
+        hint_fn = getattr(self.memory, "profile_prompt_hint", None)
+        if not callable(hint_fn):
+            return ""
+        try:
+            value = hint_fn()
+        except Exception:
+            return ""
+        if inspect.isawaitable(value):
+            try:
+                value = await value
+            except Exception:
+                return ""
+        return str(value or "").strip()
+
     def _plan_memory_snippets(self, *, session_id: str = "", user_id: str = "", user_text: str, run_log: Any) -> list[str]:
         route = self._MEMORY_ROUTE_NO_RETRIEVE
         selected_query = ""
@@ -1361,6 +1376,9 @@ class AgentEngine:
         integration_hint = await self._memory_integration_hint(actor="agent", session_id=session_id)
         if integration_hint:
             messages.append({"role": "system", "content": integration_hint})
+        profile_hint = await self._memory_profile_hint()
+        if profile_hint:
+            messages.append({"role": "system", "content": profile_hint})
         if prompt.history_messages:
             messages.extend(prompt.history_messages)
         if prompt.runtime_context:
