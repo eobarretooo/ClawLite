@@ -1205,6 +1205,11 @@ class TelegramChannel(BaseChannel):
         path.mkdir(parents=True, exist_ok=True)
         return path / f"offset-{key}.json"
 
+    def _media_download_dir(self) -> Path:
+        path = Path.home() / ".clawlite" / "state" / "telegram" / "media"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def _load_offset(self) -> int:
         path = self._offset_path()
         if not path.exists():
@@ -1546,6 +1551,7 @@ class TelegramChannel(BaseChannel):
             return True
 
         message_id = int(getattr(message, "message_id", 0) or 0)
+        await self._download_media_items(chat_id=chat_id, message_id=message_id, media_info=media_info)
         signature = hashlib.sha256(text.encode("utf-8")).hexdigest()
         msg_key = (chat_id, message_id)
         previous_signature = self._message_signatures.get(msg_key)
@@ -1693,9 +1699,11 @@ class TelegramChannel(BaseChannel):
 
         photos = getattr(message, "photo", None)
         if photos:
-            counts["photo"] = len(photos)
-            for index, photo in enumerate(photos, start=1):
-                items.append(self._build_media_item(media_type="photo", raw=photo, index=index))
+            largest_photo = photos[-1]
+            counts["photo"] = 1
+            photo_item = self._build_media_item(media_type="photo", raw=largest_photo, index=1)
+            photo_item["variant_count"] = len(photos)
+            items.append(photo_item)
 
         for media_type in (
             "voice",
@@ -1734,6 +1742,78 @@ class TelegramChannel(BaseChannel):
         if not details:
             return "[telegram media message]"
         return f"[telegram media message: {details}]"
+
+    @staticmethod
+    def _media_download_extension(*, media_type: str, item: dict[str, Any]) -> str:
+        file_name = str(item.get("file_name", "") or "").strip()
+        suffix = Path(file_name).suffix.strip()
+        if suffix:
+            return suffix
+        mime_type = str(item.get("mime_type", "") or "").strip().lower()
+        mime_map = {
+            "audio/mp4": ".m4a",
+            "audio/mpeg": ".mp3",
+            "audio/ogg": ".ogg",
+            "audio/wav": ".wav",
+            "image/gif": ".gif",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "video/mp4": ".mp4",
+            "application/pdf": ".pdf",
+        }
+        if mime_type in mime_map:
+            return mime_map[mime_type]
+        type_map = {
+            "animation": ".gif",
+            "audio": ".mp3",
+            "document": "",
+            "photo": ".jpg",
+            "sticker": ".webp",
+            "video": ".mp4",
+            "video_note": ".mp4",
+            "voice": ".ogg",
+        }
+        return type_map.get(media_type, "")
+
+    async def _download_media_items(self, *, chat_id: str, message_id: int, media_info: dict[str, Any]) -> None:
+        if not media_info.get("has_media"):
+            return
+        if self.bot is None or not hasattr(self.bot, "get_file"):
+            return
+
+        base_dir = self._media_download_dir()
+        safe_chat_id = re.sub(r"[^0-9A-Za-z_-]+", "_", chat_id or "") or "chat"
+        chat_dir = base_dir / safe_chat_id
+        try:
+            await asyncio.to_thread(chat_dir.mkdir, parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.debug("telegram media download mkdir failed chat={} error={}", chat_id, exc)
+            return
+
+        for item in media_info.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("file_id", "") or "").strip()
+            media_type = str(item.get("type", "") or "").strip().lower()
+            if not file_id or not media_type:
+                continue
+            extension = self._media_download_extension(media_type=media_type, item=item)
+            safe_file_id = re.sub(r"[^0-9A-Za-z_-]+", "_", file_id)[:24] or "file"
+            target = chat_dir / f"{message_id}-{media_type}-{safe_file_id}{extension}"
+            try:
+                remote_file = await self.bot.get_file(file_id)
+                await remote_file.download_to_drive(str(target))
+                item["local_path"] = str(target)
+            except Exception as exc:
+                logger.debug(
+                    "telegram media download failed chat={} message_id={} type={} error={}",
+                    chat_id,
+                    message_id,
+                    media_type,
+                    exc,
+                )
 
     @staticmethod
     def _split_media_caption(text: str) -> tuple[str | None, str | None]:

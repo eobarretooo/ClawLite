@@ -694,14 +694,13 @@ def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
         session_id, user_id, text, metadata = emitted[0]
         assert session_id == "telegram:42"
         assert user_id == "1"
-        assert text == "[telegram media message: photo(2), voice]"
+        assert text == "[telegram media message: photo, voice]"
         assert metadata["media_present"] is True
         assert metadata["media_types"] == ["photo", "voice"]
-        assert metadata["media_counts"] == {"photo": 2, "voice": 1}
-        assert metadata["media_total_count"] == 3
+        assert metadata["media_counts"] == {"photo": 1, "voice": 1}
+        assert metadata["media_total_count"] == 2
         assert metadata["media_items"] == [
-            {"type": "photo", "index": 1, "file_id": "p1"},
-            {"type": "photo", "index": 2, "file_id": "p2"},
+            {"type": "photo", "index": 1, "file_id": "p2", "variant_count": 2},
             {"type": "voice", "file_id": "v1"},
         ]
 
@@ -756,6 +755,68 @@ def test_telegram_media_placeholder_covers_extended_media_types() -> None:
             {"type": "contact", "phone_number": "+15550001111"},
             {"type": "location", "latitude": 1.0, "longitude": 2.0},
         ]
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+
+        class FakeRemoteFile:
+            def __init__(self) -> None:
+                self.downloads: list[str] = []
+
+            async def download_to_drive(self, path: str) -> None:
+                self.downloads.append(path)
+                Path(path).write_bytes(b"img")
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.file_ids: list[str] = []
+                self.remote = FakeRemoteFile()
+
+            async def get_file(self, file_id: str):
+                self.file_ids.append(file_id)
+                return self.remote
+
+        bot = FakeBot()
+        channel.bot = bot
+        channel._media_download_dir = lambda: tmp_path
+
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=[SimpleNamespace(file_id="p1"), SimpleNamespace(file_id="p2")],
+            voice=None,
+            audio=None,
+            document=None,
+            chat_id=42,
+            from_user=user,
+            message_id=15,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=103, message=message, edited_message=None, effective_message=message)
+
+        await channel._handle_update(update)
+
+        assert bot.file_ids == ["p2"]
+        assert len(emitted) == 1
+        media_item = emitted[0][3]["media_items"][0]
+        local_path = Path(media_item["local_path"])
+        assert local_path.exists()
+        assert local_path.read_bytes() == b"img"
+        assert local_path.parent == tmp_path / "42"
 
     asyncio.run(_scenario())
 
