@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from typing import Protocol
@@ -89,7 +90,11 @@ class CronTool(Tool):
             return json.dumps({"ok": True, "action": action, "job_id": job_id})
 
         if action == "list":
-            maybe_rows = self.api.list_jobs(session_id=session_id)
+            list_jobs = self.api.list_jobs
+            if inspect.iscoroutinefunction(list_jobs):
+                maybe_rows = await list_jobs(session_id=session_id)
+            else:
+                maybe_rows = await asyncio.to_thread(list_jobs, session_id=session_id)
             rows = await maybe_rows if inspect.isawaitable(maybe_rows) else maybe_rows
             return json.dumps({"ok": True, "action": action, "count": len(rows), "jobs": rows})
 
@@ -97,14 +102,25 @@ class CronTool(Tool):
             job_id = str(arguments.get("job_id", "")).strip()
             if not job_id:
                 raise ValueError("job_id is required for action=remove")
-            return json.dumps({"ok": self.api.remove_job(job_id), "action": action, "job_id": job_id})
+            remove_job = self.api.remove_job
+            if inspect.iscoroutinefunction(remove_job):
+                ok = await remove_job(job_id)
+            else:
+                maybe_ok = await asyncio.to_thread(remove_job, job_id)
+                ok = await maybe_ok if inspect.isawaitable(maybe_ok) else maybe_ok
+            return json.dumps({"ok": ok, "action": action, "job_id": job_id})
 
         if action in {"enable", "disable"}:
             job_id = str(arguments.get("job_id", "")).strip()
             if not job_id:
                 raise ValueError("job_id is required for action=enable/disable")
             enabled = action == "enable"
-            ok = self.api.enable_job(job_id, enabled=enabled)
+            enable_job = self.api.enable_job
+            if inspect.iscoroutinefunction(enable_job):
+                ok = await enable_job(job_id, enabled=enabled)
+            else:
+                maybe_ok = await asyncio.to_thread(enable_job, job_id, enabled=enabled)
+                ok = await maybe_ok if inspect.isawaitable(maybe_ok) else maybe_ok
             return json.dumps({"ok": ok, "action": action, "job_id": job_id, "enabled": enabled})
 
         if action == "run":

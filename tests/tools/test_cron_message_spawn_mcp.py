@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 
 from clawlite.core.subagent import SubagentManager
 from clawlite.tools.base import ToolContext
@@ -125,6 +126,43 @@ def test_message_tool() -> None:
         out = await tool.run({"channel": "telegram", "target": "1", "text": "hello"}, ToolContext(session_id="s"))
         assert out.startswith("sent:telegram")
         assert api.calls[-1]["metadata"] is None
+
+    asyncio.run(_scenario())
+
+
+def test_cron_tool_sync_remove_and_enable_run_off_event_loop_thread() -> None:
+    class ThreadAwareCronAPI:
+        async def add_job(self, **_kwargs):  # pragma: no cover - not used in this scenario
+            return "job"
+
+        def list_jobs(self, *, session_id: str):
+            return [{"id": f"job:{session_id}"}]
+
+        def remove_job(self, job_id: str) -> bool:
+            self.remove_thread_id = threading.get_ident()
+            return job_id == "j1"
+
+        def enable_job(self, job_id: str, *, enabled: bool) -> bool:
+            self.enable_thread_id = threading.get_ident()
+            self.enable_enabled = enabled
+            return job_id == "j1"
+
+        async def run_job(self, job_id: str, *, force: bool = True) -> str | None:
+            return None
+
+    async def _scenario() -> None:
+        api = ThreadAwareCronAPI()
+        tool = CronTool(api)
+        loop_thread_id = threading.get_ident()
+
+        removed = json.loads(await tool.run({"action": "remove", "job_id": "j1"}, ToolContext(session_id="s1")))
+        assert removed["ok"] is True
+        assert api.remove_thread_id != loop_thread_id
+
+        enabled = json.loads(await tool.run({"action": "enable", "job_id": "j1"}, ToolContext(session_id="s1")))
+        assert enabled["ok"] is True
+        assert api.enable_enabled is True
+        assert api.enable_thread_id != loop_thread_id
 
     asyncio.run(_scenario())
 
