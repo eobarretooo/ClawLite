@@ -77,9 +77,8 @@ class PassiveChannel(BaseChannel):
         self._running = False
 
     async def send(self, *, target: str, text: str, metadata: dict[str, Any] | None = None) -> str:
-        if not self._running:
-            return f"{self.name}:not_running"
-        return f"{self.name}:queued:{target}:{len(text)}"
+        del target, text, metadata
+        raise RuntimeError(f"{self.name}_not_implemented")
 
 
 async def cancel_task(task: asyncio.Task[Any] | None) -> None:

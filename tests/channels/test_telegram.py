@@ -2132,6 +2132,53 @@ def test_telegram_typing_keepalive_uses_chat_and_thread_context() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 1.0,
+                "typing_timeout_s": 0.5,
+            }
+        )
+
+        started = asyncio.Event()
+
+        class FakeBot:
+            async def send_chat_action(self, **kwargs):
+                del kwargs
+                started.set()
+                await asyncio.sleep(0.5)
+
+            async def send_message(self, **kwargs):
+                return kwargs
+
+        channel.bot = FakeBot()
+        channel._running = True
+        create_task_calls = 0
+        real_create_task = asyncio.create_task
+
+        def _tracking_create_task(coro):
+            nonlocal create_task_calls
+            create_task_calls += 1
+            return real_create_task(coro)
+
+        with patch("clawlite.channels.telegram.asyncio.create_task", side_effect=_tracking_create_task):
+            channel._start_typing_keepalive(chat_id="42")
+            channel._start_typing_keepalive(chat_id="42")
+            await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        assert create_task_calls == 1
+        assert "42" in channel._typing_tasks
+
+        await channel._stop_typing_keepalive(chat_id="42")
+        assert "42" not in channel._typing_tasks
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_typing_auth_breaker_suppresses_repeated_calls_when_open() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(

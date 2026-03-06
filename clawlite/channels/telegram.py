@@ -403,6 +403,7 @@ class TelegramChannel(BaseChannel):
         self.handle_commands = bool(config.get("handle_commands", config.get("handleCommands", True)))
         self._task: asyncio.Task[Any] | None = None
         self._typing_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._typing_start_guard: set[str] = set()
         self._signals: dict[str, int] = {
             "send_retry_count": 0,
             "send_retry_after_count": 0,
@@ -637,6 +638,15 @@ class TelegramChannel(BaseChannel):
         if message_thread_id is None:
             return chat_id
         return f"{chat_id}:{message_thread_id}"
+
+    @staticmethod
+    def _typing_task_is_active(task: asyncio.Task[Any] | None) -> bool:
+        if task is None:
+            return False
+        cancelling = getattr(task, "cancelling", None)
+        if callable(cancelling) and cancelling() > 0:
+            return True
+        return not task.done()
 
     def _on_send_auth_failure(self) -> None:
         was_open = self._send_auth_breaker.is_open
@@ -1005,6 +1015,7 @@ class TelegramChannel(BaseChannel):
             task = self._typing_tasks.get(typing_key)
             if task is asyncio.current_task():
                 self._typing_tasks.pop(typing_key, None)
+            self._typing_start_guard.discard(typing_key)
 
     def _start_typing_keepalive(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
         if not self.typing_enabled or not self._running:
@@ -1012,21 +1023,36 @@ class TelegramChannel(BaseChannel):
         if not chat_id:
             return
         typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
-        task = self._typing_tasks.get(typing_key)
-        if task is not None and not task.done():
+        if typing_key in self._typing_start_guard:
             return
-        self._typing_tasks[typing_key] = asyncio.create_task(
-            self._typing_loop(chat_id=chat_id, message_thread_id=message_thread_id)
-        )
+        task = self._typing_tasks.get(typing_key)
+        if self._typing_task_is_active(task):
+            return
+
+        self._typing_start_guard.add(typing_key)
+        created_task: asyncio.Task[Any] | None = None
+        try:
+            latest_task = self._typing_tasks.get(typing_key)
+            if self._typing_task_is_active(latest_task):
+                return
+            created_task = asyncio.create_task(
+                self._typing_loop(chat_id=chat_id, message_thread_id=message_thread_id)
+            )
+            self._typing_tasks[typing_key] = created_task
+        finally:
+            if created_task is None:
+                self._typing_start_guard.discard(typing_key)
 
     async def _stop_typing_keepalive(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
         typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
         task = self._typing_tasks.pop(typing_key, None)
+        self._typing_start_guard.discard(typing_key)
         await cancel_task(task)
 
     async def _stop_all_typing_keepalive(self) -> None:
         tasks = list(self._typing_tasks.values())
         self._typing_tasks.clear()
+        self._typing_start_guard.clear()
         for task in tasks:
             await cancel_task(task)
 

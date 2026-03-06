@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from clawlite.channels.discord import DiscordChannel
+from clawlite.channels.matrix import MatrixChannel
 from clawlite.channels.slack import SlackChannel
 from clawlite.channels.whatsapp import WhatsAppChannel
 
@@ -65,6 +66,19 @@ def test_outbound_channels_raise_when_not_running(channel, target: str, text: st
     async def _scenario() -> None:
         with pytest.raises(RuntimeError, match=error):
             await channel.send(target=target, text=text)
+
+    asyncio.run(_scenario())
+
+
+def test_passive_channel_send_raises_not_implemented_even_when_running() -> None:
+    async def _scenario() -> None:
+        channel = MatrixChannel(config={})
+        await channel.start()
+
+        with pytest.raises(RuntimeError, match="matrix_not_implemented"):
+            await channel.send(target="room-1", text="hello")
+
+        await channel.stop()
 
     asyncio.run(_scenario())
 
