@@ -18,11 +18,13 @@ class _FakeResponse:
         url: str = "https://example.com",
         status_code: int = 200,
         headers: dict[str, str] | None = None,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         self.text = text
         self.url = url
         self.status_code = status_code
         self.headers = headers or {"content-type": "text/plain"}
+        self.extensions = extensions or {}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -134,6 +136,37 @@ def test_web_fetch_blocks_dns_resolution_drift() -> None:
             assert payload["ok"] is False
             assert payload["error"]["code"] == "blocked_url"
             assert "resolution changed unexpectedly" in payload["error"]["message"]
+
+    asyncio.run(_scenario())
+
+
+def test_web_fetch_blocks_peer_ip_mismatch() -> None:
+    class _FakeNetworkStream:
+        def __init__(self, peername: tuple[str, int]) -> None:
+            self._peername = peername
+
+        def get_extra_info(self, name: str):
+            if name == "peername":
+                return self._peername
+            return None
+
+    async def _scenario() -> None:
+        responses = [
+            _FakeResponse(
+                "ok page",
+                headers={"content-type": "text/plain"},
+                extensions={"network_stream": _FakeNetworkStream(("1.1.1.1", 443))},
+            )
+        ]
+        with patch("clawlite.tools.web.socket.getaddrinfo", side_effect=_public_dns), patch(
+            "httpx.AsyncClient",
+            side_effect=lambda **kwargs: _FakeClient(responses, **kwargs),
+        ):
+            out = await WebFetchTool().run({"url": "https://example.com"}, ToolContext(session_id="s"))
+            payload = json.loads(out)
+            assert payload["ok"] is False
+            assert payload["error"]["code"] == "blocked_url"
+            assert "peer IP mismatch" in payload["error"]["message"]
 
     asyncio.run(_scenario())
 

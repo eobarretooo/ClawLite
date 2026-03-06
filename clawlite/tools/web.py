@@ -137,6 +137,10 @@ class WebFetchTool(Tool):
                 _, post_response_ips, _ = await self._validate_target(current)
                 if hostname_based_target and not _has_ip_overlap(pre_request_ips, post_response_ips):
                     raise ValueError("resolution changed unexpectedly")
+                if hostname_based_target:
+                    peer_ip = _extract_peer_ip(response)
+                    if peer_ip is not None and peer_ip not in pre_request_ips:
+                        raise ValueError("connected peer IP mismatch detected")
                 response.raise_for_status()
                 return response, hops
 
@@ -304,6 +308,60 @@ def _has_ip_overlap(
 
 def _mime_type(raw: str) -> str:
     return str(raw or "").split(";", 1)[0].strip().lower()
+
+
+def _extract_peer_ip(response: httpx.Response) -> ipaddress._BaseAddress | None:
+    extensions = getattr(response, "extensions", None)
+    if not isinstance(extensions, dict):
+        return None
+
+    stream = extensions.get("network_stream")
+    if stream is None:
+        return None
+
+    for key in ("socket", "ssl_object", "peername"):
+        candidate = _extract_ip_from_extra_info(stream, key)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _extract_ip_from_extra_info(stream: Any, key: str) -> ipaddress._BaseAddress | None:
+    getter = getattr(stream, "get_extra_info", None)
+    if not callable(getter):
+        return None
+    try:
+        value = getter(key)
+    except Exception:
+        return None
+    return _coerce_extra_info_to_ip(value)
+
+
+def _coerce_extra_info_to_ip(value: Any) -> ipaddress._BaseAddress | None:
+    if value is None:
+        return None
+    if isinstance(value, tuple) and value:
+        host = str(value[0])
+        return _ip_literal(host)
+
+    family_getter = getattr(value, "family", None)
+    if family_getter is not None:
+        for getter_name in ("getpeername",):
+            getter = getattr(value, getter_name, None)
+            if callable(getter):
+                try:
+                    peer = getter()
+                except Exception:
+                    peer = None
+                if isinstance(peer, tuple) and peer:
+                    host = str(peer[0])
+                    ip = _ip_literal(host)
+                    if ip is not None:
+                        return ip
+
+    if isinstance(value, str):
+        return _ip_literal(value)
+    return None
 
 
 def _extract_content(*, response: httpx.Response, mode: str, mime_type: str) -> tuple[str, str]:
