@@ -421,7 +421,7 @@ class CronService:
                     continue
                 if next_run > now:
                     continue
-                claimed = self._try_claim_due_job(job.id, now)
+                claimed = await asyncio.to_thread(self._try_claim_due_job, job.id, now)
                 if claimed is None:
                     continue
                 callback_failed = False
@@ -443,7 +443,8 @@ class CronService:
                         claimed.consecutive_failures = int(claimed.consecutive_failures or 0) + 1
                         self._diag["job_failure_count"] = int(self._diag.get("job_failure_count", 0) or 0) + 1
                         logger.error("cron job failed id={} session={} error={}", claimed.id, claimed.session_id, exc)
-                committed = self._commit_job_result(
+                committed = await asyncio.to_thread(
+                    self._commit_job_result,
                     job_id=claimed.id,
                     lease_token=claimed.lease_token,
                     now=now,
@@ -453,7 +454,7 @@ class CronService:
                 if not committed:
                     continue
             if changed:
-                self._save()
+                await asyncio.to_thread(self._save)
             await asyncio.sleep(1)
 
     def list_jobs(self, *, session_id: str | None = None) -> list[dict[str, Any]]:

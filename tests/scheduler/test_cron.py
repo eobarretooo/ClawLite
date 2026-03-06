@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -170,6 +172,17 @@ def test_cron_loop_survives_callback_failure_and_tracks_job_health(tmp_path: Pat
         await service.start(_on_job)
         await asyncio.wait_for(completed.wait(), timeout=3.0)
 
+        async def _wait_for_committed_run() -> None:
+            deadline = asyncio.get_running_loop().time() + 1.0
+            while asyncio.get_running_loop().time() < deadline:
+                current = service.get_job(job_id)
+                if current is not None and current.run_count >= 2:
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("timed out waiting for committed cron run")
+
+        await _wait_for_committed_run()
+
         status_running = service.status()
         job = service.get_job(job_id)
         assert status_running["running"] is True
@@ -330,5 +343,54 @@ def test_cron_stale_lease_is_recovered(tmp_path: Path) -> None:
 
         status = recovering.status()
         assert status["lease_stale_recovered"] >= 1
+
+    asyncio.run(_scenario())
+
+
+def test_cron_loop_claim_path_does_not_block_event_loop(monkeypatch, tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        service = CronService(tmp_path / "cron.json")
+        job_id = await service.add_job(session_id="s1", expression="every 60", prompt="slow-claim")
+        job = service.get_job(job_id)
+        assert job is not None
+        job.next_run_iso = (service._now() - timedelta(seconds=1)).isoformat()
+        service._save()
+
+        original_claim = service._try_claim_due_job
+        claim_started = threading.Event()
+        claim_finished = threading.Event()
+        ticker_steps = 0
+        executed = asyncio.Event()
+
+        def _slow_claim(job_id: str, now):
+            claim_started.set()
+            time.sleep(0.3)
+            try:
+                return original_claim(job_id, now)
+            finally:
+                claim_finished.set()
+
+        async def _on_job(_job):
+            executed.set()
+            return "ok"
+
+        async def _ticker() -> int:
+            nonlocal ticker_steps
+            while not claim_started.is_set():
+                await asyncio.sleep(0.01)
+            while not claim_finished.is_set():
+                ticker_steps += 1
+                await asyncio.sleep(0.01)
+            return ticker_steps
+
+        monkeypatch.setattr(service, "_try_claim_due_job", _slow_claim)
+
+        ticker_task = asyncio.create_task(_ticker())
+        await service.start(_on_job)
+        await asyncio.wait_for(executed.wait(), timeout=4.0)
+        await asyncio.wait_for(ticker_task, timeout=2.0)
+        await service.stop()
+
+        assert ticker_steps > 0
 
     asyncio.run(_scenario())
