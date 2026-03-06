@@ -1157,6 +1157,190 @@ class AgentEngine:
             return block
         return f"{clean_text}\n\n{block}"
 
+    @staticmethod
+    def _subagent_target_session_ids(runs: list[Any]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for run in runs:
+            metadata = dict(getattr(run, "metadata", {}) or {})
+            target_session_id = str(metadata.get("target_session_id", "") or "").strip()
+            if not target_session_id or target_session_id in seen:
+                continue
+            seen.add(target_session_id)
+            out.append(target_session_id)
+        return out
+
+    @staticmethod
+    def _subagent_target_user_ids(runs: list[Any]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for run in runs:
+            metadata = dict(getattr(run, "metadata", {}) or {})
+            target_user_id = str(metadata.get("target_user_id", "") or "").strip()
+            if not target_user_id or target_user_id in seen:
+                continue
+            seen.add(target_user_id)
+            out.append(target_user_id)
+        return out
+
+    @classmethod
+    def _subagent_digest_memory_text(cls, *, session_id: str, digest: str, target_session_ids: list[str]) -> str:
+        clean_digest = str(digest or "").strip()
+        if not clean_digest:
+            return ""
+        parts = [f"Subagent execution digest for session {session_id}."]
+        if target_session_ids:
+            parts.append(f"Delegated sessions: {', '.join(target_session_ids[:4])}.")
+        parts.append(clean_digest)
+        return "\n".join(part for part in parts if part).strip()
+
+    @staticmethod
+    def _subagent_digest_happened_at(runs: list[Any]) -> str:
+        latest = ""
+        for run in runs:
+            candidate = str(getattr(run, "finished_at", "") or "").strip()
+            if candidate and candidate > latest:
+                latest = candidate
+        return latest
+
+    async def _persist_subagent_digest_memory(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        runs: list[Any],
+        digest: str,
+        run_log: Any,
+        allow_memory_write: bool,
+    ) -> None:
+        source = f"subagent-digest:{session_id}"
+        if not allow_memory_write:
+            for run in runs:
+                run_metadata = getattr(run, "metadata", None)
+                if not isinstance(run_metadata, dict):
+                    continue
+                run_metadata["digest_memory_persisted"] = False
+                run_metadata["digest_memory_source"] = source
+                run_metadata["digest_memory_error"] = "blocked_by_memory_policy"
+            return
+        clean_digest = str(digest or "").strip()
+        if not clean_digest:
+            return
+
+        target_session_ids = self._subagent_target_session_ids(runs)
+        target_user_ids = self._subagent_target_user_ids(runs)
+        text = self._subagent_digest_memory_text(
+            session_id=session_id,
+            digest=clean_digest,
+            target_session_ids=target_session_ids,
+        )
+        if not text:
+            return
+
+        digest_id = hashlib.sha256(clean_digest.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        metadata: dict[str, Any] = {
+            "subagent_digest": True,
+            "subagent_digest_id": digest_id,
+            "subagent_parent_session_id": session_id,
+            "subagent_target_sessions": target_session_ids,
+            "subagent_target_user_ids": target_user_ids,
+            "subagent_run_ids": [
+                str(getattr(run, "run_id", "") or "").strip()
+                for run in runs
+                if str(getattr(run, "run_id", "") or "").strip()
+            ],
+            "skip_profile_sync": True,
+        }
+        if channel:
+            metadata["channel"] = channel
+        share_scopes = sorted(
+            {
+                str(dict(getattr(run, "metadata", {}) or {}).get("share_scope", "") or "").strip()
+                for run in runs
+                if str(dict(getattr(run, "metadata", {}) or {}).get("share_scope", "") or "").strip()
+            }
+        )
+        if share_scopes:
+            metadata["subagent_share_scopes"] = share_scopes
+        persist_user_id = target_user_ids[0] if len(target_user_ids) == 1 else user_id
+
+        persisted = False
+        error_text = ""
+        record_id = ""
+        happened_at = self._subagent_digest_happened_at(runs)
+        memorize_fn = getattr(self.memory, "memorize", None)
+        if callable(memorize_fn):
+            try:
+                memorize_kwargs: dict[str, Any] = {
+                    "text": text,
+                    "source": source,
+                    "metadata": metadata,
+                }
+                if self._accepts_parameter(memorize_fn, "user_id"):
+                    memorize_kwargs["user_id"] = persist_user_id
+                if self._accepts_parameter(memorize_fn, "shared"):
+                    memorize_kwargs["shared"] = False
+                if self._accepts_parameter(memorize_fn, "reasoning_layer"):
+                    memorize_kwargs["reasoning_layer"] = "outcome"
+                if self._accepts_parameter(memorize_fn, "memory_type"):
+                    memorize_kwargs["memory_type"] = "event"
+                if happened_at and self._accepts_parameter(memorize_fn, "happened_at"):
+                    memorize_kwargs["happened_at"] = happened_at
+                result = memorize_fn(**memorize_kwargs)
+                if inspect.isawaitable(result):
+                    result = await result
+                if isinstance(result, dict):
+                    status = str(result.get("status", "") or "").strip().lower()
+                    persisted = status == "ok"
+                    record = result.get("record")
+                    if isinstance(record, dict):
+                        record_id = str(record.get("id", "") or "").strip()
+                    if status and status != "ok":
+                        error_text = status
+            except Exception as exc:
+                error_text = str(exc)
+        else:
+            add_fn = getattr(self.memory, "add", None)
+            if callable(add_fn):
+                try:
+                    add_kwargs: dict[str, Any] = {
+                        "source": source,
+                        "metadata": metadata,
+                    }
+                    if self._accepts_parameter(add_fn, "user_id"):
+                        add_kwargs["user_id"] = persist_user_id
+                    if self._accepts_parameter(add_fn, "shared"):
+                        add_kwargs["shared"] = False
+                    if self._accepts_parameter(add_fn, "reasoning_layer"):
+                        add_kwargs["reasoning_layer"] = "outcome"
+                    if self._accepts_parameter(add_fn, "memory_type"):
+                        add_kwargs["memory_type"] = "event"
+                    if happened_at and self._accepts_parameter(add_fn, "happened_at"):
+                        add_kwargs["happened_at"] = happened_at
+                    record = add_fn(text, **add_kwargs)
+                    persisted = True
+                    record_id = str(getattr(record, "id", "") or "").strip()
+                except Exception as exc:
+                    error_text = str(exc)
+
+        for run in runs:
+            run_metadata = getattr(run, "metadata", None)
+            if not isinstance(run_metadata, dict):
+                continue
+            run_metadata["digest_memory_persisted"] = persisted
+            run_metadata["digest_memory_source"] = source
+            if record_id:
+                run_metadata["digest_memory_record_id"] = record_id
+            if error_text:
+                run_metadata["digest_memory_error"] = error_text[:240]
+        if not persisted and error_text:
+            run_log.warning(
+                "subagent digest memory persist failed session={} error={}",
+                session_id or "-",
+                error_text,
+            )
+
     @classmethod
     def _subagent_memory_query(cls, run: Any) -> str:
         task = " ".join(str(getattr(run, "task", "") or "").split()).strip()
@@ -1256,6 +1440,9 @@ class AgentEngine:
         *,
         final: ProviderResult,
         session_id: str,
+        user_id: str,
+        channel: str,
+        allow_memory_write: bool,
         run_log: Any,
     ) -> ProviderResult:
         list_fn = getattr(self.subagents, "list_completed_unsynthesized", None)
@@ -1297,6 +1484,16 @@ class AgentEngine:
 
         if not digest:
             return final
+
+        await self._persist_subagent_digest_memory(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            runs=completed_runs,
+            digest=digest,
+            run_log=run_log,
+            allow_memory_write=allow_memory_write,
+        )
 
         updated = ProviderResult(
             text=self._append_subagent_digest(final.text, digest),
@@ -1875,7 +2072,15 @@ class AgentEngine:
                 model="engine/fallback",
             )
 
-        final = await self._inject_subagent_digest(final=final, session_id=session_id, run_log=run_log)
+        allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
+        final = await self._inject_subagent_digest(
+            final=final,
+            session_id=session_id,
+            user_id=runtime_chat_id,
+            channel=runtime_channel,
+            allow_memory_write=allow_memory_write,
+            run_log=run_log,
+        )
         final = ProviderResult(
             text=self._normalize_identity_output(user_text=user_text, output_text=final.text),
             tool_calls=list(final.tool_calls),
@@ -1886,7 +2091,6 @@ class AgentEngine:
         if not graceful_error:
             self.sessions.append(session_id, "assistant", final.text)
             memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
-            allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
             remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
             if callable(remember_working_set_fn):
                 base_working_kwargs: dict[str, Any] = {

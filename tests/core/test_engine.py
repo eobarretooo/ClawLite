@@ -213,6 +213,85 @@ class FakeMemoryWithWorkingSetCapture(FakeMemory):
         )
 
 
+class FakeMemoryWithSubagentDigestPersistence(FakeMemory):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.retrieve_calls: list[dict[str, Any]] = []
+        self.memorize_calls: list[dict[str, Any]] = []
+        self.allow_memory_write = True
+
+    def integration_policy(self, actor: str, *, session_id: str = "") -> dict[str, Any]:
+        del actor, session_id
+        return {"allow_memory_write": self.allow_memory_write}
+
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        method: str = "rag",
+        user_id: str = "",
+        session_id: str = "",
+        include_shared: bool = False,
+    ) -> dict[str, Any]:
+        self.retrieve_calls.append(
+            {
+                "query": query,
+                "limit": limit,
+                "method": method,
+                "user_id": user_id,
+                "session_id": session_id,
+                "include_shared": include_shared,
+            }
+        )
+        return {
+            "status": "ok",
+            "hits": [],
+            "episodic_digest": {
+                "session_id": session_id,
+                "count": 1,
+                "summary": f"current:{session_id} -> blocker triaged",
+            },
+        }
+
+    async def memorize(
+        self,
+        *,
+        messages=None,
+        text: str | None = None,
+        source: str = "session",
+        user_id: str = "",
+        shared: bool = False,
+        metadata: dict[str, Any] | None = None,
+        reasoning_layer: str | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
+    ) -> dict[str, Any]:
+        self.memorize_calls.append(
+            {
+                "messages": messages,
+                "text": text,
+                "source": source,
+                "user_id": user_id,
+                "shared": shared,
+                "metadata": dict(metadata or {}),
+                "reasoning_layer": reasoning_layer,
+                "memory_type": memory_type,
+                "happened_at": happened_at,
+            }
+        )
+        return {
+            "status": "ok",
+            "record": {
+                "id": f"rec-{len(self.memorize_calls)}",
+                "text": str(text or ""),
+                "source": source,
+                "created_at": "2026-03-06T00:00:00+00:00",
+                "category": "context",
+            },
+        }
+
+
 class FakeMemoryWithPolicySearch(FakeMemory):
     def __init__(self, rows: list[MemoryRecord] | None = None, *, search_limit: int = 6) -> None:
         super().__init__(rows)
@@ -275,42 +354,6 @@ class FakeMemoryWithProfileHint(FakeMemory):
         )
 
 
-class FakeMemoryWithSubagentRetrieve(FakeMemory):
-    def __init__(self) -> None:
-        super().__init__([])
-        self.retrieve_calls: list[dict[str, Any]] = []
-
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        limit: int = 5,
-        method: str = "rag",
-        user_id: str = "",
-        session_id: str = "",
-        include_shared: bool = False,
-    ) -> dict[str, Any]:
-        self.retrieve_calls.append(
-            {
-                "query": query,
-                "limit": limit,
-                "method": method,
-                "user_id": user_id,
-                "session_id": session_id,
-                "include_shared": include_shared,
-            }
-        )
-        return {
-            "status": "ok",
-            "hits": [],
-            "episodic_digest": {
-                "session_id": session_id,
-                "count": 1,
-                "summary": f"current:{session_id} -> blocker triaged",
-            },
-        }
-
-
 class FakeSubagentManagerForDigest:
     def __init__(self) -> None:
         self.list_calls = 0
@@ -336,10 +379,14 @@ class FakeSubagentManagerForDigest:
 
 
 class FakeSubagentManagerForDigestWithTargetSession(FakeSubagentManagerForDigest):
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_runs: list[SubagentRun] = []
+
     def list_completed_unsynthesized(self, session_id: str, limit: int = 8) -> list[SubagentRun]:
         self.list_calls += 1
         del limit
-        return [
+        self.last_runs = [
             SubagentRun(
                 run_id="run-0987654321",
                 session_id=session_id,
@@ -354,6 +401,7 @@ class FakeSubagentManagerForDigestWithTargetSession(FakeSubagentManagerForDigest
                 },
             )
         ]
+        return self.last_runs
 
 
 class FakeSubagentSynthesizer:
@@ -856,7 +904,7 @@ def test_engine_enriches_subagent_digest_with_target_session_memory() -> None:
     async def _scenario() -> None:
         subagents = FakeSubagentManagerForDigestWithTargetSession()
         synthesizer = FakeSubagentSynthesizerWithMemoryContext()
-        memory = FakeMemoryWithSubagentRetrieve()
+        memory = FakeMemoryWithSubagentDigestPersistence()
         engine = AgentEngine(
             provider=FakePromptCaptureProvider(),
             tools=FakeTools(),
@@ -876,8 +924,25 @@ def test_engine_enriches_subagent_digest_with_target_session_memory() -> None:
         assert memory.retrieve_calls[0]["session_id"] == "cli:owner:subagent"
         assert memory.retrieve_calls[0]["include_shared"] is True
         assert "collect" in str(memory.retrieve_calls[0]["query"])
+        digest_rows = [row for row in memory.memorize_calls if row["source"] == "subagent-digest:cli:owner"]
+        assert len(digest_rows) == 1
+        digest_row = digest_rows[0]
+        assert digest_row["user_id"] == "u-1"
+        assert digest_row["shared"] is False
+        assert digest_row["reasoning_layer"] == "outcome"
+        assert digest_row["memory_type"] == "event"
+        assert digest_row["happened_at"] == "2026-03-05T12:05:00+00:00"
+        assert "Subagent execution digest for session cli:owner." in str(digest_row["text"])
+        assert "Delegated sessions: cli:owner:subagent." in str(digest_row["text"])
+        assert digest_row["metadata"]["subagent_digest"] is True
+        assert digest_row["metadata"]["subagent_parent_session_id"] == "cli:owner"
+        assert digest_row["metadata"]["subagent_target_sessions"] == ["cli:owner:subagent"]
+        assert digest_row["metadata"]["subagent_run_ids"] == ["run-0987654321"]
+        assert digest_row["metadata"]["skip_profile_sync"] is True
         assert synthesizer.calls == 1
         assert synthesizer.metadata_snapshots[0]["episodic_digest_summary"] == "current:cli:owner:subagent -> blocker triaged"
+        assert subagents.last_runs[0].metadata["digest_memory_persisted"] is True
+        assert subagents.last_runs[0].metadata["digest_memory_source"] == "subagent-digest:cli:owner"
 
     asyncio.run(_scenario())
 
@@ -1142,6 +1207,33 @@ def test_engine_skips_memory_persistence_when_integration_policy_blocks_write() 
         assert out.text == "ok"
         assert memory.memorize_calls == []
         assert memory.consolidate_calls == 0
+
+    asyncio.run(_scenario())
+
+
+def test_engine_skips_subagent_digest_memory_promotion_when_policy_blocks_write() -> None:
+    async def _scenario() -> None:
+        subagents = FakeSubagentManagerForDigestWithTargetSession()
+        synthesizer = FakeSubagentSynthesizerWithMemoryContext()
+        memory = FakeMemoryWithSubagentDigestPersistence()
+        memory.allow_memory_write = False
+        engine = AgentEngine(
+            provider=FakePromptCaptureProvider(),
+            tools=FakeTools(),
+            memory=memory,
+            subagents=subagents,
+            synthesizer=synthesizer,
+        )
+
+        out = await engine.run(session_id="cli:owner", user_text="hello")
+        assert out.text.count("[Subagent Digest]") == 1
+        assert "current:cli:owner:subagent -> blocker triaged" in out.text
+        assert memory.retrieve_calls
+        digest_rows = [row for row in memory.memorize_calls if row["source"] == "subagent-digest:cli:owner"]
+        assert digest_rows == []
+        assert subagents.last_runs[0].metadata["digest_memory_persisted"] is False
+        assert subagents.last_runs[0].metadata["digest_memory_source"] == "subagent-digest:cli:owner"
+        assert subagents.last_runs[0].metadata["digest_memory_error"] == "blocked_by_memory_policy"
 
     asyncio.run(_scenario())
 
