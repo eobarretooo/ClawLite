@@ -43,6 +43,58 @@ def test_message_queue_subscription() -> None:
     asyncio.run(_scenario())
 
 
+def test_message_queue_subscription_applies_backpressure_when_subscriber_queue_full() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue(subscriber_queue_maxsize=1)
+
+        q1: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=1)
+        q2: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=1)
+        bus._topics["telegram"] = [q1, q2]
+
+        await q1.put(InboundEvent(channel="telegram", session_id="seed", user_id="u0", text="seed"))
+        await q2.put(InboundEvent(channel="telegram", session_id="seed", user_id="u0", text="seed"))
+
+        blocked = asyncio.create_task(
+            bus.publish_inbound(InboundEvent(channel="telegram", session_id="s1", user_id="u1", text="blocked"))
+        )
+        await asyncio.sleep(0)
+        assert blocked.done() is False
+
+        q1.get_nowait()
+        q2.get_nowait()
+        await asyncio.wait_for(blocked, timeout=1)
+
+        delivered_1 = await asyncio.wait_for(q1.get(), timeout=1)
+        delivered_2 = await asyncio.wait_for(q2.get(), timeout=1)
+        assert delivered_1.text == "blocked"
+        assert delivered_2.text == "blocked"
+
+    asyncio.run(_scenario())
+
+
+def test_message_queue_publish_inbound_uses_snapshot_when_topics_mutate() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        q1: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=1)
+        q2: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=1)
+        bus._topics["telegram"] = [q1, q2]
+
+        await q1.put(InboundEvent(channel="telegram", session_id="seed", user_id="u0", text="seed"))
+        event = InboundEvent(channel="telegram", session_id="s1", user_id="u1", text="hello")
+
+        publish_task = asyncio.create_task(bus.publish_inbound(event))
+        await asyncio.sleep(0)
+
+        bus._topics["telegram"].remove(q2)
+        q1.get_nowait()
+        await asyncio.wait_for(publish_task, timeout=1)
+
+        delivered = await asyncio.wait_for(q2.get(), timeout=1)
+        assert delivered.text == "hello"
+
+    asyncio.run(_scenario())
+
+
 def test_message_queue_dead_letter_roundtrip() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()
@@ -242,5 +294,24 @@ def test_message_queue_dead_letter_recent_snapshot_is_bounded_ordered_and_saniti
         assert recent[-1]["session_id"] == "s2"
 
         assert bus.stats()["dead_letter_recent"] == recent
+
+    asyncio.run(_scenario())
+
+
+def test_message_queue_stop_events_are_pruned_by_ttl() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue(stop_event_ttl_s=0.05)
+        ev1 = bus.stop_event("s1")
+        assert ev1.is_set() is False
+        assert bus.stats()["stop_sessions"] == 1
+
+        await asyncio.sleep(0.08)
+        ev2 = bus.stop_event("s2")
+        assert ev2.is_set() is False
+
+        stats = bus.stats()
+        assert stats["stop_sessions"] == 1
+        assert "s1" not in bus._stop_events
+        assert "s2" in bus._stop_events
 
     asyncio.run(_scenario())

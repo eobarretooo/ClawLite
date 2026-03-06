@@ -1,23 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections import defaultdict
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 from typing import AsyncIterator
 
 from clawlite.bus.events import InboundEvent, OutboundEvent
 
 
+DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE = 256
+DEFAULT_STOP_EVENT_TTL_S = 6 * 60 * 60
+
+
 class MessageQueue:
     """Lightweight in-process message bus with topic subscriptions."""
 
-    def __init__(self, maxsize: int = 1000) -> None:
+    def __init__(
+        self,
+        maxsize: int = 1000,
+        subscriber_queue_maxsize: int = DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE,
+        stop_event_ttl_s: float = DEFAULT_STOP_EVENT_TTL_S,
+    ) -> None:
         self._inbound: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._outbound: asyncio.Queue[OutboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._dead_letter: asyncio.Queue[OutboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._topics: dict[str, list[asyncio.Queue[InboundEvent]]] = defaultdict(list)
-        self._stop_events: dict[str, asyncio.Event] = {}
+        self._subscriber_queue_maxsize = max(1, int(subscriber_queue_maxsize or 1))
+        self._outbound_created_at: deque[str] = deque()
+        self._dead_letter_events: deque[OutboundEvent] = deque()
+        self._stop_event_ttl_s = max(0.01, float(stop_event_ttl_s or 0.01))
+        self._stop_events: dict[str, tuple[asyncio.Event, float]] = {}
         self._inbound_published = 0
         self._outbound_enqueued = 0
         self._outbound_dropped = 0
@@ -29,11 +44,9 @@ class MessageQueue:
         self._dead_letter_reason_counts: dict[str, int] = defaultdict(int)
 
     @staticmethod
-    def _oldest_age_seconds(queue: asyncio.Queue[Any]) -> float | None:
-        snapshot = list(getattr(queue, "_queue", []))
+    def _oldest_age_seconds(snapshot: list[str]) -> float | None:
         oldest: datetime | None = None
-        for item in snapshot:
-            raw = getattr(item, "created_at", "")
+        for raw in snapshot:
             try:
                 stamp = datetime.fromisoformat(str(raw))
             except Exception:
@@ -52,7 +65,7 @@ class MessageQueue:
         if bounded_limit == 0:
             return []
 
-        snapshot = list(getattr(self._dead_letter, "_queue", []))
+        snapshot = list(self._dead_letter_events)
         indexed = list(enumerate(snapshot))
         indexed.sort(key=lambda item: (str(getattr(item[1], "created_at", "")), item[0]), reverse=True)
 
@@ -80,12 +93,13 @@ class MessageQueue:
     async def publish_inbound(self, event: InboundEvent) -> None:
         await self._inbound.put(event)
         self._inbound_published += 1
-        for queue in self._topics.get(event.channel, []):
+        for queue in tuple(self._topics.get(event.channel, ())):
             await queue.put(event)
 
     async def publish_outbound(self, event: OutboundEvent) -> None:
         try:
             self._outbound.put_nowait(event)
+            self._outbound_created_at.append(str(event.created_at))
             self._outbound_enqueued += 1
         except asyncio.QueueFull:
             self._outbound_dropped += 1
@@ -94,13 +108,26 @@ class MessageQueue:
         return await self._inbound.get()
 
     async def next_outbound(self) -> OutboundEvent:
-        return await self._outbound.get()
+        event = await self._outbound.get()
+        if self._outbound_created_at:
+            self._outbound_created_at.popleft()
+        return event
 
     async def publish_dead_letter(self, event: OutboundEvent) -> None:
-        await self._dead_letter.put(event)
+        await self._enqueue_dead_letter(event)
         self._dead_letter_enqueued += 1
         reason = str(event.dead_letter_reason or "unknown")
         self._dead_letter_reason_counts[reason] += 1
+
+    async def _enqueue_dead_letter(self, event: OutboundEvent) -> None:
+        await self._dead_letter.put(event)
+        self._dead_letter_events.append(event)
+
+    def _dequeue_dead_letter_nowait(self) -> OutboundEvent:
+        event = self._dead_letter.get_nowait()
+        if self._dead_letter_events:
+            self._dead_letter_events.popleft()
+        return event
 
     @staticmethod
     def _dead_letter_matches(
@@ -144,7 +171,7 @@ class MessageQueue:
         size = self._dead_letter.qsize()
         for _ in range(size):
             try:
-                dead = self._dead_letter.get_nowait()
+                dead = self._dequeue_dead_letter_nowait()
             except asyncio.QueueEmpty:
                 break
             scanned += 1
@@ -195,7 +222,7 @@ class MessageQueue:
             replayed_by_channel[dead.channel] += 1
 
         for dead in to_keep:
-            await self._dead_letter.put(dead)
+            await self._enqueue_dead_letter(dead)
 
         return {
             "scanned": scanned,
@@ -209,10 +236,13 @@ class MessageQueue:
         }
 
     async def next_dead_letter(self) -> OutboundEvent:
-        return await self._dead_letter.get()
+        event = await self._dead_letter.get()
+        if self._dead_letter_events:
+            self._dead_letter_events.popleft()
+        return event
 
     async def subscribe(self, channel: str) -> AsyncIterator[InboundEvent]:
-        queue: asyncio.Queue[InboundEvent] = asyncio.Queue()
+        queue: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=self._subscriber_queue_maxsize)
         self._topics[channel].append(queue)
         try:
             while True:
@@ -220,34 +250,46 @@ class MessageQueue:
         finally:
             self._topics[channel].remove(queue)
 
+    def _prune_stop_events(self) -> None:
+        cutoff = monotonic() - self._stop_event_ttl_s
+        stale = [session_id for session_id, (_, touched_at) in self._stop_events.items() if touched_at < cutoff]
+        for session_id in stale:
+            self._stop_events.pop(session_id, None)
+
     def stop_event(self, session_id: str) -> asyncio.Event:
+        self._prune_stop_events()
         normalized = str(session_id or "").strip()
         if not normalized:
             return asyncio.Event()
-        event = self._stop_events.get(normalized)
-        if event is None:
+        entry = self._stop_events.get(normalized)
+        if entry is None:
             event = asyncio.Event()
-            self._stop_events[normalized] = event
+        else:
+            event = entry[0]
+        self._stop_events[normalized] = (event, monotonic())
         return event
 
     def request_stop(self, session_id: str) -> bool:
+        self._prune_stop_events()
         normalized = str(session_id or "").strip()
         if not normalized:
             return False
-        self.stop_event(normalized).set()
+        event = self.stop_event(normalized)
+        event.set()
+        self._stop_events[normalized] = (event, monotonic())
         return True
 
     def clear_stop(self, session_id: str) -> None:
+        self._prune_stop_events()
         normalized = str(session_id or "").strip()
         if not normalized:
             return
-        event = self._stop_events.get(normalized)
-        if event is not None:
-            event.clear()
-            if not event.is_set():
-                self._stop_events.pop(normalized, None)
+        entry = self._stop_events.pop(normalized, None)
+        if entry is not None:
+            entry[0].clear()
 
     def stats(self) -> dict[str, Any]:
+        self._prune_stop_events()
         out: dict[str, Any] = {
             "inbound_size": self._inbound.qsize(),
             "inbound_published": self._inbound_published,
@@ -265,10 +307,12 @@ class MessageQueue:
             "topics": sum(len(v) for v in self._topics.values()),
             "stop_sessions": len(self._stop_events),
         }
-        outbound_oldest_age_s = self._oldest_age_seconds(self._outbound)
+        outbound_oldest_age_s = self._oldest_age_seconds(list(self._outbound_created_at))
         if outbound_oldest_age_s is not None:
             out["outbound_oldest_age_s"] = outbound_oldest_age_s
-        dead_letter_oldest_age_s = self._oldest_age_seconds(self._dead_letter)
+        dead_letter_oldest_age_s = self._oldest_age_seconds(
+            [str(getattr(event, "created_at", "")) for event in self._dead_letter_events]
+        )
         if dead_letter_oldest_age_s is not None:
             out["dead_letter_oldest_age_s"] = dead_letter_oldest_age_s
         return out
