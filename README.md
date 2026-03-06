@@ -1,79 +1,115 @@
-# ClawLite
+# ClawLite ✨
 
-Portable runtime-first autonomous assistant for Linux.
 
-## What ClawLite is
+ClawLite is a **portable, runtime-first autonomous assistant** designed for Linux, focused on CLI and gateway operations. It provides a robust environment for intelligent agents, featuring multi-provider inference routing, an advanced memory subsystem, and scheduling services.
 
-ClawLite is a Python agent runtime centered on CLI + gateway operation:
+---
 
-- FastAPI gateway (`/v1/*` + compatibility aliases under `/api/*`)
-- WebSocket + HTTP chat entrypoints
-- Scheduler services (cron + heartbeat + supervision)
-- Multi-provider inference routing and provider auth lifecycle commands
-- Memory subsystem with diagnostics, versioning, branching, and quality tuning
+## 🚀 Overview
 
-The runtime does not depend on a dashboard UI. The gateway root (`GET /`) serves a minimal static HTML entrypoint for endpoint visibility.
+ClawLite serves as the core of a Python agent system, centered around command-line interface (CLI) and efficient gateway operations. It operates without the need for a graphical dashboard, serving a minimal static HTML entry point for endpoint visibility. Its modular and extensible architecture allows for the creation of autonomous agents with advanced memory, scheduling, and multi-channel interaction capabilities.
 
-## Current status snapshot (through Stage 18)
+### Key Features:
 
-Major shipped capabilities visible in current code/tests:
+*   **FastAPI Gateway**: Provides `/v1/*` endpoints and `/api/*` compatibility aliases for flexible interaction.
+*   **Chat Entrypoints**: Support for both WebSocket and HTTP chat communication.
+*   **Scheduling Services**: Includes cron, heartbeat, and supervision for automation and monitoring.
+*   **Multi-provider Inference Routing**: Manages routing and authentication lifecycle for various inference providers.
+*   **Advanced Memory Subsystem**: Features diagnostics, versioning, branching, and quality tuning for intelligent agent memory.
 
-- Production-grade gateway contract with auth modes (`off|optional|required`), diagnostics, token masking, HTTP/WS telemetry, and compatibility aliases.
-- Runtime scheduler and control-plane paths for heartbeat and cron (`/v1/control/heartbeat/trigger`, `/v1/cron/*`).
-- Provider operations in CLI (`provider login/status/logout/use/set-auth/clear-auth`) and release preflight checks.
-- ClawMemory lifecycle controls (`doctor`, `quality`, snapshot/version/rollback, branches/merge, export/import, privacy/share-optin).
-- Stage 15/16/17/18 memory-quality/autonomy progression:
-  - Stage 15: reasoning-layer quality signals (`fact/hypothesis/decision/outcome`) included in quality state/reporting.
-  - Stage 16: autonomous memory-quality tuning loop with cooldown/rate limits and persisted tuning state.
-  - Stage 17: layer-aware tuning playbooks with action metadata (`playbook_id`, `weakest_layer`, `severity`) and legacy layer alias normalization.
-  - Stage 18: layer-specific execution metadata and telemetry (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`; `actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
+---
 
-## Quickstart
+## 🛠️ Tech Stack
 
-Prerequisite: Python 3.10+.
+*   **Python 3.10+**: Core programming language.
+*   **FastAPI**: High-performance web framework for the gateway.
+*   **WebSocket**: For real-time chat communication.
+*   **CLI (Command Line Interface)**: For agent interaction and control.
+*   **LiteLLM**: For multi-provider inference routing.
 
-1) Install locally
+---
 
-```bash
-pip install -e .
+## 🏗️ Architecture
+
+ClawLite's architecture is modular and well-defined, comprising the following main components:
+
+```text
+clawlite/
+├── core/         # engine, prompt, memory, skills, subagent
+├── tools/        # tool abc, registry, and built-in tools
+├── bus/          # events and async queue
+├── channels/     # manager + channels (full telegram, other adapters)
+├── gateway/      # FastAPI + WebSocket
+├── scheduler/    # cron + heartbeat
+├── providers/    # litellm/custom/codex/transcription
+├── session/      # JSONL store per session
+├── config/       # schema + loader
+├── workspace/    # loader + identity templates
+├── skills/       # built-in markdown skills (SKILL.md)
+├── cli/          # start/run/onboard/cron commands
+└── utils/        # shared helpers
 ```
 
-2) Generate workspace templates / onboarding baseline
+**Main Flow:**
 
-```bash
-clawlite onboard
-# interactive wizard variant:
-clawlite onboard --wizard
-```
+1.  A message enters via `channels` or the `gateway`.
+2.  `core.engine` builds the prompt (workspace + memory + history + skills).
+3.  The provider responds; if tool calls are present, `tools.registry` executes them.
+4.  The final response is delivered first; persistence (`session.store` append + `core.memory` consolidate) runs in best-effort mode and logs degraded storage failures without aborting the turn.
+5.  `scheduler.cron` and `scheduler.heartbeat` trigger proactive runs.
 
-3) Configure provider (example)
+---
 
-```bash
-export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
-export CLAWLITE_LITELLM_API_KEY="<your-key>"
-```
+## ⚡ Quickstart
 
-4) Start gateway
+**Prerequisite:** Python 3.10+
 
-```bash
-clawlite start --host 127.0.0.1 --port 8787
-# alias:
-clawlite gateway --host 127.0.0.1 --port 8787
-```
+Follow these steps to get ClawLite up and running quickly:
 
-5) Send a chat request
+1.  **Install locally:**
 
-```bash
-curl -sS http://127.0.0.1:8787/v1/chat \
-  -H 'content-type: application/json' \
-  -d '{"session_id":"cli:quickstart","text":"hello"}'
-```
+    ```bash
+    pip install -e .
+    ```
 
-If auth mode is required, include bearer token (header or query param, per config).
+2.  **Generate workspace templates / onboarding baseline:**
 
-## Key CLI commands
+    ```bash
+    clawlite onboard
+    # interactive wizard variant:
+    clawlite onboard --wizard
+    ```
 
-Provider + validation:
+3.  **Configure provider (example):**
+
+    ```bash
+    export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
+    export CLAWLITE_LITELLM_API_KEY="<your-key>"
+    ```
+
+4.  **Start the gateway:**
+
+    ```bash
+    clawlite start --host 127.0.0.1 --port 8787
+    # alias:
+    clawlite gateway --host 127.0.0.1 --port 8787
+    ```
+
+5.  **Send a chat request:**
+
+    ```bash
+    curl -sS http://127.0.0.1:8787/v1/chat \
+      -H 'content-type: application/json' \
+      -d '{"session_id":"cli:quickstart","text":"hello"}'
+    ```
+
+    *If auth mode is required, include the bearer token (header or query param, per config).* 
+
+---
+
+## ⚙️ Essential CLI Commands
+
+### Provider & Validation:
 
 ```bash
 clawlite provider status
@@ -84,7 +120,7 @@ clawlite validate config
 clawlite validate preflight --gateway-url http://127.0.0.1:8787
 ```
 
-Diagnostics + memory + scheduler + skills:
+### Diagnostics, Memory, Scheduler & Skills:
 
 ```bash
 clawlite diagnostics --gateway-url http://127.0.0.1:8787
@@ -97,38 +133,63 @@ clawlite skills list
 clawlite skills check
 ```
 
-## Gateway endpoints (v1 + compatibility aliases)
+---
+
+## 🌐 Gateway Endpoints (v1 + Compatibility Aliases)
 
 | Method | Endpoint | Notes |
 |---|---|---|
-| GET | `/` | Minimal static gateway entrypoint (no dashboard dependency) |
-| GET | `/health` | Health/readiness snapshot |
-| GET | `/v1/status` | Control-plane status |
-| GET | `/api/status` | Alias of `/v1/status` |
-| GET | `/v1/diagnostics` | Runtime diagnostics snapshot |
-| GET | `/api/diagnostics` | Alias of `/v1/diagnostics` |
-| POST | `/v1/chat` | Main HTTP chat endpoint |
-| POST | `/api/message` | Alias of `/v1/chat` |
-| GET | `/api/token` | Masked token diagnostics |
-| POST | `/v1/control/heartbeat/trigger` | Trigger heartbeat cycle |
-| POST | `/v1/cron/add` | Create cron job |
-| GET | `/v1/cron/list` | List cron jobs by session |
-| DELETE | `/v1/cron/{job_id}` | Remove cron job |
-| WS | `/v1/ws` | Main WebSocket chat |
-| WS | `/ws` | Alias of `/v1/ws` |
+| `GET` | `/` | Minimal static gateway entrypoint (no dashboard dependency) |
+| `GET` | `/health` | Health/readiness snapshot |
+| `GET` | `/v1/status` | Control-plane status |
+| `GET` | `/api/status` | Alias of `/v1/status` |
+| `GET` | `/v1/diagnostics` | Runtime diagnostics snapshot |
+| `GET` | `/api/diagnostics` | Alias of `/v1/diagnostics` |
+| `POST` | `/v1/chat` | Main HTTP chat endpoint |
+| `POST` | `/api/message` | Alias of `/v1/chat` |
+| `GET` | `/api/token` | Masked token diagnostics |
+| `POST` | `/v1/control/heartbeat/trigger` | Trigger heartbeat cycle |
+| `POST` | `/v1/cron/add` | Create cron job |
+| `GET` | `/v1/cron/list` | List cron jobs by session |
+| `DELETE` | `/v1/cron/{job_id}` | Remove cron job |
+| `WS` | `/v1/ws` | Main WebSocket chat |
+| `WS` | `/ws` | Alias of `/v1/ws` |
 
-## Memory and autonomy highlights
+---
 
-- Hybrid memory retrieval and quality tracking are integrated into runtime diagnostics and CLI operations.
-- Memory quality state persists scoring, drift assessment, recommendations, and tuning history.
-- Tuning loop runs as an autonomous runtime component when enabled, with fail-soft behavior, cooldown, and rate limiting.
-- Layer-aware playbooks pick actions based on drift severity and weakest reasoning layer.
-- Layer-specific execution details are persisted for auditability (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) together with playbook fields.
-- Diagnostics expose tuning telemetry maps and latest action context (`actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
+## 🧠 Memory & Autonomy Highlights
 
-## Testing and CI commands
+*   Hybrid memory retrieval and quality tracking are integrated into runtime diagnostics and CLI operations.
+*   Memory quality state persists scoring, drift assessment, recommendations, and tuning history.
+*   The tuning loop runs as an autonomous runtime component when enabled, with fail-soft behavior, cooldown, and rate limiting.
+*   Layer-aware playbooks select actions based on drift severity and the weakest reasoning layer.
+*   Layer-specific execution details are persisted for auditability (`template_id`, `backfill_limit`, `snapshot_tag`, `action_variant`) along with playbook fields.
+*   Diagnostics expose tuning telemetry maps and the latest action context (`actions_by_layer`, `actions_by_playbook`, `actions_by_action`, `action_status_by_layer`, `last_action_metadata`).
 
-Local checks:
+---
+
+## 💡 Skills
+
+ClawLite uses **Markdown skills (`SKILL.md`)** with automatic discovery. Skills are loaded from sources including `builtin` (repository), `user workspace`, and `local marketplace`, with a deterministic resolution policy for duplicates.
+
+### Current Built-in Skills:
+
+*   `cron`
+*   `memory`
+*   `github`
+*   `summarize`
+*   `skill-creator`
+*   `web-search`
+*   `weather`
+*   `tmux`
+*   `hub`
+*   `clawhub`
+
+---
+
+## 🧪 Testing & CI
+
+### Local Checks:
 
 ```bash
 pytest -q tests
@@ -137,18 +198,38 @@ bash scripts/smoke_test.sh
 clawlite validate preflight --gateway-url http://127.0.0.1:8787
 ```
 
-CI workflows in `.github/workflows/`:
+### CI Workflows (`.github/workflows/`):
 
-- `ci.yml` (pytest matrix, lint, smoke, autonomy contract)
-- `coverage.yml` (pytest + coverage XML)
-- `secret-scan.yml` (gitleaks)
+*   `ci.yml` (pytest matrix, lint, smoke, autonomy contract)
+*   `coverage.yml` (pytest + coverage XML)
+*   `secret-scan.yml` (gitleaks)
 
-## Docs index
+---
 
-- `docs/QUICKSTART.md`
-- `docs/API.md`
-- `docs/ARCHITECTURE.md`
-- `docs/CONFIGURATION.md`
-- `docs/OPERATIONS.md`
-- `docs/SKILLS.md`
-- `docs/TELEGRAM_RELIABILITY_SEMANTICS.md`
+## 🤝 Contributing
+
+Contributions are **highly welcome**! To contribute to ClawLite, please follow the guidelines in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## 📝 License
+
+This project is distributed under the [MIT License](LICENSE). See the `LICENSE` file for more details.
+
+---
+
+## 👤 Authors
+
+*   **eobarretooo** - *Initial Development* - [GitHub](https://github.com/eobarretooo)
+
+---
+
+## 🌟 Acknowledgments
+
+ClawLite is built upon and inspired by several amazing open-source projects:
+
+*   **[Nanobot](https://github.com/HKUDS/nanobot)** - For its innovative approach to autonomous agents.
+*   **[OpenClaw](https://github.com/openclaw/openclaw)** - For providing a solid foundation and inspiration for the runtime.
+*   **[memU](https://github.com/NevaMind-AI/memU)** - For its advanced memory management concepts.
+*   **[awesome-readme](https://github.com/matiassingers/awesome-readme)** - For the design patterns and best practices for creating professional READMEs.
+*   To the entire open-source community for the incredible tools and libraries that make this project possible.
