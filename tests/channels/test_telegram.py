@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import clawlite.channels.telegram as telegram_module
+from clawlite.channels.telegram import markdown_to_telegram_html
 from clawlite.channels.telegram import split_message
 from clawlite.channels.telegram import TelegramCircuitOpenError
 from clawlite.channels.telegram import TelegramChannel
@@ -1157,6 +1159,56 @@ def test_telegram_update_dedupe_state_persists_across_restarts(tmp_path: Path) -
         assert reloaded._remember_update_dedupe_key("update:103", source="polling") is True
 
     asyncio.run(_scenario())
+
+
+def test_telegram_update_dedupe_state_uses_durable_atomic_write(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        dedupe_path = tmp_path / "telegram-dedupe.json"
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+            }
+        )
+        channel._remember_update_dedupe_key("update:201", source="polling")
+
+        fsync_fds: list[int] = []
+        real_fsync = telegram_module.os.fsync
+
+        def _tracking_fsync(fd: int) -> None:
+            fsync_fds.append(fd)
+            real_fsync(fd)
+
+        with patch("clawlite.channels.telegram.os.fsync", side_effect=_tracking_fsync):
+            await channel._persist_update_dedupe_state()
+
+        persisted = json.loads(dedupe_path.read_text(encoding="utf-8"))
+        assert persisted["keys"] == ["update:201"]
+        assert len(fsync_fds) >= 1
+        assert not list(tmp_path.glob("telegram-dedupe.json.tmp*"))
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_markdown_code_tokens_do_not_collide_with_user_text() -> None:
+    markdown = (
+        "prefix \\x00TG_CB_deadbeefdeadbeef\\x00 and \\x00TG_IC_deadbeefdeadbeef\\x00\n\n"
+        "```py\nif x < y and y > z:\n    print(\"ok\")\n```\n"
+        "inline `a < b` tail"
+    )
+
+    rendered = markdown_to_telegram_html(markdown)
+
+    assert "<pre><code>if x &lt; y and y &gt; z:\n    print(\"ok\")\n</code></pre>" in rendered
+    assert "<code>a &lt; b</code>" in rendered
+    assert "\\x00TG_CB_deadbeefdeadbeef\\x00" in rendered
+    assert "\\x00TG_IC_deadbeefdeadbeef\\x00" in rendered
+
+
+def test_telegram_module_import_does_not_call_setup_logging() -> None:
+    source = Path(telegram_module.__file__).read_text(encoding="utf-8")
+    assert "from clawlite.utils.logging import setup_logging" not in source
+    assert "setup_logging()" not in source
 
 
 def test_telegram_send_markdown_falls_back_to_plain_text() -> None:

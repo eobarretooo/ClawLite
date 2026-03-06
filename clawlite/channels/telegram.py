@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import math
+import os
 import random
 import re
 import secrets
@@ -23,7 +24,6 @@ from loguru import logger
 
 from clawlite.channels.base import BaseChannel, cancel_task
 from clawlite.config.schema import TelegramChannelConfig
-from clawlite.utils.logging import setup_logging
 
 MAX_MESSAGE_LEN = 4000
 TELEGRAM_ALLOWED_UPDATES = [
@@ -34,9 +34,6 @@ TELEGRAM_ALLOWED_UPDATES = [
     "channel_post",
     "edited_channel_post",
 ]
-
-setup_logging()
-
 
 @dataclass(slots=True)
 class TelegramRetryPolicy:
@@ -259,19 +256,33 @@ def markdown_to_telegram_html(text: str) -> str:
     if not text:
         return ""
 
-    code_blocks: list[str] = []
+    original_text = text
+    token_map: dict[str, str] = {}
+
+    def _reserve_token(prefix: str) -> str:
+        while True:
+            candidate = f"\x00TG_{prefix}_{secrets.token_hex(8)}\x00"
+            if candidate in token_map:
+                continue
+            if candidate in original_text:
+                continue
+            return candidate
 
     def save_code_block(match: re.Match[str]) -> str:
-        code_blocks.append(match.group(1))
-        return f"\x00CB{len(code_blocks) - 1}\x00"
+        code = match.group(1)
+        token = _reserve_token("CB")
+        escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        token_map[token] = f"<pre><code>{escaped}</code></pre>"
+        return token
 
     text = re.sub(r"```[\w]*\n?([\s\S]*?)```", save_code_block, text)
 
-    inline_codes: list[str] = []
-
     def save_inline_code(match: re.Match[str]) -> str:
-        inline_codes.append(match.group(1))
-        return f"\x00IC{len(inline_codes) - 1}\x00"
+        code = match.group(1)
+        token = _reserve_token("IC")
+        escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        token_map[token] = f"<code>{escaped}</code>"
+        return token
 
     text = re.sub(r"`([^`]+)`", save_inline_code, text)
     text = re.sub(r"^#{1,6}\s+(.+)$", r"\1", text, flags=re.MULTILINE)
@@ -284,13 +295,8 @@ def markdown_to_telegram_html(text: str) -> str:
     text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
     text = re.sub(r"^[-*]\s+", "• ", text, flags=re.MULTILINE)
 
-    for idx, code in enumerate(inline_codes):
-        escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        text = text.replace(f"\x00IC{idx}\x00", f"<code>{escaped}</code>")
-
-    for idx, code in enumerate(code_blocks):
-        escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        text = text.replace(f"\x00CB{idx}\x00", f"<pre><code>{escaped}</code></pre>")
+    for token, rendered in token_map.items():
+        text = text.replace(token, rendered)
 
     return text
 
@@ -512,12 +518,23 @@ class TelegramChannel(BaseChannel):
 
     async def _persist_update_dedupe_state(self) -> None:
         path = self.dedupe_state_path
-        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+        tmp_path = path.with_suffix(f"{path.suffix}.tmp.{secrets.token_hex(4)}")
+        dir_fd: int | None = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             payload = self._dedupe_state_payload()
-            tmp_path.write_text(json.dumps(payload), encoding="utf-8")
-            tmp_path.replace(path)
+            encoded_payload = json.dumps(payload).encode("utf-8")
+            with tmp_path.open("wb") as handle:
+                handle.write(encoded_payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+            try:
+                open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                dir_fd = os.open(str(path.parent), open_flags)
+                os.fsync(dir_fd)
+            except OSError:
+                pass
         except (OSError, TypeError, ValueError) as exc:
             self._signals["update_dedupe_state_save_error_count"] += 1
             logger.debug("telegram dedupe state persist failed path={} error={}", path, exc)
@@ -526,6 +543,12 @@ class TelegramChannel(BaseChannel):
                     tmp_path.unlink()
             except OSError:
                 pass
+        finally:
+            if dir_fd is not None:
+                try:
+                    os.close(dir_fd)
+                except OSError:
+                    pass
 
     def _schedule_dedupe_state_persist(self) -> None:
         try:
