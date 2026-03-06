@@ -57,14 +57,14 @@ def test_run_skill_executes_command_binding(tmp_path: Path) -> None:
 
     async def _scenario() -> None:
         reg = ToolRegistry()
+        reg.register(FakeExecTool())
         tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
         reg.register(tool)
         out = await tool.run(
             {"name": "echo-skill", "input": "hello world"},
             ToolContext(session_id="s1"),
         )
-        assert "exit=0" in out
-        assert "hello world" in out
+        assert out == "exec:echo hello world::"
 
     asyncio.run(_scenario())
 
@@ -181,7 +181,7 @@ def test_run_skill_blocks_oversized_argument_list(tmp_path: Path) -> None:
     asyncio.run(_scenario())
 
 
-def test_run_skill_blocks_dangerous_command_without_exec_tool(tmp_path: Path, monkeypatch) -> None:
+def test_run_skill_blocks_command_when_exec_tool_not_registered(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,
         "dangerous",
@@ -191,16 +191,11 @@ def test_run_skill_blocks_dangerous_command_without_exec_tool(tmp_path: Path, mo
     async def _scenario() -> None:
         reg = ToolRegistry()
         tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
-
-        async def _should_not_run(argv: list[str], *, timeout: float) -> str:  # pragma: no cover
-            raise AssertionError("command spawn should be blocked before execution")
-
-        monkeypatch.setattr(tool, "_run_command", _should_not_run)
         out = await tool.run(
             {"name": "dangerous", "args": ["-rf", "/"]},
             ToolContext(session_id="s7", channel="cli", user_id="u1"),
         )
-        assert out == "skill_blocked:dangerous:blocked_by_policy:deny_pattern"
+        assert out == "skill_blocked:dangerous:exec_tool_not_registered"
 
     asyncio.run(_scenario())
 
@@ -308,13 +303,14 @@ def test_run_skill_allows_execution_when_memory_policy_allows(tmp_path: Path) ->
 
     async def _scenario() -> None:
         reg = ToolRegistry()
+        reg.register(FakeExecTool())
         memory = FakeMemory({"allowed": True})
         tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg, memory=memory)
         out = await tool.run(
             {"name": "echo-skill", "input": "hello"},
             ToolContext(session_id="s8"),
         )
-        assert "exit=0" in out
+        assert out == "exec:echo hello::"
         assert memory.calls == [("skill", "s8")]
 
     asyncio.run(_scenario())

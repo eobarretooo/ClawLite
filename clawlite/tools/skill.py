@@ -8,10 +8,8 @@ from __future__ import annotations
 - `script:` dispatches to built-in tool wrappers or external executables
 """
 
-import asyncio
 import inspect
 import shlex
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -19,7 +17,6 @@ import httpx
 
 from clawlite.core.skills import SkillsLoader
 from clawlite.tools.base import Tool, ToolContext
-from clawlite.tools.exec import ExecTool
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logging import bind_event, setup_logging
 
@@ -128,24 +125,6 @@ class SkillTool(Tool):
             return cls.MAX_TIMEOUT_SECONDS
         return raw
 
-    async def _run_command(self, argv: list[str], *, timeout: float) -> str:
-        if not argv:
-            raise ValueError("empty command")
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            out, err = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
-            return f"skill_exec_timeout:{timeout}s"
-        stdout = out.decode("utf-8", errors="ignore").strip()
-        stderr = err.decode("utf-8", errors="ignore").strip()
-        return f"exit={process.returncode}\nstdout={stdout}\nstderr={stderr}"
-
     @staticmethod
     def _join_command(argv: list[str]) -> str:
         if not argv:
@@ -169,15 +148,6 @@ class SkillTool(Tool):
             if error.startswith("tool_blocked_by_safety_policy:exec:"):
                 return f"skill_blocked:{spec_name}:{error}"
             raise
-
-    async def _run_command_with_local_fallback(self, *, spec_name: str, argv: list[str], timeout: float) -> str:
-        command = self._join_command(argv)
-        if not command:
-            raise ValueError("empty command")
-        guard = ExecTool()._guard_command(command, argv, Path.cwd().resolve())
-        if guard:
-            return f"skill_blocked:{spec_name}:{guard}"
-        return await self._run_command(argv, timeout=timeout)
 
     async def _run_weather(self, arguments: dict[str, Any]) -> str:
         location = str(arguments.get("location") or arguments.get("input") or "").strip()
@@ -255,7 +225,7 @@ class SkillTool(Tool):
             log.info("running skill command skill={}", spec.name)
             if self.registry.get("exec") is not None:
                 return await self._run_command_via_exec_tool(spec_name=spec.name, argv=argv, timeout=timeout, ctx=ctx)
-            return await self._run_command_with_local_fallback(spec_name=spec.name, argv=argv, timeout=timeout)
+            return f"skill_blocked:{spec.name}:exec_tool_not_registered"
 
         if spec.execution_kind == "script":
             log.info("running skill script skill={} script={}", spec.name, spec.execution_target)
