@@ -973,11 +973,38 @@ class ToolLoopDetectionConfig:
 
 
 @dataclass(slots=True)
+class ToolSafetyLayerConfig:
+    risky_tools: list[str] | None = None
+    blocked_channels: list[str] | None = None
+    allowed_channels: list[str] | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> ToolSafetyLayerConfig:
+        data = dict(raw or {})
+
+        def _parse_optional_names(*keys: str) -> list[str] | None:
+            for key in keys:
+                if key in data:
+                    return ToolSafetyPolicyConfig._parse_names(data.get(key))
+            return None
+
+        return cls(
+            risky_tools=_parse_optional_names("risky_tools", "riskyTools"),
+            blocked_channels=_parse_optional_names("blocked_channels", "blockedChannels"),
+            allowed_channels=_parse_optional_names("allowed_channels", "allowedChannels"),
+        )
+
+
+@dataclass(slots=True)
 class ToolSafetyPolicyConfig:
     enabled: bool = True
     risky_tools: list[str] = field(default_factory=lambda: ["exec", "run_skill", "web_fetch", "web_search", "mcp"])
     blocked_channels: list[str] = field(default_factory=list)
     allowed_channels: list[str] = field(default_factory=list)
+    profile: str = ""
+    profiles: dict[str, ToolSafetyLayerConfig] = field(default_factory=dict)
+    by_agent: dict[str, ToolSafetyLayerConfig] = field(default_factory=dict)
+    by_channel: dict[str, ToolSafetyLayerConfig] = field(default_factory=dict)
 
     @staticmethod
     def _parse_names(raw: Any) -> list[str]:
@@ -985,9 +1012,22 @@ class ToolSafetyPolicyConfig:
             return []
         return [str(item).strip().lower() for item in raw if str(item).strip()]
 
+    @staticmethod
+    def _parse_layer_map(raw: Any) -> dict[str, ToolSafetyLayerConfig]:
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, ToolSafetyLayerConfig] = {}
+        for key, value in raw.items():
+            name = str(key or "").strip().lower()
+            if not name or not isinstance(value, dict):
+                continue
+            out[name] = ToolSafetyLayerConfig.from_dict(value)
+        return out
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> ToolSafetyPolicyConfig:
         data = dict(raw or {})
+
         if "riskyTools" in data:
             risky_raw = data.get("riskyTools")
         else:
@@ -1000,11 +1040,31 @@ class ToolSafetyPolicyConfig:
             allowed_raw = data.get("allowedChannels")
         else:
             allowed_raw = data.get("allowed_channels", [])
+
+        profile = str(data.get("profile", "") or "").strip().lower()
+        profiles_raw = data.get("profiles", {})
+        if "by_agent" in data:
+            by_agent_raw = data.get("by_agent")
+        elif "byAgent" in data:
+            by_agent_raw = data.get("byAgent")
+        else:
+            by_agent_raw = data.get("agents", {})
+        if "by_channel" in data:
+            by_channel_raw = data.get("by_channel")
+        elif "byChannel" in data:
+            by_channel_raw = data.get("byChannel")
+        else:
+            by_channel_raw = data.get("channels", {})
+
         return cls(
             enabled=bool(data.get("enabled", True)),
             risky_tools=cls._parse_names(risky_raw),
             blocked_channels=cls._parse_names(blocked_raw),
             allowed_channels=cls._parse_names(allowed_raw),
+            profile=profile,
+            profiles=cls._parse_layer_map(profiles_raw),
+            by_agent=cls._parse_layer_map(by_agent_raw),
+            by_channel=cls._parse_layer_map(by_channel_raw),
         )
 
 

@@ -92,6 +92,50 @@ def test_load_config_tools_safety_custom_and_camel_case(tmp_path: Path) -> None:
     assert cfg.tools.safety.allowed_channels == ["telegram"]
 
 
+def test_load_config_tools_safety_layered_parsing_and_normalization(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "safety": {
+                        "profile": "  TeamA  ",
+                        "profiles": {
+                            " TeamA ": {
+                                "riskyTools": [" Exec ", "", "MCP"],
+                                "blocked_channels": [" Telegram ", ""],
+                                "allowedChannels": [" cli ", ""],
+                            }
+                        },
+                        "agents": {
+                            " Agent-1 ": {
+                                "risky_tools": ["run_skill"],
+                                "blockedChannels": ["Slack"],
+                            }
+                        },
+                        "byChannel": {
+                            " TELEGRAM ": {
+                                "allowed_channels": ["Telegram"],
+                            }
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.tools.safety.profile == "teama"
+    assert cfg.tools.safety.profiles["teama"].risky_tools == ["exec", "mcp"]
+    assert cfg.tools.safety.profiles["teama"].blocked_channels == ["telegram"]
+    assert cfg.tools.safety.profiles["teama"].allowed_channels == ["cli"]
+    assert cfg.tools.safety.by_agent["agent-1"].risky_tools == ["run_skill"]
+    assert cfg.tools.safety.by_agent["agent-1"].blocked_channels == ["slack"]
+    assert cfg.tools.safety.by_agent["agent-1"].allowed_channels is None
+    assert cfg.tools.safety.by_channel["telegram"].allowed_channels == ["telegram"]
+
+
 def test_load_config_web_tool_policy(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(

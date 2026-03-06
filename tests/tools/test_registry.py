@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from clawlite.config.schema import ToolSafetyPolicyConfig
+from clawlite.config.schema import ToolSafetyLayerConfig, ToolSafetyPolicyConfig
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
 
@@ -163,5 +163,85 @@ def test_tool_registry_blocks_run_skill_for_telegram_when_explicitly_configured(
             raise AssertionError("expected safety policy block")
         except RuntimeError as exc:
             assert str(exc) == "tool_blocked_by_safety_policy:run_skill:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_layered_profile_override_changes_effective_risky_tools() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["exec"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+                profile="ops",
+                profiles={
+                    "ops": ToolSafetyLayerConfig(
+                        risky_tools=["run_skill"],
+                    )
+                },
+            )
+        )
+        reg.register(ExecLikeTool())
+        out = await reg.execute("exec", {"command": "id"}, session_id="telegram:1", channel="telegram", user_id="1")
+        assert out == "channel=telegram;user=1"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_layered_agent_override_supersedes_profile_and_global() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["exec"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+                profile="ops",
+                profiles={
+                    "ops": ToolSafetyLayerConfig(
+                        risky_tools=["exec"],
+                        blocked_channels=["telegram"],
+                    )
+                },
+                by_agent={
+                    "alpha": ToolSafetyLayerConfig(
+                        risky_tools=["exec"],
+                        blocked_channels=["slack"],
+                    )
+                },
+            )
+        )
+        reg.register(ExecLikeTool())
+        out = await reg.execute("exec", {"command": "id"}, session_id="agent:alpha:42", channel="telegram", user_id="1")
+        assert out == "channel=telegram;user=1"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_layered_channel_override_supersedes_agent_and_global() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["exec"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+                by_agent={
+                    "alpha": ToolSafetyLayerConfig(
+                        blocked_channels=["telegram"],
+                    )
+                },
+                by_channel={
+                    "telegram": ToolSafetyLayerConfig(
+                        blocked_channels=[],
+                    )
+                },
+            )
+        )
+        reg.register(ExecLikeTool())
+        out = await reg.execute("exec", {"command": "id"}, session_id="agent:alpha:42", channel="telegram", user_id="1")
+        assert out == "channel=telegram;user=1"
 
     asyncio.run(_scenario())
