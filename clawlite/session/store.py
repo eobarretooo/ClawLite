@@ -36,6 +36,8 @@ class SessionStore:
         self.root.mkdir(parents=True, exist_ok=True)
         configured_limit = None if max_messages_per_session is None else int(max_messages_per_session)
         self.max_messages_per_session = configured_limit if configured_limit and configured_limit > 0 else None
+        self._strict_compaction_limit = 64
+        self._session_line_estimates: dict[Path, int] = {}
         self._diagnostics: dict[str, int | str] = {
             "append_attempts": 0,
             "append_retries": 0,
@@ -89,7 +91,12 @@ class SessionStore:
                 self._append_once(path, payload)
                 self._diagnostics["append_success"] = int(self._diagnostics["append_success"]) + 1
                 self._diagnostics["last_error"] = ""
-                self._compact_session_file(path)
+                cached_count = self._session_line_estimates.get(path)
+                if cached_count is None:
+                    self._session_line_estimates[path] = self._get_line_estimate(path)
+                else:
+                    self._session_line_estimates[path] = cached_count + 1
+                self._maybe_compact_session_file(path)
                 return
             except OSError as exc:
                 self._diagnostics["last_error"] = str(exc)
@@ -141,16 +148,78 @@ class SessionStore:
             rewritten = "\n".join(valid_lines)
             if rewritten:
                 rewritten = f"{rewritten}\n"
-            path.write_text(rewritten, encoding="utf-8")
+            self._atomic_rewrite(path, rewritten)
             self._diagnostics["read_repaired_files"] = int(self._diagnostics["read_repaired_files"]) + 1
+            self._session_line_estimates.pop(path, None)
             self._diagnostics["last_error"] = ""
         except Exception as exc:
             self._diagnostics["last_error"] = str(exc)
 
-    def _compact_session_file(self, path: Path) -> None:
+    def _get_line_estimate(self, path: Path) -> int:
+        cached = self._session_line_estimates.get(path)
+        if cached is not None:
+            return cached
+        if not path.exists():
+            self._session_line_estimates[path] = 0
+            return 0
+        count = 0
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            count += 1
+        self._session_line_estimates[path] = count
+        return count
+
+    @staticmethod
+    def _overflow_budget(limit: int) -> int:
+        return max(1, limit // 10)
+
+    def _maybe_compact_session_file(self, path: Path) -> None:
         limit = self.max_messages_per_session
         if limit is None:
             return
+        if limit <= self._strict_compaction_limit:
+            new_count = self._compact_session_file(path)
+            if new_count is not None:
+                self._session_line_estimates[path] = new_count
+            return
+
+        estimated_count = self._get_line_estimate(path)
+        overflow = estimated_count - limit
+        if overflow < self._overflow_budget(limit):
+            return
+
+        new_count = self._compact_session_file(path)
+        if new_count is not None:
+            self._session_line_estimates[path] = new_count
+
+    def _atomic_rewrite(self, path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+    def _compact_session_file(self, path: Path) -> int | None:
+        limit = self.max_messages_per_session
+        if limit is None:
+            return None
         self._diagnostics["compaction_runs"] = int(self._diagnostics["compaction_runs"]) + 1
         try:
             valid_lines: list[str] = []
@@ -169,13 +238,15 @@ class SessionStore:
             rewritten = "\n".join(keep)
             if rewritten:
                 rewritten = f"{rewritten}\n"
-            path.write_text(rewritten, encoding="utf-8")
+            self._atomic_rewrite(path, rewritten)
             if trimmed:
                 self._diagnostics["compaction_trimmed_lines"] = int(self._diagnostics["compaction_trimmed_lines"]) + trimmed
             self._diagnostics["last_error"] = ""
+            return len(keep)
         except Exception as exc:
             self._diagnostics["compaction_failures"] = int(self._diagnostics["compaction_failures"]) + 1
             self._diagnostics["last_error"] = str(exc)
+            return None
 
     def diagnostics(self) -> dict[str, int | str]:
         return {

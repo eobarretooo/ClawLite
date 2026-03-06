@@ -122,3 +122,20 @@ def test_session_store_compaction_updates_diagnostics_counters(tmp_path: Path, m
     assert diag_after["append_success"] == 4
     assert diag_after["compaction_failures"] == 1
     assert target.exists()
+
+
+def test_session_store_batches_compaction_for_larger_limits(tmp_path: Path) -> None:
+    store = SessionStore(root=tmp_path / "sessions", max_messages_per_session=100)
+    for idx in range(130):
+        store.append("telegram:7", "user", f"m{idx}")
+
+    diag = store.diagnostics()
+    assert diag["append_success"] == 130
+    assert diag["compaction_runs"] < 130
+    assert diag["compaction_runs"] <= 5
+    assert diag["compaction_trimmed_lines"] >= 10
+
+    rows = store.read("telegram:7", limit=200)
+    assert len(rows) == 100
+    assert rows[0]["content"] == "m30"
+    assert rows[-1]["content"] == "m129"
