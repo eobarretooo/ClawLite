@@ -815,6 +815,9 @@ def test_memory_record_normalization_fills_defaults_for_legacy_rows(tmp_path: Pa
     assert row.confidence == 1.0
     assert row.decay_rate == 0.0
     assert row.emotional_tone == "neutral"
+    assert row.memory_type == "knowledge"
+    assert row.happened_at == ""
+    assert row.metadata == {}
 
 
 def test_memory_reasoning_layer_and_confidence_roundtrip_on_write_and_read(tmp_path: Path) -> None:
@@ -824,19 +827,68 @@ def test_memory_reasoning_layer_and_confidence_roundtrip_on_write_and_read(tmp_p
         source="session:decision",
         reasoning_layer="decision",
         confidence=0.42,
+        memory_type="skill",
+        happened_at="2026-03-10T00:00:00+00:00",
+        metadata={"origin": "manual", "tags": ["deploy", "release"]},
     )
 
     assert created.reasoning_layer == "decision"
     assert created.confidence == 0.42
+    assert created.memory_type == "skill"
+    assert created.happened_at == "2026-03-10T00:00:00+00:00"
+    assert created.metadata["origin"] == "manual"
     read_back = store.all()
     assert len(read_back) == 1
     assert read_back[0].reasoning_layer == "decision"
     assert read_back[0].confidence == 0.42
+    assert read_back[0].memory_type == "skill"
+    assert read_back[0].happened_at == "2026-03-10T00:00:00+00:00"
+    assert read_back[0].metadata["origin"] == "manual"
 
     raw_line = next(line for line in store.history_path.read_text(encoding="utf-8").splitlines() if line.strip())
     payload = json.loads(raw_line)
     assert payload["reasoning_layer"] == "decision"
     assert payload["confidence"] == 0.42
+    assert payload["memory_type"] == "skill"
+    assert payload["happened_at"] == "2026-03-10T00:00:00+00:00"
+    assert payload["metadata"]["origin"] == "manual"
+
+
+def test_memory_infers_event_type_happened_at_and_structured_metadata(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    row = store.add(
+        "Product launch meeting scheduled for 2026-05-10 09:30 with ops@example.com",
+        source="session:event",
+    )
+
+    assert row.memory_type == "event"
+    assert row.happened_at == "2026-05-10T09:30:00+00:00"
+    assert row.metadata["source_session"] == "session:event"
+    assert row.metadata["content_hash"]
+    assert row.metadata["entities"]["dates"] == ["2026-05-10"]
+    assert row.metadata["entities"]["emails"] == ["ops@example.com"]
+
+    retrieved = asyncio.run(store.retrieve("launch meeting", method="rag", limit=1))
+    assert retrieved["hits"]
+    assert retrieved["hits"][0]["memory_type"] == "event"
+    assert retrieved["hits"][0]["happened_at"] == "2026-05-10T09:30:00+00:00"
+
+
+def test_memory_consolidate_infers_profile_type_for_preferences(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    row = store.consolidate(
+        [
+            {"role": "user", "content": "remember that I prefer concise answers"},
+            {"role": "assistant", "content": "noted preference stored"},
+        ],
+        source="session:profile",
+    )
+
+    assert row is not None
+    assert row.memory_type == "profile"
+    curated_rows = store.curated()
+    assert curated_rows
+    assert any(item.memory_type == "profile" for item in curated_rows)
 
 
 def test_memory_search_and_retrieve_support_reasoning_layer_and_min_confidence_filters(tmp_path: Path) -> None:

@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from collections import Counter, deque
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from html import unescape
@@ -48,6 +48,8 @@ EMOTIONAL_MARKERS: dict[str, tuple[str, ...]] = {
 }
 REASONING_LAYERS: tuple[str, ...] = ("fact", "hypothesis", "decision", "outcome")
 REASONING_LAYER_SET: frozenset[str] = frozenset(REASONING_LAYERS)
+MEMORY_TYPES: tuple[str, ...] = ("profile", "event", "knowledge", "behavior", "skill", "tool")
+MEMORY_TYPE_SET: frozenset[str] = frozenset(MEMORY_TYPES)
 PROFILE_TOPIC_STOPWORDS: frozenset[str] = frozenset(
     {
         "the",
@@ -95,6 +97,9 @@ class MemoryRecord:
     confidence: float = 1.0
     decay_rate: float = 0.0
     emotional_tone: str = "neutral"
+    memory_type: str = "knowledge"
+    happened_at: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class MemoryLayer(str, Enum):
@@ -259,6 +264,37 @@ class MemoryStore:
             return default
         return numeric
 
+    @staticmethod
+    def _normalize_memory_type(value: Any) -> str:
+        clean = str(value or "").strip().lower()
+        if clean in MEMORY_TYPE_SET:
+            return clean
+        return "knowledge"
+
+    @classmethod
+    def _normalize_metadata_value(cls, value: Any, *, depth: int = 0) -> Any:
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if depth >= 3:
+            return str(value)
+        if isinstance(value, dict):
+            return cls._normalize_memory_metadata(value, depth=depth + 1)
+        if isinstance(value, (list, tuple, set)):
+            return [cls._normalize_metadata_value(item, depth=depth + 1) for item in list(value)[:32]]
+        return str(value)
+
+    @classmethod
+    def _normalize_memory_metadata(cls, value: Any, *, depth: int = 0) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            clean_key = str(key or "").strip()
+            if not clean_key:
+                continue
+            out[clean_key] = cls._normalize_metadata_value(item, depth=depth)
+        return out
+
     @classmethod
     def _bounded_confidence_score(cls, value: Any) -> float:
         normalized = cls._normalize_confidence(value, default=1.0)
@@ -322,6 +358,9 @@ class MemoryStore:
             confidence=confidence,
             decay_rate=decay_rate,
             emotional_tone=str(payload.get("emotional_tone", payload.get("emotionalTone", "neutral")) or "neutral"),
+            memory_type=cls._normalize_memory_type(payload.get("memory_type", payload.get("memoryType", "knowledge"))),
+            happened_at=str(payload.get("happened_at", payload.get("happenedAt", "")) or ""),
+            metadata=cls._normalize_memory_metadata(payload.get("metadata", {})),
         )
 
     def __init__(
@@ -1700,6 +1739,9 @@ class MemoryStore:
             importance = 1.0
         confidence = cls._normalize_confidence(row.get("confidence", 1.0), default=1.0)
         reasoning_layer = cls._normalize_reasoning_layer(row.get("reasoning_layer", row.get("reasoningLayer", "fact")))
+        memory_type = cls._normalize_memory_type(row.get("memory_type", row.get("memoryType", "knowledge")))
+        happened_at = str(row.get("happened_at", row.get("happenedAt", "")) or "")
+        metadata = cls._normalize_memory_metadata(row.get("metadata", {}))
 
         sessions_raw = row.get("sessions", [])
         sessions: list[str] = []
@@ -1722,6 +1764,9 @@ class MemoryStore:
             "importance": max(0.1, importance),
             "confidence": confidence,
             "reasoning_layer": reasoning_layer,
+            "memory_type": memory_type,
+            "happened_at": happened_at,
+            "metadata": metadata,
         }
 
     @staticmethod
@@ -2142,6 +2187,94 @@ class MemoryStore:
         if by_llm in self._MEMORY_CATEGORIES:
             return by_llm
         return self._heuristic_category(text, source)
+
+    @staticmethod
+    def _memory_content_hash(text: str, memory_type: str) -> str:
+        normalized = " ".join(str(text or "").strip().lower().split())
+        content = f"{memory_type}:{normalized}"
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+    def _infer_memory_type(self, text: str, source: str, *, category: str = "") -> str:
+        normalized = str(text or "").strip().lower()
+        source_norm = str(source or "").strip().lower()
+        category_norm = str(category or "").strip().lower()
+        happened_at = self._infer_happened_at(text)
+
+        if source_norm.startswith("tool:") or source_norm.startswith("process:") or " tool " in f" {normalized} ":
+            return "tool"
+        if category_norm in {"preferences", "relationships"}:
+            return "profile"
+        if category_norm == "skills":
+            return "skill"
+        if category_norm == "events":
+            return "event"
+        if any(token in normalized for token in ("prefer", "preference", "timezone", "language", "my name", "sou ", "i am ")):
+            return "profile"
+        if any(token in normalized for token in ("every ", "usually", "often", "habit", "always", "normalmente", "costumo")):
+            return "behavior"
+        if happened_at or any(
+            token in normalized
+            for token in ("meeting", "deadline", "trip", "travel", "launch", "release", "weekend", "tomorrow", "today", "yesterday")
+        ):
+            return "event"
+        if any(token in normalized for token in ("how to", "workflow", "runbook", "guide", "tutorial", "playbook", "can use", "sei fazer")):
+            return "skill"
+        return "knowledge"
+
+    @classmethod
+    def _infer_happened_at(cls, text: str) -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+
+        exact_dt = re.search(r"\b(\d{4}-\d{2}-\d{2})[tT ](\d{1,2}:\d{2})(?::\d{2})?\b", raw)
+        if exact_dt:
+            date_part = exact_dt.group(1)
+            time_part = exact_dt.group(2)
+            return f"{date_part}T{time_part}:00+00:00"
+
+        exact_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", raw)
+        if exact_date:
+            return f"{exact_date.group(1)}T00:00:00+00:00"
+
+        lowered = raw.lower()
+        today = datetime.now(timezone.utc).date()
+        if "tomorrow" in lowered:
+            return datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+        if "yesterday" in lowered:
+            return datetime.combine(today - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+        if "today" in lowered:
+            return datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+        return ""
+
+    def _prepare_memory_metadata(
+        self,
+        *,
+        text: str,
+        source: str,
+        metadata: dict[str, Any] | None,
+        memory_type: str,
+        happened_at: str,
+    ) -> dict[str, Any]:
+        prepared = self._normalize_memory_metadata(metadata)
+        entities = self._extract_entities(text)
+        non_empty_entities = {key: value for key, value in entities.items() if value}
+        if non_empty_entities and "entities" not in prepared:
+            prepared["entities"] = non_empty_entities
+        if happened_at and "happened_at_hint" not in prepared:
+            prepared["happened_at_hint"] = happened_at
+        source_session = self._source_session_key(source)
+        if source_session and "source_session" not in prepared:
+            prepared["source_session"] = source_session
+        prepared.setdefault("content_hash", self._memory_content_hash(text, memory_type))
+        return prepared
+
+    @classmethod
+    def _record_temporal_anchor(cls, row: MemoryRecord) -> str:
+        happened_at = str(getattr(row, "happened_at", "") or "").strip()
+        if happened_at and cls._parse_iso_timestamp(happened_at).year > 1:
+            return happened_at
+        return str(row.created_at or "")
 
     @staticmethod
     def _metadata_hint(metadata: dict[str, Any] | None) -> str:
@@ -2607,8 +2740,11 @@ class MemoryStore:
         *,
         source: str,
         repeated_count: int = 1,
+        metadata: dict[str, Any] | None = None,
         reasoning_layer: str | None = None,
         confidence: float | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
     ) -> None:
         if self.curated_path is None or not candidates:
             return
@@ -2623,6 +2759,15 @@ class MemoryStore:
             norm = self._normalize_memory_text(candidate)
             if not norm:
                 continue
+            inferred_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(candidate, source))
+            inferred_happened_at = str(happened_at or self._infer_happened_at(candidate) or "")
+            inferred_metadata = self._prepare_memory_metadata(
+                text=candidate,
+                source=source,
+                metadata=metadata,
+                memory_type=inferred_memory_type,
+                happened_at=inferred_happened_at,
+            )
             existing = by_norm.get(norm)
             if existing is None:
                 row: dict[str, object] = {
@@ -2637,6 +2782,9 @@ class MemoryStore:
                     "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
                     "reasoning_layer": resolved_reasoning_layer,
                     "confidence": resolved_confidence,
+                    "memory_type": inferred_memory_type,
+                    "happened_at": inferred_happened_at,
+                    "metadata": inferred_metadata,
                 }
                 current.append(row)
                 by_norm[norm] = row
@@ -2668,6 +2816,14 @@ class MemoryStore:
             ) * 0.35
             existing["reasoning_layer"] = resolved_reasoning_layer
             existing["confidence"] = resolved_confidence
+            existing["memory_type"] = inferred_memory_type
+            existing["happened_at"] = inferred_happened_at
+            existing["metadata"] = self._normalize_memory_metadata(
+                {
+                    **self._normalize_memory_metadata(existing.get("metadata", {})),
+                    **inferred_metadata,
+                }
+            )
             changed = True
         if changed:
             self._write_curated_facts(current)
@@ -3304,25 +3460,42 @@ class MemoryStore:
         user_id: str = "default",
         shared: bool = False,
         modality: str = "text",
+        metadata: dict[str, Any] | None = None,
         reasoning_layer: str | None = None,
         confidence: float | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
     ) -> MemoryRecord:
         clean = text.strip()
         if not clean:
             raise ValueError("memory text must not be empty")
         clean_user = self._normalize_user_id(user_id)
+        category = self._categorize_memory(clean, source)
+        memory_basis = str(raw_resource_text or clean)
+        resolved_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(memory_basis, source, category=category))
+        resolved_happened_at = str(happened_at or self._infer_happened_at(memory_basis) or "")
+        resolved_metadata = self._prepare_memory_metadata(
+            text=memory_basis,
+            source=source,
+            metadata=metadata,
+            memory_type=resolved_memory_type,
+            happened_at=resolved_happened_at,
+        )
         row = MemoryRecord(
             id=uuid.uuid4().hex,
             text=clean,
             source=source,
             created_at=datetime.now(timezone.utc).isoformat(),
-            category=self._categorize_memory(clean, source),
+            category=category,
             user_id=clean_user,
             layer=MemoryLayer.ITEM.value,
             reasoning_layer=self._normalize_reasoning_layer(reasoning_layer),
             modality=str(modality or "text").strip().lower() or "text",
             confidence=self._normalize_confidence(confidence, default=1.0),
             emotional_tone=self._detect_emotional_tone(clean) if self.emotional_tracking else "neutral",
+            memory_type=resolved_memory_type,
+            happened_at=resolved_happened_at,
+            metadata=resolved_metadata,
         )
         stored_payload = asdict(row)
         stored_payload["text"] = self._encrypt_text_for_category(str(row.text or ""), row.category)
@@ -3416,6 +3589,9 @@ class MemoryStore:
                 layer=self._normalize_layer(item.get("layer", MemoryLayer.ITEM.value)),
                 reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                 confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
+                happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
+                metadata=self._normalize_memory_metadata(item.get("metadata", {})),
             )
             for item in rows
             if str(item.get("text", "")).strip()
@@ -3512,6 +3688,8 @@ class MemoryStore:
         metadata: dict[str, Any] | None = None,
         reasoning_layer: str | None = None,
         confidence: float | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
     ) -> dict[str, Any]:
         _ = include_shared
         try:
@@ -3536,8 +3714,11 @@ class MemoryStore:
                 source=source,
                 user_id=user_id,
                 shared=shared,
+                metadata=metadata,
                 reasoning_layer=reasoning_layer,
                 confidence=confidence,
+                memory_type=memory_type,
+                happened_at=happened_at,
             )
             if record is None:
                 return {"status": "skipped", "mode": "consolidate", "record": None}
@@ -3578,8 +3759,11 @@ class MemoryStore:
             user_id=user_id,
             shared=shared,
             modality=resolved_modality,
+            metadata=metadata,
             reasoning_layer=reasoning_layer,
             confidence=confidence,
+            memory_type=memory_type,
+            happened_at=happened_at,
         )
         self._update_profile_from_text(clean)
         return {"status": "ok", "mode": "add", "record": asdict(record)}
@@ -3600,6 +3784,9 @@ class MemoryStore:
             "confidence": MemoryStore._normalize_confidence(getattr(row, "confidence", 1.0), default=1.0),
             "decay_rate": float(row.decay_rate),
             "emotional_tone": str(row.emotional_tone or "neutral"),
+            "memory_type": MemoryStore._normalize_memory_type(getattr(row, "memory_type", "knowledge")),
+            "happened_at": str(getattr(row, "happened_at", "") or ""),
+            "metadata": MemoryStore._normalize_memory_metadata(getattr(row, "metadata", {})),
         }
 
     def _refine_hits_with_llm(self, query: str, hits: list[dict[str, Any]]) -> dict[str, str] | None:
@@ -3796,9 +3983,9 @@ class MemoryStore:
                 importance = curated_importance.get(records[idx].id, 1.0)
                 mentions = curated_mentions.get(records[idx].id, 1)
                 curated_boost = 0.75 + min(2.0, importance * 0.25) + min(1.0, mentions * 0.1)
-            temporal_score = self._recency_score(records[idx].created_at)
+            temporal_score = self._recency_score(self._record_temporal_anchor(records[idx]))
             if query_has_temporal_intent:
-                if self._memory_has_temporal_markers(records[idx].text):
+                if records[idx].happened_at or self._memory_has_temporal_markers(records[idx].text):
                     temporal_score += self._TEMPORAL_INTENT_MATCH_BOOST
                 else:
                     temporal_score -= self._TEMPORAL_INTENT_MISS_PENALTY
@@ -3859,6 +4046,9 @@ class MemoryStore:
                     category=str(item.get("category", "context") or "context"),
                     reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                     confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
+                    happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
+                    metadata=self._normalize_memory_metadata(item.get("metadata", {})),
                 )
                 for item in curated_rows
                 if str(item.get("text", "")).strip()
@@ -3892,6 +4082,9 @@ class MemoryStore:
                     user_id=clean_user,
                     reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                     confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
+                    happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
+                    metadata=self._normalize_memory_metadata(item.get("metadata", {})),
                 )
                 for item in curated_rows
                 if str(item.get("text", "")).strip()
@@ -3915,6 +4108,9 @@ class MemoryStore:
                     user_id="shared",
                     reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
                     confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
+                    memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
+                    happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
+                    metadata=self._normalize_memory_metadata(item.get("metadata", {})),
                 )
                 for item in shared_curated
                 if str(item.get("text", "")).strip()
@@ -3943,8 +4139,11 @@ class MemoryStore:
         source: str,
         user_id: str,
         shared: bool,
+        metadata: dict[str, Any] | None = None,
         reasoning_layer: str | None = None,
         confidence: float | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
     ) -> MemoryRecord | None:
         self._ensure_scope_paths(scope)
         lines = self._extract_consolidation_lines(messages)
@@ -3991,8 +4190,11 @@ class MemoryStore:
                 raw_resource_text=(resource_text or summary),
                 user_id=user_id,
                 shared=shared,
+                metadata=metadata,
                 reasoning_layer=reasoning_layer,
                 confidence=confidence,
+                memory_type=memory_type,
+                happened_at=happened_at,
             )
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
@@ -4042,6 +4244,15 @@ class MemoryStore:
             norm = self._normalize_memory_text(candidate)
             if not norm:
                 continue
+            inferred_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(candidate, source))
+            inferred_happened_at = str(happened_at or self._infer_happened_at(candidate) or "")
+            inferred_metadata = self._prepare_memory_metadata(
+                text=candidate,
+                source=source,
+                metadata=metadata,
+                memory_type=inferred_memory_type,
+                happened_at=inferred_happened_at,
+            )
             existing = by_norm.get(norm)
             if existing is None:
                 facts.append(
@@ -4057,6 +4268,9 @@ class MemoryStore:
                         "importance": self._candidate_importance(role=role, text=candidate, repeated_count=repeated_count),
                         "reasoning_layer": resolved_reasoning_layer,
                         "confidence": resolved_confidence,
+                        "memory_type": inferred_memory_type,
+                        "happened_at": inferred_happened_at,
+                        "metadata": inferred_metadata,
                     }
                 )
                 changed = True
@@ -4087,6 +4301,14 @@ class MemoryStore:
             ) * 0.35
             existing["reasoning_layer"] = resolved_reasoning_layer
             existing["confidence"] = resolved_confidence
+            existing["memory_type"] = inferred_memory_type
+            existing["happened_at"] = inferred_happened_at
+            existing["metadata"] = self._normalize_memory_metadata(
+                {
+                    **self._normalize_memory_metadata(existing.get("metadata", {})),
+                    **inferred_metadata,
+                }
+            )
             changed = True
         if changed:
             self._write_curated_facts_to(scope["curated"], facts)
@@ -4099,8 +4321,11 @@ class MemoryStore:
         source: str = "session",
         user_id: str = "default",
         shared: bool = False,
+        metadata: dict[str, Any] | None = None,
         reasoning_layer: str | None = None,
         confidence: float | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
     ) -> MemoryRecord | None:
         clean_user = self._normalize_user_id(user_id)
         if shared or clean_user != "default":
@@ -4111,8 +4336,11 @@ class MemoryStore:
                 source=source,
                 user_id=clean_user,
                 shared=shared,
+                metadata=metadata,
                 reasoning_layer=reasoning_layer,
                 confidence=confidence,
+                memory_type=memory_type,
+                happened_at=happened_at,
             )
 
         lines = self._extract_consolidation_lines(messages)
@@ -4156,8 +4384,11 @@ class MemoryStore:
                 summary,
                 source=source,
                 raw_resource_text=(resource_text or summary),
+                metadata=metadata,
                 reasoning_layer=reasoning_layer,
                 confidence=confidence,
+                memory_type=memory_type,
+                happened_at=happened_at,
             )
             self._diagnostics["consolidate_writes"] = int(self._diagnostics["consolidate_writes"]) + 1
 
@@ -4218,8 +4449,11 @@ class MemoryStore:
             curated_candidates,
             source=source,
             repeated_count=repeated_count,
+            metadata=metadata,
             reasoning_layer=reasoning_layer,
             confidence=confidence,
+            memory_type=memory_type,
+            happened_at=happened_at,
         )
         return row
 
