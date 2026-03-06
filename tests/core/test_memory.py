@@ -184,6 +184,32 @@ def test_memory_search_hybrid_semantic_and_bm25_ranks_by_combined_score(tmp_path
     assert "alpha" in found[0].text.lower()
 
 
+def test_memory_search_entity_match_breaks_temporal_ties(tmp_path: Path, monkeypatch) -> None:
+    class _FakeBM25:
+        def __init__(self, _corpus: object) -> None:
+            pass
+
+        def get_scores(self, _query_tokens: object) -> list[float]:
+            return [0.0, 0.0]
+
+    def _fake_tokens(text: str) -> list[str]:
+        lowered = text.lower()
+        if "release" in lowered or "window" in lowered:
+            return ["release", "window"]
+        return ["note"]
+
+    monkeypatch.setattr("clawlite.core.memory.BM25Okapi", _FakeBM25)
+    monkeypatch.setattr(MemoryStore, "_tokens", staticmethod(_fake_tokens))
+
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    store.add("Release window confirmed for 2026-05-10", source="user")
+    store.add("Release window confirmed for 2026-05-12", source="user")
+
+    found = store.search("what is the release window for 2026-05-10", limit=2)
+    assert found
+    assert "2026-05-10" in found[0].text
+
+
 def test_memory_consolidate(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.jsonl")
     row = store.consolidate([

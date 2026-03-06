@@ -207,6 +207,13 @@ class MemoryStore:
     _SEMANTIC_VECTOR_WEIGHT = 0.6
     _RANKING_CONFIDENCE_BOOST_MAX = 0.18
     _RANKING_REASONING_BOOST_MAX = 0.14
+    _ENTITY_MATCH_WEIGHTS: dict[str, float] = {
+        "urls": 0.45,
+        "emails": 0.35,
+        "dates": 0.32,
+        "times": 0.22,
+    }
+    _ENTITY_MATCH_MAX_BOOST = 0.65
     _MEMORY_CATEGORIES: tuple[str, ...] = (
         "preferences",
         "relationships",
@@ -2027,6 +2034,38 @@ class MemoryStore:
             out[key] = unique
         return out
 
+    @staticmethod
+    def _normalize_entity_value(value: str) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    @classmethod
+    def _entity_match_score(
+        cls,
+        query_entities: dict[str, list[str]],
+        memory_entities: dict[str, list[str]],
+    ) -> float:
+        score = 0.0
+        for entity_type, weight in cls._ENTITY_MATCH_WEIGHTS.items():
+            query_values_raw = query_entities.get(entity_type, []) if isinstance(query_entities, dict) else []
+            memory_values_raw = memory_entities.get(entity_type, []) if isinstance(memory_entities, dict) else []
+            query_values = {
+                cls._normalize_entity_value(item)
+                for item in query_values_raw
+                if cls._normalize_entity_value(item)
+            }
+            memory_values = {
+                cls._normalize_entity_value(item)
+                for item in memory_values_raw
+                if cls._normalize_entity_value(item)
+            }
+            if not query_values or not memory_values:
+                continue
+            overlap = len(query_values.intersection(memory_values))
+            if overlap <= 0:
+                continue
+            score += min(float(weight), float(weight) * float(overlap))
+        return max(0.0, min(cls._ENTITY_MATCH_MAX_BOOST, round(score, 6)))
+
     def _heuristic_category(self, text: str, source: str) -> str:
         normalized = str(text or "").lower()
         source_norm = str(source or "").lower()
@@ -3570,12 +3609,14 @@ class MemoryStore:
         if not records:
             return []
         q_tokens = self._tokens(query)
+        query_entities = self._extract_entities(query)
         reasoning_boosts = self._reasoning_intent_boosts(query)
         query_has_temporal_intent = self._query_has_temporal_intent(query)
         if not q_tokens:
             return records[-limit:][::-1]
 
         corpus_tokens = [self._tokens(item.text) for item in records]
+        corpus_entities = [self._extract_entities(item.text) for item in records]
         qset = set(q_tokens)
 
         if BM25Okapi is None:
@@ -3629,6 +3670,7 @@ class MemoryStore:
         scored: list[tuple[float, float, float, int]] = []
         for idx, toks in enumerate(corpus_tokens):
             overlap = len(qset.intersection(toks))
+            entity_score = self._entity_match_score(query_entities, corpus_entities[idx])
             curated_boost = 0.0
             if records[idx].source.startswith("curated:"):
                 importance = curated_importance.get(records[idx].id, 1.0)
@@ -3646,19 +3688,20 @@ class MemoryStore:
             reasoning_boost = reasoning_boosts.get(reasoning_layer, 0.0)
 
             ranking_score = bm25_scores[idx]
-            ranking_score += confidence_boost + reasoning_boost
-            tie_breaker = temporal_score + (confidence_boost * 0.5) + reasoning_boost
+            ranking_score += confidence_boost + reasoning_boost + entity_score
+            tie_breaker = temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score
             if semantic_active:
                 ranking_score = (
                     self._SEMANTIC_BM25_WEIGHT * bm25_scores[idx]
                     + self._SEMANTIC_VECTOR_WEIGHT * semantic_scores[idx]
                     + confidence_boost
                     + reasoning_boost
+                    + entity_score
                 )
-                tie_breaker = curated_boost + temporal_score + (confidence_boost * 0.5) + reasoning_boost
-                scored.append((float(overlap), ranking_score, tie_breaker, idx))
+                tie_breaker = curated_boost + temporal_score + (confidence_boost * 0.5) + reasoning_boost + entity_score
+                scored.append((float(overlap) + entity_score, ranking_score, tie_breaker, idx))
             else:
-                scored.append((float(overlap) + curated_boost, ranking_score, tie_breaker, idx))
+                scored.append((float(overlap) + curated_boost + entity_score, ranking_score, tie_breaker, idx))
 
         scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
         picked: list[MemoryRecord] = []
