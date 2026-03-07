@@ -574,6 +574,25 @@ def test_run_skill_summarize_falls_back_to_provider_for_urls(tmp_path: Path) -> 
     asyncio.run(_scenario())
 
 
+def test_run_skill_summarize_blocks_when_web_fetch_is_unavailable(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "summarize",
+        "name: summarize\ndescription: summarize\nscript: summarize",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg, provider=FakeProvider())
+        out = await tool.run(
+            {"name": "summarize", "input": "https://example.com"},
+            ToolContext(session_id="cli:summarize", channel="cli", user_id="42"),
+        )
+        assert out == "skill_blocked:summarize:summary_source_fetch_unavailable"
+
+    asyncio.run(_scenario())
+
+
 def test_run_skill_summarize_falls_back_to_provider_for_local_files(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,
@@ -590,6 +609,25 @@ def test_run_skill_summarize_falls_back_to_provider_for_local_files(tmp_path: Pa
             ToolContext(session_id="cli:summarize", channel="cli", user_id="42"),
         )
         assert out.startswith("summary::Source: /tmp/demo.txt")
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_summarize_blocks_when_reader_tools_are_unavailable(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "summarize",
+        "name: summarize\ndescription: summarize\nscript: summarize",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg, provider=FakeProvider())
+        out = await tool.run(
+            {"name": "summarize", "input": "/tmp/demo.txt"},
+            ToolContext(session_id="cli:summarize", channel="cli", user_id="42"),
+        )
+        assert out == "skill_blocked:summarize:summary_source_reader_unavailable"
 
     asyncio.run(_scenario())
 

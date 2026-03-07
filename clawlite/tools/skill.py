@@ -304,6 +304,8 @@ class SkillTool(Tool):
             raise ValueError("input is required for summarize skill")
 
         if source_input.startswith(("http://", "https://")):
+            if self.registry.get("web_fetch") is None:
+                raise RuntimeError("summary_source_fetch_unavailable")
             raw = await self.registry.execute(
                 "web_fetch",
                 {"url": source_input, "max_chars": self.SUMMARY_MAX_SOURCE_CHARS},
@@ -342,7 +344,13 @@ class SkillTool(Tool):
                 return result
         if self.provider is None:
             return f"skill_blocked:{spec_name}:provider_unavailable_for_summary"
-        source_label, source_text = await self._load_summary_source(arguments, ctx)
+        try:
+            source_label, source_text = await self._load_summary_source(arguments, ctx)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            reason = str(exc or "").strip() or "summary_source_reader_unavailable"
+            if not reason.startswith("summary_source_"):
+                reason = "summary_source_reader_unavailable"
+            return f"skill_blocked:{spec_name}:{reason}"
         if not source_text:
             return f"skill_blocked:{spec_name}:summary_source_empty"
         response = await self.provider.complete(

@@ -647,13 +647,21 @@ class SkillsLoader:
 
         async def _loop() -> None:
             while not stop_event.is_set():
-                report = self.refresh(force=False)
                 self._watcher_state["ticks"] = int(self._watcher_state.get("ticks", 0) or 0) + 1
                 self._watcher_state["last_tick_monotonic"] = float(self._now_monotonic())
-                self._watcher_state["last_refresh_monotonic"] = float(report.get("refreshed_at_monotonic", 0.0) or 0.0)
-                self._watcher_state["debounced"] = bool(report.get("debounced", False))
-                self._watcher_state["pending"] = bool(report.get("pending", False))
-                self._watcher_state["last_result"] = "refreshed" if report.get("refreshed", False) else "idle"
+                try:
+                    report = self.refresh(force=False)
+                except Exception as exc:
+                    self._watcher_state["last_error"] = str(exc)
+                    self._watcher_state["last_result"] = "failed_refresh"
+                    self._watcher_state["debounced"] = False
+                    self._watcher_state["pending"] = False
+                else:
+                    self._watcher_state["last_error"] = ""
+                    self._watcher_state["last_refresh_monotonic"] = float(report.get("refreshed_at_monotonic", 0.0) or 0.0)
+                    self._watcher_state["debounced"] = bool(report.get("debounced", False))
+                    self._watcher_state["pending"] = bool(report.get("pending", False))
+                    self._watcher_state["last_result"] = "refreshed" if report.get("refreshed", False) else "idle"
                 await asyncio.sleep(self.watch_interval_s)
 
         self._watcher_task = asyncio.create_task(_loop())
@@ -877,9 +885,12 @@ class SkillsLoader:
                 disabled_count += 1
             if row.pinned:
                 pinned_count += 1
+            runnable = bool(row.available and row.enabled and row.execution_kind in {"command", "script"})
+            runtime_requirements = self._runtime_requirements_for_spec(row)
+
             if row.available:
                 available_count += 1
-                if row.enabled:
+                if runnable:
                     runnable_count += 1
                 if row.always and row.enabled:
                     always_on_available_count += 1
@@ -920,9 +931,10 @@ class SkillsLoader:
                     "enabled": row.enabled,
                     "pinned": row.pinned,
                     "version": row.version,
-                    "runnable": bool(row.available and row.enabled),
+                    "runnable": runnable,
                     "source": row.source,
                     "execution_kind": row.execution_kind,
+                    "runtime_requirements": runtime_requirements,
                     "missing": sorted(row.missing),
                     "contract_issues": sorted(row.contract_issues),
                 }
@@ -953,6 +965,19 @@ class SkillsLoader:
             },
             "skills": sorted(skill_rows, key=lambda item: str(item["name"]).lower()),
         }
+
+    @staticmethod
+    def _runtime_requirements_for_spec(spec: SkillSpec) -> list[str]:
+        if spec.execution_kind != "script":
+            return []
+        script_name = str(spec.script or "").strip().lower()
+        if script_name == "coding_agent":
+            return ["tool:sessions_spawn"]
+        if script_name == "gh_issues":
+            return ["tool:exec"]
+        if script_name == "summarize":
+            return ["provider", "tool:web_fetch|read|read_file"]
+        return []
 
     def always_on(self, *, only_available: bool = True) -> list[SkillSpec]:
         rows = self.discover(include_unavailable=not only_available)

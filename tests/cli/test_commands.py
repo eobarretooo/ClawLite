@@ -1624,6 +1624,65 @@ def test_provider_live_probe_openai_model_not_listed_returns_soft_warning(tmp_pa
     assert any("nao apareceu na lista remota" in row.lower() for row in payload["hints"])
 
 
+def test_provider_live_probe_prefers_configured_vendor_transport_over_generic_model(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {
+                    "model": "claude-3.5-sonnet",
+                    "litellm_base_url": "https://api.minimax.io/anthropic",
+                    "litellm_api_key": "mini-key",
+                },
+                "agents": {"defaults": {"model": "claude-3.5-sonnet"}},
+                "providers": {"minimax": {"api_base": "https://api.minimax.io/anthropic", "api_key": "mini-key"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Response:
+        status_code = 200
+        is_success = True
+        text = "ok"
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"id": "msg_123", "content": [{"type": "text", "text": "pong"}]}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, headers=None):
+            raise AssertionError(f"unexpected GET probe: {url} headers={headers}")
+
+        def post(self, url, headers=None, json=None):
+            assert url == "https://api.minimax.io/anthropic/messages"
+            assert headers["x-api-key"] == "mini-key"
+            assert headers["anthropic-version"] == "2023-06-01"
+            assert json["model"] == "claude-3.5-sonnet"
+            return _Response()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _Client)
+
+    from clawlite.config.loader import load_config
+
+    payload = provider_live_probe(load_config(config_path), timeout=0.1)
+    assert payload["ok"] is True
+    assert payload["provider"] == "minimax"
+    assert payload["transport"] == "anthropic_compatible"
+    assert payload["probe_method"] == "POST"
+
+
 def test_cli_provider_status_unsupported_provider_returns_rc2(tmp_path: Path, capsys) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(

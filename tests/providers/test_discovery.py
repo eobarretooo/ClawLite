@@ -10,6 +10,11 @@ def test_detect_local_runtime_distinguishes_ollama_and_vllm() -> None:
     assert detect_local_runtime("https://api.openai.com/v1") == ""
 
 
+def test_detect_local_runtime_does_not_assume_generic_loopback_is_vllm() -> None:
+    assert detect_local_runtime("http://127.0.0.1:4000/v1") == ""
+    assert detect_local_runtime("http://localhost:1234/v1") == ""
+
+
 def test_probe_local_provider_runtime_accepts_ollama_show_fallback(monkeypatch) -> None:
     class _Response:
         def __init__(self, status_code: int, payload):

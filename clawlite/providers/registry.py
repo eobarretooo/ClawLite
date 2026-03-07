@@ -458,16 +458,16 @@ def detect_provider_name(
     if gateway_spec is not None:
         return gateway_spec.name
 
+    if provider_name:
+        explicit = _find_spec(provider_name)
+        if explicit is not None:
+            return explicit.name
+
     local_runtime = detect_local_runtime(base_url)
     if local_runtime:
         local_spec = _find_spec(local_runtime)
         if local_spec is not None:
             return local_spec.name
-
-    if provider_name:
-        explicit = _find_spec(provider_name)
-        if explicit is not None:
-            return explicit.name
 
     model_spec = _spec_from_model(model)
     if model_spec is not None:
@@ -482,6 +482,25 @@ def detect_provider_name(
         return base_spec.name
 
     return "openai"
+
+
+def _configured_provider_hint(providers_cfg: dict[str, Any], *, model: str) -> str:
+    explicit_prefix = (model or "").strip().lower().split("/", 1)[0] if "/" in (model or "") else ""
+    if explicit_prefix:
+        explicit_spec = _find_spec(explicit_prefix)
+        if explicit_spec is not None:
+            return ""
+
+    candidates: list[str] = []
+    for spec in SPECS:
+        cfg = _provider_cfg(providers_cfg, spec.name)
+        api_key = _cfg_value(cfg, "api_key", "apiKey")
+        api_base = _cfg_value(cfg, "api_base", "apiBase") or _cfg_value(cfg, "base_url", "baseUrl")
+        if str(api_key or "").strip() or str(api_base or "").strip():
+            candidates.append(spec.name)
+    if len(candidates) == 1:
+        return candidates[0]
+    return ""
 
 
 def resolve_litellm_provider(
@@ -623,15 +642,17 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
             **reliability,
         )
 
-    predicted_name = detect_provider_name(model, api_key=litellm_api_key, base_url=litellm_base_url)
-    selected_cfg = _provider_cfg(providers_cfg, predicted_name)
+    provider_hint = _configured_provider_hint(providers_cfg, model=model)
+    predicted_name = detect_provider_name(model, api_key=litellm_api_key, base_url=litellm_base_url, provider_name=provider_hint)
+    selected_name = provider_hint or predicted_name
+    selected_cfg = _provider_cfg(providers_cfg, selected_name)
     selected_api_key = _cfg_value(selected_cfg, "api_key", "apiKey")
     selected_api_base = _cfg_value(selected_cfg, "api_base", "apiBase")
     resolved = resolve_litellm_provider(
         model=model,
         api_key=selected_api_key or _cfg_value(litellm_cfg, "api_key", "apiKey"),
         base_url=selected_api_base or _cfg_value(litellm_cfg, "base_url", "baseUrl"),
-        provider_name=predicted_name,
+        provider_name=selected_name,
     )
 
     extra_headers_raw = selected_cfg.get("extra_headers", selected_cfg.get("extraHeaders", {}))

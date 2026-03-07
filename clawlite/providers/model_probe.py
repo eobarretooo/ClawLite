@@ -16,17 +16,24 @@ def strip_provider_prefix(model: str, *, provider: str = "", aliases: tuple[str,
     return candidate
 
 
-def _normalize_model_name(model: str) -> str:
-    candidate = str(model or "").strip()
+def _model_variants(model: str, *, provider: str = "", aliases: tuple[str, ...] = ()) -> set[str]:
+    candidate = strip_provider_prefix(model, provider=provider, aliases=aliases).strip().lower()
     if not candidate:
-        return ""
-    return candidate.lower()
+        return set()
+    base = candidate.split(":", 1)[0].strip()
+    if not base:
+        return set()
+    variants = {base}
+    if "/" in base:
+        variants.add(base.split("/", 1)[1].strip())
+        variants.add(base.rsplit("/", 1)[-1].strip())
+    return {value for value in variants if value}
 
 
-def _match_model(target: str, offered: str) -> bool:
-    target_name = _normalize_model_name(target)
-    offered_name = _normalize_model_name(offered)
-    return bool(target_name) and bool(offered_name) and target_name == offered_name
+def _match_model(target: str, offered: str, *, provider: str = "", aliases: tuple[str, ...] = ()) -> bool:
+    target_variants = _model_variants(target, provider=provider, aliases=aliases)
+    offered_variants = _model_variants(offered, provider=provider, aliases=aliases)
+    return bool(target_variants and offered_variants and target_variants.intersection(offered_variants))
 
 
 def extract_listed_models(payload: Any) -> list[str]:
@@ -99,7 +106,7 @@ def evaluate_remote_model_check(
             "matched_model": "",
         }
 
-    matched_model = next((row for row in available_models if _match_model(target_model, row)), "")
+    matched_model = next((row for row in available_models if _match_model(target_model, row, provider=provider, aliases=aliases)), "")
     return {
         "checked": True,
         "ok": bool(matched_model),

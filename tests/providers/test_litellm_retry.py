@@ -241,6 +241,26 @@ def test_litellm_provider_invalid_empty_choices_returns_controlled_error() -> No
     asyncio.run(_scenario())
 
 
+def test_litellm_provider_invalid_malformed_payload_returns_controlled_error() -> None:
+    async def _scenario() -> None:
+        provider = LiteLLMProvider(base_url="https://api.example/v1", api_key="k", model="gpt-test", retry_max_attempts=1)
+        post_mock = AsyncMock(side_effect=[_FakeResponse(200, [])])
+
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            try:
+                await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+            except RuntimeError as exc:
+                assert str(exc) == "provider_response_invalid:malformed_payload"
+            else:
+                raise AssertionError("expected controlled provider error")
+
+        diag = provider.diagnostics()
+        assert diag["last_error"] == "provider_response_invalid:malformed_payload"
+        assert diag["error_class_counts"]["unknown"] == 1
+
+    asyncio.run(_scenario())
+
+
 def test_litellm_provider_passes_reasoning_effort_for_openai() -> None:
     async def _scenario() -> None:
         provider = LiteLLMProvider(base_url="https://api.example/v1", api_key="k", model="gpt-test", provider_name="openai", retry_max_attempts=1)

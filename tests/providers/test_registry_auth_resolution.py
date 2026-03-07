@@ -199,6 +199,27 @@ def test_build_provider_uses_minimax_anthropic_transport(monkeypatch) -> None:
     assert provider.base_url == "https://api.minimax.io/anthropic"
 
 
+def test_build_provider_prefers_single_configured_vendor_for_generic_model(monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+
+    provider = build_provider(
+        {
+            "model": "claude-3.5-sonnet",
+            "providers": {
+                "litellm": {"api_key": "", "base_url": ""},
+                "minimax": {"api_key": "mini-config", "api_base": "https://api.minimax.io/anthropic"},
+            },
+        }
+    )
+
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.provider_name == "minimax"
+    assert provider.model == "claude-3.5-sonnet"
+    assert provider.base_url == "https://api.minimax.io/anthropic"
+    assert provider.openai_compatible is False
+    assert provider.native_transport == "anthropic"
+
+
 def test_build_provider_openai_codex_is_deterministic_even_without_codex_auth(monkeypatch) -> None:
     monkeypatch.delenv("CLAWLITE_CODEX_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("CLAWLITE_CODEX_ACCOUNT_ID", raising=False)

@@ -206,6 +206,52 @@ def test_skills_loader_watcher_refreshes_pending_skill_changes(tmp_path: Path) -
     asyncio.run(_scenario())
 
 
+def test_skills_loader_watcher_survives_refresh_failure(tmp_path: Path, monkeypatch) -> None:
+    async def _scenario() -> None:
+        skill_dir = tmp_path / "alpha"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: stable\n---\n\n# Alpha\n",
+            encoding="utf-8",
+        )
+
+        loader = SkillsLoader(
+            builtin_root=tmp_path,
+            state_path=tmp_path / "skills-state.json",
+            watch_interval_s=0.01,
+        )
+        loader.get("alpha")
+
+        original_refresh = loader.refresh
+        calls = {"count": 0}
+
+        def _flaky_refresh(*, force: bool = False) -> dict[str, object]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("transient refresh failure")
+            return original_refresh(force=force)
+
+        monkeypatch.setattr(loader, "refresh", _flaky_refresh)
+
+        await loader.start_watcher()
+        try:
+            for _ in range(40):
+                await asyncio.sleep(0.02)
+                watcher = loader.watcher_status()
+                if calls["count"] >= 2 and watcher["last_error"] == "":
+                    assert watcher["running"] is True
+                    assert watcher["task_state"] == "running"
+                    assert watcher["last_result"] in {"idle", "refreshed"}
+                    break
+            else:
+                raise AssertionError("watcher did not recover after refresh failure")
+        finally:
+            stopped = await loader.stop_watcher()
+            assert stopped["running"] is False
+
+    asyncio.run(_scenario())
+
+
 def test_skills_loader_marks_invalid_execution_contract(tmp_path: Path) -> None:
     skill_dir = tmp_path / "invalid-contract"
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -469,3 +515,27 @@ def test_skills_loader_diagnostics_report_aggregates_deterministically(tmp_path:
     assert [row["name"] for row in skills] == ["command-ok", "invalid-contract", "missing-reqs"]
     assert all("version" in row for row in skills)
     assert all("enabled" in row for row in skills)
+
+
+def test_skills_loader_diagnostics_report_marks_doc_only_as_not_runnable(tmp_path: Path) -> None:
+    doc_dir = tmp_path / "docs-only"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "SKILL.md").write_text(
+        "---\nname: docs-only\ndescription: docs\n---\n",
+        encoding="utf-8",
+    )
+
+    summarize_dir = tmp_path / "summarize"
+    summarize_dir.mkdir(parents=True, exist_ok=True)
+    (summarize_dir / "SKILL.md").write_text(
+        "---\nname: summarize\ndescription: summarize\nscript: summarize\n---\n",
+        encoding="utf-8",
+    )
+
+    report = SkillsLoader(builtin_root=tmp_path).diagnostics_report()
+    by_name = {str(row["name"]): row for row in report["skills"]}
+
+    assert by_name["docs-only"]["runnable"] is False
+    assert by_name["docs-only"]["runtime_requirements"] == []
+    assert by_name["summarize"]["runnable"] is True
+    assert by_name["summarize"]["runtime_requirements"] == ["provider", "tool:web_fetch|read|read_file"]

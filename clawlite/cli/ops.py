@@ -20,7 +20,7 @@ from clawlite.providers.codex_auth import load_codex_auth_file
 from clawlite.providers.discovery import probe_local_provider_runtime
 from clawlite.providers.hints import provider_probe_hints, provider_status_hints, provider_transport_name
 from clawlite.providers.model_probe import evaluate_remote_model_check, model_check_hints
-from clawlite.providers.registry import SPECS, detect_provider_name
+from clawlite.providers.registry import SPECS, _configured_provider_hint, detect_provider_name
 from clawlite.providers.reliability import classify_provider_error
 from clawlite.workspace.loader import TEMPLATE_FILES
 from clawlite.workspace.loader import WorkspaceLoader
@@ -709,7 +709,26 @@ def _resolve_provider_probe_target(config: AppConfig, provider_name: str) -> dic
 
 def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str, Any]:
     model = str(config.agents.defaults.model or config.provider.model).strip() or str(config.provider.model)
-    detected = detect_provider_name(model)
+    configured_api_key = str(config.provider.litellm_api_key or "").strip()
+    configured_base_url = str(config.provider.litellm_base_url or "").strip()
+    provider_hint = _configured_provider_hint(config.providers.to_dict(), model=model)
+    model_hint_name = provider_hint or detect_provider_name(model)
+    hint_selected = _provider_override(config, model_hint_name)
+    hint_api_key = str(getattr(hint_selected, "api_key", "") or "").strip()
+    hint_api_base = str(getattr(hint_selected, "api_base", "") or "").strip()
+    local_base_hint = ""
+    for local_name in ("ollama", "vllm"):
+        local_selected = _provider_override(config, local_name)
+        local_candidate = str(getattr(local_selected, "api_base", "") or "").strip()
+        if local_candidate:
+            local_base_hint = local_candidate
+            break
+    detected = detect_provider_name(
+        model,
+        api_key=hint_api_key or configured_api_key,
+        base_url=hint_api_base or configured_base_url or local_base_hint,
+        provider_name=provider_hint,
+    )
     target = _resolve_provider_probe_target(config, detected)
     if not bool(target.get("ok", False)):
         provider_name = str(target.get("provider", detected) or detected)
@@ -748,6 +767,8 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
     payload: dict[str, Any] | None = None
     auth_mode = str(target.get("auth_mode", "") or "")
     transport = provider_transport_name(provider=provider, spec=spec, auth_mode=auth_mode)
+    if spec is not None and str(getattr(spec, "native_transport", "") or "").strip().lower() == "anthropic" and provider != "anthropic":
+        transport = "anthropic_compatible"
     probe_method = "GET"
     default_base_url = str(getattr(spec, "default_base_url", "") or "")
     key_envs = list(getattr(spec, "key_envs", ()) or [])

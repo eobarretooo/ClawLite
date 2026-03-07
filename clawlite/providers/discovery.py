@@ -61,15 +61,12 @@ def _loopback_host(host: str) -> bool:
 
 def detect_local_runtime(base_url: str) -> str:
     parsed = urlparse(str(base_url or "").strip())
-    host = str(parsed.hostname or "").strip().lower()
     raw = str(base_url or "").strip().lower()
     if not raw:
         return ""
     if parsed.port == 11434 or "ollama" in raw:
         return "ollama"
-    if "vllm" in raw:
-        return "vllm"
-    if _loopback_host(host):
+    if parsed.port == 8000 or "vllm" in raw:
         return "vllm"
     return ""
 

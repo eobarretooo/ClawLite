@@ -160,6 +160,11 @@ class LiteLLMProvider(LLMProvider):
             return "\n".join(parts).strip()
         return str(content or "").strip()
 
+    def _invalid_response_error(self, suffix: str) -> RuntimeError:
+        error = f"provider_response_invalid:{suffix}"
+        self._record_failure(error=error)
+        return RuntimeError(error)
+
     @staticmethod
     def _error_payload(resp: httpx.Response | None) -> dict[str, Any] | None:
         if resp is None:
@@ -383,30 +388,36 @@ class LiteLLMProvider(LLMProvider):
                 try:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
-                    data = response.json()
+                    try:
+                        data = response.json()
+                    except Exception as exc:
+                        raise self._invalid_response_error("malformed_payload") from exc
+                    if not isinstance(data, dict):
+                        raise self._invalid_response_error("malformed_payload")
 
                     parts = data.get("content")
+                    if not isinstance(parts, list):
+                        raise self._invalid_response_error("missing_content")
                     text_parts: list[str] = []
                     tool_calls: list[ToolCall] = []
-                    if isinstance(parts, list):
-                        for idx, part in enumerate(parts):
-                            if not isinstance(part, dict):
+                    for idx, part in enumerate(parts):
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "text":
+                            text = str(part.get("text") or "").strip()
+                            if text:
+                                text_parts.append(text)
+                        if part.get("type") == "tool_use":
+                            name = str(part.get("name") or "").strip()
+                            if not name:
                                 continue
-                            if part.get("type") == "text":
-                                text = str(part.get("text") or "").strip()
-                                if text:
-                                    text_parts.append(text)
-                            if part.get("type") == "tool_use":
-                                name = str(part.get("name") or "").strip()
-                                if not name:
-                                    continue
-                                tool_calls.append(
-                                    ToolCall(
-                                        id=str(part.get("id") or f"tool_{idx}"),
-                                        name=name,
-                                        arguments=part.get("input") if isinstance(part.get("input"), dict) else {},
-                                    )
+                            tool_calls.append(
+                                ToolCall(
+                                    id=str(part.get("id") or f"tool_{idx}"),
+                                    name=name,
+                                    arguments=part.get("input") if isinstance(part.get("input"), dict) else {},
                                 )
+                            )
 
                     self._record_success()
                     return LLMResult(
@@ -530,17 +541,18 @@ class LiteLLMProvider(LLMProvider):
                 try:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
-                    data = response.json()
+                    try:
+                        data = response.json()
+                    except Exception as exc:
+                        raise self._invalid_response_error("malformed_payload") from exc
+                    if not isinstance(data, dict):
+                        raise self._invalid_response_error("malformed_payload")
                     choices = data.get("choices")
                     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-                        error = "provider_response_invalid:missing_choice"
-                        self._record_failure(error=error)
-                        raise RuntimeError(error)
+                        raise self._invalid_response_error("missing_choice")
                     message = choices[0].get("message")
                     if not isinstance(message, dict):
-                        error = "provider_response_invalid:missing_choice"
-                        self._record_failure(error=error)
-                        raise RuntimeError(error)
+                        raise self._invalid_response_error("missing_choice")
                     text = self._extract_text(message.get("content", ""))
                     tool_calls = self._parse_tool_calls(message)
                     self._record_success()

@@ -12,8 +12,9 @@ def provider_transport_name(*, provider: str, spec: Any | None = None, auth_mode
         return "oauth_openai_compatible"
     if provider_name in {"ollama", "vllm"}:
         return "local_runtime"
-    if spec is not None and str(getattr(spec, "native_transport", "") or "").strip().lower():
-        return str(getattr(spec, "native_transport", "") or "").strip().lower()
+    native_transport = str(getattr(spec, "native_transport", "") or "").strip().lower() if spec is not None else ""
+    if native_transport:
+        return native_transport
     if spec is not None and bool(getattr(spec, "openai_compatible", False)):
         return "openai_compatible"
     return "native"
@@ -66,7 +67,7 @@ def provider_probe_hints(
     detail_lowered = detail_text.lower()
     hints: list[str] = []
 
-    if transport == "anthropic":
+    if transport in {"anthropic", "anthropic_compatible"}:
         _append_hint(hints, "Este provider usa transporte Anthropic-compatible; o probe consulta /messages ou /models.")
     elif transport == "openai_compatible":
         _append_hint(hints, "Este provider usa transporte OpenAI-compatible; o probe consulta /models.")
