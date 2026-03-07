@@ -8,6 +8,8 @@ from typing import Any, Iterable
 
 from loguru import logger
 
+from clawlite.workspace.user_profile import WorkspaceUserProfile, load_user_profile_from_path
+
 TEMPLATE_FILES = (
     "IDENTITY.md",
     "SOUL.md",
@@ -230,6 +232,13 @@ class WorkspaceLoader:
             if text:
                 out[filename] = text
         return out
+
+    def user_profile(self) -> WorkspaceUserProfile:
+        self.ensure_runtime_files()
+        return load_user_profile_from_path(self.workspace / "USER.md")
+
+    def user_profile_prompt(self) -> str:
+        return self.user_profile().prompt_hint()
 
     def bootstrap_path(self) -> Path:
         return self.workspace / "BOOTSTRAP.md"

@@ -97,6 +97,41 @@ def test_prompt_builder_preserves_soul_and_user_sections_under_workspace_pressur
     assert "[Identity Guard]" in out.system_prompt
 
 
+def test_prompt_builder_injects_structured_user_profile_hint(tmp_path: Path) -> None:
+    (tmp_path / "IDENTITY.md").write_text("I am ClawLite", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text("Always stay direct and autonomous.", encoding="utf-8")
+    (tmp_path / "USER.md").write_text(
+        "\n".join(
+            [
+                "# User Profile",
+                "",
+                "Name: Eder",
+                "What to call them: Ed",
+                "Timezone: America/Sao_Paulo",
+                "Context: ClawLite core work",
+                "Preferences: concise updates, direct actions",
+                "",
+                "## Working Style",
+                "- Commit and test changes incrementally",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    builder = PromptBuilder(tmp_path)
+    out = builder.build(
+        user_text="hello",
+        memory_snippets=[],
+        history=[],
+        skills_for_prompt=[],
+    )
+
+    assert "[Structured User Profile]" in out.system_prompt
+    assert "- Preferred name: Ed" in out.system_prompt
+    assert "- Timezone: America/Sao_Paulo" in out.system_prompt
+    assert "- Preferences: concise updates, direct actions" in out.system_prompt
+
+
 def test_prompt_builder_injects_identity_first_when_identity_missing(tmp_path: Path) -> None:
     (tmp_path / "SOUL.md").write_text("Be direct", encoding="utf-8")
 

@@ -189,6 +189,7 @@ class PromptBuilder:
         *,
         workspace_block: str,
         identity_guard: str,
+        profile_text: str,
         skills_text: str,
         memory_items: list[str],
         skills_context: str,
@@ -209,6 +210,7 @@ class PromptBuilder:
         shaped_system = cls._shape_system_prompt(
             workspace_block=workspace_block,
             identity_guard=identity_guard,
+            profile_text=profile_text,
             skills_text=skills_text,
             token_limit=system_cap,
         )
@@ -264,6 +266,7 @@ class PromptBuilder:
         *,
         workspace_block: str,
         identity_guard: str,
+        profile_text: str,
         skills_text: str,
         token_limit: int,
     ) -> str:
@@ -273,7 +276,7 @@ class PromptBuilder:
         sections = cls._split_workspace_sections(workspace_block)
         if len(sections) == 1 and not sections[0][0]:
             ordered_sections = cls._fit_prioritized_segments(
-                [sections[0][1], identity_guard, skills_text],
+                [sections[0][1], identity_guard, profile_text, skills_text],
                 token_limit,
             )
             return "\n\n".join(item for item in ordered_sections if item).strip()
@@ -288,7 +291,7 @@ class PromptBuilder:
                 secondary.append(section_text)
 
         ordered_sections = cls._fit_prioritized_segments(
-            [*critical, identity_guard, *secondary, skills_text],
+            [*critical, identity_guard, profile_text, *secondary, skills_text],
             token_limit,
         )
         return "\n\n".join(item for item in ordered_sections if item).strip()
@@ -324,6 +327,7 @@ class PromptBuilder:
         chat_id: str = "",
     ) -> PromptArtifacts:
         workspace_block = self._ensure_identity_first(self._read_workspace_files())
+        profile_text = self.workspace_loader.user_profile_prompt()
         clean_skills = [item.strip() for item in skills_for_prompt if item and item.strip()]
         if clean_skills and len(clean_skills) == 1 and clean_skills[0].startswith("<available_skills>"):
             skills_text = f"[Skills]\n{clean_skills[0]}"
@@ -338,6 +342,7 @@ class PromptBuilder:
         shaped_system, shaped_memory, shaped_skills_context, shaped_history = self._shape_context(
             workspace_block=workspace_block,
             identity_guard=self._IDENTITY_GUARD_SECTION,
+            profile_text=profile_text,
             skills_text=skills_text,
             memory_items=clean_memory,
             skills_context=skills_context,

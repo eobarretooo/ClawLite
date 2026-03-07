@@ -18,6 +18,7 @@ from clawlite.core.subagent import SubagentManager
 from clawlite.core.subagent_synthesizer import SubagentSynthesizer
 from clawlite.session.store import SessionStore
 from clawlite.utils.logging import bind_event
+from clawlite.workspace.identity_enforcer import IdentityEnforcer
 
 
 @dataclass(slots=True)
@@ -297,6 +298,7 @@ class AgentEngine:
         sessions: SessionStoreProtocol | None = None,
         memory: MemoryStore | None = None,
         prompt_builder: PromptBuilder | None = None,
+        identity_enforcer: IdentityEnforcer | None = None,
         skills_loader: SkillsLoader | None = None,
         subagents: SubagentManager | None = None,
         synthesizer: SubagentSynthesizer | None = None,
@@ -319,6 +321,9 @@ class AgentEngine:
         self.sessions = sessions or SessionStore()
         self.memory = memory or MemoryStore()
         self.prompt_builder = prompt_builder or PromptBuilder()
+        self.identity_enforcer = identity_enforcer or IdentityEnforcer(
+            workspace_loader=self.prompt_builder.workspace_loader
+        )
         self.skills_loader = skills_loader or SkillsLoader()
         self.subagents = subagents or SubagentManager(
             state_path=subagent_state_path,
@@ -2506,9 +2511,23 @@ class AgentEngine:
             tool_calls=list(final.tool_calls),
             model=final.model,
         )
+        enforcement = self.identity_enforcer.enforce(user_text=user_text, output_text=final.text)
+        final = ProviderResult(
+            text=enforcement.text,
+            tool_calls=list(final.tool_calls),
+            model=final.model,
+        )
+        if enforcement.violations or enforcement.warnings:
+            run_log.warning(
+                "identity enforcement session={} violations={} warnings={} persist_allowed={}",
+                session_id or "-",
+                ",".join(enforcement.violations) or "-",
+                ",".join(enforcement.warnings) or "-",
+                enforcement.persist_allowed,
+            )
 
         self.sessions.append(session_id, "user", user_text)
-        if not graceful_error:
+        if not graceful_error and enforcement.persist_allowed:
             self.sessions.append(session_id, "assistant", final.text)
             memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
             remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
@@ -2582,6 +2601,8 @@ class AgentEngine:
                         )
                     except Exception as exc:
                         run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)
+        elif not graceful_error:
+            run_log.warning("assistant persistence blocked by identity enforcement session={}", session_id or "-")
         else:
             run_log.info("skipping assistant persistence after provider failure")
         if final.model == "engine/stop":
