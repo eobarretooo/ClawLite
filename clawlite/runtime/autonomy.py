@@ -550,6 +550,22 @@ class AutonomyService:
         self._consecutive_error_count = 0
         self._last_snapshot: dict[str, Any] = {}
 
+    def _task_snapshot(self) -> tuple[str, str]:
+        task = self._task
+        if task is None:
+            return ("stopped", "")
+        if task.cancelled():
+            return ("cancelled", "")
+        if not task.done():
+            return ("running", "")
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", "")
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", "")
+
     @staticmethod
     def _utc_now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -699,8 +715,10 @@ class AutonomyService:
 
     def status(self) -> dict[str, Any]:
         cooldown_remaining_s = max(0.0, self._cooldown_until - self._now_monotonic())
+        task_state, task_error = self._task_snapshot()
         return {
-            "running": bool(self._running and self._task is not None),
+            "running": bool(self._running and task_state == "running"),
+            "worker_state": task_state,
             "enabled": bool(self.enabled),
             "session_id": self.session_id,
             "interval_s": self.interval_s,
@@ -716,7 +734,7 @@ class AutonomyService:
             "skipped_disabled": self._skipped_disabled,
             "last_run_at": self._last_run_at,
             "last_result_excerpt": self._last_result_excerpt,
-            "last_error": self._last_error,
+            "last_error": task_error or self._last_error,
             "consecutive_error_count": self._consecutive_error_count,
             "last_snapshot": dict(self._last_snapshot),
             "cooldown_remaining_s": round(cooldown_remaining_s, 3),

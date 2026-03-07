@@ -36,7 +36,7 @@ from clawlite.providers.reliability import is_quota_429_error
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
-from clawlite.runtime import AutonomyLog, AutonomyWakeCoordinator, RuntimeSupervisor, SupervisorIncident
+from clawlite.runtime import AutonomyLog, AutonomyService, AutonomyWakeCoordinator, RuntimeSupervisor, SupervisorIncident
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.tools.agents import AgentsListTool
 from clawlite.tools.cron import CronTool
@@ -76,6 +76,7 @@ TELEGRAM_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S = 300.0
 GATEWAY_CRON_ENGINE_TIMEOUT_S = 90.0
 GATEWAY_HEARTBEAT_ENGINE_TIMEOUT_S = 120.0
+GATEWAY_BOOTSTRAP_ENGINE_TIMEOUT_S = 120.0
 LATEST_MEMORY_ROUTE_CACHE_TTL_S = 5.0
 LATEST_MEMORY_ROUTE_TAIL_BYTES = 32 * 1024
 
@@ -305,6 +306,7 @@ class DiagnosticsResponse(BaseModel):
     channels_inbound: dict[str, Any] = {}
     cron: dict[str, Any]
     heartbeat: dict[str, Any]
+    autonomy: dict[str, Any] = {}
     supervisor: dict[str, Any] = {}
     autonomy_wake: dict[str, Any] = {}
     autonomy_log: dict[str, Any] = {}
@@ -616,6 +618,7 @@ class RuntimeContainer:
     memory_monitor: MemoryMonitor | None = None
     supervisor: RuntimeSupervisor | None = None
     self_evolution: Any | None = None
+    autonomy: AutonomyService | None = None
 
 
 @dataclass(slots=True)
@@ -631,6 +634,7 @@ class GatewayLifecycleState:
                 "channels": {"enabled": True, "running": False, "last_error": ""},
                 "cron": {"enabled": True, "running": False, "last_error": ""},
                 "heartbeat": {"enabled": True, "running": False, "last_error": ""},
+                "autonomy": {"enabled": False, "running": False, "last_error": "disabled"},
                 "supervisor": {"enabled": True, "running": False, "last_error": ""},
                 "skills_watcher": {"enabled": True, "running": False, "last_error": ""},
                 "proactive_monitor": {"enabled": False, "running": False, "last_error": ""},
@@ -1439,6 +1443,104 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
     return decision
 
 
+async def _run_bootstrap_cycle(runtime: RuntimeContainer) -> dict[str, Any]:
+    workspace = getattr(runtime, "workspace", None)
+    if workspace is None:
+        return {"attempted": False, "status": "skipped", "reason": "workspace_unavailable"}
+
+    should_run = getattr(workspace, "should_run", None)
+    if callable(should_run):
+        try:
+            if not bool(should_run()):
+                return {"attempted": False, "status": "skipped", "reason": "not_pending"}
+        except Exception as exc:
+            return {
+                "attempted": True,
+                "status": "error",
+                "reason": "status_check_failed",
+                "error": str(exc),
+            }
+
+    bootstrap_prompt = getattr(workspace, "get_prompt", None)
+    prompt_text = ""
+    if callable(bootstrap_prompt):
+        try:
+            prompt_text = str(bootstrap_prompt() or "").strip()
+        except Exception as exc:
+            prompt_text = ""
+            return {
+                "attempted": True,
+                "status": "error",
+                "reason": "prompt_load_failed",
+                "error": str(exc),
+            }
+    if not prompt_text:
+        return {"attempted": False, "status": "skipped", "reason": "prompt_missing"}
+
+    session_id = "bootstrap:system"
+    user_text = (
+        "Run the bootstrap cycle now. Read BOOTSTRAP.md from the workspace context, "
+        "follow it completely, and finish the first-run initialization without asking the operator to intervene. "
+        "When complete, reply with a short confirmation."
+    )
+    try:
+        result = await _run_engine_with_timeout(
+            engine=runtime.engine,
+            session_id=session_id,
+            user_text=user_text,
+            timeout_s=GATEWAY_BOOTSTRAP_ENGINE_TIMEOUT_S,
+        )
+        model_name = str(getattr(result, "model", "") or "").strip()
+        if not model_name or model_name.startswith("engine/"):
+            error = f"bootstrap_run_unsatisfied:{model_name or 'unknown_model'}"
+            try:
+                workspace.record_bootstrap_result(status="error", session_id=session_id, error=error)
+            except Exception:
+                pass
+            return {
+                "attempted": True,
+                "status": "error",
+                "reason": error,
+                "result_excerpt": str(getattr(result, "text", "") or "")[:200],
+            }
+        completed = bool(workspace.complete())
+        if not completed:
+            try:
+                workspace.record_bootstrap_result(
+                    status="error",
+                    session_id=session_id,
+                    error="complete_bootstrap_returned_false",
+                )
+            except Exception:
+                pass
+            return {
+                "attempted": True,
+                "status": "error",
+                "reason": "complete_bootstrap_returned_false",
+            }
+        try:
+            workspace.record_bootstrap_result(status="completed", session_id=session_id)
+        except Exception:
+            pass
+        return {
+            "attempted": True,
+            "status": "completed",
+            "reason": "startup_bootstrap_completed",
+            "result_excerpt": str(getattr(result, "text", "") or "")[:200],
+        }
+    except Exception as exc:
+        try:
+            workspace.record_bootstrap_result(status="error", session_id=session_id, error=str(exc))
+        except Exception:
+            pass
+        return {
+            "attempted": True,
+            "status": "error",
+            "reason": "bootstrap_run_failed",
+            "error": str(exc),
+        }
+
+
 def create_app(config: AppConfig | None = None) -> FastAPI:
     setup_logging()
     cfg = config or load_config()
@@ -1453,6 +1555,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     ws_telemetry = WebSocketTelemetry()
     started_monotonic = time.monotonic()
     lifecycle.components["heartbeat"]["enabled"] = bool(cfg.gateway.heartbeat.enabled)
+    lifecycle.components["autonomy"]["enabled"] = bool(cfg.gateway.autonomy.enabled)
+    lifecycle.components["autonomy"]["last_error"] = "" if cfg.gateway.autonomy.enabled else "disabled"
     lifecycle.components["supervisor"]["enabled"] = bool(cfg.gateway.supervisor.enabled)
     lifecycle.components["skills_watcher"]["enabled"] = True
     lifecycle.components["proactive_monitor"]["enabled"] = bool(runtime.memory_monitor is not None)
@@ -1571,6 +1675,67 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
         except Exception as exc:
             bind_event("autonomy.log", source=source, action=action).warning("autonomy log record failed error={}", exc)
+
+    async def _autonomy_snapshot_payload() -> dict[str, Any]:
+        queue_snapshot = runtime.bus.stats()
+        channels_snapshot = runtime.channels.status()
+        supervisor_snapshot = runtime.supervisor.status() if runtime.supervisor is not None else {}
+        return {
+            "queue": queue_snapshot if isinstance(queue_snapshot, dict) else {},
+            "channels": channels_snapshot if isinstance(channels_snapshot, dict) else {},
+            "supervisor": supervisor_snapshot if isinstance(supervisor_snapshot, dict) else {},
+        }
+
+    async def _run_autonomy_tick(snapshot: dict[str, Any]) -> str:
+        prompt_text = (
+            "Autonomy tick. Review the runtime snapshot and workspace context. "
+            "If nothing needs operator attention right now, reply AUTONOMY_IDLE. "
+            "If the operator needs a concise autonomous update, reply with only that notice text."
+        )
+        snapshot_text = json.dumps(snapshot or {}, ensure_ascii=False, sort_keys=True)
+        result = await _run_engine_with_timeout(
+            engine=runtime.engine,
+            session_id=str(cfg.gateway.autonomy.session_id or "autonomy:system"),
+            user_text=f"{prompt_text}\n\nRuntime snapshot:\n{snapshot_text}",
+            timeout_s=float(cfg.gateway.autonomy.timeout_s or 45.0),
+        )
+        model_name = str(getattr(result, "model", "") or "").strip()
+        if not model_name or model_name.startswith("engine/"):
+            raise RuntimeError(f"autonomy_tick_unsatisfied:{model_name or 'unknown_model'}")
+
+        text = str(getattr(result, "text", "") or "").strip() or "AUTONOMY_IDLE"
+        metadata = {
+            "source": "autonomy",
+            "trigger": "continuous_loop",
+            "session_id": str(cfg.gateway.autonomy.session_id or "autonomy:system"),
+            "snapshot": dict(snapshot or {}),
+        }
+        if text == "AUTONOMY_IDLE" or text.startswith("AUTONOMY_IDLE\n"):
+            _record_autonomy_event(
+                "autonomy",
+                "continuous_tick",
+                "idle",
+                summary="continuous autonomy tick returned idle",
+                metadata=metadata,
+            )
+            return text
+
+        _record_autonomy_event(
+            "autonomy",
+            "continuous_tick",
+            "actionable",
+            summary="continuous autonomy tick produced operator notice",
+            metadata={**metadata, "result_excerpt": text[:200]},
+        )
+        sent = await _send_autonomy_notice(
+            "autonomy",
+            "continuous_tick",
+            "actionable",
+            text=text,
+            metadata=metadata,
+            summary="continuous autonomy tick operator notice",
+        )
+        return "AUTONOMY_NOTICE_SENT" if sent else "AUTONOMY_NOTICE_UNROUTED"
 
     def _wake_backpressure_row(snapshot: dict[str, Any], kind: str) -> dict[str, int]:
         by_kind = snapshot.get("by_kind") if isinstance(snapshot, dict) else {}
@@ -1883,7 +2048,32 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         row["last_error"] = str(status.get("last_error", "") or "")
         row["completed_at"] = str(status.get("completed_at", "") or "")
         row["run_count"] = int(status.get("run_count", 0) or 0)
+        row["last_session_id"] = str(status.get("last_session_id", "") or "")
         return status
+
+    async def _run_startup_bootstrap_cycle() -> dict[str, Any]:
+        status = _refresh_bootstrap_component()
+        if not bool(status.get("pending", False)):
+            return {"attempted": False, "status": "skipped", "reason": "not_pending"}
+
+        row = lifecycle.components.setdefault(
+            "bootstrap",
+            {"enabled": True, "running": False, "pending": False, "last_status": "", "last_error": ""},
+        )
+        row["enabled"] = True
+        row["running"] = True
+        row["pending"] = True
+        row["last_error"] = ""
+        bind_event("bootstrap.lifecycle", session="bootstrap:system").info("bootstrap startup cycle begin")
+
+        result = await _run_bootstrap_cycle(runtime)
+        _refresh_bootstrap_component()
+        bind_event("bootstrap.lifecycle", session="bootstrap:system").info(
+            "bootstrap startup cycle finished status={} reason={}",
+            str(result.get("status", "") or "unknown"),
+            str(result.get("reason", "") or ""),
+        )
+        return result
 
     def _background_task_snapshot(
         task: asyncio.Task[Any] | None,
@@ -1911,6 +2101,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "heartbeat",
             running=bool(heartbeat_status.get("running", False)),
             error=str(heartbeat_status.get("last_error", "") or ""),
+        )
+
+        autonomy_status = runtime.autonomy.status() if runtime.autonomy is not None else {
+            "running": False,
+            "enabled": False,
+            "last_error": "disabled",
+        }
+        lifecycle.components.setdefault("autonomy", {"enabled": False, "running": False, "last_error": "disabled"})[
+            "enabled"
+        ] = bool(autonomy_status.get("enabled", False))
+        lifecycle.mark_component(
+            "autonomy",
+            running=bool(autonomy_status.get("running", False)),
+            error=(str(autonomy_status.get("last_error", "") or "") or ("disabled" if not autonomy_status.get("enabled", False) else "")),
         )
 
         cron_status = runtime.cron.status()
@@ -2750,6 +2954,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def _stop_self_evolution() -> None:
         lifecycle.mark_component("self_evolution", running=False)
 
+    runtime.autonomy = AutonomyService(
+        enabled=bool(cfg.gateway.autonomy.enabled),
+        interval_s=float(cfg.gateway.autonomy.interval_s or 900),
+        cooldown_s=float(cfg.gateway.autonomy.cooldown_s or 300),
+        timeout_s=float(cfg.gateway.autonomy.timeout_s or 45.0),
+        max_queue_backlog=int(cfg.gateway.autonomy.max_queue_backlog or 200),
+        session_id=str(cfg.gateway.autonomy.session_id or "autonomy:system"),
+        snapshot_callback=_autonomy_snapshot_payload,
+        run_callback=_run_autonomy_tick,
+    )
+
     async def _supervisor_incident_checks() -> list[SupervisorIncident]:
         incidents: list[SupervisorIncident] = []
 
@@ -2768,6 +2983,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         if not autonomy_wake_status.get("running", False):
             worker_state = str(autonomy_wake_status.get("worker_state", "stopped") or "stopped")
             incidents.append(SupervisorIncident(component="autonomy_wake", reason=f"autonomy_wake_{worker_state}"))
+
+        if cfg.gateway.autonomy.enabled and runtime.autonomy is not None:
+            autonomy_status = runtime.autonomy.status()
+            if not autonomy_status.get("running", False):
+                worker_state = str(autonomy_status.get("worker_state", "stopped") or "stopped")
+                incidents.append(SupervisorIncident(component="autonomy", reason=f"autonomy_{worker_state}"))
 
         skills_watcher_status = runtime.skills_loader.watcher_status()
         if not skills_watcher_status.get("running", False):
@@ -2860,6 +3081,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             await runtime.autonomy_wake.start(_dispatch_autonomy_wake)
             _refresh_runtime_components()
             recovered = bool(runtime.autonomy_wake.status().get("running", False))
+        elif component == "autonomy":
+            if runtime.autonomy is not None:
+                await runtime.autonomy.start()
+                _refresh_runtime_components()
+                recovered = bool(runtime.autonomy.status().get("running", False))
         elif component == "skills_watcher":
             await runtime.skills_loader.start_watcher()
             _refresh_runtime_components()
@@ -3036,6 +3262,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             ("autonomy_wake", runtime.autonomy_wake.start, runtime.autonomy_wake.stop, True),
             ("cron", runtime.cron.start, runtime.cron.stop, True),
             ("heartbeat", runtime.heartbeat.start, runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
+            ("autonomy", runtime.autonomy.start, runtime.autonomy.stop, bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
             ("proactive_monitor", _start_proactive_monitor, _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
             ("memory_quality_tuning", _start_memory_quality_tuning, _stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
             ("self_evolution", _start_self_evolution, _stop_self_evolution, bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None)),
@@ -3165,6 +3392,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     await start_fn(_submit_cron_wake)
                 elif name == "skills_watcher":
                     await start_fn()
+                elif name == "autonomy":
+                    await start_fn()
                 elif name == "proactive_monitor":
                     await start_fn()
                 elif name == "memory_quality_tuning":
@@ -3213,9 +3442,25 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
             bind_event("gateway.lifecycle").warning("subagent replay startup failed error={}", exc)
 
+        try:
+            bootstrap_result = await _run_startup_bootstrap_cycle()
+            if bool(bootstrap_result.get("attempted", False)):
+                bind_event("gateway.lifecycle").info(
+                    "bootstrap startup cycle status={} reason={}",
+                    str(bootstrap_result.get("status", "") or "unknown"),
+                    str(bootstrap_result.get("reason", "") or ""),
+                )
+        except Exception as exc:
+            lifecycle.components.setdefault(
+                "bootstrap",
+                {"enabled": True, "running": False, "pending": False, "last_status": "", "last_error": ""},
+            )["last_error"] = str(exc)
+            bind_event("gateway.lifecycle").warning("bootstrap startup cycle failed error={}", exc)
+
     async def _stop_subsystems() -> None:
         steps: list[tuple[str, Any, bool]] = [
             ("supervisor", runtime.supervisor.stop, bool(cfg.gateway.supervisor.enabled)),
+            ("autonomy", runtime.autonomy.stop, bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
             ("heartbeat", runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
             ("proactive_monitor", _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
             ("memory_quality_tuning", _stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
@@ -3733,6 +3978,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             channels_inbound=runtime.channels.inbound_diagnostics(),
             cron=cron_payload,
             heartbeat=runtime.heartbeat.status(),
+            autonomy=runtime.autonomy.status() if runtime.autonomy is not None else {},
             supervisor=runtime.supervisor.status() if runtime.supervisor is not None else {},
             autonomy_wake=runtime.autonomy_wake.status(),
             autonomy_log=runtime.autonomy_log.snapshot(),

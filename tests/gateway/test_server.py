@@ -44,6 +44,15 @@ class FakeProvider:
         return LLMResult(text="pong", model="fake/test", tool_calls=[], metadata={})
 
 
+class AutonomyIdleProvider:
+    def get_default_model(self) -> str:
+        return "fake/autonomy"
+
+    async def complete(self, *, messages, tools):
+        del messages, tools
+        return LLMResult(text="AUTONOMY_IDLE", model="fake/autonomy", tool_calls=[], metadata={})
+
+
 class ReplayProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -633,7 +642,7 @@ def test_gateway_telegram_webhook_processing_failure_returns_503_in_fail_fast_mo
             assert payload["code"] == "telegram_webhook_processing_failed"
 
 
-def test_gateway_successful_chat_completes_bootstrap_lifecycle(tmp_path: Path) -> None:
+def test_gateway_startup_completes_bootstrap_lifecycle_without_user_turn(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
         state_path=str(tmp_path / "state"),
@@ -645,17 +654,45 @@ def test_gateway_successful_chat_completes_bootstrap_lifecycle(tmp_path: Path) -
     bootstrap_file = tmp_path / "workspace" / "BOOTSTRAP.md"
 
     with TestClient(app) as client:
-        assert bootstrap_file.exists()
-        chat = client.post("/v1/chat", json={"session_id": "cli:bootstrap", "text": "ping"})
-        assert chat.status_code == 200
-        assert chat.json()["text"] == "pong"
-
         assert not bootstrap_file.exists()
 
         status_payload = client.get("/v1/status").json()
         bootstrap_component = status_payload["components"]["bootstrap"]
         assert bootstrap_component["pending"] is False
         assert bootstrap_component["last_status"] == "completed"
+        assert bootstrap_component["last_session_id"] == "bootstrap:system"
+
+        diagnostics_payload = client.get("/v1/diagnostics").json()
+        assert diagnostics_payload["bootstrap"]["pending"] is False
+        assert diagnostics_payload["bootstrap"]["last_status"] == "completed"
+        assert diagnostics_payload["bootstrap"]["last_session_id"] == "bootstrap:system"
+
+
+def test_gateway_successful_chat_completes_bootstrap_after_startup_failure(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FailingProvider("bootstrap_boom")
+    bootstrap_file = tmp_path / "workspace" / "BOOTSTRAP.md"
+
+    with TestClient(app) as client:
+        assert bootstrap_file.exists()
+
+        diagnostics_payload = client.get("/v1/diagnostics").json()
+        assert diagnostics_payload["bootstrap"]["pending"] is True
+        assert diagnostics_payload["bootstrap"]["last_status"] == "error"
+        assert diagnostics_payload["bootstrap"]["last_error"] == "bootstrap_run_unsatisfied:engine/fallback"
+
+        app.state.runtime.engine.provider = FakeProvider()
+        chat = client.post("/v1/chat", json={"session_id": "cli:bootstrap", "text": "ping"})
+        assert chat.status_code == 200
+        assert chat.json()["text"] == "pong"
+
+        assert not bootstrap_file.exists()
 
         diagnostics_payload = client.get("/v1/diagnostics").json()
         assert diagnostics_payload["bootstrap"]["pending"] is False
@@ -670,18 +707,19 @@ def test_gateway_internal_sessions_do_not_complete_bootstrap(tmp_path: Path) -> 
         channels={},
     )
     app = create_app(cfg)
-    app.state.runtime.engine.provider = FakeProvider()
+    app.state.runtime.engine.provider = FailingProvider("bootstrap_boom")
     bootstrap_file = tmp_path / "workspace" / "BOOTSTRAP.md"
 
     with TestClient(app) as client:
         assert bootstrap_file.exists()
+        app.state.runtime.engine.provider = FakeProvider()
         chat = client.post("/v1/chat", json={"session_id": "heartbeat:manual", "text": "ping"})
         assert chat.status_code == 200
         assert bootstrap_file.exists()
 
         payload = client.get("/v1/diagnostics").json()
         assert payload["bootstrap"]["pending"] is True
-        assert payload["bootstrap"]["last_status"] == ""
+        assert payload["bootstrap"]["last_status"] == "error"
 
 
 def test_gateway_runtime_passes_memory_window_to_engine(tmp_path: Path) -> None:
@@ -1248,18 +1286,49 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
         workspace_path=str(tmp_path / "workspace"),
         state_path=str(tmp_path / "state"),
         scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
-        gateway={"heartbeat": {"enabled": False}, "diagnostics": {"enabled": True, "require_auth": False}},
+        gateway={
+            "heartbeat": {"enabled": False},
+            "autonomy": {"enabled": True, "interval_s": 9999, "cooldown_s": 30, "timeout_s": 5},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
         channels={},
     )
     app = create_app(cfg)
+    app.state.runtime.engine.provider = AutonomyIdleProvider()
 
     with TestClient(app) as client:
         payload = client.get("/v1/diagnostics").json()
         alias_payload = client.get("/api/diagnostics").json()
 
+        assert "autonomy" in payload
         assert "autonomy_wake" in payload
         assert "autonomy_log" in payload
         assert "supervisor" in payload
+        assert payload["control_plane"]["components"]["autonomy"]["running"] is True
+        assert set(payload["autonomy"].keys()) >= {
+            "running",
+            "worker_state",
+            "enabled",
+            "session_id",
+            "ticks",
+            "run_attempts",
+            "run_success",
+            "run_failures",
+            "skipped_backlog",
+            "skipped_cooldown",
+            "skipped_disabled",
+            "last_run_at",
+            "last_result_excerpt",
+            "last_error",
+            "consecutive_error_count",
+            "last_snapshot",
+            "cooldown_remaining_s",
+        }
+        assert payload["autonomy"]["enabled"] is True
+        assert payload["autonomy"]["running"] is True
+        assert payload["autonomy"]["run_attempts"] >= 1
+        assert payload["autonomy"]["run_success"] >= 1
+        assert payload["autonomy"]["last_result_excerpt"] == "AUTONOMY_IDLE"
         assert set(payload["autonomy_wake"].keys()) >= {
             "running",
             "worker_state",
@@ -1321,6 +1390,12 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
             "consecutive_error_count",
             "cooldown_active",
         }
+        alias_autonomy = dict(alias_payload["autonomy"])
+        payload_autonomy = dict(payload["autonomy"])
+        alias_cooldown = float(alias_autonomy.pop("cooldown_remaining_s", 0.0) or 0.0)
+        payload_cooldown = float(payload_autonomy.pop("cooldown_remaining_s", 0.0) or 0.0)
+        assert alias_autonomy == payload_autonomy
+        assert abs(alias_cooldown - payload_cooldown) <= 1.0
         assert alias_payload["autonomy_wake"] == payload["autonomy_wake"]
         assert alias_payload["autonomy_log"] == payload["autonomy_log"]
         assert alias_payload["supervisor"] == payload["supervisor"]
@@ -2573,7 +2648,7 @@ def test_gateway_ws_alias_behaves_like_v1_ws(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         bootstrap_file = tmp_path / "workspace" / "BOOTSTRAP.md"
-        assert bootstrap_file.exists()
+        assert not bootstrap_file.exists()
 
         with client.websocket_connect("/v1/ws") as socket:
             _assert_connect_challenge(socket)

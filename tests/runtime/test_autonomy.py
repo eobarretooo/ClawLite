@@ -78,6 +78,7 @@ def test_autonomy_success_updates_excerpt_and_cooldown_skip() -> None:
         assert first["run_attempts"] == 1
         assert first["run_success"] == 1
         assert first["run_failures"] == 0
+        assert first["worker_state"] == "stopped"
         assert first["last_result_excerpt"] == "AUTONOMY_IDLE"
         assert first["consecutive_error_count"] == 0
 
