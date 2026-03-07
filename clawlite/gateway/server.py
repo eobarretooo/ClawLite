@@ -988,7 +988,15 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         memory_backend_url=str(config.agents.defaults.memory.pgvector_url or ""),
     )
     tools.register(SkillTool(loader=skills, registry=tools, memory=memory))
-    memory_monitor = MemoryMonitor(memory) if bool(getattr(config.agents.defaults.memory, "proactive", False)) else None
+    memory_monitor = (
+        MemoryMonitor(
+            memory,
+            retry_backoff_seconds=float(getattr(config.agents.defaults.memory, "proactive_retry_backoff_s", 300.0) or 300.0),
+            max_retry_attempts=int(getattr(config.agents.defaults.memory, "proactive_max_retry_attempts", 3) or 3),
+        )
+        if bool(getattr(config.agents.defaults.memory, "proactive", False))
+        else None
+    )
     tools.register(MemoryRecallTool(memory))
     tools.register(MemorySearchTool(memory))
     tools.register(MemoryGetTool(workspace_path=workspace_path))
@@ -1178,6 +1186,7 @@ async def _run_proactive_monitor(runtime: RuntimeContainer) -> dict[str, Any]:
         "status": "disabled",
         "scanned": 0,
         "delivered": 0,
+        "replayed": 0,
         "failed": 0,
         "next_step_sent": False,
         "error": "",
@@ -1198,6 +1207,8 @@ async def _run_proactive_monitor(runtime: RuntimeContainer) -> dict[str, Any]:
     for suggestion in suggestions:
         if not monitor.should_deliver(suggestion, min_priority=0.7):
             continue
+        suggestion_metadata = dict(getattr(suggestion, "metadata", {}) or {})
+        delivery_status = str(suggestion_metadata.get("_delivery_status", "pending") or "pending").strip().lower()
         try:
             priority = float(getattr(suggestion, "priority", 0.0) or 0.0)
         except Exception:
@@ -1207,7 +1218,7 @@ async def _run_proactive_monitor(runtime: RuntimeContainer) -> dict[str, Any]:
             "suggestion_id": suggestion.suggestion_id,
             "trigger": suggestion.trigger,
             "priority": priority,
-            **dict(getattr(suggestion, "metadata", {}) or {}),
+            **suggestion_metadata,
         }
         try:
             await channels.send(
@@ -1231,6 +1242,8 @@ async def _run_proactive_monitor(runtime: RuntimeContainer) -> dict[str, Any]:
                 pass
             continue
         result["delivered"] = int(result.get("delivered", 0) or 0) + 1
+        if delivery_status == "failed":
+            result["replayed"] = int(result.get("replayed", 0) or 0) + 1
         try:
             monitor.mark_delivered(suggestion)
         except Exception as exc:
@@ -1391,6 +1404,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         "error_count": 0,
         "backpressure_count": 0,
         "delivered_count": 0,
+        "replayed_count": 0,
         "last_trigger": "",
         "last_result": "",
         "last_error": "",
@@ -2145,6 +2159,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     else:
                         proactive_runner_state["error_count"] = int(proactive_runner_state.get("error_count", 0) or 0) + 1
                     proactive_runner_state["delivered_count"] = int(proactive_runner_state.get("delivered_count", 0) or 0) + int(scan_result.get("delivered", 0) or 0)
+                    proactive_runner_state["replayed_count"] = int(proactive_runner_state.get("replayed_count", 0) or 0) + int(scan_result.get("replayed", 0) or 0)
                     proactive_runner_state["last_result"] = status or "unknown"
                     proactive_runner_state["last_error"] = str(scan_result.get("error", "") or "")
                 except asyncio.CancelledError:

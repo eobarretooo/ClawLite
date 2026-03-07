@@ -18,7 +18,8 @@ from starlette.websockets import WebSocketDisconnect
 import clawlite.gateway.server as gateway_server
 from clawlite.channels.base import BaseChannel
 from clawlite.config.schema import AppConfig, SchedulerConfig
-from clawlite.core.memory_monitor import MemorySuggestion
+from clawlite.core.memory import MemoryStore
+from clawlite.core.memory_monitor import MemoryMonitor, MemorySuggestion
 from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.gateway.server import (
     _LATEST_MEMORY_ROUTE_CACHE,
@@ -1614,6 +1615,89 @@ def test_run_proactive_monitor_scan_fail_soft_does_not_raise() -> None:
         channels.send.assert_not_awaited()
 
     asyncio.run(_scenario())
+
+
+def test_run_proactive_monitor_replays_retryable_failed_suggestions(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        monitor = MemoryMonitor(store, retry_backoff_seconds=0.0, max_retry_attempts=3)
+        suggestion = MemorySuggestion(
+            text="Pending task with no updates for 2 day(s): revisar rollout",
+            priority=0.85,
+            trigger="pending_task",
+            channel="telegram",
+            target="chat42",
+        )
+        row = suggestion.to_payload()
+        row["status"] = "failed"
+        row["failure_count"] = 1
+        row["failed_at"] = "2026-03-06T00:00:00+00:00"
+        row["retry_after_at"] = "2026-03-06T00:00:00+00:00"
+        monitor._write_pending_payload(
+            [row]
+        )
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=SimpleNamespace(memory=None), channels=channels, memory_monitor=monitor)
+
+        result = await _run_proactive_monitor(runtime)
+
+        assert result["status"] == "ok"
+        assert result["delivered"] == 1
+        assert result["replayed"] == 1
+        channels.send.assert_awaited_once()
+        assert json.loads(monitor.suggestions_path.read_text(encoding="utf-8"))[0]["status"] == "delivered"
+
+    asyncio.run(_scenario())
+
+
+def test_gateway_startup_replays_failed_memory_suggestions(tmp_path: Path) -> None:
+    memory_home = tmp_path / "memory"
+    memory_home.mkdir(parents=True, exist_ok=True)
+    suggestions_path = memory_home / "suggestions_pending.json"
+    suggestion = MemorySuggestion(
+        text="Upcoming birthday in 1 day(s): Ana",
+        priority=0.9,
+        trigger="upcoming_event",
+        channel="telegram",
+        target="chat42",
+        metadata={"days_until": 1},
+    )
+    row = suggestion.to_payload()
+    row["status"] = "failed"
+    row["failure_count"] = 1
+    row["failed_at"] = "2026-03-06T00:00:00+00:00"
+    row["retry_after_at"] = "2026-03-06T00:00:00+00:00"
+    suggestions_path.write_text(
+        json.dumps([row]) + "\n",
+        encoding="utf-8",
+    )
+
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        agents={"defaults": {"memory": {"proactive": True, "proactive_retry_backoff_s": 0, "proactive_max_retry_attempts": 3}}},
+        gateway={"heartbeat": {"enabled": False}, "diagnostics": {"enabled": True, "require_auth": False}},
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            payload = client.get("/v1/diagnostics").json()
+            runner = payload["memory_monitor"]["runner"]
+            if app.state.runtime.channels.send.await_count >= 1 and int(runner.get("replayed_count", 0) or 0) >= 1:
+                break
+            time.sleep(0.05)
+
+        send_kwargs = app.state.runtime.channels.send.await_args.kwargs
+        assert send_kwargs["channel"] == "telegram"
+        assert send_kwargs["target"] == "chat42"
+        assert "Upcoming birthday in 1 day(s): Ana" in str(send_kwargs["text"])
+        payload = json.loads(suggestions_path.read_text(encoding="utf-8"))
+        assert payload[0]["status"] == "delivered"
 
 
 def test_gateway_auth_required_for_control_plane(tmp_path: Path) -> None:

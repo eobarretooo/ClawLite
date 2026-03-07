@@ -411,6 +411,8 @@ class AgentMemoryConfig:
     semantic_search: bool = False
     auto_categorize: bool = False
     proactive: bool = False
+    proactive_retry_backoff_s: float = 300.0
+    proactive_max_retry_attempts: int = 3
     emotional_tracking: bool = False
     backend: str = "sqlite"
     pgvector_url: str = ""
@@ -444,6 +446,14 @@ class AgentMemoryConfig:
             semantic_search=bool(_value("semantic_search", "semanticSearch", legacy_semantic)),
             auto_categorize=bool(_value("auto_categorize", "autoCategorize", legacy_auto_categorize)),
             proactive=bool(_value("proactive", "proactive", False)),
+            proactive_retry_backoff_s=max(
+                0.0,
+                float(_value("proactive_retry_backoff_s", "proactiveRetryBackoffS", 300.0) or 300.0),
+            ),
+            proactive_max_retry_attempts=max(
+                1,
+                int(_value("proactive_max_retry_attempts", "proactiveMaxRetryAttempts", 3) or 3),
+            ),
             emotional_tracking=bool(_value("emotional_tracking", "emotionalTracking", False)),
             backend=backend,
             pgvector_url=str(_value("pgvector_url", "pgvectorUrl", "") or ""),

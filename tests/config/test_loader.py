@@ -521,6 +521,8 @@ def test_load_config_agent_memory_nested_snake_case_and_legacy_interop(tmp_path:
                             "semantic_search": True,
                             "auto_categorize": True,
                             "proactive": True,
+                            "proactive_retry_backoff_s": 45,
+                            "proactive_max_retry_attempts": 5,
                             "emotional_tracking": True,
                             "backend": "pgvector",
                             "pgvector_url": "postgresql://memory-db",
@@ -536,6 +538,8 @@ def test_load_config_agent_memory_nested_snake_case_and_legacy_interop(tmp_path:
     assert cfg.agents.defaults.memory.semantic_search is True
     assert cfg.agents.defaults.memory.auto_categorize is True
     assert cfg.agents.defaults.memory.proactive is True
+    assert cfg.agents.defaults.memory.proactive_retry_backoff_s == 45.0
+    assert cfg.agents.defaults.memory.proactive_max_retry_attempts == 5
     assert cfg.agents.defaults.memory.emotional_tracking is True
     assert cfg.agents.defaults.memory.backend == "pgvector"
     assert cfg.agents.defaults.memory.pgvector_url == "postgresql://memory-db"
@@ -554,6 +558,8 @@ def test_load_config_agent_memory_nested_camel_case_and_legacy_fallback(tmp_path
                         "memoryAutoCategorize": True,
                         "memory": {
                             "proactive": True,
+                            "proactiveRetryBackoffS": 15,
+                            "proactiveMaxRetryAttempts": 4,
                             "emotionalTracking": True,
                             "backend": "jsonl",
                             "pgvectorUrl": "postgresql://ignored",
@@ -569,6 +575,8 @@ def test_load_config_agent_memory_nested_camel_case_and_legacy_fallback(tmp_path
     assert cfg.agents.defaults.memory.semantic_search is True
     assert cfg.agents.defaults.memory.auto_categorize is True
     assert cfg.agents.defaults.memory.proactive is True
+    assert cfg.agents.defaults.memory.proactive_retry_backoff_s == 15.0
+    assert cfg.agents.defaults.memory.proactive_max_retry_attempts == 4
     assert cfg.agents.defaults.memory.emotional_tracking is True
     assert cfg.agents.defaults.memory.backend == "sqlite"
     assert cfg.agents.defaults.memory.pgvector_url == "postgresql://ignored"

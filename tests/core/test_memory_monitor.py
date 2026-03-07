@@ -247,23 +247,60 @@ def test_memory_monitor_scan_offloads_persist_and_pending_to_threads(tmp_path: P
         observed: dict[str, int] = {}
         loop_thread = threading.get_ident()
         original_persist = monitor._persist_pending
-        original_pending = monitor.pending
+        original_deliverable = monitor.deliverable
 
         def _persist_probe(suggestions):
             observed["persist"] = threading.get_ident()
             return original_persist(suggestions)
 
-        def _pending_probe():
-            observed["pending"] = threading.get_ident()
-            return original_pending()
+        def _deliverable_probe():
+            observed["deliverable"] = threading.get_ident()
+            return original_deliverable()
 
         monkeypatch.setattr(monitor, "_persist_pending", _persist_probe)
-        monkeypatch.setattr(monitor, "pending", _pending_probe)
+        monkeypatch.setattr(monitor, "deliverable", _deliverable_probe)
 
         suggestions = await monitor.scan()
 
         assert suggestions
         assert observed["persist"] != loop_thread
-        assert observed["pending"] != loop_thread
+        assert observed["deliverable"] != loop_thread
+
+    asyncio.run(_scenario())
+
+
+def test_memory_monitor_replays_failed_suggestions_after_backoff(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        monitor = MemoryMonitor(store, retry_backoff_seconds=0.0, max_retry_attempts=3)
+        monitor._write_pending_payload(
+            [
+                {
+                    "id": "retry-1",
+                    "semantic_key": "retry-semantic",
+                    "text": "Pending task with no updates for 3 day(s): revisar rollout",
+                    "priority": 0.8,
+                    "trigger": "pending_task",
+                    "channel": "telegram",
+                    "target": "chat42",
+                    "status": "pending",
+                    "metadata": {"record_id": "task-1"},
+                }
+            ]
+        )
+
+        assert monitor.mark_failed("retry-1", error="telegram unavailable") is True
+
+        pending = monitor.pending()
+        assert pending == []
+
+        deliverable = monitor.deliverable()
+        assert len(deliverable) == 1
+        assert deliverable[0].metadata["_delivery_status"] == "failed"
+        assert deliverable[0].metadata["_failure_count"] == 1
+
+        replayed = await monitor.scan()
+        assert len(replayed) == 1
+        assert replayed[0].suggestion_id == deliverable[0].suggestion_id
 
     asyncio.run(_scenario())

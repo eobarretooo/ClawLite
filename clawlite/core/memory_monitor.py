@@ -46,7 +46,11 @@ class MemorySuggestion:
             if key in self.metadata:
                 identity[key] = self.metadata[key]
         if not identity:
-            identity = {str(k): self.metadata[k] for k in sorted(self.metadata.keys())}
+            identity = {
+                str(k): self.metadata[k]
+                for k in sorted(self.metadata.keys())
+                if not str(k).startswith("_")
+            }
         canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         base = f"{self.trigger}|{self.channel}|{self.target}|{canonical}".strip().lower()
         return hashlib.sha1(base.encode("utf-8")).hexdigest()[:20]
@@ -66,10 +70,14 @@ class MemoryMonitor:
         *,
         suggestions_path: str | Path | None = None,
         cooldown_seconds: float = 3600.0,
+        retry_backoff_seconds: float = 300.0,
+        max_retry_attempts: int = 3,
     ) -> None:
         self.store = store or MemoryStore()
         self.suggestions_path = Path(suggestions_path) if suggestions_path else (self.store.memory_home / "suggestions_pending.json")
         self.cooldown_seconds = max(0.0, float(cooldown_seconds or 0.0))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds or 0.0))
+        self.max_retry_attempts = max(1, int(max_retry_attempts or 1))
         self._telemetry: dict[str, int] = {
             "scans": 0,
             "generated": 0,
@@ -172,28 +180,90 @@ class MemoryMonitor:
         self._atomic_write_pending_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
 
     def pending(self) -> list[MemorySuggestion]:
+        return self._deliverable_suggestions(include_retryable_failed=False)
+
+    @staticmethod
+    def _row_status(row: dict[str, Any]) -> str:
+        return str(row.get("status", "pending") or "pending").strip().lower() or "pending"
+
+    @staticmethod
+    def _row_failure_count(row: dict[str, Any]) -> int:
+        try:
+            return max(0, int(row.get("failure_count", 0) or 0))
+        except Exception:
+            return 0
+
+    def _retry_delay_seconds(self, failure_count: int) -> float:
+        base = max(0.0, float(self.retry_backoff_seconds or 0.0))
+        if base <= 0:
+            return 0.0
+        attempts = max(1, int(failure_count or 1))
+        cap = max(base, base * 8.0)
+        return min(base * (2 ** max(0, attempts - 1)), cap)
+
+    def _suggestion_from_row(self, row: dict[str, Any]) -> MemorySuggestion | None:
+        text = str(row.get("text", "")).strip()
+        if not text:
+            return None
+        metadata = row.get("metadata", {}) if isinstance(row.get("metadata"), dict) else {}
+        payload = dict(metadata)
+        status = self._row_status(row)
+        payload.setdefault("_delivery_status", status)
+        failure_count = self._row_failure_count(row)
+        if failure_count > 0:
+            payload.setdefault("_failure_count", failure_count)
+        last_error = str(row.get("last_error", "") or "")
+        if last_error:
+            payload.setdefault("_last_error", last_error)
+        retry_after_at = str(row.get("retry_after_at", "") or "")
+        if retry_after_at:
+            payload.setdefault("_retry_after_at", retry_after_at)
+        return MemorySuggestion(
+            text=text,
+            priority=self._coerce_priority(row.get("priority", 0.5)),
+            trigger=str(row.get("trigger", "unknown") or "unknown"),
+            channel=str(row.get("channel", "cli") or "cli"),
+            target=str(row.get("target", "default") or "default"),
+            metadata=payload,
+            created_at=str(row.get("created_at", "") or ""),
+        )
+
+    def _row_is_deliverable(self, row: dict[str, Any], *, now: datetime, include_retryable_failed: bool) -> bool:
+        status = self._row_status(row)
+        if status == "pending":
+            return True
+        if status != "failed" or not include_retryable_failed:
+            return False
+        failure_count = max(1, self._row_failure_count(row))
+        if failure_count >= self.max_retry_attempts:
+            return False
+        retry_after_raw = str(row.get("retry_after_at", row.get("failed_at", "")) or "")
+        if not retry_after_raw:
+            return True
+        retry_after_at = self._parse_time(retry_after_raw)
+        if retry_after_at.year <= 1:
+            return True
+        return retry_after_at <= now
+
+    def _deliverable_suggestions(self, *, include_retryable_failed: bool) -> list[MemorySuggestion]:
         suggestions: list[MemorySuggestion] = []
         seen_semantic_keys: set[str] = set()
+        now = datetime.now(timezone.utc)
         for row in self._read_pending_payload():
-            if row.get("status", "pending") != "pending":
+            if not self._row_is_deliverable(row, now=now, include_retryable_failed=include_retryable_failed):
                 continue
-            text = str(row.get("text", "")).strip()
-            if not text:
+            suggestion = self._suggestion_from_row(row)
+            if suggestion is None:
                 continue
-            suggestion = MemorySuggestion(
-                text=text,
-                priority=self._coerce_priority(row.get("priority", 0.5)),
-                trigger=str(row.get("trigger", "unknown") or "unknown"),
-                channel=str(row.get("channel", "cli") or "cli"),
-                target=str(row.get("target", "default") or "default"),
-                metadata=row.get("metadata", {}) if isinstance(row.get("metadata"), dict) else {},
-                created_at=str(row.get("created_at", "") or ""),
-            )
             if suggestion.semantic_key in seen_semantic_keys:
                 continue
             seen_semantic_keys.add(suggestion.semantic_key)
             suggestions.append(suggestion)
+        suggestions.sort(key=lambda item: (str(getattr(item, "created_at", "") or ""), str(item.suggestion_id)))
         return suggestions
+
+    def deliverable(self) -> list[MemorySuggestion]:
+        return self._deliverable_suggestions(include_retryable_failed=True)
 
     def mark_delivered(self, suggestion_id: str | MemorySuggestion) -> bool:
         if isinstance(suggestion_id, MemorySuggestion):
@@ -213,6 +283,8 @@ class MemoryMonitor:
                 if row.get("status", "pending") != "delivered":
                     row["status"] = "delivered"
                     row["delivered_at"] = datetime.now(timezone.utc).isoformat()
+                    row["last_attempt_at"] = row["delivered_at"]
+                    row["retry_after_at"] = ""
                     changed = True
             if changed:
                 self._write_pending_payload(rows)
@@ -235,8 +307,13 @@ class MemoryMonitor:
                 current_key = str(row.get("semantic_key", "") or "")
                 if current_id != sid and (not semantic_key or current_key != semantic_key):
                     continue
+                failure_count = self._row_failure_count(row) + 1
+                retry_delay = self._retry_delay_seconds(failure_count)
                 row["status"] = "failed"
                 row["failed_at"] = now_iso
+                row["last_attempt_at"] = now_iso
+                row["failure_count"] = failure_count
+                row["retry_after_at"] = (datetime.now(timezone.utc) + timedelta(seconds=retry_delay)).isoformat()
                 if error:
                     row["last_error"] = str(error)
                 changed = True
@@ -282,7 +359,10 @@ class MemoryMonitor:
         return {
             **dict(self._telemetry),
             "cooldown_seconds": self.cooldown_seconds,
+            "retry_backoff_seconds": self.retry_backoff_seconds,
+            "max_retry_attempts": self.max_retry_attempts,
             "pending": len(self.pending()),
+            "deliverable": len(self.deliverable()),
             "suggestions_path": str(self.suggestions_path),
         }
 
@@ -455,6 +535,16 @@ class MemoryMonitor:
                 semantic_key = str(suggestion_payload.get("semantic_key", "") or "")
                 existing = by_semantic.get(semantic_key)
                 if existing is not None:
+                    if self._row_status(existing) != "delivered":
+                        existing["text"] = suggestion_payload.get("text", existing.get("text", ""))
+                        existing["priority"] = suggestion_payload.get("priority", existing.get("priority", 0.5))
+                        existing["trigger"] = suggestion_payload.get("trigger", existing.get("trigger", "unknown"))
+                        existing["channel"] = suggestion_payload.get("channel", existing.get("channel", "cli"))
+                        existing["target"] = suggestion_payload.get("target", existing.get("target", "default"))
+                        existing["metadata"] = suggestion_payload.get("metadata", existing.get("metadata", {}))
+                        existing["semantic_key"] = semantic_key
+                        if not str(existing.get("created_at", "") or "").strip():
+                            existing["created_at"] = suggestion_payload.get("created_at", "")
                     self._telemetry["deduped"] += 1
                     continue
                 if sid in by_id and by_id[sid].get("status") == "delivered":
@@ -478,4 +568,4 @@ class MemoryMonitor:
         suggestions.extend(self._trigger_recurring_birthdays(records, now))
         self._telemetry["generated"] += len(suggestions)
         await asyncio.to_thread(self._persist_pending, suggestions)
-        return await asyncio.to_thread(self.pending)
+        return await asyncio.to_thread(self.deliverable)
