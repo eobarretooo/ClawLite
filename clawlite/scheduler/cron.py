@@ -67,6 +67,7 @@ class CronService:
             "lease_claimed": 0,
             "lease_skipped_active": 0,
             "lease_stale_recovered": 0,
+            "lease_released_on_stop": 0,
             "lease_finalize_mismatch": 0,
             "lease_finalize_missing": 0,
             "last_load_error": "",
@@ -275,6 +276,9 @@ class CronService:
         except asyncio.CancelledError:
             pass
         self._task = None
+        released = await asyncio.to_thread(self._release_owned_leases)
+        if released:
+            bind_event("cron.lifecycle").warning("cron stop released_owned_leases count={}", released)
         bind_event("cron.lifecycle").info("cron service stopped")
 
     def status(self) -> dict[str, Any]:
@@ -298,6 +302,7 @@ class CronService:
             "lease_claimed": int(self._diag.get("lease_claimed", 0) or 0),
             "lease_skipped_active": int(self._diag.get("lease_skipped_active", 0) or 0),
             "lease_stale_recovered": int(self._diag.get("lease_stale_recovered", 0) or 0),
+            "lease_released_on_stop": int(self._diag.get("lease_released_on_stop", 0) or 0),
             "lease_finalize_mismatch": int(self._diag.get("lease_finalize_mismatch", 0) or 0),
             "lease_finalize_missing": int(self._diag.get("lease_finalize_missing", 0) or 0),
             "last_load_error": str(self._diag.get("last_load_error", "") or ""),
@@ -333,6 +338,30 @@ class CronService:
         job.lease_owner = ""
         job.lease_expires_iso = ""
         job.lease_claimed_iso = ""
+
+    def _release_owned_leases(self) -> int:
+        released = 0
+        with self._store_lock():
+            jobs = self._read_jobs_unlocked()
+            changed = False
+            for job in jobs.values():
+                if str(job.lease_owner or "") != self._instance_id or not str(job.lease_token or ""):
+                    continue
+                self._clear_lease(job)
+                if not str(job.last_status or "").strip() or job.last_status == "idle":
+                    job.last_status = "interrupted"
+                job.last_error = "service_stopped_before_commit"
+                jobs[job.id] = job
+                released += 1
+                changed = True
+            if changed:
+                self._write_rows_unlocked([asdict(item) for item in jobs.values()])
+                self._jobs = jobs
+            else:
+                self._jobs = jobs
+        if released:
+            self._diag["lease_released_on_stop"] = int(self._diag.get("lease_released_on_stop", 0) or 0) + released
+        return released
 
     def _try_claim_due_job(self, job_id: str, now: datetime) -> CronJob | None:
         token = uuid.uuid4().hex

@@ -479,6 +479,64 @@ def test_cron_stale_lease_is_recovered(tmp_path: Path) -> None:
     asyncio.run(_scenario())
 
 
+def test_cron_stop_releases_owned_lease_for_immediate_restart_replay(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        store = tmp_path / "cron.json"
+        initializer = CronService(store)
+        await initializer.add_job(
+            session_id="s1",
+            expression="every 1",
+            prompt="restart replay",
+            metadata={"run_once": True},
+        )
+
+        service = CronService(store, lease_seconds=60)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        replayed = asyncio.Event()
+        executed: list[str] = []
+
+        async def _blocking_on_job(job):
+            executed.append(job.id)
+            entered.set()
+            await release.wait()
+            return "blocked"
+
+        await service.start(_blocking_on_job)
+        await asyncio.wait_for(entered.wait(), timeout=4.0)
+        await service.stop()
+
+        payload = json.loads(store.read_text(encoding="utf-8"))
+        assert isinstance(payload, list)
+        assert payload
+        row = payload[0]
+        assert row["lease_token"] == ""
+        assert row["lease_owner"] == ""
+        assert row["lease_expires_iso"] == ""
+        assert row["last_status"] == "interrupted"
+        assert row["last_error"] == "service_stopped_before_commit"
+
+        restarted = CronService(store, lease_seconds=60)
+
+        async def _replayed_on_job(job):
+            executed.append(job.id)
+            replayed.set()
+            return "ok"
+
+        await restarted.start(_replayed_on_job)
+        await asyncio.wait_for(replayed.wait(), timeout=4.0)
+        await asyncio.sleep(0.1)
+        await restarted.stop()
+        release.set()
+
+        status = service.status()
+        assert status["lease_released_on_stop"] >= 1
+        assert executed
+        assert len(executed) == 2
+
+    asyncio.run(_scenario())
+
+
 def test_cron_loop_claim_path_does_not_block_event_loop(monkeypatch, tmp_path: Path) -> None:
     async def _scenario() -> None:
         service = CronService(tmp_path / "cron.json")
