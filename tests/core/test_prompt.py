@@ -74,6 +74,29 @@ def test_prompt_builder_applies_token_budget_shaping_deterministically(tmp_path:
     assert "old-message" not in out.history_messages[0]["content"]
 
 
+def test_prompt_builder_preserves_soul_and_user_sections_under_workspace_pressure(tmp_path: Path) -> None:
+    (tmp_path / "IDENTITY.md").write_text("I am ClawLite", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text("Always stay direct and autonomous.", encoding="utf-8")
+    (tmp_path / "USER.md").write_text("Prefer concise answers and mention timezone if relevant.", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("agent-rules " * 400, encoding="utf-8")
+    (tmp_path / "TOOLS.md").write_text("tool-rules " * 400, encoding="utf-8")
+
+    builder = PromptBuilder(tmp_path, context_token_budget=180)
+    out = builder.build(
+        user_text="hello",
+        memory_snippets=[],
+        history=[],
+        skills_for_prompt=["alpha", "beta"],
+    )
+
+    assert "## IDENTITY.md" in out.system_prompt
+    assert "## SOUL.md" in out.system_prompt
+    assert "Always stay direct and autonomous." in out.system_prompt
+    assert "## USER.md" in out.system_prompt
+    assert "Prefer concise answers and mention timezone if relevant." in out.system_prompt
+    assert "[Identity Guard]" in out.system_prompt
+
+
 def test_prompt_builder_injects_identity_first_when_identity_missing(tmp_path: Path) -> None:
     (tmp_path / "SOUL.md").write_text("Be direct", encoding="utf-8")
 

@@ -27,6 +27,7 @@ class PromptBuilder:
     _RUNTIME_CONTEXT_CLOSE_TAG = "</untrusted_runtime_context>"
     _TRUNCATED_SUFFIX = "\n...[truncated to fit token budget]"
     _IDENTITY_HEADER = "## IDENTITY.md"
+    _CRITICAL_WORKSPACE_FILES: tuple[str, ...] = ("IDENTITY.md", "SOUL.md", "USER.md")
     _FILE_SECTION_RE = re.compile(r"^## ([A-Za-z0-9_.-]+)$", re.MULTILINE)
     _IDENTITY_FALLBACK_BODY = (
         "# IDENTITY.md - Who Am I?\n\n"
@@ -186,7 +187,9 @@ class PromptBuilder:
     def _shape_context(
         cls,
         *,
-        system_prompt: str,
+        workspace_block: str,
+        identity_guard: str,
+        skills_text: str,
         memory_items: list[str],
         skills_context: str,
         history_rows: list[dict[str, str]],
@@ -203,12 +206,92 @@ class PromptBuilder:
         skills_cap = max(64, int(available * 0.22))
         memory_cap = max(32, available - (system_cap + history_cap + skills_cap))
 
-        shaped_system = cls._truncate_text(system_prompt, system_cap)
+        shaped_system = cls._shape_system_prompt(
+            workspace_block=workspace_block,
+            identity_guard=identity_guard,
+            skills_text=skills_text,
+            token_limit=system_cap,
+        )
         shaped_memory = cls._shape_memory_items(memory_items, memory_cap)
         shaped_skills_context = cls._truncate_text(skills_context.strip(), skills_cap)
         shaped_history = cls._shape_history(history_rows, history_cap)
 
         return shaped_system, shaped_memory, shaped_skills_context, shaped_history
+
+    @classmethod
+    def _split_workspace_sections(cls, workspace_block: str) -> list[tuple[str, str]]:
+        clean = str(workspace_block or "").strip()
+        if not clean:
+            return []
+        matches = list(cls._FILE_SECTION_RE.finditer(clean))
+        if not matches:
+            return [("", clean)]
+
+        sections: list[tuple[str, str]] = []
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(clean)
+            sections.append((match.group(1), clean[start:end].strip()))
+        return sections
+
+    @classmethod
+    def _fit_prioritized_segments(cls, segments: list[str], token_limit: int) -> list[str]:
+        remaining = max(0, int(token_limit))
+        if remaining <= 0:
+            return []
+
+        kept: list[str] = []
+        non_empty = [str(item or "").strip() for item in segments if str(item or "").strip()]
+        if not non_empty:
+            return []
+
+        for index, segment in enumerate(non_empty):
+            remaining_segments = len(non_empty) - index
+            minimum_reserve = 24 * max(0, remaining_segments - 1)
+            if remaining <= 0:
+                break
+            segment_budget = max(24, remaining - minimum_reserve)
+            shaped = cls._truncate_text(segment, segment_budget)
+            if not shaped:
+                continue
+            kept.append(shaped)
+            remaining -= max(1, cls._estimate_tokens(shaped))
+        return kept
+
+    @classmethod
+    def _shape_system_prompt(
+        cls,
+        *,
+        workspace_block: str,
+        identity_guard: str,
+        skills_text: str,
+        token_limit: int,
+    ) -> str:
+        if token_limit <= 0:
+            return ""
+
+        sections = cls._split_workspace_sections(workspace_block)
+        if len(sections) == 1 and not sections[0][0]:
+            ordered_sections = cls._fit_prioritized_segments(
+                [sections[0][1], identity_guard, skills_text],
+                token_limit,
+            )
+            return "\n\n".join(item for item in ordered_sections if item).strip()
+
+        critical: list[str] = []
+        secondary: list[str] = []
+        critical_names = set(cls._CRITICAL_WORKSPACE_FILES)
+        for name, section_text in sections:
+            if name in critical_names:
+                critical.append(section_text)
+            else:
+                secondary.append(section_text)
+
+        ordered_sections = cls._fit_prioritized_segments(
+            [*critical, identity_guard, *secondary, skills_text],
+            token_limit,
+        )
+        return "\n\n".join(item for item in ordered_sections if item).strip()
 
     @staticmethod
     def _render_runtime_context(channel: str, chat_id: str) -> str:
@@ -248,14 +331,14 @@ class PromptBuilder:
             skills_block = "\n".join(f"- {item}" for item in sorted(clean_skills))
             skills_text = f"[Skills]\n{skills_block}" if skills_block else ""
 
-        ordered_sections = [workspace_block, self._IDENTITY_GUARD_SECTION, skills_text]
-        system_prompt = "\n\n".join(item for item in ordered_sections if item).strip()
         runtime_context = self._render_runtime_context(channel=channel.strip(), chat_id=chat_id.strip())
 
         normalized_history = self._normalize_history(history)
         clean_memory = [item.strip() for item in memory_snippets if item and item.strip()]
         shaped_system, shaped_memory, shaped_skills_context, shaped_history = self._shape_context(
-            system_prompt=system_prompt,
+            workspace_block=workspace_block,
+            identity_guard=self._IDENTITY_GUARD_SECTION,
+            skills_text=skills_text,
             memory_items=clean_memory,
             skills_context=skills_context,
             history_rows=normalized_history,
