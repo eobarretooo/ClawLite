@@ -732,6 +732,13 @@ class WhatsAppChannelConfig(BaseChannelConfig):
 class ChannelsConfig:
     send_progress: bool = False
     send_tool_hints: bool = False
+    recovery_enabled: bool = True
+    recovery_interval_s: float = 15.0
+    recovery_cooldown_s: float = 30.0
+    replay_dead_letters_on_startup: bool = True
+    replay_dead_letters_limit: int = 50
+    replay_dead_letters_reasons: list[str] = field(default_factory=lambda: ["send_failed", "channel_unavailable"])
+    delivery_persistence_path: str = ""
     telegram: TelegramChannelConfig = field(default_factory=TelegramChannelConfig)
     discord: DiscordChannelConfig = field(default_factory=DiscordChannelConfig)
     slack: SlackChannelConfig = field(default_factory=SlackChannelConfig)
@@ -741,16 +748,58 @@ class ChannelsConfig:
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> ChannelsConfig:
         data = dict(raw or {})
-        known = {"send_progress", "sendProgress", "send_tool_hints", "sendToolHints", "telegram", "discord", "slack", "whatsapp"}
+        known = {
+            "send_progress",
+            "sendProgress",
+            "send_tool_hints",
+            "sendToolHints",
+            "recovery_enabled",
+            "recoveryEnabled",
+            "recovery_interval_s",
+            "recoveryIntervalS",
+            "recovery_cooldown_s",
+            "recoveryCooldownS",
+            "replay_dead_letters_on_startup",
+            "replayDeadLettersOnStartup",
+            "replay_dead_letters_limit",
+            "replayDeadLettersLimit",
+            "replay_dead_letters_reasons",
+            "replayDeadLettersReasons",
+            "delivery_persistence_path",
+            "deliveryPersistencePath",
+            "telegram",
+            "discord",
+            "slack",
+            "whatsapp",
+        }
         extra: dict[str, dict[str, Any]] = {}
         for key, value in data.items():
             if key in known:
                 continue
             if isinstance(value, dict):
                 extra[str(key)] = dict(value)
+        replay_reasons_raw = data.get(
+            "replay_dead_letters_reasons",
+            data.get("replayDeadLettersReasons", ["send_failed", "channel_unavailable"]),
+        )
+        replay_reasons = [str(item).strip() for item in replay_reasons_raw] if isinstance(replay_reasons_raw, list) else []
         return cls(
             send_progress=bool(data.get("send_progress", data.get("sendProgress", False))),
             send_tool_hints=bool(data.get("send_tool_hints", data.get("sendToolHints", False))),
+            recovery_enabled=bool(data.get("recovery_enabled", data.get("recoveryEnabled", True))),
+            recovery_interval_s=max(0.1, float(data.get("recovery_interval_s", data.get("recoveryIntervalS", 15.0)) or 15.0)),
+            recovery_cooldown_s=max(0.0, float(data.get("recovery_cooldown_s", data.get("recoveryCooldownS", 30.0)) or 30.0)),
+            replay_dead_letters_on_startup=bool(
+                data.get("replay_dead_letters_on_startup", data.get("replayDeadLettersOnStartup", True))
+            ),
+            replay_dead_letters_limit=max(
+                0,
+                int(data.get("replay_dead_letters_limit", data.get("replayDeadLettersLimit", 50)) or 50),
+            ),
+            replay_dead_letters_reasons=replay_reasons or ["send_failed", "channel_unavailable"],
+            delivery_persistence_path=str(
+                data.get("delivery_persistence_path", data.get("deliveryPersistencePath", "")) or ""
+            ).strip(),
             telegram=TelegramChannelConfig.from_dict(dict(data.get("telegram") or {})),
             discord=DiscordChannelConfig.from_dict(dict(data.get("discord") or {})),
             slack=SlackChannelConfig.from_dict(dict(data.get("slack") or {})),
@@ -762,6 +811,13 @@ class ChannelsConfig:
         out: dict[str, Any] = {
             "send_progress": self.send_progress,
             "send_tool_hints": self.send_tool_hints,
+            "recovery_enabled": self.recovery_enabled,
+            "recovery_interval_s": self.recovery_interval_s,
+            "recovery_cooldown_s": self.recovery_cooldown_s,
+            "replay_dead_letters_on_startup": self.replay_dead_letters_on_startup,
+            "replay_dead_letters_limit": self.replay_dead_letters_limit,
+            "replay_dead_letters_reasons": list(self.replay_dead_letters_reasons),
+            "delivery_persistence_path": self.delivery_persistence_path,
             "telegram": asdict(self.telegram),
             "discord": asdict(self.discord),
             "slack": asdict(self.slack),

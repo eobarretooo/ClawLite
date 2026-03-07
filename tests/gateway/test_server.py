@@ -16,6 +16,7 @@ from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 
 import clawlite.gateway.server as gateway_server
+from clawlite.channels.base import BaseChannel
 from clawlite.config.schema import AppConfig, SchedulerConfig
 from clawlite.core.memory_monitor import MemorySuggestion
 from clawlite.core.subagent import SubagentManager, SubagentRun
@@ -101,6 +102,42 @@ class ProviderWithUnsafeDiagnostics:
             ],
             "counters": {"requests": 3, "successes": 2},
         }
+
+
+class RecoveringGatewayChannel(BaseChannel):
+    starts = 0
+
+    def __init__(self, *, config: dict[str, object], on_message=None) -> None:
+        super().__init__(name="fake", config=config, on_message=on_message)
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        type(self).starts += 1
+        self._running = True
+        if type(self).starts == 1:
+            async def _crash() -> None:
+                raise RuntimeError("gateway channel worker crashed")
+
+            self._task = asyncio.create_task(_crash())
+            await asyncio.sleep(0)
+            return
+        self._task = asyncio.create_task(asyncio.sleep(3600))
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._task = None
+
+    async def send(self, *, target: str, text: str, metadata=None) -> str:
+        del target, text, metadata
+        return "ok"
 
 
 class _FakeTuningMemory:
@@ -2261,6 +2298,45 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert disabled_alias.status_code == 404
         assert disabled_alias.json()["error"] == "diagnostics_disabled"
         assert disabled_alias.json()["code"] == "diagnostics_disabled"
+
+
+def test_gateway_channel_recovery_notice_uses_runtime_send(tmp_path: Path) -> None:
+    RecoveringGatewayChannel.starts = 0
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={
+            "recovery_interval_s": 0.01,
+            "recovery_cooldown_s": 0.0,
+            "fake": {"enabled": True},
+        },
+    )
+    app = create_app(cfg)
+    app.state.runtime.channels.register("fake", RecoveringGatewayChannel)
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            payload = client.get("/v1/diagnostics").json()
+            fake_status = payload["channels"].get("fake", {})
+            recovery = fake_status.get("recovery", {}) if isinstance(fake_status, dict) else {}
+            if app.state.runtime.channels.send.await_count >= 1 and int(recovery.get("success", 0) or 0) >= 1:
+                break
+            time.sleep(0.05)
+
+        send_kwargs = app.state.runtime.channels.send.await_args.kwargs
+        metadata = dict(send_kwargs["metadata"])
+        assert metadata["source"] == "channel_recovery"
+        assert metadata["autonomy_notice"] is True
+        assert metadata["recovery_channel"] == "fake"
+        assert metadata["recovery_status"] == "recovered"
+        assert "Autonomy notice: channel fake recovered." in str(send_kwargs["text"])
 
 
 def test_gateway_diagnostics_include_provider_telemetry_when_enabled(tmp_path: Path) -> None:

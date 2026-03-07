@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -193,6 +194,35 @@ class FakeChannel(BaseChannel):
 class FakeChannelWithSignals(FakeChannel):
     def signals(self) -> dict[str, Any]:
         return {"foo": 1, "bar": 2}
+
+
+class RecoveringChannel(FakeChannel):
+    starts = 0
+
+    async def start(self) -> None:
+        type(self).starts += 1
+        self._running = True
+        if type(self).starts == 1:
+            async def _crash() -> None:
+                raise RuntimeError("channel worker crashed")
+
+            self._task = asyncio.create_task(_crash())
+            await asyncio.sleep(0)
+            return
+        self._task = asyncio.create_task(asyncio.sleep(3600))
+
+    async def stop(self) -> None:
+        self._running = False
+        task = getattr(self, "_task", None)
+        if isinstance(task, asyncio.Task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._task = None
 
 
 def test_channel_manager_dispatches_inbound_to_engine_and_send() -> None:
@@ -842,6 +872,51 @@ def test_channel_manager_startup_replays_persisted_dead_letters_after_restart(tm
         assert second_bus.stats()["dead_letter_restored"] == 1
 
         await second_mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_recovers_failed_channel_worker_and_notifies() -> None:
+    async def _scenario() -> None:
+        RecoveringChannel.starts = 0
+        notices: list[dict[str, Any]] = []
+
+        async def _notice(payload: dict[str, Any]) -> None:
+            notices.append(dict(payload))
+
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("fake", RecoveringChannel)
+        mgr.set_recovery_notifier(_notice)
+        await mgr.start(
+            {
+                "channels": {
+                    "recovery_interval_s": 0.01,
+                    "recovery_cooldown_s": 0.0,
+                    "fake": {"enabled": True},
+                }
+            }
+        )
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            status = mgr.status()["fake"]
+            if status["recovery"]["success"] >= 1 and status["task_state"] == "running":
+                break
+            await asyncio.sleep(0.01)
+
+        status = mgr.status()["fake"]
+        assert status["running"] is True
+        assert status["task_state"] == "running"
+        assert status["recovery"]["attempts"] >= 1
+        assert status["recovery"]["success"] >= 1
+        assert RecoveringChannel.starts >= 2
+        assert notices
+        assert notices[-1]["channel"] == "fake"
+        assert notices[-1]["status"] == "recovered"
+        assert "worker_failed" in str(notices[-1]["reason"])
+
+        await mgr.stop()
 
     asyncio.run(_scenario())
 

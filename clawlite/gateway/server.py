@@ -1602,6 +1602,42 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             return dict(response)
         return fallback
 
+    async def _send_channel_recovery_notice(payload: dict[str, Any]) -> None:
+        memory_store = getattr(runtime.engine, "memory", None)
+        channel_name, target = await _latest_memory_route(memory_store)
+        normalized_channel = str(payload.get("channel", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip() or "unknown"
+        reason = str(payload.get("reason", "") or "").strip()
+        error = str(payload.get("error", "") or "").strip()
+        if not channel_name or not target:
+            return
+        text = f"Autonomy notice: channel {normalized_channel} {status}."
+        if reason:
+            text += f" reason={reason}."
+        if error and status != "recovered":
+            text += f" error={error}."
+        try:
+            await runtime.channels.send(
+                channel=channel_name,
+                target=target,
+                text=text,
+                metadata={
+                    "source": "channel_recovery",
+                    "autonomy_notice": True,
+                    "recovery_channel": normalized_channel,
+                    "recovery_status": status,
+                    "recovery_reason": reason,
+                    "recovery_error": error,
+                },
+            )
+        except Exception as exc:
+            bind_event("channel.recovery", channel=normalized_channel or channel_name).warning(
+                "channel recovery notice failed error={}",
+                exc,
+            )
+
+    runtime.channels.set_recovery_notifier(_send_channel_recovery_notice)
+
     def _is_internal_session_id(session_id: str) -> bool:
         normalized = str(session_id or "").strip().lower()
         return normalized.startswith("heartbeat:") or normalized.startswith("autonomy:") or normalized.startswith("bootstrap:")

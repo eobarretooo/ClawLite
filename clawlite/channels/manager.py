@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from clawlite.bus.events import InboundEvent, OutboundEvent
 from clawlite.bus.queue import MessageQueue
@@ -135,6 +135,18 @@ class ChannelManager:
             "failed_by_channel": {},
             "skipped_by_channel": {},
         }
+        self._recovery_enabled = True
+        self._recovery_interval_s = 15.0
+        self._recovery_cooldown_s = 30.0
+        self._recovery_task: asyncio.Task[Any] | None = None
+        self._recovery_notifier: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
+        self._recovery_total: dict[str, int] = {
+            "attempts": 0,
+            "success": 0,
+            "failures": 0,
+            "skipped_cooldown": 0,
+        }
+        self._recovery_per_channel: dict[str, dict[str, Any]] = {}
 
     def _ensure_delivery_channel(self, channel: str) -> dict[str, int]:
         name = str(channel or "").strip() or "unknown"
@@ -447,6 +459,157 @@ class ChannelManager:
 
     def startup_replay_status(self) -> dict[str, Any]:
         return dict(self._delivery_startup_replay)
+
+    def set_recovery_notifier(self, notifier: Callable[[dict[str, Any]], Awaitable[Any]] | None) -> None:
+        self._recovery_notifier = notifier
+
+    def _ensure_recovery_channel(self, channel: str) -> dict[str, Any]:
+        name = str(channel or "").strip() or "unknown"
+        row = self._recovery_per_channel.get(name)
+        if row is None:
+            row = {
+                "attempts": 0,
+                "success": 0,
+                "failures": 0,
+                "skipped_cooldown": 0,
+                "last_recovery_at": "",
+                "last_error": "",
+                "last_reason": "",
+                "_last_attempt_monotonic": 0.0,
+            }
+            self._recovery_per_channel[name] = row
+        return row
+
+    def _channel_worker_state(self, channel: BaseChannel) -> tuple[str, str]:
+        task = getattr(channel, "_task", None)
+        if task is None:
+            return ("missing", "")
+        if not isinstance(task, asyncio.Task):
+            return ("external", "")
+        if task.cancelled():
+            return ("cancelled", "")
+        if not task.done():
+            return ("running", "")
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return ("cancelled", "")
+        if exc is not None:
+            return ("failed", str(exc))
+        return ("done", "")
+
+    async def _notify_recovery(self, payload: dict[str, Any]) -> None:
+        notifier = self._recovery_notifier
+        if notifier is None:
+            return
+        try:
+            result = notifier(dict(payload))
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            bind_event("channel.recovery", channel=str(payload.get("channel", "") or "")).warning(
+                "recovery notifier failed error={}",
+                exc,
+            )
+
+    async def _recover_channel(self, channel_name: str, reason: str) -> bool:
+        normalized = str(channel_name or "").strip().lower()
+        channel = self._channels.get(normalized)
+        if channel is None:
+            return False
+
+        row = self._ensure_recovery_channel(normalized)
+        now = time.monotonic()
+        last_attempt = float(row.get("_last_attempt_monotonic", 0.0) or 0.0)
+        if self._recovery_cooldown_s > 0 and last_attempt > 0 and now < (last_attempt + self._recovery_cooldown_s):
+            self._recovery_total["skipped_cooldown"] += 1
+            row["skipped_cooldown"] = int(row.get("skipped_cooldown", 0) or 0) + 1
+            return False
+
+        row["_last_attempt_monotonic"] = now
+        row["last_reason"] = str(reason or "")
+        self._recovery_total["attempts"] += 1
+        row["attempts"] = int(row.get("attempts", 0) or 0) + 1
+        recovery_at = datetime.now(timezone.utc).isoformat()
+        cls = self._registry.get(normalized)
+        if cls is None:
+            self._recovery_total["failures"] += 1
+            row["failures"] = int(row.get("failures", 0) or 0) + 1
+            row["last_recovery_at"] = recovery_at
+            row["last_error"] = "channel_recovery_unregistered"
+            return False
+
+        replacement: BaseChannel | None = None
+        try:
+            await channel.stop()
+        except Exception as exc:
+            bind_event("channel.recovery", channel=normalized).warning("channel stop before recovery failed error={}", exc)
+
+        try:
+            replacement = cls(config=dict(getattr(channel, "config", {}) or {}), on_message=self._on_channel_message)
+            self._channels[normalized] = replacement
+            await replacement.start()
+        except Exception as exc:
+            if replacement is not None:
+                try:
+                    await replacement.stop()
+                except Exception:
+                    pass
+            self._channels[normalized] = channel
+            self._recovery_total["failures"] += 1
+            row["failures"] = int(row.get("failures", 0) or 0) + 1
+            row["last_recovery_at"] = recovery_at
+            row["last_error"] = str(exc)
+            bind_event("channel.recovery", channel=normalized).error("channel recovery failed reason={} error={}", reason, exc)
+            await self._notify_recovery(
+                {
+                    "channel": normalized,
+                    "status": "failed",
+                    "reason": str(reason or ""),
+                    "error": str(exc),
+                    "at": recovery_at,
+                }
+            )
+            return False
+
+        self._recovery_total["success"] += 1
+        row["success"] = int(row.get("success", 0) or 0) + 1
+        row["last_recovery_at"] = recovery_at
+        row["last_error"] = ""
+        bind_event("channel.recovery", channel=normalized).info("channel recovered reason={}", reason)
+        await self._notify_recovery(
+            {
+                "channel": normalized,
+                "status": "recovered",
+                "reason": str(reason or ""),
+                "at": recovery_at,
+            }
+        )
+        return True
+
+    async def _recovery_loop(self) -> None:
+        while True:
+            try:
+                if not self._recovery_enabled:
+                    await asyncio.sleep(self._recovery_interval_s)
+                    continue
+                for name, channel in list(self._channels.items()):
+                    health = channel.health()
+                    task_state, task_error = self._channel_worker_state(channel)
+                    if not health.running:
+                        await self._recover_channel(name, reason="channel_stopped")
+                        continue
+                    if task_state in {"failed", "done", "cancelled"}:
+                        reason = f"worker_{task_state}"
+                        if task_error:
+                            reason = f"{reason}:{task_error}"
+                        await self._recover_channel(name, reason=reason)
+                await asyncio.sleep(self._recovery_interval_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                bind_event("channel.recovery").error("channel recovery loop failed error={}", exc)
+                await asyncio.sleep(min(max(self._recovery_interval_s, 1.0), 5.0))
 
     def register(self, name: str, channel_cls: type[BaseChannel]) -> None:
         self._registry[name] = channel_cls
@@ -1098,6 +1261,15 @@ class ChannelManager:
                 self._delivery_persistence_path = state_root / "channels" / "delivery-dead-letters.json"
             else:
                 self._delivery_persistence_path = None
+        self._recovery_enabled = bool(channels_cfg.get("recovery_enabled", channels_cfg.get("recoveryEnabled", True)))
+        self._recovery_interval_s = max(
+            0.1,
+            float(channels_cfg.get("recovery_interval_s", channels_cfg.get("recoveryIntervalS", 15.0)) or 15.0),
+        )
+        self._recovery_cooldown_s = max(
+            0.0,
+            float(channels_cfg.get("recovery_cooldown_s", channels_cfg.get("recoveryCooldownS", 30.0)) or 30.0),
+        )
         self._prune_delivery_idempotency_cache()
         self._reset_dispatch_controls()
         self._delivery_startup_replay = {
@@ -1135,6 +1307,14 @@ class ChannelManager:
         if self._dispatcher_task is None:
             self._dispatcher_task = asyncio.create_task(self._dispatch_loop())
             bind_event("channel.lifecycle").info("channel dispatcher started")
+        if self._recovery_task is None:
+            self._recovery_task = asyncio.create_task(self._recovery_loop())
+            bind_event("channel.lifecycle").info(
+                "channel recovery supervisor started enabled={} interval_s={} cooldown_s={}",
+                self._recovery_enabled,
+                self._recovery_interval_s,
+                self._recovery_cooldown_s,
+            )
 
         await self._run_startup_delivery_replay()
 
@@ -1163,6 +1343,16 @@ class ChannelManager:
                 pass
             self._dispatcher_task = None
             bind_event("channel.lifecycle").info("channel dispatcher stopped")
+
+        if self._recovery_task is not None:
+            bind_event("channel.lifecycle").info("channel recovery supervisor stopping")
+            self._recovery_task.cancel()
+            try:
+                await self._recovery_task
+            except asyncio.CancelledError:
+                pass
+            self._recovery_task = None
+            bind_event("channel.lifecycle").info("channel recovery supervisor stopped")
 
         for name, channel in list(self._channels.items()):
             bind_event("channel.lifecycle", channel=name).info("channel stopping")
@@ -1202,10 +1392,16 @@ class ChannelManager:
     def status(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for name, ch in self._channels.items():
+            task_state, task_error = self._channel_worker_state(ch)
+            recovery_row = dict(self._ensure_recovery_channel(name))
+            recovery_row.pop("_last_attempt_monotonic", None)
             row: dict[str, Any] = {
                 "running": ch.running,
                 "last_error": ch.health().last_error,
+                "task_state": task_state,
+                "task_error": task_error,
                 "delivery": dict(self._ensure_delivery_channel(name)),
+                "recovery": recovery_row,
             }
             channel_signals = getattr(ch, "signals", None)
             if callable(channel_signals):
