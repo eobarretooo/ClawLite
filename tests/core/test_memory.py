@@ -186,6 +186,67 @@ def test_memory_search_hybrid_semantic_and_bm25_ranks_by_combined_score(tmp_path
     assert "alpha" in found[0].text.lower()
 
 
+def test_memory_search_user_scope_uses_semantic_ranking(tmp_path: Path, monkeypatch) -> None:
+    class _FakeBM25:
+        def __init__(self, _corpus: object) -> None:
+            pass
+
+        def get_scores(self, _query_tokens: object) -> list[float]:
+            return [0.2, 0.8]
+
+    def _fake_embedding(self: MemoryStore, text: str) -> list[float] | None:
+        lowered = text.lower()
+        if "alpha" in lowered:
+            return [1.0, 0.0]
+        if "beta" in lowered:
+            return [0.0, 1.0]
+        if "which" in lowered:
+            return [1.0, 0.0]
+        return [0.0, 0.0]
+
+    monkeypatch.setattr("clawlite.core.memory.BM25Okapi", _FakeBM25)
+    monkeypatch.setattr(MemoryStore, "_generate_embedding", _fake_embedding)
+
+    store = MemoryStore(tmp_path / "memory.jsonl", semantic_enabled=True)
+    store.add("alpha project memory", source="user", user_id="alice")
+    store.add("beta project memory", source="user", user_id="alice")
+
+    found = store.search("which project should I pick", user_id="alice", limit=2)
+    assert found
+    assert "alpha" in found[0].text.lower()
+
+
+def test_memory_search_include_shared_uses_semantic_ranking(tmp_path: Path, monkeypatch) -> None:
+    class _FakeBM25:
+        def __init__(self, _corpus: object) -> None:
+            pass
+
+        def get_scores(self, _query_tokens: object) -> list[float]:
+            return [0.2, 0.8]
+
+    def _fake_embedding(self: MemoryStore, text: str) -> list[float] | None:
+        lowered = text.lower()
+        if "alpha" in lowered:
+            return [1.0, 0.0]
+        if "beta" in lowered:
+            return [0.0, 1.0]
+        if "which" in lowered:
+            return [1.0, 0.0]
+        return [0.0, 0.0]
+
+    monkeypatch.setattr("clawlite.core.memory.BM25Okapi", _FakeBM25)
+    monkeypatch.setattr(MemoryStore, "_generate_embedding", _fake_embedding)
+
+    store = MemoryStore(tmp_path / "memory.jsonl", semantic_enabled=True)
+    store.add("alpha project memory", source="user", user_id="alice", shared=True)
+    store.add("beta project memory", source="user", user_id="alice")
+    store.set_shared_opt_in("alice", True)
+
+    found = store.search("which project should I pick", user_id="alice", include_shared=True, limit=2)
+    assert found
+    assert "alpha" in found[0].text.lower()
+
+
 def test_memory_search_entity_match_breaks_temporal_ties(tmp_path: Path, monkeypatch) -> None:
     class _FakeBM25:
         def __init__(self, _corpus: object) -> None:

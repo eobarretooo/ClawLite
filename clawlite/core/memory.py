@@ -5262,7 +5262,7 @@ class MemoryStore:
         if session_id:
             records = [row for row in records if self._working_episode_visible_in_session(row, session_id=session_id)]
 
-        semantic_enabled = bool(self.semantic_enabled and len(scopes) == 1 and scopes[0]["root"] == self.memory_home)
+        semantic_enabled = bool(self.semantic_enabled and bool(records))
         return records, curated_importance, curated_mentions, scopes, semantic_enabled
 
     @classmethod
@@ -6029,7 +6029,7 @@ class MemoryStore:
             curated_importance=curated_importance,
             curated_mentions=curated_mentions,
             limit=bounded_limit,
-            semantic_enabled=False,
+            semantic_enabled=bool(self.semantic_enabled and bool(records)),
             session_id=session_id,
         )
 
