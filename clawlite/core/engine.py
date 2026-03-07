@@ -69,6 +69,11 @@ class _ToolExecutionRecord:
 
 
 @dataclass(slots=True)
+class _ProviderPlanRecord:
+    signature: str
+
+
+@dataclass(slots=True)
 class _CallableParameterSpec:
     names: frozenset[str]
     accepts_kwargs: bool
@@ -580,6 +585,28 @@ class AgentEngine:
         digest = hashlib.sha256(serialized.encode("utf-8", errors="ignore")).hexdigest()
         return f"{name}:{digest}"
 
+    @classmethod
+    def _provider_plan_signature(cls, text: str, tool_calls: list[Any], *, available_tools: set[str]) -> str:
+        normalized_text = cls._normalize_error_text(text)
+        parts: list[str] = []
+        for tool_call in tool_calls:
+            try:
+                name = cls._tool_call_name(tool_call, available_tools=available_tools)
+            except ValueError:
+                name = cls._tool_call_label_for_error(tool_call)
+            raw_arguments = cls._tool_call_raw_arguments(tool_call)
+            try:
+                arguments = cls._tool_call_arguments(tool_call)
+            except ValueError as exc:
+                arguments = cls._tool_call_signature_arguments(raw_arguments, fallback_error=str(exc))
+            parts.append(cls._tool_signature(name, arguments))
+        payload = {"text": normalized_text, "tool_calls": parts}
+        try:
+            serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            serialized = repr(payload)
+        return hashlib.sha256(serialized.encode("utf-8", errors="ignore")).hexdigest()
+
     @staticmethod
     def _tool_outcome_hash(result: Any) -> str:
         text = str(result)
@@ -658,6 +685,22 @@ class AgentEngine:
         if alternating_length >= repeat_threshold:
             return True, "warning", alternating_length, last.tool_name
         return False, "", alternating_length, last.tool_name
+
+    def _detect_provider_plan_loop(
+        self,
+        history: list[_ProviderPlanRecord],
+        signature: str,
+    ) -> tuple[bool, str, int]:
+        streak = 0
+        for record in reversed(history):
+            if record.signature != signature:
+                break
+            streak += 1
+        if streak >= self.loop_detection.critical_threshold:
+            return True, "critical", streak
+        if streak >= self.loop_detection.repeat_threshold:
+            return True, "warning", streak
+        return False, "", streak
 
     @staticmethod
     def _tool_call_raw_name(tool_call: Any) -> Any:
@@ -2114,6 +2157,7 @@ class AgentEngine:
         iteration = 0
         resolved_reasoning_effort = self._resolve_reasoning_effort(user_text, self.reasoning_effort_default)
         tool_history: list[_ToolExecutionRecord] = []
+        provider_plan_history: list[_ProviderPlanRecord] = []
         diagnostic_threshold = self._DIAGNOSTIC_SWITCH_THRESHOLD
         failure_fingerprint_counts: dict[str, int] = {}
         diagnostic_switched_fingerprints: set[str] = set()
@@ -2185,6 +2229,59 @@ class AgentEngine:
 
             if step.tool_calls:
                 run_log.debug("tool calls requested iteration={} count={}", iteration, len(step.tool_calls))
+                available_tool_names = self._tool_schema_names(tool_schema)
+                if self.loop_detection.enabled:
+                    plan_signature = self._provider_plan_signature(
+                        step.text or "",
+                        step.tool_calls,
+                        available_tools=available_tool_names,
+                    )
+                    plan_stop, plan_severity, plan_streak = self._detect_provider_plan_loop(
+                        provider_plan_history,
+                        plan_signature,
+                    )
+                    if plan_stop:
+                        final = ProviderResult(
+                            text=(
+                                "I stopped this turn because the model kept issuing the same "
+                                f"no-progress tool plan ({plan_streak} repeats)."
+                            ),
+                            tool_calls=[],
+                            model="engine/loop-detected",
+                        )
+                        run_log.warning(
+                            "provider plan loop detected iteration={} repeats={} severity={} threshold={} critical_threshold={}",
+                            iteration,
+                            plan_streak,
+                            plan_severity,
+                            self.loop_detection.repeat_threshold,
+                            self.loop_detection.critical_threshold,
+                        )
+                        await self._emit_progress(
+                            progress_hook=progress_hook,
+                            event=ProgressEvent(
+                                stage="loop_detected",
+                                session_id=session_id,
+                                iteration=iteration,
+                                message=final.text,
+                                metadata={
+                                    "detector": "provider_plan_no_progress",
+                                    "severity": plan_severity,
+                                    "repeats": plan_streak,
+                                    "threshold": self.loop_detection.repeat_threshold,
+                                    "critical_threshold": self.loop_detection.critical_threshold,
+                                    "history_size": self.loop_detection.history_size,
+                                    "tool_calls": len(step.tool_calls),
+                                },
+                            ),
+                            counter=progress_counter,
+                            limit=budget.max_progress_events or 1,
+                        )
+                        break
+                    provider_plan_history.append(_ProviderPlanRecord(signature=plan_signature))
+                    max_history = self.loop_detection.history_size
+                    if len(provider_plan_history) > max_history:
+                        del provider_plan_history[:-max_history]
                 normalized_tool_call_ids = self._tool_call_ids(step.tool_calls)
                 messages.append(
                     {
@@ -2199,7 +2296,6 @@ class AgentEngine:
                     max_dynamic=dynamic_message_cap,
                 )
 
-                available_tool_names = self._tool_schema_names(tool_schema)
                 for idx, tool_call in enumerate(step.tool_calls):
                     if self._stop_requested(session_id=session_id, stop_event=stop_event):
                         final = ProviderResult(text="Stopped current task.", tool_calls=[], model="engine/stop")

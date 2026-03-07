@@ -728,6 +728,20 @@ class FakePingPongToolProvider:
         )
 
 
+class FakeRepeatedPlanProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *, messages, tools):
+        del messages, tools
+        self.calls += 1
+        return ProviderResult(
+            text="keep using the same plan",
+            tool_calls=[ToolCall(name="echo", arguments={"text": "loop"})],
+            model="fake/model",
+        )
+
+
 class FakeDiagnosticSwitchProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -783,6 +797,19 @@ class FakePingPongTools:
             {"name": "alpha", "description": "alpha tool", "arguments": {"value": "string"}},
             {"name": "beta", "description": "beta tool", "arguments": {"value": "string"}},
         ]
+
+
+class FakeChangingResultTools:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+        del channel, user_id
+        self.calls += 1
+        return f"{name}:{arguments.get('text', '')}:{session_id}:{self.calls}"
+
+    def schema(self):
+        return [{"name": "echo", "description": "echo text", "arguments": {"text": "string"}}]
 
 
 class FakeNeverCalledProvider:
@@ -2567,7 +2594,7 @@ def test_engine_detects_repeated_non_progress_tool_loops() -> None:
         )
         out = await engine.run(session_id="cli:loop-detect", user_text="run", progress_hook=_hook)
         assert out.model == "engine/loop-detected"
-        assert "loop detection" in out.text.lower()
+        assert "no-progress" in out.text.lower()
         assert provider.calls < 20
         assert "loop_detected" in stages
 
@@ -2601,6 +2628,38 @@ def test_engine_detects_ping_pong_non_progress_tool_loops() -> None:
         assert loop_events
         assert loop_events[0]["detector"] == "ping_pong_no_progress"
         assert loop_events[0]["other_tool"] in {"alpha", "beta"}
+
+    asyncio.run(_scenario())
+
+
+def test_engine_detects_repeated_provider_plans_before_extra_tool_execution() -> None:
+    async def _scenario() -> None:
+        provider = FakeRepeatedPlanProvider()
+        tools = FakeChangingResultTools()
+        loop_events: list[dict[str, Any]] = []
+
+        def _hook(event) -> None:
+            if event.stage == "loop_detected":
+                loop_events.append(event.metadata or {})
+
+        engine = AgentEngine(
+            provider=provider,
+            tools=tools,
+            max_iterations=20,
+            loop_detection=LoopDetectionSettings(
+                enabled=True,
+                history_size=10,
+                repeat_threshold=1,
+                critical_threshold=2,
+            ),
+        )
+        out = await engine.run(session_id="cli:provider-plan-detect", user_text="run", progress_hook=_hook)
+        assert out.model == "engine/loop-detected"
+        assert "same no-progress tool plan" in out.text.lower()
+        assert provider.calls == 2
+        assert tools.calls == 1
+        assert loop_events
+        assert loop_events[0]["detector"] == "provider_plan_no_progress"
 
     asyncio.run(_scenario())
 
