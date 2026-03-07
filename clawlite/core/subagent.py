@@ -606,6 +606,35 @@ class SubagentManager:
             values = [item for item in values if item.status in {"running", "queued"}]
         return sorted(values, key=lambda item: item.started_at, reverse=True)
 
+    def get_run(self, run_id: str) -> SubagentRun | None:
+        clean_run_id = str(run_id or "").strip()
+        if not clean_run_id:
+            return None
+        return self._runs.get(clean_run_id)
+
+    def list_resumable_runs(
+        self,
+        *,
+        session_id: str | None = None,
+        reason: str = "",
+        limit: int = 50,
+    ) -> list[SubagentRun]:
+        clean_reason = str(reason or "").strip()
+        max_items = max(1, int(limit))
+        rows = self.list_runs(session_id=session_id, active_only=False)
+        out: list[SubagentRun] = []
+        for run in rows:
+            metadata = dict(getattr(run, "metadata", {}) or {})
+            if not bool(metadata.get("resumable", False)):
+                continue
+            if clean_reason and str(metadata.get("last_status_reason", "") or "").strip() != clean_reason:
+                continue
+            out.append(run)
+            if len(out) >= max_items:
+                break
+        out.sort(key=lambda item: (item.updated_at or item.finished_at or item.started_at, item.run_id))
+        return out
+
     def list_completed_unsynthesized(self, session_id: str, limit: int = 8) -> list[SubagentRun]:
         clean_session_id = str(session_id or "").strip()
         if not clean_session_id:

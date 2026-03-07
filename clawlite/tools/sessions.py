@@ -13,6 +13,7 @@ from clawlite.tools.base import Tool, ToolContext
 
 
 Runner = Callable[[str, str], Awaitable[Any]]
+ResumeRunnerFactory = Callable[[SubagentRun], Runner]
 
 
 @dataclass(slots=True)
@@ -194,6 +195,23 @@ def _continuation_payload(continuation: _ContinuationContext) -> dict[str, Any]:
     if continuation.count > 0:
         payload["continuation_digest_count"] = continuation.count
     return payload
+
+
+def _continuation_from_metadata(metadata: dict[str, Any] | None) -> _ContinuationContext:
+    payload = metadata if isinstance(metadata, dict) else {}
+    summary = _compact(payload.get("continuation_digest_summary", ""), max_chars=240)
+    if not summary:
+        return _ContinuationContext()
+    session_id = _compact(payload.get("continuation_digest_session_id", ""), max_chars=96)
+    try:
+        count = int(payload.get("continuation_digest_count", 0) or 0)
+    except Exception:
+        count = 0
+    return _ContinuationContext(summary=summary, session_id=session_id, count=max(0, count))
+
+
+def build_task_with_continuation_metadata(message: str, metadata: dict[str, Any] | None = None) -> str:
+    return _apply_continuation_context(message, _continuation_from_metadata(metadata))
 
 
 def _session_file_path(sessions: SessionStore, session_id: str) -> Path:
@@ -560,20 +578,22 @@ class SubagentsTool(Tool):
     name = "subagents"
     description = "List or cancel subagent runs."
 
-    def __init__(self, manager: SubagentManager) -> None:
+    def __init__(self, manager: SubagentManager, *, resume_runner_factory: ResumeRunnerFactory | None = None) -> None:
         self.manager = manager
+        self.resume_runner_factory = resume_runner_factory
 
     def args_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["list", "kill", "sweep"], "default": "list"},
+                "action": {"type": "string", "enum": ["list", "kill", "sweep", "resume"], "default": "list"},
                 "session_id": {"type": "string"},
                 "sessionId": {"type": "string"},
                 "sessionKey": {"type": "string"},
                 "run_id": {"type": "string"},
                 "runId": {"type": "string"},
                 "all": {"type": "boolean"},
+                "limit": {"type": "integer", "minimum": 1},
             },
         }
 
@@ -603,6 +623,67 @@ class SubagentsTool(Tool):
                     "action": "sweep",
                     "session_id": session_id,
                     "maintenance": maintenance,
+                }
+            )
+
+        if action == "resume":
+            if self.resume_runner_factory is None:
+                return _json(
+                    {
+                        "status": "failed",
+                        "action": "resume",
+                        "error": "resume_unsupported",
+                    }
+                )
+            run_id = str(arguments.get("run_id") or arguments.get("runId") or "").strip()
+            resume_all = _coerce_bool(arguments.get("all"), default=False)
+            limit = _coerce_limit(arguments.get("limit"), default=20, minimum=1, maximum=200)
+            target_runs: list[SubagentRun] = []
+            if run_id:
+                run = self.manager.get_run(run_id)
+                if run is None:
+                    return _json(
+                        {
+                            "status": "failed",
+                            "action": "resume",
+                            "run_id": run_id,
+                            "error": "run_not_found",
+                        }
+                    )
+                target_runs = [run]
+            elif resume_all:
+                target_runs = self.manager.list_resumable_runs(session_id=session_id, limit=limit)
+            else:
+                return _json(
+                    {
+                        "status": "failed",
+                        "action": "resume",
+                        "error": "run_id/runId is required when all=false",
+                    }
+                )
+
+            resumed: list[dict[str, Any]] = []
+            failed: list[dict[str, str]] = []
+            for run in target_runs:
+                try:
+                    updated = await self.manager.resume(
+                        run_id=run.run_id,
+                        runner=self.resume_runner_factory(run),
+                    )
+                except Exception as exc:
+                    failed.append({"run_id": run.run_id, "error": str(exc)})
+                    continue
+                resumed.append(_run_to_payload(updated))
+            status = "ok" if resumed or not failed else "failed"
+            return _json(
+                {
+                    "status": status,
+                    "action": "resume",
+                    "session_id": session_id,
+                    "requested": len(target_runs),
+                    "resumed": len(resumed),
+                    "failed": failed,
+                    "runs": resumed,
                 }
             )
 

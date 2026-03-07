@@ -59,6 +59,7 @@ from clawlite.tools.sessions import (
     SessionsSendTool,
     SessionsSpawnTool,
     SubagentsTool,
+    build_task_with_continuation_metadata,
 )
 from clawlite.tools.spawn import SpawnTool
 from clawlite.tools.web import WebFetchTool, WebSearchTool
@@ -622,6 +623,7 @@ class GatewayLifecycleState:
                 "proactive_monitor": {"enabled": False, "running": False, "last_error": ""},
                 "memory_quality_tuning": {"enabled": False, "running": False, "last_error": ""},
                 "autonomy_wake": {"enabled": True, "running": False, "last_error": ""},
+                "subagent_replay": {"enabled": True, "running": False, "last_error": "", "replayed": 0, "failed": 0},
                 "bootstrap": {"enabled": True, "running": False, "pending": False, "last_status": "", "last_error": ""},
                 "engine": {"enabled": True, "running": True, "last_error": ""},
             }
@@ -1021,12 +1023,27 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     async def _session_runner(session_id: str, task: str):
         return await engine.run(session_id=session_id, user_text=task)
 
+    def _resume_runner_factory(run: Any) -> Callable[[str, str], Any]:
+        metadata = dict(getattr(run, "metadata", {}) or {})
+        target_session_id = str(metadata.get("target_session_id", "") or "").strip() or str(
+            getattr(run, "session_id", "") or ""
+        ).strip()
+
+        async def _resume_runner(_owner_session_id: str, delegated_task: str) -> str:
+            resumed_task = build_task_with_continuation_metadata(delegated_task, metadata)
+            result = await engine.run(session_id=target_session_id, user_text=resumed_task)
+            return result.text
+
+        return _resume_runner
+
+    setattr(engine, "_subagent_resume_runner_factory", _resume_runner_factory)
+
     tools.register(SpawnTool(engine.subagents, _subagent_runner, memory=memory))
     tools.register(SessionsListTool(sessions))
     tools.register(SessionsHistoryTool(sessions))
     tools.register(SessionsSendTool(_session_runner, memory=memory))
     tools.register(SessionsSpawnTool(engine.subagents, _session_runner, memory=memory))
-    tools.register(SubagentsTool(engine.subagents))
+    tools.register(SubagentsTool(engine.subagents, resume_runner_factory=_resume_runner_factory))
     tools.register(SessionStatusTool(sessions, engine.subagents))
 
     bus = MessageQueue()
@@ -2202,6 +2219,65 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         recover=_recover_supervised_component,
     )
 
+    async def _resume_recoverable_subagents() -> dict[str, Any]:
+        component = lifecycle.components.setdefault(
+            "subagent_replay",
+            {
+                "enabled": True,
+                "running": False,
+                "last_error": "",
+                "replayed": 0,
+                "failed": 0,
+                "last_run_iso": "",
+            },
+        )
+        component["enabled"] = True
+        component["running"] = True
+        component["last_error"] = ""
+        resume_factory = getattr(runtime.engine, "_subagent_resume_runner_factory", None)
+        if not callable(resume_factory):
+            component["running"] = False
+            component["last_error"] = "resume_runner_factory_missing"
+            return {"replayed": 0, "failed": 0}
+        rows = runtime.engine.subagents.list_resumable_runs(reason="manager_restart", limit=64)
+        replayed = 0
+        failed: list[dict[str, str]] = []
+        for run in rows:
+            try:
+                await runtime.engine.subagents.resume(
+                    run_id=str(getattr(run, "run_id", "") or ""),
+                    runner=resume_factory(run),
+                )
+            except Exception as exc:
+                failed.append(
+                    {
+                        "run_id": str(getattr(run, "run_id", "") or "").strip(),
+                        "error": str(exc),
+                    }
+                )
+                continue
+            replayed += 1
+        await asyncio.sleep(0)
+        component["running"] = False
+        component["replayed"] = replayed
+        component["failed"] = len(failed)
+        component["last_failed_runs"] = failed[-8:]
+        component["last_run_iso"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        if failed:
+            component["last_error"] = failed[-1]["error"]
+            bind_event("gateway.subagents").warning(
+                "subagent replay completed replayed={} failed={} last_error={}",
+                replayed,
+                len(failed),
+                component["last_error"],
+            )
+        elif replayed:
+            bind_event("gateway.subagents").info("subagent replay completed replayed={}", replayed)
+        return {
+            "replayed": replayed,
+            "failed": len(failed),
+        }
+
     async def _start_subsystems() -> None:
         started: list[tuple[str, Any]] = []
         steps: list[tuple[str, Any, Any, bool]] = [
@@ -2251,6 +2327,22 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                         lifecycle.mark_component(stop_name, running=False, error=str(stop_exc))
                         bind_event("gateway.lifecycle").error("subsystem rollback failed name={} error={}", stop_name, stop_exc)
                 raise RuntimeError(f"gateway_startup_failed:{name}") from exc
+
+        try:
+            replay_result = await _resume_recoverable_subagents()
+            bind_event("gateway.lifecycle").info(
+                "subagent replay startup replayed={} failed={}",
+                int(replay_result.get("replayed", 0) or 0),
+                int(replay_result.get("failed", 0) or 0),
+            )
+        except Exception as exc:
+            row = lifecycle.components.setdefault(
+                "subagent_replay",
+                {"enabled": True, "running": False, "last_error": "", "replayed": 0, "failed": 0},
+            )
+            row["running"] = False
+            row["last_error"] = str(exc)
+            bind_event("gateway.lifecycle").warning("subagent replay startup failed error={}", exc)
 
     async def _stop_subsystems() -> None:
         steps: list[tuple[str, Any, bool]] = [

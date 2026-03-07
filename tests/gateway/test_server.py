@@ -18,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 import clawlite.gateway.server as gateway_server
 from clawlite.config.schema import AppConfig, SchedulerConfig
 from clawlite.core.memory_monitor import MemorySuggestion
+from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.gateway.server import (
     _LATEST_MEMORY_ROUTE_CACHE,
     _latest_memory_route,
@@ -34,8 +35,26 @@ from clawlite.utils import logging as logging_utils
 
 
 class FakeProvider:
+    def get_default_model(self) -> str:
+        return "fake/test"
+
     async def complete(self, *, messages, tools):
         return LLMResult(text="pong", model="fake/test", tool_calls=[], metadata={})
+
+
+class ReplayProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[list[dict[str, object]]] = []
+
+    def get_default_model(self) -> str:
+        return "fake/replay"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        self.snapshots.append(messages)
+        return LLMResult(text="replayed", model="fake/replay", tool_calls=[], metadata={})
 
 
 class FailingProvider:
@@ -719,6 +738,71 @@ def test_build_runtime_registers_openclaw_compatibility_alias_tools(tmp_path: Pa
         "subagents",
         "session_status",
     }.issubset(schema_names)
+
+
+def test_gateway_startup_replays_resumable_subagents_after_restart(tmp_path: Path) -> None:
+    state_root = tmp_path / "state" / "subagents"
+    manager = SubagentManager(state_path=state_root)
+    run = SubagentRun(
+        run_id="run-replay-1",
+        session_id="cli:owner",
+        task="retry task",
+        status="running",
+        started_at="2026-03-06T10:00:00+00:00",
+        updated_at="2026-03-06T10:00:00+00:00",
+        metadata={
+            "target_session_id": "cli:owner:subagent",
+            "run_version": 1,
+            "resume_attempts": 0,
+            "resume_attempts_max": 2,
+            "retry_budget_remaining": 2,
+            "resume_token": "tok-1",
+            "resumable": False,
+            "last_status_reason": "spawned",
+            "last_status_at": "2026-03-06T10:00:00+00:00",
+            "continuation_context_applied": True,
+            "continuation_digest_summary": "current:cli:owner:subagent -> blocker triaged",
+            "continuation_digest_session_id": "cli:owner:subagent",
+            "continuation_digest_count": 1,
+        },
+    )
+    manager._runs[run.run_id] = run
+    manager._save_state()
+
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    provider = ReplayProvider()
+    with patch.object(gateway_server, "build_provider", return_value=provider):
+        with patch.object(
+            gateway_server,
+            "probe_local_provider_runtime",
+            return_value={"checked": False, "ok": True},
+        ):
+            app = create_app(cfg)
+            with TestClient(app) as client:
+                deadline = time.time() + 1.0
+                rows = client.app.state.runtime.engine.subagents.list_runs(session_id="cli:owner")
+                while time.time() < deadline:
+                    rows = client.app.state.runtime.engine.subagents.list_runs(session_id="cli:owner")
+                    if rows and rows[0].status == "done":
+                        break
+                    time.sleep(0.01)
+
+                assert rows
+                assert rows[0].run_id == "run-replay-1"
+                assert rows[0].status == "done"
+                assert rows[0].result == "replayed"
+                assert rows[0].metadata["last_status_reason"] == "done"
+                assert rows[0].metadata["resume_attempts"] == 1
+                assert rows[0].metadata["retry_budget_remaining"] == 1
+                replay_component = client.app.state.lifecycle.components["subagent_replay"]
+                assert replay_component["replayed"] == 1
+                assert replay_component["failed"] == 0
+                assert provider.calls >= 1
 
 
 def test_run_heartbeat_skips_suggestions_when_memory_monitor_missing() -> None:

@@ -14,6 +14,7 @@ from clawlite.tools.sessions import (
     SessionsSendTool,
     SessionsSpawnTool,
     SubagentsTool,
+    build_task_with_continuation_metadata,
 )
 
 
@@ -471,6 +472,75 @@ def test_subagents_list_and_sweep_surface_lifecycle_metadata(tmp_path) -> None:
         }
 
         del sessions
+
+    asyncio.run(_scenario())
+
+
+def test_subagents_resume_restarts_resumable_runs(tmp_path) -> None:
+    async def _scenario() -> None:
+        calls: list[tuple[str, str]] = []
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_resume_attempts=2)
+        run = SubagentRun(
+            run_id="run-resume",
+            session_id="cli:owner",
+            task="retry task",
+            status="interrupted",
+            updated_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "target_session_id": "cli:owner:subagent",
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+                "resumable": True,
+                "last_status_reason": "manager_restart",
+                "continuation_digest_summary": "current:cli:owner:subagent -> blocker triaged",
+                "continuation_digest_session_id": "cli:owner:subagent",
+                "continuation_digest_count": 1,
+            },
+        )
+        manager._runs[run.run_id] = run
+        manager._save_state()
+
+        def _resume_runner_factory(row: SubagentRun):
+            async def _runner(_owner_session_id: str, task: str):
+                delegated = build_task_with_continuation_metadata(task, dict(row.metadata))
+                calls.append((str(row.metadata.get("target_session_id", "") or row.session_id), delegated))
+                return f"done:{task}"
+
+            return _runner
+
+        tool = SubagentsTool(manager, resume_runner_factory=_resume_runner_factory)
+        payload = json.loads(
+            await tool.run(
+                {"action": "resume", "run_id": "run-resume"},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert payload["status"] == "ok"
+        assert payload["action"] == "resume"
+        assert payload["requested"] == 1
+        assert payload["resumed"] == 1
+        assert payload["failed"] == []
+        assert payload["runs"][0]["run_id"] == "run-resume"
+        assert payload["runs"][0]["status"] in {"running", "queued"}
+        assert calls == [
+            (
+                "cli:owner:subagent",
+                "[Continuation Context]\n"
+                "Session: cli:owner:subagent\n"
+                "Summary: current:cli:owner:subagent -> blocker triaged\n\n"
+                "[Task]\n"
+                "retry task",
+            )
+        ]
+        rows = manager.list_runs(session_id="cli:owner")
+        assert rows[0].status == "done"
+        assert rows[0].result == "done:retry task"
+        assert rows[0].metadata["resume_attempts"] == 1
+        assert rows[0].metadata["retry_budget_remaining"] == 1
 
     asyncio.run(_scenario())
 
