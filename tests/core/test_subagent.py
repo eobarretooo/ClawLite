@@ -330,6 +330,7 @@ def test_subagent_manager_sweeps_expired_and_orphaned_runs(tmp_path: Path) -> No
             "expired": 1,
             "orphaned_running": 0,
             "orphaned_queued": 1,
+            "pruned_completed": 0,
         }
 
         rows = {row.run_id: row for row in mgr.list_runs(session_id="s1")}

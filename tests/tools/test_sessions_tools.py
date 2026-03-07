@@ -79,6 +79,7 @@ def test_sessions_list_surfaces_subagent_inventory(tmp_path) -> None:
             "expired": 0,
             "orphaned_running": 0,
             "orphaned_queued": 0,
+            "pruned_completed": 0,
         }
         row_a = [row for row in payload["sessions"] if row["session_id"] == "cli:a"][0]
         assert row_a["message_count"] == 2
@@ -799,6 +800,7 @@ def test_subagents_list_and_sweep_surface_lifecycle_metadata(tmp_path) -> None:
             "expired": 0,
             "orphaned_running": 0,
             "orphaned_queued": 0,
+            "pruned_completed": 0,
         }
 
         del sessions
@@ -1117,6 +1119,7 @@ def test_session_status_fields(tmp_path) -> None:
             "expired": 0,
             "orphaned_running": 0,
             "orphaned_queued": 0,
+            "pruned_completed": 0,
         }
 
     asyncio.run(_scenario())

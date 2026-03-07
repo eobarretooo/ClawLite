@@ -85,6 +85,7 @@ def test_agents_list_returns_primary_and_subagent_inventory(tmp_path) -> None:
             "expired": 0,
             "orphaned_running": 0,
             "orphaned_queued": 0,
+            "pruned_completed": 0,
         }
         primary = [row for row in payload["agents"] if row["id"] == "primary"][0]
         delegated = [row for row in payload["agents"] if row["id"] == "subagent_manager"][0]

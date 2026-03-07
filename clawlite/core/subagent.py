@@ -156,12 +156,64 @@ class SubagentManager:
         run.metadata["last_status_at"] = now_iso
         self._sync_retry_metadata(run)
 
+    _MAX_COMPLETED_RUNS = 500   # hard cap: prune oldest completed when exceeded
+
     def _empty_sweep_stats(self) -> dict[str, int]:
         return {
             "expired": 0,
             "orphaned_running": 0,
             "orphaned_queued": 0,
+            "pruned_completed": 0,
         }
+
+    def _prune_completed_locked(self, stats: dict[str, int]) -> bool:
+        """Remove completed/terminal runs that are no longer useful to keep.
+
+        Strategy (both applied):
+        1. TTL-based: if run_ttl_seconds is set, drop completed runs whose
+           finished_at is older than run_ttl_seconds * 2.
+        2. Cap-based: if total completed count > _MAX_COMPLETED_RUNS, drop
+           the oldest by finished_at until below the cap.
+
+        Active runs (running/queued) are never touched here.
+        """
+        terminal_statuses = {"done", "error", "cancelled", "interrupted", "expired"}
+        completed = [
+            run for run in self._runs.values()
+            if run.status in terminal_statuses
+            and not bool(run.metadata.get("resumable", False))
+        ]
+
+        pruned: set[str] = set()
+        now_dt = datetime.now(timezone.utc)
+
+        # TTL-based prune
+        if self.run_ttl_seconds is not None:
+            ttl_threshold = self.run_ttl_seconds * 2
+            for run in completed:
+                finished = _parse_utc(str(run.finished_at or "") or "")
+                if finished is None:
+                    finished = _parse_utc(str(run.updated_at or "") or "")
+                if finished is not None and (now_dt - finished).total_seconds() > ttl_threshold:
+                    pruned.add(run.run_id)
+
+        # Cap-based prune
+        remaining = [r for r in completed if r.run_id not in pruned]
+        over = len(remaining) - self._MAX_COMPLETED_RUNS
+        if over > 0:
+            sorted_by_age = sorted(
+                remaining,
+                key=lambda r: str(r.finished_at or r.updated_at or r.started_at or ""),
+            )
+            for run in sorted_by_age[:over]:
+                pruned.add(run.run_id)
+
+        for run_id in pruned:
+            self._runs.pop(run_id, None)
+
+        n = len(pruned)
+        stats["pruned_completed"] = n
+        return n > 0
 
     def _remove_from_queue_locked(self, run_id: str) -> None:
         if run_id not in self._queue:
@@ -241,7 +293,8 @@ class SubagentManager:
                     stats["orphaned_running"] += 1
                     changed = True
 
-        if changed:
+        pruned_changed = self._prune_completed_locked(stats)
+        if changed or pruned_changed:
             self._drain_queue_locked()
             self._save_state()
         return stats
