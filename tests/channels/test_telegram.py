@@ -437,6 +437,97 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
     asyncio.run(_scenario())
 
 
+def test_telegram_business_message_is_forwarded_with_business_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token"},
+            on_message=_on_message,
+        )
+        message = SimpleNamespace(
+            text="business hello",
+            caption=None,
+            chat_id=6001,
+            business_connection_id="bc-1",
+            from_user=SimpleNamespace(id=77, username="merchant", first_name="Merchant", language_code="en"),
+            message_id=501,
+            chat=SimpleNamespace(type="private"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=601,
+            message=None,
+            edited_message=None,
+            business_message=message,
+            edited_business_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:6001"
+        assert user_id == "77"
+        assert text == "business hello"
+        assert metadata["update_kind"] == "business_message"
+        assert metadata["business_connection_id"] == "bc-1"
+        assert metadata["message_id"] == 501
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_edited_business_message_marks_edit_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token"},
+            on_message=_on_message,
+        )
+        message = SimpleNamespace(
+            text="business edited",
+            caption=None,
+            chat_id=6002,
+            business_connection_id="bc-2",
+            from_user=SimpleNamespace(id=88, username="agent", first_name="Agent", language_code="en"),
+            message_id=502,
+            chat=SimpleNamespace(type="private"),
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=602,
+            message=None,
+            edited_message=None,
+            business_message=None,
+            edited_business_message=message,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        metadata = emitted[0][3]
+        assert metadata["update_kind"] == "edited_business_message"
+        assert metadata["is_edit"] is True
+        assert metadata["business_connection_id"] == "bc-2"
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_callback_query_policy_blocked_when_context_denies() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
@@ -3078,6 +3169,8 @@ def test_telegram_webhook_mode_start_sets_webhook_and_stop_deletes_webhook() -> 
             assert bot.set_calls[0]["allowed_updates"] == [
                 "message",
                 "edited_message",
+                "business_message",
+                "edited_business_message",
                 "callback_query",
                 "message_reaction",
                 "channel_post",

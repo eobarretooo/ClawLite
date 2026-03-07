@@ -31,6 +31,8 @@ MAX_CAPTION_LEN = 1024
 TELEGRAM_ALLOWED_UPDATES = [
     "message",
     "edited_message",
+    "business_message",
+    "edited_business_message",
     "callback_query",
     "message_reaction",
     "channel_post",
@@ -789,6 +791,8 @@ class TelegramChannel(BaseChannel):
         for field_name, is_edit in (
             ("message", False),
             ("edited_message", True),
+            ("business_message", False),
+            ("edited_business_message", True),
             ("channel_post", False),
             ("edited_channel_post", True),
         ):
@@ -1659,19 +1663,42 @@ class TelegramChannel(BaseChannel):
             return True
 
         message = getattr(item, "message", None)
+        update_kind = "message"
         is_edit = False
         if message is None:
             message = getattr(item, "edited_message", None)
             is_edit = message is not None
+            if message is not None:
+                update_kind = "edited_message"
+        if message is None:
+            message = getattr(item, "business_message", None)
+            is_edit = False
+            if message is not None:
+                update_kind = "business_message"
+        if message is None:
+            message = getattr(item, "edited_business_message", None)
+            is_edit = message is not None
+            if message is not None:
+                update_kind = "edited_business_message"
         if message is None:
             message = getattr(item, "channel_post", None)
             is_edit = False
+            if message is not None:
+                update_kind = "channel_post"
         if message is None:
             message = getattr(item, "edited_channel_post", None)
             is_edit = message is not None
+            if message is not None:
+                update_kind = "edited_channel_post"
         if message is None:
             message = getattr(item, "effective_message", None)
-            is_edit = bool(getattr(item, "edited_message", None))
+            is_edit = bool(
+                getattr(item, "edited_message", None)
+                or getattr(item, "edited_business_message", None)
+                or getattr(item, "edited_channel_post", None)
+            )
+            if message is not None:
+                update_kind = "effective_message"
         if message is None:
             return True
 
@@ -1744,6 +1771,7 @@ class TelegramChannel(BaseChannel):
             message=message,
             text=text,
             is_edit=is_edit,
+            update_kind=update_kind,
             command=command,
             command_args=command_args,
             media_info=media_info,
@@ -1772,6 +1800,7 @@ class TelegramChannel(BaseChannel):
         message: Any,
         text: str,
         is_edit: bool,
+        update_kind: str,
         command: str,
         command_args: str,
         media_info: dict[str, Any],
@@ -1788,6 +1817,7 @@ class TelegramChannel(BaseChannel):
             "is_group": str(getattr(chat, "type", "") or "") != "private",
             "message_id": int(getattr(message, "message_id", 0) or 0),
             "update_id": int(getattr(item, "update_id", 0) or 0),
+            "update_kind": str(update_kind or "message"),
             "is_edit": is_edit,
             "is_command": bool(command),
             "text": text,
@@ -1803,6 +1833,9 @@ class TelegramChannel(BaseChannel):
             "media_total_count": int(media_info.get("total_count", 0) or 0),
             "media_items": list(media_info.get("items", [])),
         }
+        business_connection_id = str(getattr(message, "business_connection_id", "") or "").strip()
+        if business_connection_id:
+            metadata["business_connection_id"] = business_connection_id
         message_thread_id = self._coerce_thread_id(getattr(message, "message_thread_id", None))
         if message_thread_id is not None:
             metadata["message_thread_id"] = message_thread_id
