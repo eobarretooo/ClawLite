@@ -2389,6 +2389,43 @@ def test_engine_emits_progress_events() -> None:
     asyncio.run(_scenario())
 
 
+def test_engine_sync_progress_hook_failures_do_not_abort_turn() -> None:
+    async def _scenario() -> None:
+        provider = FakeLongToolProvider()
+        engine = AgentEngine(provider=provider, tools=FakeTools())
+        stages: list[str] = []
+
+        def _hook(event) -> None:
+            stages.append(event.stage)
+            if event.stage == "tool_call":
+                raise RuntimeError("typing offline")
+
+        out = await engine.run(session_id="cli:progress-sync-fail", user_text="run", progress_hook=_hook)
+        assert out.text == "done"
+        assert "tool_call" in stages
+        assert "turn_completed" not in stages
+
+    asyncio.run(_scenario())
+
+
+def test_engine_async_progress_hook_failures_do_not_abort_turn() -> None:
+    async def _scenario() -> None:
+        provider = FakeLongToolProvider()
+        engine = AgentEngine(provider=provider, tools=FakeTools())
+        stages: list[str] = []
+
+        async def _hook(event) -> None:
+            stages.append(event.stage)
+            if event.stage == "llm_request":
+                raise RuntimeError("typing offline")
+
+        out = await engine.run(session_id="cli:progress-async-fail", user_text="run", progress_hook=_hook)
+        assert out.text == "done"
+        assert stages == ["turn_started", "llm_request"]
+
+    asyncio.run(_scenario())
+
+
 def test_engine_handles_typed_provider_errors() -> None:
     async def _scenario() -> None:
         engine = AgentEngine(provider=FakeErrorProvider("provider_network_error:timeout"), tools=FakeTools())

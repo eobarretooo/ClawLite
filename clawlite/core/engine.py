@@ -1993,10 +1993,18 @@ class AgentEngine:
             return
         if counter[0] >= limit:
             return
-        counter[0] += 1
-        maybe_awaitable = progress_hook(event)
-        if inspect.isawaitable(maybe_awaitable):
-            await maybe_awaitable
+        try:
+            counter[0] += 1
+            maybe_awaitable = progress_hook(event)
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
+        except Exception as exc:
+            bind_event("agent.progress", session=event.session_id, stage=event.stage).warning(
+                "progress hook disabled iteration={} error={}",
+                event.iteration,
+                exc,
+            )
+            counter[0] = max(counter[0], limit)
 
     async def run(
         self,
