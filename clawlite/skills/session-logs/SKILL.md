@@ -1,7 +1,8 @@
 ---
 name: session-logs
 description: Search and inspect ClawLite JSONL session logs for prior conversation context.
-metadata: {"clawlite":{"emoji":"📜","requires":{"bins":["jq","rg"]}}}
+metadata: {"clawlite":{"emoji":"📜"}}
+script: session_logs
 ---
 
 # Session logs

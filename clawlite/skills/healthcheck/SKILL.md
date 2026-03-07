@@ -2,6 +2,7 @@
 name: healthcheck
 description: Host hardening and ClawLite runtime health checklist with safe, approval-first operations.
 metadata: {"clawlite":{"emoji":"🛡️"}}
+script: healthcheck
 ---
 
 # Healthcheck

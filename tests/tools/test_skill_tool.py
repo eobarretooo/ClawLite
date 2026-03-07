@@ -82,6 +82,26 @@ class FakeReadTool(Tool):
         return f"Local content from {arguments.get('path', '')}"
 
 
+class FakeSessionsSpawnTool(Tool):
+    name = "sessions_spawn"
+    description = "fake sessions spawn"
+
+    def args_schema(self) -> dict:
+        return {"type": "object", "properties": {"task": {"type": "string"}}}
+
+    async def run(self, arguments: dict, ctx: ToolContext) -> str:
+        return json.dumps(
+            {
+                "status": "ok",
+                "session_id": ctx.session_id,
+                "user_id": ctx.user_id,
+                "task": arguments.get("task", ""),
+                "tasks": arguments.get("tasks", []),
+                "share_scope": arguments.get("share_scope", ""),
+            }
+        )
+
+
 class FakeProvider:
     async def complete(self, *, messages, tools, max_tokens=None, temperature=None, reasoning_effort=None):
         del tools, max_tokens, temperature, reasoning_effort
@@ -555,5 +575,158 @@ def test_run_skill_weather_falls_back_to_open_meteo(tmp_path: Path) -> None:
         with patch("httpx.AsyncClient", side_effect=lambda **kwargs: _Client(responses, **kwargs)):
             out = await tool.run({"name": "weather", "location": "Lisbon"}, ToolContext(session_id="cli:weather"))
             assert out == "Lisbon, Portugal: 19.5°C, partly cloudy, wind 12.0 km/h"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_coding_agent_wraps_sessions_spawn(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "coding-agent",
+        "name: coding-agent\ndescription: coding\nscript: coding_agent",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        reg.register(FakeSessionsSpawnTool())
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {
+                "name": "coding-agent",
+                "tool_arguments": {"task": "Fix test suite", "share_scope": "family"},
+            },
+            ToolContext(session_id="cli:coding", channel="cli", user_id="7"),
+        )
+        payload = json.loads(out)
+        assert payload["status"] == "ok"
+        assert payload["task"] == "Fix test suite"
+        assert payload["share_scope"] == "family"
+        assert payload["session_id"] == "cli:coding"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_healthcheck_returns_local_diagnostics_snapshot(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "healthcheck",
+        "name: healthcheck\ndescription: health\nscript: healthcheck",
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {
+                "name": "healthcheck",
+                "tool_arguments": {"config": str(config_path)},
+            },
+            ToolContext(session_id="cli:health", channel="cli", user_id="7"),
+        )
+        payload = json.loads(out)
+        assert payload["workspace_path"] == str(tmp_path / "workspace")
+        assert "validation" in payload
+        assert "provider" in payload["validation"]
+        assert "channels" in payload["validation"]
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_model_usage_executes_local_script_binding(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "model-usage",
+        "name: model-usage\ndescription: usage\nscript: model_usage",
+    )
+    input_path = tmp_path / "usage.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "provider": "codex",
+                "daily": [
+                    {
+                        "date": "2026-03-06",
+                        "modelBreakdowns": [
+                            {"modelName": "gpt-5-codex", "cost": 4.25},
+                            {"modelName": "gpt-4.1-mini", "cost": 1.5},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {
+                "name": "model-usage",
+                "tool_arguments": {"provider": "codex", "mode": "all", "input": str(input_path)},
+            },
+            ToolContext(session_id="cli:model-usage"),
+        )
+        assert "Provider: codex" in out
+        assert "gpt-5-codex" in out
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_session_logs_reads_jsonl_without_jq_or_rg(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "session-logs",
+        "name: session-logs\ndescription: logs\nscript: session_logs",
+    )
+    state_path = tmp_path / "state"
+    sessions_dir = state_path / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sessions_dir / "cli_history.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"session_id": "cli:history", "role": "user", "content": "deploy status", "ts": "2026-03-07T00:00:00Z", "metadata": {"channel": "telegram"}}),
+                json.dumps({"session_id": "cli:history", "role": "assistant", "content": "deployment healthy", "ts": "2026-03-07T00:01:00Z", "metadata": {"channel": "telegram"}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {
+                "name": "session-logs",
+                "tool_arguments": {"config": str(config_path), "session_id": "cli:history", "role": "assistant"},
+            },
+            ToolContext(session_id="cli:logs"),
+        )
+        payload = json.loads(out)
+        assert payload["status"] == "ok"
+        assert payload["session_id"] == "cli:history"
+        assert payload["count"] == 1
+        assert payload["messages"][0]["content"] == "deployment healthy"
 
     asyncio.run(_scenario())

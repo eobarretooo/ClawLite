@@ -1,7 +1,8 @@
 ---
 name: model-usage
 description: Summarize per-model cost usage from CodexBar JSON for ClawLite workflows.
-metadata: {"clawlite":{"emoji":"📊","requires":{"bins":["python3"]}}}
+metadata: {"clawlite":{"emoji":"📊"}}
+script: model_usage
 ---
 
 # Model usage

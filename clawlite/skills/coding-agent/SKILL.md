@@ -3,6 +3,7 @@ name: coding-agent
 description: Orchestrate coding work with ClawLite sessions/subagents and patch tooling for multi-step implementation flows.
 always: false
 metadata: {"clawlite":{"emoji":"🧩"}}
+script: coding_agent
 ---
 
 # Coding Agent

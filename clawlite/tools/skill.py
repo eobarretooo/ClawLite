@@ -8,11 +8,15 @@ from __future__ import annotations
 - `script:` dispatches to built-in tool wrappers or external executables
 """
 
+import asyncio
+import importlib.util
 import inspect
 import json
 import os
 import shlex
 import shutil
+import sys
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -364,11 +368,284 @@ class SkillTool(Tool):
             return f"skill_blocked:{spec_name}:provider_empty_summary"
         return text
 
+    @staticmethod
+    def _skill_config_path(arguments: dict[str, Any]) -> str:
+        payload = arguments.get("tool_arguments")
+        if isinstance(payload, dict):
+            value = payload.get("config") or payload.get("config_path") or payload.get("configPath") or ""
+            return str(value or "").strip()
+        return str(arguments.get("config") or arguments.get("config_path") or arguments.get("configPath") or "").strip()
+
+    @staticmethod
+    def _skill_payload(arguments: dict[str, Any]) -> dict[str, Any]:
+        payload = arguments.get("tool_arguments")
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _load_module_from_path(module_name: str, path: Path) -> Any:
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"module_load_failed:{path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    async def _run_healthcheck(self, arguments: dict[str, Any], *, timeout: float) -> str:
+        from clawlite.cli.ops import diagnostics_snapshot, fetch_gateway_diagnostics
+        from clawlite.config.loader import DEFAULT_CONFIG_PATH, load_config
+
+        config_path = self._skill_config_path(arguments)
+        cfg = load_config(config_path or None)
+        resolved_config_path = str(Path(config_path).expanduser()) if config_path else str(DEFAULT_CONFIG_PATH)
+        payload = diagnostics_snapshot(cfg, config_path=resolved_config_path, include_validation=True)
+        args_payload = self._skill_payload(arguments)
+        gateway_url = str(args_payload.get("gateway_url") or args_payload.get("gatewayUrl") or "").strip()
+        token = str(args_payload.get("token") or "").strip()
+        if gateway_url:
+            payload["gateway_probe"] = await asyncio.to_thread(
+                fetch_gateway_diagnostics,
+                gateway_url=gateway_url,
+                timeout=min(timeout, 10.0),
+                token=token,
+            )
+        return json.dumps(payload, ensure_ascii=False)
+
+    async def _run_model_usage(self, arguments: dict[str, Any]) -> str:
+        payload = self._skill_payload(arguments)
+        provider = str(payload.get("provider") or arguments.get("provider") or "codex").strip().lower() or "codex"
+        mode = str(payload.get("mode") or arguments.get("mode") or "current").strip().lower() or "current"
+        input_path = str(payload.get("input") or arguments.get("input") or "").strip() or None
+        explicit_model = str(payload.get("model") or arguments.get("model") or "").strip() or None
+        output_format = str(payload.get("format") or arguments.get("format") or "text").strip().lower() or "text"
+        pretty = bool(payload.get("pretty", arguments.get("pretty", False)))
+        days_raw = payload.get("days", arguments.get("days"))
+        days = int(days_raw) if days_raw not in {"", None} else None
+        if provider not in {"codex", "claude"}:
+            raise ValueError("provider must be codex or claude")
+        if mode not in {"current", "all"}:
+            raise ValueError("mode must be current or all")
+        if output_format not in {"text", "json"}:
+            raise ValueError("format must be text or json")
+
+        script_path = Path(__file__).resolve().parents[1] / "skills" / "model-usage" / "scripts" / "model_usage.py"
+        module = self._load_module_from_path("clawlite_skill_model_usage_runtime", script_path)
+        usage_payload = module.load_payload(input_path, provider)
+        entries = module.parse_daily_entries(usage_payload)
+        entries = module.filter_by_days(entries, days)
+
+        if mode == "all":
+            totals = module.aggregate_costs(entries)
+            if output_format == "json":
+                body = module.build_json_all(provider, totals)
+                return json.dumps(body, ensure_ascii=False, indent=2 if pretty else None)
+            return module.render_text_all(provider, totals)
+
+        model = explicit_model
+        latest_model_date = None
+        if not model:
+            model, latest_model_date = module.pick_current_model(entries)
+        if not model:
+            raise RuntimeError("model_usage_current_model_unavailable")
+        totals = module.aggregate_costs(entries)
+        total_cost = float(totals.get(model, 0.0))
+        latest_cost_date, latest_cost = module.latest_day_cost(entries, model)
+        if output_format == "json":
+            body = module.build_json_current(
+                provider,
+                model,
+                latest_model_date,
+                total_cost,
+                latest_cost,
+                latest_cost_date,
+                len(entries),
+            )
+            return json.dumps(body, ensure_ascii=False, indent=2 if pretty else None)
+        return module.render_text_current(
+            provider,
+            model,
+            latest_model_date,
+            total_cost,
+            latest_cost,
+            latest_cost_date,
+            len(entries),
+        )
+
+    async def _run_session_logs(self, arguments: dict[str, Any]) -> str:
+        from clawlite.config.loader import load_config
+        from clawlite.session.store import SessionStore
+
+        payload = self._skill_payload(arguments)
+        config_path = self._skill_config_path(arguments)
+        cfg = load_config(config_path or None)
+        sessions_root = Path(cfg.state_path).expanduser() / "sessions"
+        sessions_root.mkdir(parents=True, exist_ok=True)
+        session_id = str(payload.get("session_id") or payload.get("sessionId") or arguments.get("session_id") or arguments.get("sessionId") or "").strip()
+        query = str(payload.get("query") or arguments.get("query") or "").strip().lower()
+        role_filter = str(payload.get("role") or arguments.get("role") or "").strip().lower()
+        channel_filter = str(payload.get("channel") or arguments.get("channel") or "").strip().lower()
+        limit_raw = payload.get("limit", arguments.get("limit", 20))
+        limit = max(1, min(200, int(limit_raw or 20)))
+
+        def _iter_rows(path: Path) -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    decoded = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(decoded, dict):
+                    continue
+                rows.append(decoded)
+            return rows
+
+        def _resolve_session_path(raw_session_id: str) -> Path | None:
+            store = SessionStore(root=sessions_root)
+            candidate_names = [
+                store._safe_session_id(raw_session_id),
+                raw_session_id.replace(":", "_"),
+                raw_session_id.replace(":", "-"),
+            ]
+            seen: set[str] = set()
+            for candidate in candidate_names:
+                clean = str(candidate or "").strip()
+                if not clean or clean in seen:
+                    continue
+                seen.add(clean)
+                path = sessions_root / f"{clean}.jsonl"
+                if path.exists():
+                    return path
+            for path in sessions_root.glob("*.jsonl"):
+                rows = _iter_rows(path)
+                if any(str(row.get("session_id", "") or "").strip() == raw_session_id for row in rows):
+                    return path
+            return None
+
+        def _matches(row: dict[str, Any]) -> bool:
+            role = str(row.get("role", "")).strip().lower()
+            content = str(row.get("content", "") or "")
+            metadata = row.get("metadata", {})
+            channel = str(metadata.get("channel", "") if isinstance(metadata, dict) else "").strip().lower()
+            if role_filter and role != role_filter:
+                return False
+            if channel_filter and channel != channel_filter:
+                return False
+            if query and query not in content.lower():
+                return False
+            return True
+
+        if session_id:
+            path = _resolve_session_path(session_id)
+            if path is None:
+                return json.dumps({"status": "failed", "error": "session_not_found", "session_id": session_id}, ensure_ascii=False)
+            rows = [row for row in _iter_rows(path) if _matches(row)]
+            rows = rows[-limit:]
+            role_counts: dict[str, int] = {}
+            for row in rows:
+                role = str(row.get("role", "")).strip().lower()
+                if role:
+                    role_counts[role] = role_counts.get(role, 0) + 1
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "session_id": session_id,
+                    "count": len(rows),
+                    "role_counts": role_counts,
+                    "messages": rows,
+                },
+                ensure_ascii=False,
+            )
+
+        session_rows: list[dict[str, Any]] = []
+        for path in sorted(sessions_root.glob("*.jsonl"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
+            rows = _iter_rows(path)
+            resolved_session_id = str(path.stem)
+            if rows:
+                first_session_id = str(rows[0].get("session_id", "") or "").strip()
+                if first_session_id:
+                    resolved_session_id = first_session_id
+            if query or role_filter or channel_filter:
+                matched = [row for row in rows if _matches(row)]
+                if not matched:
+                    continue
+                for row in matched[:limit]:
+                    session_rows.append(
+                        {
+                            "session_id": resolved_session_id,
+                            "ts": str(row.get("ts", "") or ""),
+                            "role": str(row.get("role", "") or ""),
+                            "content": str(row.get("content", "") or ""),
+                            "metadata": row.get("metadata", {}) if isinstance(row.get("metadata", {}), dict) else {},
+                        }
+                    )
+                    if len(session_rows) >= limit:
+                        break
+            else:
+                preview = rows[-1] if rows else {}
+                session_rows.append(
+                    {
+                        "session_id": resolved_session_id,
+                        "message_count": len(rows),
+                        "last_ts": str(preview.get("ts", "") or ""),
+                        "last_role": str(preview.get("role", "") or ""),
+                        "last_content": str(preview.get("content", "") or "")[:160],
+                    }
+                )
+            if len(session_rows) >= limit:
+                break
+        return json.dumps({"status": "ok", "count": len(session_rows), "sessions": session_rows[:limit]}, ensure_ascii=False)
+
+    async def _run_coding_agent(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
+        payload = self._skill_payload(arguments)
+        task = str(payload.get("task") or arguments.get("task") or arguments.get("input") or "").strip()
+        tasks = payload.get("tasks")
+        target_tool = self.registry.get("sessions_spawn")
+        if target_tool is None:
+            return "skill_script_unavailable:coding_agent"
+        if not task and not isinstance(tasks, list):
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "mode": "guide",
+                    "available_tools": ["sessions_spawn", "subagents", "session_status", "sessions_history", "process", "apply_patch"],
+                    "message": "Provide task or tasks to delegate coding work.",
+                },
+                ensure_ascii=False,
+            )
+
+        call_arguments: dict[str, Any] = {}
+        if isinstance(tasks, list) and tasks:
+            call_arguments["tasks"] = [str(item) for item in tasks if str(item).strip()]
+        elif task:
+            call_arguments["task"] = task
+        for key in ("session_id", "sessionId", "target_sessions", "targetSessions", "share_scope", "shareScope"):
+            value = payload.get(key)
+            if value not in {None, ""}:
+                call_arguments[key] = value
+        return await self.registry.execute(
+            "sessions_spawn",
+            call_arguments,
+            session_id=ctx.session_id,
+            channel=ctx.channel,
+            user_id=ctx.user_id,
+        )
+
     async def _dispatch_script(self, script_name: str, arguments: dict[str, Any], ctx: ToolContext, *, spec_name: str) -> str:
         if script_name == "weather":
             return await self._run_weather(arguments)
         if script_name == "summarize":
             return await self._run_summarize(arguments, ctx, spec_name=spec_name, timeout=self._timeout_value(arguments))
+        if script_name == "healthcheck":
+            return await self._run_healthcheck(arguments, timeout=self._timeout_value(arguments))
+        if script_name == "model_usage":
+            return await self._run_model_usage(arguments)
+        if script_name == "session_logs":
+            return await self._run_session_logs(arguments)
+        if script_name == "coding_agent":
+            return await self._run_coding_agent(arguments, ctx)
 
         target_tool = self.registry.get(script_name)
         if target_tool is not None and script_name != self.name:
