@@ -104,3 +104,45 @@ def test_workspace_bootstrap_not_recreated_after_completed_state(tmp_path: Path)
 
     loader.sync_templates(update_existing=False)
     assert not (tmp_path / "ws" / "BOOTSTRAP.md").exists()
+
+
+def test_workspace_runtime_health_repairs_empty_and_corrupt_core_docs(tmp_path: Path) -> None:
+    loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
+    loader.bootstrap()
+
+    soul_path = tmp_path / "ws" / "SOUL.md"
+    user_path = tmp_path / "ws" / "USER.md"
+    soul_path.write_bytes(b"\x00\x01broken")
+    user_path.write_text("", encoding="utf-8")
+
+    report = loader.ensure_runtime_files()
+
+    assert report["issues_detected"] == 2
+    assert report["repaired_count"] == 2
+    assert report["critical_files"]["SOUL.md"]["repaired"] is True
+    assert report["critical_files"]["SOUL.md"]["issue"] == "corrupt"
+    assert report["critical_files"]["SOUL.md"]["backup_path"]
+    assert Path(report["critical_files"]["SOUL.md"]["backup_path"]).exists()
+    assert report["critical_files"]["USER.md"]["repaired"] is True
+    assert report["critical_files"]["USER.md"]["issue"] == "empty"
+    assert "## Core Values" in soul_path.read_text(encoding="utf-8")
+    assert "Preferences:" in user_path.read_text(encoding="utf-8")
+
+
+def test_workspace_system_context_auto_repairs_missing_runtime_docs(tmp_path: Path) -> None:
+    loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
+    loader.bootstrap()
+
+    soul_path = tmp_path / "ws" / "SOUL.md"
+    user_path = tmp_path / "ws" / "USER.md"
+    soul_path.unlink()
+    user_path.write_text("", encoding="utf-8")
+
+    content = loader.system_context()
+    health = loader.runtime_health()
+
+    assert "## SOUL.md" in content
+    assert "## USER.md" in content
+    assert health["repaired_count"] == 2
+    assert health["critical_files"]["SOUL.md"]["repaired"] is True
+    assert health["critical_files"]["USER.md"]["repaired"] is True

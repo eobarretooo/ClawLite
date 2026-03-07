@@ -308,6 +308,7 @@ class DiagnosticsResponse(BaseModel):
     autonomy_wake: dict[str, Any] = {}
     autonomy_log: dict[str, Any] = {}
     bootstrap: dict[str, Any]
+    workspace: dict[str, Any] = {}
     memory_monitor: dict[str, Any] = {}
     memory_quality_tuning: dict[str, Any] = {}
     engine: dict[str, Any] = {}
@@ -848,6 +849,7 @@ def _provider_config(config: AppConfig) -> dict[str, Any]:
 def build_runtime(config: AppConfig) -> RuntimeContainer:
     bind_event("gateway.runtime").info("building runtime workspace={} state={}", config.workspace_path, config.state_path)
     workspace = WorkspaceLoader(workspace_path=config.workspace_path)
+    workspace.ensure_runtime_files()
     workspace.bootstrap()
     workspace_path = Path(config.workspace_path).expanduser().resolve()
 
@@ -3193,6 +3195,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             autonomy_wake=runtime.autonomy_wake.status(),
             autonomy_log=runtime.autonomy_log.snapshot(),
             bootstrap=_bootstrap_status_snapshot(),
+            workspace=runtime.workspace.runtime_health(),
             memory_monitor=monitor_payload,
             memory_quality_tuning=dict(tuning_runner_state),
             engine=engine_payload,

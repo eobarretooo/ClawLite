@@ -2568,6 +2568,9 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert "heartbeat" in payload
         assert "bootstrap" in payload
         assert "pending" in payload["bootstrap"]
+        assert "workspace" in payload
+        assert "critical_files" in payload["workspace"]
+        assert set(payload["workspace"]["critical_files"].keys()) >= {"IDENTITY.md", "SOUL.md", "USER.md"}
         assert "memory_monitor" in payload
         assert payload["memory_monitor"]["enabled"] is False
         assert "engine" in payload
@@ -2703,6 +2706,38 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert disabled_alias.status_code == 404
         assert disabled_alias.json()["error"] == "diagnostics_disabled"
         assert disabled_alias.json()["code"] == "diagnostics_disabled"
+
+
+def test_gateway_runtime_repairs_workspace_core_docs_and_surfaces_health(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "SOUL.md").write_bytes(b"\x00bad-soul")
+    (workspace / "USER.md").write_text("", encoding="utf-8")
+
+    cfg = AppConfig(
+        workspace_path=str(workspace),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/diagnostics").json()
+
+    workspace_payload = payload["workspace"]
+    assert workspace_payload["repaired_count"] >= 2
+    assert workspace_payload["critical_files"]["SOUL.md"]["repaired"] is True
+    assert workspace_payload["critical_files"]["SOUL.md"]["issue"] == "corrupt"
+    assert workspace_payload["critical_files"]["SOUL.md"]["backup_path"]
+    assert workspace_payload["critical_files"]["USER.md"]["repaired"] is True
+    assert workspace_payload["critical_files"]["USER.md"]["issue"] == "empty"
+    assert "## Core Values" in (workspace / "SOUL.md").read_text(encoding="utf-8")
+    assert "Preferences:" in (workspace / "USER.md").read_text(encoding="utf-8")
 
 
 def test_gateway_channel_recovery_notice_uses_runtime_send(tmp_path: Path) -> None:

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from loguru import logger
+
 TEMPLATE_FILES = (
     "IDENTITY.md",
     "SOUL.md",
@@ -16,6 +18,8 @@ TEMPLATE_FILES = (
     "BOOTSTRAP.md",
     "memory/MEMORY.md",
 )
+
+RUNTIME_CRITICAL_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
 
 DEFAULT_VARS = {
     "assistant_name": "ClawLite",
@@ -34,6 +38,7 @@ class WorkspaceLoader:
     def __init__(self, workspace_path: str | Path | None = None, template_root: str | Path | None = None) -> None:
         self.workspace = Path(workspace_path) if workspace_path else (Path.home() / ".clawlite" / "workspace")
         self.templates = Path(template_root) if template_root else Path(__file__).resolve().parent / "templates"
+        self._last_runtime_health: dict[str, Any] = {}
 
     @staticmethod
     def _render(template: str, variables: dict[str, str]) -> str:
@@ -97,6 +102,123 @@ class WorkspaceLoader:
     def bootstrap(self, *, variables: dict[str, str] | None = None, overwrite: bool = False) -> list[Path]:
         result = self.sync_templates(variables=variables, update_existing=overwrite)
         return [*result["created"], *result["updated"]]
+
+    @staticmethod
+    def _utcnow_iso() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def _render_template_file(self, filename: str, *, variables: dict[str, str] | None = None) -> str:
+        values = dict(DEFAULT_VARS)
+        values.update({k: str(v) for k, v in (variables or {}).items()})
+        template_path = self.templates / filename
+        if not template_path.exists():
+            raise FileNotFoundError(f"workspace_template_missing:{filename}")
+        return self._render(template_path.read_text(encoding="utf-8"), values)
+
+    def _runtime_file_issue(self, path: Path) -> tuple[str, str]:
+        if not path.exists():
+            return "missing", ""
+        try:
+            raw = path.read_bytes()
+        except Exception as exc:
+            return "unreadable", str(exc)
+        if not raw:
+            return "empty", ""
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return "corrupt", str(exc)
+        if "\x00" in text:
+            return "corrupt", "contains_nul_bytes"
+        if not text.strip():
+            return "empty", ""
+        return "", ""
+
+    def _backup_runtime_file(self, path: Path, *, suffix: str) -> str:
+        if not path.exists():
+            return ""
+        backup_name = f"{path.name}.{suffix}.bak"
+        backup_path = path.with_name(backup_name)
+        counter = 1
+        while backup_path.exists():
+            backup_path = path.with_name(f"{path.name}.{suffix}.{counter}.bak")
+            counter += 1
+        try:
+            backup_path.write_bytes(path.read_bytes())
+            return str(backup_path)
+        except Exception as exc:
+            logger.warning("workspace backup failed path={} error={}", path, exc)
+            return ""
+
+    def ensure_runtime_files(self, *, variables: dict[str, str] | None = None) -> dict[str, Any]:
+        values = dict(DEFAULT_VARS)
+        values.update({k: str(v) for k, v in (variables or {}).items()})
+        self.workspace.mkdir(parents=True, exist_ok=True)
+
+        files_payload: dict[str, Any] = {}
+        repaired_files: list[str] = []
+        failed_files: list[str] = []
+        issues_detected = 0
+
+        for filename in RUNTIME_CRITICAL_FILES:
+            path = self.workspace / filename
+            issue, error = self._runtime_file_issue(path)
+            repaired = False
+            backup_path = ""
+            status = "ok"
+            if issue:
+                issues_detected += 1
+                try:
+                    if issue in {"corrupt", "unreadable"} and path.exists():
+                        backup_path = self._backup_runtime_file(path, suffix=f"repair-{issue}")
+                    rendered = self._render_template_file(filename, variables=values)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(rendered, encoding="utf-8")
+                    repaired = True
+                    repaired_files.append(filename)
+                    logger.warning("workspace runtime file repaired file={} issue={}", filename, issue)
+                except Exception as exc:
+                    status = "repair_failed"
+                    failed_files.append(filename)
+                    error = str(exc)
+                    logger.warning("workspace runtime file repair failed file={} issue={} error={}", filename, issue, exc)
+
+            exists = path.exists()
+            byte_size = 0
+            try:
+                if exists:
+                    byte_size = int(path.stat().st_size)
+            except Exception:
+                byte_size = 0
+
+            files_payload[filename] = {
+                "path": str(path),
+                "status": status,
+                "issue": issue,
+                "error": error,
+                "exists": exists,
+                "bytes": byte_size,
+                "repaired": repaired,
+                "backup_path": backup_path,
+            }
+
+        report = {
+            "checked_at": self._utcnow_iso(),
+            "critical_files": files_payload,
+            "repaired_files": repaired_files,
+            "repaired_count": len(repaired_files),
+            "failed_files": failed_files,
+            "failed_count": len(failed_files),
+            "issues_detected": issues_detected,
+            "healthy_count": sum(1 for payload in files_payload.values() if str(payload.get("status", "")) == "ok"),
+        }
+        self._last_runtime_health = dict(report)
+        return dict(report)
+
+    def runtime_health(self) -> dict[str, Any]:
+        if not self._last_runtime_health:
+            return self.ensure_runtime_files()
+        return dict(self._last_runtime_health)
 
     def read(self, filenames: Iterable[str]) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -260,6 +382,7 @@ class WorkspaceLoader:
         return path.read_text(encoding="utf-8", errors="ignore").strip()
 
     def system_context(self, *, include_heartbeat: bool = True, include_bootstrap: bool = True) -> str:
+        self.ensure_runtime_files()
         files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md"]
         if include_heartbeat:
             files.append("HEARTBEAT.md")
