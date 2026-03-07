@@ -692,6 +692,7 @@ class SubagentManager:
             if run.session_id == clean_session_id
             and run.status in completed_statuses
             and not bool(run.metadata.get("synthesized", False))
+            and not bool(run.metadata.get("resumable", False))
         ]
         rows.sort(key=lambda item: (item.finished_at or "", item.run_id))
         return rows[:max_items]

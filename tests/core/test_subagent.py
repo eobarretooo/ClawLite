@@ -374,6 +374,22 @@ def test_list_completed_unsynthesized_filters_status_and_metadata(tmp_path: Path
             finished_at="2026-03-05T10:10:00+00:00",
             metadata={"synthesized": True},
         ),
+        "interrupted-resumable": SubagentRun(
+            run_id="interrupted-resumable",
+            session_id="s1",
+            task="task-f",
+            status="interrupted",
+            finished_at="2026-03-05T10:12:00+00:00",
+            metadata={"resumable": True},
+        ),
+        "interrupted-final": SubagentRun(
+            run_id="interrupted-final",
+            session_id="s1",
+            task="task-g",
+            status="interrupted",
+            finished_at="2026-03-05T10:13:00+00:00",
+            metadata={"resumable": False},
+        ),
         "running": SubagentRun(
             run_id="running",
             session_id="s1",
@@ -391,7 +407,7 @@ def test_list_completed_unsynthesized_filters_status_and_metadata(tmp_path: Path
     }
 
     rows = mgr.list_completed_unsynthesized("s1")
-    assert [row.run_id for row in rows] == ["done-unsynth", "error-unsynth"]
+    assert [row.run_id for row in rows] == ["done-unsynth", "error-unsynth", "interrupted-final"]
 
 
 def test_mark_synthesized_persists_across_reload(tmp_path: Path) -> None:
