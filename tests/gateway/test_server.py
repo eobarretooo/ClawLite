@@ -724,6 +724,7 @@ def test_build_runtime_registers_openclaw_compatibility_alias_tools(tmp_path: Pa
 
     schema_names = {row["name"] for row in runtime.engine.tools.schema()}
     assert {
+        "agents_list",
         "read",
         "write",
         "edit",
@@ -1048,6 +1049,8 @@ def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Pa
         assert aliases["write_file"] == "write"
         assert aliases["edit_file"] == "edit"
         assert aliases["memory_recall"] == "memory_search"
+        agents_group = [group for group in payload["groups"] if group["id"] == "agents"][0]
+        assert {"agents_list", "spawn", "run_skill"}.issubset({tool["id"] for tool in agents_group["tools"]})
 
         total_tools = 0
         for group in payload["groups"]:

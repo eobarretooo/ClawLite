@@ -35,6 +35,7 @@ from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
 from clawlite.runtime import AutonomyWakeCoordinator, RuntimeSupervisor, SupervisorIncident
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
+from clawlite.tools.agents import AgentsListTool
 from clawlite.tools.cron import CronTool
 from clawlite.tools.apply_patch import ApplyPatchTool
 from clawlite.tools.exec import ExecTool
@@ -1039,6 +1040,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     setattr(engine, "_subagent_resume_runner_factory", _resume_runner_factory)
 
     tools.register(SpawnTool(engine.subagents, _subagent_runner, memory=memory))
+    tools.register(AgentsListTool(engine, engine.subagents, memory=memory))
     tools.register(SessionsListTool(sessions, manager=engine.subagents))
     tools.register(SessionsHistoryTool(sessions, manager=engine.subagents))
     tools.register(SessionsSendTool(_session_runner, memory=memory))

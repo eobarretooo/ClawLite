@@ -55,6 +55,7 @@ _GROUP_BY_TOOL_ID: dict[str, str] = {
     "session_status": "sessions",
     "message": "messaging",
     "cron": "automation",
+    "agents_list": "agents",
     "spawn": "agents",
     "run_skill": "agents",
     "mcp": "nodes",
