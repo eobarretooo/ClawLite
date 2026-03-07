@@ -89,6 +89,42 @@ def test_resolve_zai_accepts_env_aliases(monkeypatch) -> None:
     assert resolved.base_url == "https://api.z.ai/api/paas/v4"
 
 
+def test_resolve_minimax_uses_anthropic_transport(monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+    monkeypatch.setenv("MINIMAX_API_KEY", "mini-test")
+
+    resolved = resolve_litellm_provider(
+        model="minimax/MiniMax-M2.5",
+        api_key="",
+        base_url="",
+    )
+
+    assert resolved.name == "minimax"
+    assert resolved.model == "MiniMax-M2.5"
+    assert resolved.api_key == "mini-test"
+    assert resolved.base_url == "https://api.minimax.io/anthropic"
+    assert resolved.openai_compatible is False
+    assert resolved.native_transport == "anthropic"
+
+
+def test_resolve_kimi_coding_uses_anthropic_transport(monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-test")
+
+    resolved = resolve_litellm_provider(
+        model="kimi-coding/k2p5",
+        api_key="",
+        base_url="",
+    )
+
+    assert resolved.name == "kimi_coding"
+    assert resolved.model == "k2p5"
+    assert resolved.api_key == "kimi-test"
+    assert resolved.base_url == "https://api.kimi.com/coding"
+    assert resolved.openai_compatible is False
+    assert resolved.native_transport == "anthropic"
+
+
 def test_provider_returns_missing_key_error_before_http() -> None:
     async def _scenario() -> None:
         provider = LiteLLMProvider(
@@ -141,6 +177,26 @@ def test_build_provider_uses_dynamic_xai_block(monkeypatch) -> None:
     assert provider.provider_name == "xai"
     assert provider.api_key == "xai-config"
     assert provider.base_url == "https://api.x.ai/v1"
+
+
+def test_build_provider_uses_minimax_anthropic_transport(monkeypatch) -> None:
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+
+    provider = build_provider(
+        {
+            "model": "minimax/MiniMax-M2.5",
+            "providers": {
+                "litellm": {"api_key": "", "base_url": ""},
+                "minimax": {"api_key": "mini-config", "api_base": "https://api.minimax.io/anthropic"},
+            },
+        }
+    )
+
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.provider_name == "minimax"
+    assert provider.openai_compatible is False
+    assert provider.native_transport == "anthropic"
+    assert provider.base_url == "https://api.minimax.io/anthropic"
 
 
 def test_build_provider_openai_codex_is_deterministic_even_without_codex_auth(monkeypatch) -> None:

@@ -26,6 +26,7 @@ class ProviderSpec:
     key_prefixes: tuple[str, ...] = ()
     base_url_keywords: tuple[str, ...] = ()
     openai_compatible: bool = True
+    native_transport: str = ""
     is_gateway: bool = False
     is_oauth: bool = False
     strip_model_prefix: bool = False
@@ -38,6 +39,7 @@ class ProviderResolution:
     api_key: str
     base_url: str
     openai_compatible: bool
+    native_transport: str
     is_gateway: bool
     is_oauth: bool
 
@@ -202,6 +204,39 @@ SPECS: tuple[ProviderSpec, ...] = (
         base_url_keywords=("volces.com", "volcengine"),
     ),
     ProviderSpec(
+        name="minimax",
+        aliases=(),
+        keywords=("minimax",),
+        model_prefixes=("minimax/",),
+        key_envs=("MINIMAX_API_KEY",),
+        default_base_url="https://api.minimax.io/anthropic",
+        base_url_keywords=("api.minimax.io/anthropic", "api.minimaxi.com/anthropic", "minimax.io/anthropic"),
+        openai_compatible=False,
+        native_transport="anthropic",
+    ),
+    ProviderSpec(
+        name="xiaomi",
+        aliases=(),
+        keywords=("xiaomi", "mimo"),
+        model_prefixes=("xiaomi/",),
+        key_envs=("XIAOMI_API_KEY",),
+        default_base_url="https://api.xiaomimimo.com/anthropic",
+        base_url_keywords=("api.xiaomimimo.com/anthropic", "xiaomimimo.com/anthropic"),
+        openai_compatible=False,
+        native_transport="anthropic",
+    ),
+    ProviderSpec(
+        name="kimi_coding",
+        aliases=("kimi-coding",),
+        keywords=("kimi-coding",),
+        model_prefixes=("kimi_coding/", "kimi-coding/"),
+        key_envs=("KIMI_API_KEY", "KIMICODE_API_KEY"),
+        default_base_url="https://api.kimi.com/coding/",
+        base_url_keywords=("api.kimi.com/coding", "kimi.com/coding"),
+        openai_compatible=False,
+        native_transport="anthropic",
+    ),
+    ProviderSpec(
         name="anthropic",
         aliases=("claude",),
         keywords=("anthropic", "claude"),
@@ -210,6 +245,7 @@ SPECS: tuple[ProviderSpec, ...] = (
         default_base_url="https://api.anthropic.com/v1",
         base_url_keywords=("anthropic",),
         openai_compatible=False,
+        native_transport="anthropic",
     ),
     ProviderSpec(
         name="openai",
@@ -382,9 +418,9 @@ def _resolve_api_key(spec: ProviderSpec, configured_api_key: str) -> str:
 def _resolve_base_url(spec: ProviderSpec, configured_base_url: str) -> str:
     candidate = (configured_base_url or "").strip().rstrip("/")
     if not candidate:
-        return spec.default_base_url
+        return spec.default_base_url.rstrip("/")
     if candidate == OPENAI_DEFAULT_BASE_URL and spec.name != "openai" and spec.default_base_url:
-        return spec.default_base_url
+        return spec.default_base_url.rstrip("/")
     return candidate
 
 
@@ -470,6 +506,7 @@ def resolve_litellm_provider(
         api_key=resolved_api_key,
         base_url=resolved_base_url,
         openai_compatible=spec.openai_compatible,
+        native_transport=spec.native_transport,
         is_gateway=spec.is_gateway,
         is_oauth=spec.is_oauth,
     )
@@ -609,6 +646,7 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
         model=resolved.model,
         provider_name=resolved.name,
         openai_compatible=resolved.openai_compatible,
+        native_transport=resolved.native_transport,
         allow_empty_api_key=resolved.name in {"ollama", "vllm"},
         extra_headers=extra_headers,
         **reliability,

@@ -22,6 +22,7 @@ class LiteLLMProvider(LLMProvider):
         model: str,
         provider_name: str = "litellm",
         openai_compatible: bool = True,
+        native_transport: str = "",
         allow_empty_api_key: bool = False,
         timeout: float = 30.0,
         extra_headers: dict[str, str] | None = None,
@@ -37,6 +38,10 @@ class LiteLLMProvider(LLMProvider):
         self.model = model
         self.provider_name = provider_name
         self.openai_compatible = openai_compatible
+        resolved_transport = str(native_transport or "").strip().lower()
+        if not openai_compatible and not resolved_transport and provider_name == "anthropic":
+            resolved_transport = "anthropic"
+        self.native_transport = resolved_transport
         self.allow_empty_api_key = bool(allow_empty_api_key)
         self.timeout = timeout
         self.extra_headers = dict(extra_headers or {})
@@ -78,7 +83,7 @@ class LiteLLMProvider(LLMProvider):
             "provider": "litellm",
             "provider_name": self.provider_name,
             "model": self.model,
-            "transport": "openai_compatible" if self.openai_compatible else "native",
+            "transport": "openai_compatible" if self.openai_compatible else (self.native_transport or "native"),
             "auth_optional": self.allow_empty_api_key,
             "counters": counters,
             **counters,
@@ -340,12 +345,12 @@ class LiteLLMProvider(LLMProvider):
         reasoning_effort: str | None = None,
     ) -> LLMResult:
         if not self.api_key.strip():
-            error = "provider_auth_error:missing_api_key:anthropic"
+            error = f"provider_auth_error:missing_api_key:{self.provider_name}"
             self._record_failure(error=error, status_code=401)
             raise RuntimeError(error)
 
         if not self.base_url.strip():
-            error = "provider_config_error:missing_base_url:anthropic"
+            error = f"provider_config_error:missing_base_url:{self.provider_name}"
             self._record_failure(error=error)
             raise RuntimeError(error)
 
@@ -408,7 +413,7 @@ class LiteLLMProvider(LLMProvider):
                         text="\n".join(text_parts).strip(),
                         model=self.model,
                         tool_calls=tool_calls,
-                        metadata={"provider": "anthropic"},
+                        metadata={"provider": self.provider_name},
                     )
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code if exc.response is not None else None
@@ -471,7 +476,7 @@ class LiteLLMProvider(LLMProvider):
             self._record_failure(error=circuit_error)
             raise RuntimeError(circuit_error)
 
-        if not self.openai_compatible and self.provider_name == "anthropic":
+        if not self.openai_compatible and self.native_transport == "anthropic":
             return await self._complete_anthropic(
                 messages=messages,
                 tools=tools,

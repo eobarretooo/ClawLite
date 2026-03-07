@@ -672,6 +672,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
     spec = _provider_spec(provider)
     endpoint = ""
     headers: dict[str, str] = {}
+    payload: dict[str, Any] | None = None
 
     if provider == "ollama":
         endpoint = "/api/tags"
@@ -693,6 +694,34 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
             }
         headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
+    elif spec is not None and spec.native_transport == "anthropic":
+        endpoint = "/messages"
+        if not api_key:
+            return {
+                "ok": False,
+                "provider": provider,
+                "provider_detected": detected,
+                "model": model,
+                "status_code": 0,
+                "error": "api_key_missing",
+                "api_key_masked": str(target.get("api_key_masked", "") or ""),
+                "api_key_source": str(target.get("api_key_source", "") or ""),
+                "base_url": base_url,
+                "base_url_source": str(target.get("base_url_source", "") or ""),
+                "endpoint": endpoint,
+            }
+        probe_model = model
+        if "/" in probe_model:
+            prefix, remainder = probe_model.split("/", 1)
+            if prefix.strip().lower().replace("-", "_") in _provider_name_variants(spec.name, spec.aliases):
+                probe_model = remainder
+        headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+        payload = {
+            "model": probe_model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
     elif spec is not None and spec.openai_compatible:
         endpoint = "/models"
         if not api_key and provider not in {"vllm"}:
@@ -744,7 +773,10 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
     url = f"{base_url}{endpoint}"
     try:
         with httpx.Client(timeout=max(0.1, float(timeout))) as client:
-            response = client.get(url, headers=headers)
+            if payload is None:
+                response = client.get(url, headers=headers)
+            else:
+                response = client.post(url, headers=headers, json=payload)
         status_code = int(response.status_code)
         ok = bool(response.is_success)
         error = "" if ok else f"http_status:{status_code}"

@@ -64,3 +64,32 @@ def test_litellm_provider_supports_anthropic_direct() -> None:
         }
 
     asyncio.run(_scenario())
+
+
+def test_litellm_provider_supports_anthropic_compatible_provider() -> None:
+    async def _scenario() -> None:
+        provider = LiteLLMProvider(
+            base_url="https://api.minimax.io/anthropic",
+            api_key="mini-key",
+            model="MiniMax-M2.5",
+            provider_name="minimax",
+            openai_compatible=False,
+            native_transport="anthropic",
+        )
+
+        post_mock = AsyncMock(side_effect=[_AnthropicResponse()])
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            out = await provider.complete(
+                messages=[
+                    {"role": "system", "content": "be concise"},
+                    {"role": "user", "content": "hi"},
+                ],
+                tools=[],
+            )
+
+        assert out.text == "hello"
+        assert out.metadata["provider"] == "minimax"
+        assert post_mock.call_args.args[0] == "https://api.minimax.io/anthropic/messages"
+        assert post_mock.call_args.kwargs["headers"]["x-api-key"] == "mini-key"
+
+    asyncio.run(_scenario())
