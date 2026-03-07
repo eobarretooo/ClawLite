@@ -1039,8 +1039,8 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     setattr(engine, "_subagent_resume_runner_factory", _resume_runner_factory)
 
     tools.register(SpawnTool(engine.subagents, _subagent_runner, memory=memory))
-    tools.register(SessionsListTool(sessions))
-    tools.register(SessionsHistoryTool(sessions))
+    tools.register(SessionsListTool(sessions, manager=engine.subagents))
+    tools.register(SessionsHistoryTool(sessions, manager=engine.subagents))
     tools.register(SessionsSendTool(_session_runner, memory=memory))
     tools.register(SessionsSpawnTool(engine.subagents, _session_runner, memory=memory))
     tools.register(SubagentsTool(engine.subagents, resume_runner_factory=_resume_runner_factory))

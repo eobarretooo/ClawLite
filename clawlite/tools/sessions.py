@@ -241,8 +241,57 @@ def _count_session_messages(sessions: SessionStore, session_id: str) -> int:
         return 0
 
 
+def _read_session_messages(
+    sessions: SessionStore,
+    session_id: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    path = _session_file_path(sessions, session_id)
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    valid_lines: list[str] = []
+    corrupt_lines = 0
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            corrupt_lines += 1
+            continue
+        valid_lines.append(raw)
+        role = str(payload.get("role", "")).strip()
+        content = str(payload.get("content", "")).strip()
+        if not role or not content:
+            continue
+        row: dict[str, Any] = {
+            "role": role,
+            "content": content,
+        }
+        ts = str(payload.get("ts", "") or "").strip()
+        if ts:
+            row["ts"] = ts
+        metadata = payload.get("metadata", {})
+        if isinstance(metadata, dict) and metadata:
+            row["metadata"] = dict(metadata)
+        rows.append(row)
+
+    if corrupt_lines:
+        repair = getattr(sessions, "_repair_file", None)
+        if callable(repair):
+            try:
+                repair(path, valid_lines)
+            except Exception:
+                pass
+
+    return rows[-max(1, int(limit or 1)) :]
+
+
 def _last_message_preview(sessions: SessionStore, session_id: str) -> dict[str, str] | None:
-    rows = sessions.read(session_id, limit=1)
+    rows = _read_session_messages(sessions, session_id, limit=1)
     if not rows:
         return None
     last = rows[-1]
@@ -253,6 +302,69 @@ def _last_message_preview(sessions: SessionStore, session_id: str) -> dict[str, 
         "content": content,
         "preview": _preview(role, content),
     }
+
+
+def _subagent_status_counts(runs: list[SubagentRun]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for run in runs:
+        counts[run.status] = counts.get(run.status, 0) + 1
+    return counts
+
+
+def _recent_subagent_runs(runs: list[SubagentRun], *, limit: int = 3) -> list[dict[str, Any]]:
+    return [_run_to_payload(run) for run in runs[: max(1, int(limit or 1))]]
+
+
+def _timeline_timestamp(payload: dict[str, Any]) -> str:
+    for key in ("ts", "at", "finished_at", "updated_at", "started_at"):
+        value = str(payload.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _message_timeline_event(session_id: str, row: dict[str, Any]) -> dict[str, Any]:
+    role = str(row.get("role", "") or "").strip()
+    content = str(row.get("content", "") or "").strip()
+    payload: dict[str, Any] = {
+        "kind": "message",
+        "session_id": session_id,
+        "role": role,
+        "content": content,
+        "preview": _preview(role, content),
+    }
+    ts = str(row.get("ts", "") or "").strip()
+    if ts:
+        payload["ts"] = ts
+    metadata = row.get("metadata")
+    if isinstance(metadata, dict) and metadata:
+        payload["metadata"] = dict(metadata)
+    return payload
+
+
+def _subagent_timeline_event(session_id: str, run: SubagentRun) -> dict[str, Any]:
+    payload = _run_to_payload(run)
+    payload["kind"] = "subagent_run"
+    payload["session_id"] = session_id
+    payload["at"] = str(run.finished_at or run.updated_at or run.started_at or "").strip()
+    excerpt = str(run.error or run.result or run.task or "").strip()
+    if excerpt:
+        payload["preview"] = _preview("subagent", excerpt)
+    return payload
+
+
+def _merge_session_timeline(
+    session_id: str,
+    messages: list[dict[str, Any]],
+    runs: list[SubagentRun],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    events.extend(_message_timeline_event(session_id, row) for row in messages)
+    events.extend(_subagent_timeline_event(session_id, run) for run in runs)
+    events.sort(key=lambda row: (_timeline_timestamp(row), row.get("kind", "")))
+    return events[-max(1, int(limit or 1)) :]
 
 
 def _run_to_payload(run: SubagentRun) -> dict[str, Any]:
@@ -272,11 +384,13 @@ def _run_to_payload(run: SubagentRun) -> dict[str, Any]:
     if share_scope:
         payload["share_scope"] = share_scope
     for key in (
+        "target_user_id",
         "resume_attempts",
         "resume_attempts_max",
         "retry_budget_remaining",
         "expires_at",
         "last_status_reason",
+        "last_status_at",
         "continuation_digest_summary",
         "continuation_digest_session_id",
         "continuation_digest_count",
@@ -296,8 +410,9 @@ class SessionsListTool(Tool):
     name = "sessions_list"
     description = "List persisted sessions with last-message preview."
 
-    def __init__(self, sessions: SessionStore) -> None:
+    def __init__(self, sessions: SessionStore, manager: SubagentManager | None = None) -> None:
         self.sessions = sessions
+        self.manager = manager
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -310,19 +425,35 @@ class SessionsListTool(Tool):
     async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
         del ctx
         limit = _coerce_limit(arguments.get("limit"), default=20, minimum=1, maximum=500)
+        maintenance = (
+            await self.manager.sweep_async()
+            if self.manager is not None
+            else {"expired": 0, "orphaned_running": 0, "orphaned_queued": 0}
+        )
         ids = self.sessions.list_sessions()[:limit]
         rows: list[dict[str, Any]] = []
         for session_id in ids:
             preview = _last_message_preview(self.sessions, session_id)
-            rows.append(
-                {
-                    "session_id": session_id,
-                    "last_message": preview,
-                }
-            )
+            payload: dict[str, Any] = {
+                "session_id": session_id,
+                "last_message": preview,
+                "message_count": _count_session_messages(self.sessions, session_id),
+            }
+            if self.manager is not None:
+                runs = self.manager.list_runs(session_id=session_id)
+                payload["active_subagents"] = sum(1 for run in runs if run.status in {"running", "queued"})
+                payload["resumable_subagents"] = sum(
+                    1
+                    for run in runs
+                    if bool(dict(getattr(run, "metadata", {}) or {}).get("resumable", False))
+                )
+                payload["subagent_counts"] = _subagent_status_counts(runs)
+                payload["recent_subagents"] = _recent_subagent_runs(runs, limit=2)
+            rows.append(payload)
         return _json(
             {
                 "status": "ok",
+                "maintenance": maintenance,
                 "count": len(rows),
                 "sessions": rows,
             }
@@ -333,8 +464,9 @@ class SessionsHistoryTool(Tool):
     name = "sessions_history"
     description = "Read history for a specific session."
 
-    def __init__(self, sessions: SessionStore) -> None:
+    def __init__(self, sessions: SessionStore, manager: SubagentManager | None = None) -> None:
         self.sessions = sessions
+        self.manager = manager
 
     def args_schema(self) -> dict[str, Any]:
         return {
@@ -346,6 +478,10 @@ class SessionsHistoryTool(Tool):
                 "limit": {"type": "integer", "minimum": 1},
                 "include_tools": {"type": "boolean"},
                 "includeTools": {"type": "boolean"},
+                "include_subagents": {"type": "boolean"},
+                "includeSubagents": {"type": "boolean"},
+                "subagent_limit": {"type": "integer", "minimum": 1},
+                "subagentLimit": {"type": "integer", "minimum": 1},
             },
         }
 
@@ -361,15 +497,33 @@ class SessionsHistoryTool(Tool):
             arguments.get("include_tools", arguments.get("includeTools")),
             default=False,
         )
-        rows = self.sessions.read(session_id, limit=limit)
+        include_subagents = _coerce_bool(
+            arguments.get("include_subagents", arguments.get("includeSubagents")),
+            default=True,
+        )
+        subagent_limit = _coerce_limit(
+            arguments.get("subagent_limit", arguments.get("subagentLimit")),
+            default=min(limit, 20),
+            minimum=1,
+            maximum=200,
+        )
+        rows = _read_session_messages(self.sessions, session_id, limit=limit)
         if not include_tools:
             rows = [row for row in rows if str(row.get("role", "")).strip().lower() != "tool"]
+        runs: list[SubagentRun] = []
+        if include_subagents and self.manager is not None:
+            runs = self.manager.list_runs(session_id=session_id)[:subagent_limit]
+        timeline = _merge_session_timeline(session_id, rows, runs, limit=max(limit, subagent_limit))
         return _json(
             {
                 "status": "ok",
                 "session_id": session_id,
                 "count": len(rows),
                 "messages": rows,
+                "subagent_count": len(runs),
+                "subagent_runs": [_run_to_payload(run) for run in runs],
+                "timeline_count": len(timeline),
+                "timeline": timeline,
             }
         )
 
@@ -781,6 +935,8 @@ class SessionStatusTool(Tool):
                 "subagent_counts": subagent_counts,
                 "resumable_subagents": resumable_subagents,
                 "exhausted_retry_budget": exhausted_retry_budget,
+                "recent_subagents": _recent_subagent_runs(runs, limit=3),
+                "latest_subagent": _run_to_payload(runs[0]) if runs else None,
                 "maintenance": maintenance,
             }
         )

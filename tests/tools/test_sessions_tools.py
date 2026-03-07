@@ -39,6 +39,61 @@ def test_sessions_list(tmp_path) -> None:
     asyncio.run(_scenario())
 
 
+def test_sessions_list_surfaces_subagent_inventory(tmp_path) -> None:
+    async def _scenario() -> None:
+        sessions = SessionStore(root=tmp_path / "sessions")
+        sessions.append("cli:a", "user", "hello from alpha")
+        sessions.append("cli:a", "assistant", "done alpha")
+        sessions.append("cli:b", "user", "hello from beta")
+
+        manager = SubagentManager(state_path=tmp_path / "subagents")
+        manager._runs["run-active"] = SubagentRun(
+            run_id="run-active",
+            session_id="cli:a",
+            task="active task",
+            status="running",
+            metadata={
+                "target_session_id": "cli:a:subagent",
+                "target_user_id": "u-alpha",
+            },
+        )
+        manager._runs["run-retry"] = SubagentRun(
+            run_id="run-retry",
+            session_id="cli:a",
+            task="retry task",
+            status="interrupted",
+            metadata={
+                "target_session_id": "cli:a:subagent:2",
+                "target_user_id": "u-alpha",
+                "resumable": True,
+                "retry_budget_remaining": 1,
+            },
+        )
+        manager._save_state()
+
+        tool = SessionsListTool(sessions, manager=manager)
+        payload = json.loads(await tool.run({"limit": 10}, ToolContext(session_id="cli:a")))
+
+        assert payload["status"] == "ok"
+        assert payload["maintenance"] == {
+            "expired": 0,
+            "orphaned_running": 0,
+            "orphaned_queued": 0,
+        }
+        row_a = [row for row in payload["sessions"] if row["session_id"] == "cli:a"][0]
+        assert row_a["message_count"] == 2
+        assert row_a["active_subagents"] == 1
+        assert row_a["resumable_subagents"] == 1
+        assert row_a["subagent_counts"] == {
+            "running": 1,
+            "interrupted": 1,
+        }
+        assert {row["run_id"] for row in row_a["recent_subagents"]} == {"run-active", "run-retry"}
+        assert row_a["recent_subagents"][0]["target_user_id"] == "u-alpha"
+
+    asyncio.run(_scenario())
+
+
 def test_sessions_history_include_and_exclude_tool_messages(tmp_path) -> None:
     async def _scenario() -> None:
         sessions = SessionStore(root=tmp_path / "sessions")
@@ -75,6 +130,56 @@ def test_sessions_history_include_and_exclude_tool_messages(tmp_path) -> None:
         assert included["status"] == "ok"
         assert included["count"] == 3
         assert [row["role"] for row in included["messages"]] == ["user", "tool", "assistant"]
+
+    asyncio.run(_scenario())
+
+
+def test_sessions_history_surfaces_subagent_runs_and_timeline(tmp_path) -> None:
+    async def _scenario() -> None:
+        sessions = SessionStore(root=tmp_path / "sessions")
+        sessions.append("cli:h", "user", "start task")
+        sessions.append("cli:h", "assistant", "delegating now")
+
+        manager = SubagentManager(state_path=tmp_path / "subagents")
+        manager._runs["run-finished"] = SubagentRun(
+            run_id="run-finished",
+            session_id="cli:h",
+            task="delegate subagent task",
+            status="done",
+            result="subagent finished cleanly",
+            started_at="2030-03-06T10:00:00+00:00",
+            finished_at="2030-03-06T10:01:00+00:00",
+            updated_at="2030-03-06T10:01:00+00:00",
+            metadata={
+                "target_session_id": "cli:h:subagent",
+                "target_user_id": "u-history",
+                "share_scope": "family",
+            },
+        )
+        manager._save_state()
+
+        tool = SessionsHistoryTool(sessions, manager=manager)
+        payload = json.loads(
+            await tool.run(
+                {
+                    "sessionId": "cli:h",
+                    "limit": 10,
+                    "includeSubagents": True,
+                    "subagentLimit": 5,
+                },
+                ToolContext(session_id="cli:caller"),
+            )
+        )
+
+        assert payload["status"] == "ok"
+        assert payload["count"] == 2
+        assert payload["subagent_count"] == 1
+        assert payload["subagent_runs"][0]["run_id"] == "run-finished"
+        assert payload["subagent_runs"][0]["target_session_id"] == "cli:h:subagent"
+        assert payload["subagent_runs"][0]["target_user_id"] == "u-history"
+        assert payload["timeline_count"] == 3
+        assert [row["kind"] for row in payload["timeline"]][-1] == "subagent_run"
+        assert payload["timeline"][-1]["preview"].startswith("subagent:")
 
     asyncio.run(_scenario())
 
@@ -564,6 +669,8 @@ def test_session_status_fields(tmp_path) -> None:
         assert payload["subagent_counts"] == {}
         assert payload["resumable_subagents"] == 0
         assert payload["exhausted_retry_budget"] == 0
+        assert payload["recent_subagents"] == []
+        assert payload["latest_subagent"] is None
         assert payload["maintenance"] == {
             "expired": 0,
             "orphaned_running": 0,
@@ -603,5 +710,55 @@ def test_session_status_sweeps_expired_subagents_and_reports_counts(tmp_path) ->
         assert payload["resumable_subagents"] == 0
         assert payload["exhausted_retry_budget"] == 1
         assert payload["maintenance"]["expired"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_session_status_surfaces_recent_subagents(tmp_path) -> None:
+    async def _scenario() -> None:
+        sessions = SessionStore(root=tmp_path / "sessions")
+        sessions.append("cli:status", "user", "hello")
+
+        manager = SubagentManager(state_path=tmp_path / "subagents")
+        manager._runs["run-done"] = SubagentRun(
+            run_id="run-done",
+            session_id="cli:status",
+            task="collect data",
+            status="done",
+            result="collected data",
+            started_at="2030-03-06T10:00:00+00:00",
+            finished_at="2030-03-06T10:02:00+00:00",
+            updated_at="2030-03-06T10:02:00+00:00",
+            metadata={
+                "target_session_id": "cli:status:subagent",
+                "target_user_id": "u-status",
+                "share_scope": "family",
+            },
+        )
+        manager._runs["run-retry"] = SubagentRun(
+            run_id="run-retry",
+            session_id="cli:status",
+            task="retry data",
+            status="interrupted",
+            started_at="2030-03-06T10:03:00+00:00",
+            updated_at="2030-03-06T10:03:30+00:00",
+            metadata={
+                "target_session_id": "cli:status:subagent:2",
+                "target_user_id": "u-status",
+                "resumable": True,
+                "retry_budget_remaining": 1,
+                "last_status_reason": "manager_restart",
+            },
+        )
+        manager._save_state()
+
+        tool = SessionStatusTool(sessions, manager)
+        payload = json.loads(await tool.run({}, ToolContext(session_id="cli:status")))
+
+        assert payload["status"] == "ok"
+        assert payload["recent_subagents"][0]["run_id"] == "run-retry"
+        assert payload["latest_subagent"]["run_id"] == "run-retry"
+        assert payload["recent_subagents"][0]["target_user_id"] == "u-status"
+        assert payload["latest_subagent"]["target_session_id"] == "cli:status:subagent:2"
 
     asyncio.run(_scenario())
