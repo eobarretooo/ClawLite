@@ -73,11 +73,24 @@ class SubagentSynthesizer:
             task = self._compact(getattr(run, "task", ""), self._MAX_TASK_CHARS)
             metadata = dict(getattr(run, "metadata", {}) or {})
             target_session_id = self._compact(metadata.get("target_session_id", ""), self._MAX_SESSION_CHARS)
+            parallel_group_id = self._compact(metadata.get("parallel_group_id", ""), 12)
+            try:
+                parallel_group_index = int(metadata.get("parallel_group_index", 0) or 0)
+            except Exception:
+                parallel_group_index = 0
+            try:
+                parallel_group_size = int(metadata.get("parallel_group_size", 0) or 0)
+            except Exception:
+                parallel_group_size = 0
             excerpt = self._excerpt_from_run(run)
 
             line = f"- {short_id} [{status}] task={task or '-'}"
             if target_session_id:
                 line = f"{line} | session={target_session_id}"
+            if parallel_group_id:
+                line = f"{line} | group={parallel_group_id}"
+                if parallel_group_index > 0 and parallel_group_size > 0:
+                    line = f"{line}#{parallel_group_index}/{parallel_group_size}"
             line = f"{line} | excerpt={excerpt}"
             if total_chars + len(line) > self._MAX_TOTAL_CHARS:
                 break

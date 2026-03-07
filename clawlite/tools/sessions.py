@@ -6,6 +6,7 @@ import inspect
 import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+import uuid
 
 from clawlite.core.subagent import SubagentLimitError, SubagentManager, SubagentRun
 from clawlite.session.store import SessionStore
@@ -96,6 +97,21 @@ def _coerce_timeout(value: Any, *, default: float, minimum: float = 0.1, maximum
     if timeout > maximum:
         return maximum
     return timeout
+
+
+def _coerce_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = [value]
+    out: list[str] = []
+    for item in items:
+        clean = str(item or "").strip()
+        if clean:
+            out.append(clean)
+    return out
 
 
 def _accepts_parameter(func: Any, parameter: str) -> bool:
@@ -315,6 +331,66 @@ def _recent_subagent_runs(runs: list[SubagentRun], *, limit: int = 3) -> list[di
     return [_run_to_payload(run) for run in runs[: max(1, int(limit or 1))]]
 
 
+def _parallel_group_summaries(
+    runs: list[SubagentRun],
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for run in runs:
+        metadata = dict(getattr(run, "metadata", {}) or {})
+        group_id = str(metadata.get("parallel_group_id", "") or "").strip()
+        if not group_id:
+            continue
+        row = groups.get(group_id)
+        if row is None:
+            row = {
+                "group_id": group_id,
+                "session_id": run.session_id,
+                "requested": int(metadata.get("parallel_group_size", 0) or 0),
+                "run_count": 0,
+                "active_subagents": 0,
+                "resumable_subagents": 0,
+                "status_counts": {},
+                "target_session_ids": [],
+                "run_ids": [],
+                "last_updated_at": "",
+            }
+            groups[group_id] = row
+        row["run_count"] += 1
+        if run.status in {"running", "queued"}:
+            row["active_subagents"] += 1
+        if bool(metadata.get("resumable", False)):
+            row["resumable_subagents"] += 1
+        status_counts = row["status_counts"]
+        status_counts[run.status] = status_counts.get(run.status, 0) + 1
+        target_session_id = str(metadata.get("target_session_id", "") or "").strip()
+        if target_session_id and target_session_id not in row["target_session_ids"]:
+            row["target_session_ids"].append(target_session_id)
+        row["run_ids"].append(run.run_id)
+        updated_at = str(run.updated_at or run.finished_at or run.started_at or "").strip()
+        if updated_at and updated_at >= str(row["last_updated_at"] or ""):
+            row["last_updated_at"] = updated_at
+    ordered = sorted(
+        groups.values(),
+        key=lambda row: (str(row.get("last_updated_at", "") or ""), str(row.get("group_id", "") or "")),
+        reverse=True,
+    )
+    return ordered[: max(1, int(limit or 1))]
+
+
+def _default_target_session_ids(
+    owner_session_id: str,
+    *,
+    requested_target: str,
+    count: int,
+) -> list[str]:
+    if count <= 1:
+        return [requested_target or f"{owner_session_id}:subagent"]
+    base = requested_target or f"{owner_session_id}:subagent"
+    return [f"{base}:{idx}" for idx in range(1, count + 1)]
+
+
 def _timeline_timestamp(payload: dict[str, Any]) -> str:
     for key in ("ts", "at", "finished_at", "updated_at", "started_at"):
         value = str(payload.get(key, "") or "").strip()
@@ -385,6 +461,9 @@ def _run_to_payload(run: SubagentRun) -> dict[str, Any]:
         payload["share_scope"] = share_scope
     for key in (
         "target_user_id",
+        "parallel_group_id",
+        "parallel_group_index",
+        "parallel_group_size",
         "resume_attempts",
         "resume_attempts_max",
         "retry_budget_remaining",
@@ -623,42 +702,116 @@ class SessionsSpawnTool(Tool):
             "type": "object",
             "properties": {
                 "task": {"type": "string"},
+                "tasks": {"type": "array", "items": {"type": "string"}, "minItems": 1},
                 "session_id": {"type": "string"},
                 "sessionId": {"type": "string"},
                 "sessionKey": {"type": "string"},
+                "target_sessions": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "targetSessions": {"type": "array", "items": {"type": "string"}, "minItems": 1},
                 "share_scope": {"type": "string", "enum": ["private", "parent", "family"]},
                 "shareScope": {"type": "string", "enum": ["private", "parent", "family"]},
             },
-            "required": ["task"],
+            "required": [],
         }
 
     async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
-        task = str(arguments.get("task", "")).strip()
-        if not task:
-            return _json({"status": "failed", "error": "task is required"})
+        tasks = _coerce_string_list(arguments.get("tasks"))
+        if not tasks:
+            task = str(arguments.get("task", "")).strip()
+            if task:
+                tasks = [task]
+        if not tasks:
+            return _json({"status": "failed", "error": "task or tasks is required"})
 
         requested_target = _resolve_session_id(arguments, required=False)
+        requested_targets = _coerce_string_list(arguments.get("target_sessions", arguments.get("targetSessions")))
+        if requested_targets and len(requested_targets) != len(tasks):
+            return _json({"status": "failed", "error": "target_sessions length must match tasks"})
+        if len(tasks) > 1 and requested_target and not requested_targets:
+            requested_targets = _default_target_session_ids(
+                ctx.session_id,
+                requested_target=requested_target,
+                count=len(tasks),
+            )
+        if len(tasks) == 1 and requested_targets:
+            requested_target = requested_targets[0]
         target_session_id = requested_target or f"{ctx.session_id}:subagent"
         share_scope = str(arguments.get("share_scope", arguments.get("shareScope", "")) or "").strip().lower()
         if share_scope and share_scope not in {"private", "parent", "family"}:
             return _json({"status": "failed", "error": "share_scope must be one of private|parent|family"})
-        policy_fn = None
-        if share_scope:
-            policy_fn = getattr(self.memory, "set_working_memory_share_scope", None)
-            if not callable(policy_fn):
-                return _json(
-                    {
-                        "status": "failed",
-                        "session_id": ctx.session_id,
-                        "target_session_id": target_session_id,
-                        "error": "share_scope_unsupported",
-                    }
+        policy_fn = getattr(self.memory, "set_working_memory_share_scope", None) if share_scope else None
+        if share_scope and not callable(policy_fn):
+            return _json(
+                {
+                    "status": "failed",
+                    "session_id": ctx.session_id,
+                    "target_session_id": target_session_id,
+                    "error": "share_scope_unsupported",
+                }
+            )
+
+        target_session_ids = requested_targets or _default_target_session_ids(
+            ctx.session_id,
+            requested_target=requested_target,
+            count=len(tasks),
+        )
+        if len(tasks) == 1:
+            task = tasks[0]
+            target_session_id = target_session_ids[0]
+            if share_scope and callable(policy_fn):
+                try:
+                    payload = policy_fn(target_session_id, share_scope)
+                    if inspect.isawaitable(payload):
+                        await payload
+                except Exception as exc:
+                    return _json(
+                        {
+                            "status": "failed",
+                            "session_id": ctx.session_id,
+                            "target_session_id": target_session_id,
+                            "error": str(exc),
+                        }
+                    )
+
+            continuation = await _lookup_continuation_context(
+                self.memory,
+                session_id=target_session_id,
+                user_id=str(ctx.user_id or "").strip(),
+                message=task,
+            )
+
+            async def _target_runner(_owner_session_id: str, delegated_task: str) -> str:
+                result = self.runner(
+                    target_session_id,
+                    _apply_continuation_context(delegated_task, continuation),
                 )
+                if inspect.isawaitable(result):
+                    result = await result
+                return str(getattr(result, "text", result) or "")
+
+            spawn_metadata: dict[str, str | int | bool] = {
+                "target_session_id": target_session_id,
+            }
+            if share_scope:
+                spawn_metadata["share_scope"] = share_scope
+            if str(ctx.user_id or "").strip():
+                spawn_metadata["target_user_id"] = str(ctx.user_id).strip()
+            if continuation.applied:
+                spawn_metadata["continuation_context_applied"] = True
+                spawn_metadata["continuation_digest_summary"] = continuation.summary
+                if continuation.session_id:
+                    spawn_metadata["continuation_digest_session_id"] = continuation.session_id
+                if continuation.count > 0:
+                    spawn_metadata["continuation_digest_count"] = continuation.count
+
             try:
-                payload = policy_fn(target_session_id, share_scope)
-                if inspect.isawaitable(payload):
-                    await payload
-            except Exception as exc:
+                run = await self.manager.spawn(
+                    session_id=ctx.session_id,
+                    task=task,
+                    runner=_target_runner,
+                    metadata=spawn_metadata,
+                )
+            except SubagentLimitError as exc:
                 return _json(
                     {
                         "status": "failed",
@@ -668,64 +821,114 @@ class SessionsSpawnTool(Tool):
                     }
                 )
 
-        continuation = await _lookup_continuation_context(
-            self.memory,
-            session_id=target_session_id,
-            user_id=str(ctx.user_id or "").strip(),
-            message=task,
+            payload: dict[str, Any] = {
+                "status": "ok",
+                "run_id": run.run_id,
+                "session_id": run.session_id,
+                "target_session_id": target_session_id,
+                "share_scope": share_scope or "",
+                "state": run.status,
+            }
+            payload.update(_continuation_payload(continuation))
+            return _json(payload)
+
+        group_id = uuid.uuid4().hex[:12]
+        spawned: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for idx, (task, target_session_id) in enumerate(zip(tasks, target_session_ids, strict=False), start=1):
+            if share_scope and callable(policy_fn):
+                try:
+                    payload = policy_fn(target_session_id, share_scope)
+                    if inspect.isawaitable(payload):
+                        await payload
+                except Exception as exc:
+                    failed.append(
+                        {
+                            "task": task,
+                            "target_session_id": target_session_id,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+
+            continuation = await _lookup_continuation_context(
+                self.memory,
+                session_id=target_session_id,
+                user_id=str(ctx.user_id or "").strip(),
+                message=task,
+            )
+
+            async def _target_runner(
+                _owner_session_id: str,
+                delegated_task: str,
+                *,
+                _target_session_id: str = target_session_id,
+                _continuation: _ContinuationContext = continuation,
+            ) -> str:
+                result = self.runner(
+                    _target_session_id,
+                    _apply_continuation_context(delegated_task, _continuation),
+                )
+                if inspect.isawaitable(result):
+                    result = await result
+                return str(getattr(result, "text", result) or "")
+
+            spawn_metadata = {
+                "target_session_id": target_session_id,
+                "parallel_group_id": group_id,
+                "parallel_group_index": idx,
+                "parallel_group_size": len(tasks),
+            }
+            if share_scope:
+                spawn_metadata["share_scope"] = share_scope
+            if str(ctx.user_id or "").strip():
+                spawn_metadata["target_user_id"] = str(ctx.user_id).strip()
+            if continuation.applied:
+                spawn_metadata["continuation_context_applied"] = True
+                spawn_metadata["continuation_digest_summary"] = continuation.summary
+                if continuation.session_id:
+                    spawn_metadata["continuation_digest_session_id"] = continuation.session_id
+                if continuation.count > 0:
+                    spawn_metadata["continuation_digest_count"] = continuation.count
+
+            try:
+                run = await self.manager.spawn(
+                    session_id=ctx.session_id,
+                    task=task,
+                    runner=_target_runner,
+                    metadata=spawn_metadata,
+                )
+            except SubagentLimitError as exc:
+                failed.append(
+                    {
+                        "task": task,
+                        "target_session_id": target_session_id,
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            run_payload = _run_to_payload(run)
+            run_payload.update(_continuation_payload(continuation))
+            spawned.append(run_payload)
+
+        status = "ok" if spawned and not failed else "partial" if spawned else "failed"
+        return _json(
+            {
+                "status": status,
+                "mode": "parallel",
+                "session_id": ctx.session_id,
+                "group_id": group_id,
+                "requested": len(tasks),
+                "spawned": len(spawned),
+                "failed": failed,
+                "share_scope": share_scope or "",
+                "target_session_ids": list(target_session_ids),
+                "run_ids": [row["run_id"] for row in spawned],
+                "runs": spawned,
+            }
         )
-
-        async def _target_runner(_owner_session_id: str, delegated_task: str) -> str:
-            result = self.runner(
-                target_session_id,
-                _apply_continuation_context(delegated_task, continuation),
-            )
-            if inspect.isawaitable(result):
-                result = await result
-            return str(getattr(result, "text", result) or "")
-
-        spawn_metadata: dict[str, str | int | bool] = {
-            "target_session_id": target_session_id,
-        }
-        if share_scope:
-            spawn_metadata["share_scope"] = share_scope
-        if str(ctx.user_id or "").strip():
-            spawn_metadata["target_user_id"] = str(ctx.user_id).strip()
-        if continuation.applied:
-            spawn_metadata["continuation_context_applied"] = True
-            spawn_metadata["continuation_digest_summary"] = continuation.summary
-            if continuation.session_id:
-                spawn_metadata["continuation_digest_session_id"] = continuation.session_id
-            if continuation.count > 0:
-                spawn_metadata["continuation_digest_count"] = continuation.count
-
-        try:
-            run = await self.manager.spawn(
-                session_id=ctx.session_id,
-                task=task,
-                runner=_target_runner,
-                metadata=spawn_metadata,
-            )
-        except SubagentLimitError as exc:
-            return _json(
-                {
-                    "status": "failed",
-                    "session_id": ctx.session_id,
-                    "target_session_id": target_session_id,
-                    "error": str(exc),
-                }
-            )
-
-        payload: dict[str, Any] = {
-            "status": "ok",
-            "run_id": run.run_id,
-            "session_id": run.session_id,
-            "target_session_id": target_session_id,
-            "share_scope": share_scope or "",
-            "state": run.status,
-        }
-        payload.update(_continuation_payload(continuation))
-        return _json(payload)
 
 
 class SubagentsTool(Tool):
@@ -765,6 +968,8 @@ class SubagentsTool(Tool):
                     "session_id": session_id,
                     "maintenance": maintenance,
                     "count": len(rows),
+                    "parallel_group_count": len(_parallel_group_summaries(rows)),
+                    "parallel_groups": _parallel_group_summaries(rows),
                     "runs": [_run_to_payload(run) for run in rows],
                 }
             )
@@ -937,6 +1142,8 @@ class SessionStatusTool(Tool):
                 "exhausted_retry_budget": exhausted_retry_budget,
                 "recent_subagents": _recent_subagent_runs(runs, limit=3),
                 "latest_subagent": _run_to_payload(runs[0]) if runs else None,
+                "parallel_group_count": len(_parallel_group_summaries(runs)),
+                "parallel_groups": _parallel_group_summaries(runs),
                 "maintenance": maintenance,
             }
         )

@@ -510,6 +510,149 @@ def test_sessions_spawn_applies_explicit_working_memory_share_scope(tmp_path) ->
     asyncio.run(_scenario())
 
 
+def test_sessions_spawn_fans_out_parallel_tasks_and_surfaces_group_status(tmp_path) -> None:
+    async def _scenario() -> None:
+        gate = asyncio.Event()
+        calls: list[tuple[str, str]] = []
+
+        class MemoryStub:
+            def __init__(self) -> None:
+                self.scope_calls: list[tuple[str, str]] = []
+                self.retrieve_calls: list[dict[str, object]] = []
+
+            def set_working_memory_share_scope(self, session_id: str, share_scope: str) -> dict[str, str]:
+                self.scope_calls.append((session_id, share_scope))
+                return {"session_id": session_id, "share_scope": share_scope}
+
+            async def retrieve(
+                self,
+                query: str,
+                *,
+                limit: int = 5,
+                method: str = "rag",
+                user_id: str = "",
+                session_id: str = "",
+                include_shared: bool = False,
+            ) -> dict[str, object]:
+                self.retrieve_calls.append(
+                    {
+                        "query": query,
+                        "limit": limit,
+                        "method": method,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "include_shared": include_shared,
+                    }
+                )
+                return {
+                    "status": "ok",
+                    "episodic_digest": {
+                        "session_id": session_id,
+                        "count": 1,
+                        "summary": f"current:{session_id} -> {query}",
+                    },
+                }
+
+        async def _runner(session_id: str, task: str):
+            calls.append((session_id, task))
+            await gate.wait()
+            return SimpleNamespace(text=f"{session_id}:{task}", model="spawn/model")
+
+        sessions = SessionStore(root=tmp_path / "sessions")
+        memory = MemoryStub()
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_queued_runs=8, per_session_quota=4)
+        spawn_tool = SessionsSpawnTool(manager, _runner, memory=memory)
+        subagents_tool = SubagentsTool(manager)
+        status_tool = SessionStatusTool(sessions, manager)
+
+        payload = json.loads(
+            await spawn_tool.run(
+                {"tasks": ["alpha task", "beta task"], "share_scope": "family"},
+                ToolContext(session_id="cli:owner", user_id="u-1"),
+            )
+        )
+
+        assert payload["status"] == "ok"
+        assert payload["mode"] == "parallel"
+        assert payload["requested"] == 2
+        assert payload["spawned"] == 2
+        assert payload["failed"] == []
+        assert payload["share_scope"] == "family"
+        assert payload["target_session_ids"] == ["cli:owner:subagent:1", "cli:owner:subagent:2"]
+        assert len(payload["group_id"]) == 12
+        assert payload["run_ids"] == [row["run_id"] for row in payload["runs"]]
+        assert {row["parallel_group_id"] for row in payload["runs"]} == {payload["group_id"]}
+        assert {row["parallel_group_index"] for row in payload["runs"]} == {1, 2}
+        assert {row["parallel_group_size"] for row in payload["runs"]} == {2}
+        assert all(row["target_user_id"] == "u-1" for row in payload["runs"])
+        assert all(row["share_scope"] == "family" for row in payload["runs"])
+        assert memory.scope_calls == [
+            ("cli:owner:subagent:1", "family"),
+            ("cli:owner:subagent:2", "family"),
+        ]
+        assert [row["session_id"] for row in memory.retrieve_calls] == ["cli:owner:subagent:1", "cli:owner:subagent:2"]
+
+        listed = json.loads(await subagents_tool.run({"action": "list"}, ToolContext(session_id="cli:owner")))
+        assert listed["status"] == "ok"
+        assert listed["parallel_group_count"] == 1
+        assert listed["parallel_groups"][0]["group_id"] == payload["group_id"]
+        assert listed["parallel_groups"][0]["requested"] == 2
+        assert listed["parallel_groups"][0]["run_count"] == 2
+        assert set(listed["parallel_groups"][0]["target_session_ids"]) == {
+            "cli:owner:subagent:1",
+            "cli:owner:subagent:2",
+        }
+
+        status = json.loads(await status_tool.run({}, ToolContext(session_id="cli:owner")))
+        assert status["status"] == "ok"
+        assert status["parallel_group_count"] == 1
+        assert status["parallel_groups"][0]["group_id"] == payload["group_id"]
+
+        gate.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert calls[0][0] == "cli:owner:subagent:1"
+        assert calls[0][1].startswith("[Continuation Context]")
+
+    asyncio.run(_scenario())
+
+
+def test_sessions_spawn_parallel_reports_partial_failure_when_quota_is_hit(tmp_path) -> None:
+    async def _scenario() -> None:
+        gate = asyncio.Event()
+
+        async def _runner(_session_id: str, task: str):
+            await gate.wait()
+            return SimpleNamespace(text=f"done:{task}", model="spawn/model")
+
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_queued_runs=8, per_session_quota=1)
+        spawn_tool = SessionsSpawnTool(manager, _runner)
+
+        payload = json.loads(
+            await spawn_tool.run(
+                {"tasks": ["alpha task", "beta task"]},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+
+        assert payload["status"] == "partial"
+        assert payload["mode"] == "parallel"
+        assert payload["requested"] == 2
+        assert payload["spawned"] == 1
+        assert len(payload["failed"]) == 1
+        assert payload["failed"][0]["target_session_id"] == "cli:owner:subagent:2"
+        assert "subagent quota reached" in payload["failed"][0]["error"]
+        assert len(payload["runs"]) == 1
+        assert payload["runs"][0]["parallel_group_id"] == payload["group_id"]
+        assert payload["runs"][0]["parallel_group_size"] == 2
+
+        gate.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    asyncio.run(_scenario())
+
+
 def test_sessions_spawn_fails_closed_when_share_scope_is_requested_without_memory_support(tmp_path) -> None:
     async def _scenario() -> None:
         async def _runner(session_id: str, task: str):

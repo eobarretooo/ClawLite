@@ -428,6 +428,42 @@ class FakeSubagentManagerForDigestWithContinuation(FakeSubagentManagerForDigest)
         ]
 
 
+class FakeSubagentManagerForParallelDigest(FakeSubagentManagerForDigest):
+    def list_completed_unsynthesized(self, session_id: str, limit: int = 8) -> list[SubagentRun]:
+        self.list_calls += 1
+        del limit
+        return [
+            SubagentRun(
+                run_id="run-par-1111",
+                session_id=session_id,
+                task="collect api signals",
+                status="done",
+                result="Collected API signals.",
+                finished_at="2026-03-05T12:15:00+00:00",
+                metadata={
+                    "target_session_id": f"{session_id}:subagent:1",
+                    "parallel_group_id": "grp123456789",
+                    "parallel_group_index": 1,
+                    "parallel_group_size": 2,
+                },
+            ),
+            SubagentRun(
+                run_id="run-par-2222",
+                session_id=session_id,
+                task="collect db signals",
+                status="done",
+                result="Collected DB signals.",
+                finished_at="2026-03-05T12:16:00+00:00",
+                metadata={
+                    "target_session_id": f"{session_id}:subagent:2",
+                    "parallel_group_id": "grp123456789",
+                    "parallel_group_index": 2,
+                    "parallel_group_size": 2,
+                },
+            ),
+        ]
+
+
 class FakeSubagentSynthesizer:
     def __init__(self) -> None:
         self.calls = 0
@@ -1013,6 +1049,27 @@ def test_engine_subagent_digest_mentions_continuation_context_between_executions
         assert "session=cli:owner:subagent" in out.text
         assert "continued from current:cli:owner:subagent -> blocker triaged" in out.text
         assert "result=Confirmed owner and next action." in out.text
+
+    asyncio.run(_scenario())
+
+
+def test_engine_subagent_digest_mentions_parallel_group_metadata() -> None:
+    async def _scenario() -> None:
+        subagents = FakeSubagentManagerForParallelDigest()
+        engine = AgentEngine(
+            provider=FakePromptCaptureProvider(),
+            tools=FakeTools(),
+            memory=FakeMemory([]),
+            subagents=subagents,
+            synthesizer=SubagentSynthesizer(),
+        )
+
+        out = await engine.run(session_id="cli:owner", user_text="hello")
+        assert out.text.count("[Subagent Digest]") == 1
+        assert "session=cli:owner:subagent:1" in out.text
+        assert "session=cli:owner:subagent:2" in out.text
+        assert "group=grp123456789#1/2" in out.text
+        assert "group=grp123456789#2/2" in out.text
 
     asyncio.run(_scenario())
 
