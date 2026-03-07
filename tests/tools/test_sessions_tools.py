@@ -4,7 +4,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from clawlite.core.subagent import SubagentManager
+from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.session.store import SessionStore
 from clawlite.tools.base import ToolContext
 from clawlite.tools.sessions import (
@@ -425,6 +425,56 @@ def test_sessions_spawn_fails_closed_when_share_scope_is_requested_without_memor
     asyncio.run(_scenario())
 
 
+def test_subagents_list_and_sweep_surface_lifecycle_metadata(tmp_path) -> None:
+    async def _scenario() -> None:
+        sessions = SessionStore(root=tmp_path / "sessions")
+        manager = SubagentManager(state_path=tmp_path / "subagents", zombie_grace_seconds=0.0)
+        stale_run = SubagentRun(
+            run_id="run-zombie",
+            session_id="cli:owner",
+            task="retry task",
+            status="queued",
+            updated_at="2026-03-05T10:00:00+00:00",
+            queued_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "target_session_id": "cli:owner:subagent",
+                "resume_attempts": 1,
+                "resume_attempts_max": 3,
+                "retry_budget_remaining": 2,
+                "expires_at": "2030-03-06T10:05:00+00:00",
+                "resumable": False,
+            },
+        )
+        manager._runs[stale_run.run_id] = stale_run
+        manager._save_state()
+
+        subagents_tool = SubagentsTool(manager)
+        listed = json.loads(await subagents_tool.run({"action": "list"}, ToolContext(session_id="cli:owner")))
+        assert listed["status"] == "ok"
+        assert listed["maintenance"]["orphaned_queued"] == 1
+        assert listed["count"] == 1
+        assert listed["runs"][0]["run_id"] == "run-zombie"
+        assert listed["runs"][0]["status"] == "interrupted"
+        assert listed["runs"][0]["resumable"] is True
+        assert listed["runs"][0]["resume_attempts"] == 1
+        assert listed["runs"][0]["resume_attempts_max"] == 3
+        assert listed["runs"][0]["retry_budget_remaining"] == 2
+        assert listed["runs"][0]["last_status_reason"] == "orphaned_queue_entry"
+
+        swept = json.loads(await subagents_tool.run({"action": "sweep"}, ToolContext(session_id="cli:owner")))
+        assert swept["status"] == "ok"
+        assert swept["action"] == "sweep"
+        assert swept["maintenance"] == {
+            "expired": 0,
+            "orphaned_running": 0,
+            "orphaned_queued": 0,
+        }
+
+        del sessions
+
+    asyncio.run(_scenario())
+
+
 def test_session_status_fields(tmp_path) -> None:
     async def _scenario() -> None:
         sessions = SessionStore(root=tmp_path / "sessions")
@@ -441,5 +491,47 @@ def test_session_status_fields(tmp_path) -> None:
         assert payload["message_count"] == 2
         assert payload["last_message"]["role"] == "assistant"
         assert payload["active_subagents"] == 0
+        assert payload["subagent_counts"] == {}
+        assert payload["resumable_subagents"] == 0
+        assert payload["exhausted_retry_budget"] == 0
+        assert payload["maintenance"] == {
+            "expired": 0,
+            "orphaned_running": 0,
+            "orphaned_queued": 0,
+        }
+
+    asyncio.run(_scenario())
+
+
+def test_session_status_sweeps_expired_subagents_and_reports_counts(tmp_path) -> None:
+    async def _scenario() -> None:
+        sessions = SessionStore(root=tmp_path / "sessions")
+        sessions.append("cli:status", "user", "hello")
+        manager = SubagentManager(
+            state_path=tmp_path / "subagents",
+            max_concurrent_runs=1,
+            max_resume_attempts=0,
+            run_ttl_seconds=0.01,
+            zombie_grace_seconds=0.0,
+        )
+        blocker = asyncio.Event()
+
+        async def _slow_runner(_session_id: str, task: str):
+            await blocker.wait()
+            return f"done:{task}"
+
+        await manager.spawn(session_id="cli:status", task="long task", runner=_slow_runner)
+        await asyncio.sleep(0.02)
+
+        tool = SessionStatusTool(sessions, manager)
+        payload = json.loads(await tool.run({}, ToolContext(session_id="cli:status")))
+        await asyncio.sleep(0)
+
+        assert payload["status"] == "ok"
+        assert payload["active_subagents"] == 0
+        assert payload["subagent_counts"]["expired"] == 1
+        assert payload["resumable_subagents"] == 0
+        assert payload["exhausted_retry_budget"] == 1
+        assert payload["maintenance"]["expired"] == 1
 
     asyncio.run(_scenario())

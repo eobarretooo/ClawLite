@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from clawlite.core.subagent import SubagentLimitError, SubagentManager, SubagentRun
@@ -128,6 +129,93 @@ def test_subagent_manager_restores_resumable_state(tmp_path: Path) -> None:
         assert final.status == "done"
         assert final.result == "resumed:long"
         assert int(final.metadata.get("resume_attempts", 0)) >= 1
+
+    asyncio.run(_scenario())
+
+
+def test_subagent_manager_enforces_retry_budget_on_resume(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        mgr = SubagentManager(state_path=tmp_path / "state", max_resume_attempts=1)
+        expired_run = SubagentRun(
+            run_id="r-budget",
+            session_id="s1",
+            task="retry task",
+            status="interrupted",
+            finished_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "resumable": True,
+                "resume_attempts": 1,
+                "resume_attempts_max": 1,
+                "retry_budget_remaining": 0,
+            },
+        )
+        mgr._runs[expired_run.run_id] = expired_run
+        mgr._save_state()
+
+        try:
+            await mgr.resume(run_id=expired_run.run_id, runner=_runner)
+            raise AssertionError("expected retry budget exhaustion")
+        except ValueError as exc:
+            assert "exhausted retry budget" in str(exc)
+
+        run = mgr.list_runs(session_id="s1")[0]
+        assert run.metadata["resumable"] is False
+        assert run.metadata["retry_budget_remaining"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_subagent_manager_sweeps_expired_and_orphaned_runs(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        blocker = asyncio.Event()
+
+        async def _blocking_runner(_session_id: str, task: str) -> str:
+            await blocker.wait()
+            return f"done:{task}"
+
+        mgr = SubagentManager(
+            state_path=tmp_path / "state",
+            max_concurrent_runs=1,
+            run_ttl_seconds=0.01,
+            zombie_grace_seconds=0.0,
+        )
+        running = await mgr.spawn(session_id="s1", task="expire-me", runner=_blocking_runner)
+        await asyncio.sleep(0.02)
+
+        stale_iso = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+        orphaned = SubagentRun(
+            run_id="queued-orphan",
+            session_id="s1",
+            task="recover-me",
+            status="queued",
+            queued_at=stale_iso,
+            updated_at=stale_iso,
+            metadata={
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+                "resumable": False,
+            },
+        )
+        mgr._runs[orphaned.run_id] = orphaned
+        mgr._save_state()
+
+        swept = await mgr.sweep_async()
+        await asyncio.sleep(0)
+
+        assert swept == {
+            "expired": 1,
+            "orphaned_running": 0,
+            "orphaned_queued": 1,
+        }
+
+        rows = {row.run_id: row for row in mgr.list_runs(session_id="s1")}
+        assert rows[running.run_id].status == "expired"
+        assert rows[running.run_id].metadata["resumable"] is False
+        assert "expired" in rows[running.run_id].error
+        assert rows["queued-orphan"].status == "interrupted"
+        assert rows["queued-orphan"].metadata["resumable"] is True
+        assert rows["queued-orphan"].metadata["last_status_reason"] == "orphaned_queue_entry"
 
     asyncio.run(_scenario())
 
@@ -261,6 +349,7 @@ def test_subagent_manager_concurrent_spawn_cancel_and_synthesize(tmp_path: Path)
         assert all(mgr._runs[run_id].status == "queued" for run_id in queue_snapshot)
 
         valid_statuses = {"queued", "running", "done", "error", "cancelled", "interrupted"}
+        valid_statuses.add("expired")
         assert all(run.status in valid_statuses for run in runs)
         assert all(str(run.updated_at).strip() for run in runs)
 

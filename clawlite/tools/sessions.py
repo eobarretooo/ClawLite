@@ -253,6 +253,24 @@ def _run_to_payload(run: SubagentRun) -> dict[str, Any]:
     share_scope = str(metadata.get("share_scope", "") or "").strip()
     if share_scope:
         payload["share_scope"] = share_scope
+    for key in (
+        "resume_attempts",
+        "resume_attempts_max",
+        "retry_budget_remaining",
+        "expires_at",
+        "last_status_reason",
+        "continuation_digest_summary",
+        "continuation_digest_session_id",
+        "continuation_digest_count",
+    ):
+        value = metadata.get(key)
+        if value in {"", None}:
+            continue
+        payload[key] = value
+    if "resumable" in metadata:
+        payload["resumable"] = bool(metadata.get("resumable"))
+    if bool(metadata.get("continuation_context_applied", False)):
+        payload["continuation_context_applied"] = True
     return payload
 
 
@@ -549,7 +567,7 @@ class SubagentsTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["list", "kill"], "default": "list"},
+                "action": {"type": "string", "enum": ["list", "kill", "sweep"], "default": "list"},
                 "session_id": {"type": "string"},
                 "sessionId": {"type": "string"},
                 "sessionKey": {"type": "string"},
@@ -564,14 +582,27 @@ class SubagentsTool(Tool):
         session_id = _resolve_session_id(arguments, required=False) or ctx.session_id
 
         if action == "list":
+            maintenance = await self.manager.sweep_async()
             rows = self.manager.list_runs(session_id=session_id)
             return _json(
                 {
                     "status": "ok",
                     "action": "list",
                     "session_id": session_id,
+                    "maintenance": maintenance,
                     "count": len(rows),
                     "runs": [_run_to_payload(run) for run in rows],
+                }
+            )
+
+        if action == "sweep":
+            maintenance = await self.manager.sweep_async()
+            return _json(
+                {
+                    "status": "ok",
+                    "action": "sweep",
+                    "session_id": session_id,
+                    "maintenance": maintenance,
                 }
             )
 
@@ -641,7 +672,23 @@ class SessionStatusTool(Tool):
         exists = path.exists()
         message_count = _count_session_messages(self.sessions, session_id) if exists else 0
         last_message = _last_message_preview(self.sessions, session_id)
-        active_subagents = len(self.manager.list_runs(session_id=session_id, active_only=True))
+        maintenance = await self.manager.sweep_async()
+        runs = self.manager.list_runs(session_id=session_id)
+        active_subagents = sum(1 for run in runs if run.status in {"running", "queued"})
+        subagent_counts: dict[str, int] = {}
+        resumable_subagents = 0
+        exhausted_retry_budget = 0
+        for run in runs:
+            subagent_counts[run.status] = subagent_counts.get(run.status, 0) + 1
+            metadata = dict(getattr(run, "metadata", {}) or {})
+            if bool(metadata.get("resumable", False)):
+                resumable_subagents += 1
+            try:
+                remaining = int(metadata.get("retry_budget_remaining", 0) or 0)
+            except Exception:
+                remaining = 0
+            if remaining <= 0 and run.status in {"error", "cancelled", "interrupted", "expired"}:
+                exhausted_retry_budget += 1
         return _json(
             {
                 "status": "ok",
@@ -650,5 +697,9 @@ class SessionStatusTool(Tool):
                 "message_count": message_count,
                 "last_message": last_message,
                 "active_subagents": active_subagents,
+                "subagent_counts": subagent_counts,
+                "resumable_subagents": resumable_subagents,
+                "exhausted_retry_budget": exhausted_retry_budget,
+                "maintenance": maintenance,
             }
         )

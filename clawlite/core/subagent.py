@@ -5,7 +5,7 @@ import json
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, Coroutine, TypeVar
 
@@ -33,6 +33,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_utc(value: str) -> datetime | None:
+    clean = str(value or "").strip()
+    if not clean:
+        return None
+    try:
+        parsed = datetime.fromisoformat(clean)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 Runner = Callable[[str, str], Awaitable[str]]
 _T = TypeVar("_T")
 
@@ -47,6 +60,9 @@ class SubagentManager:
         max_concurrent_runs: int = 2,
         max_queued_runs: int = 32,
         per_session_quota: int = 4,
+        max_resume_attempts: int = 2,
+        run_ttl_seconds: float | None = 900.0,
+        zombie_grace_seconds: float = 5.0,
     ) -> None:
         if max_concurrent_runs < 1:
             raise ValueError("max_concurrent_runs must be >= 1")
@@ -54,6 +70,12 @@ class SubagentManager:
             raise ValueError("max_queued_runs must be >= 0")
         if per_session_quota < 1:
             raise ValueError("per_session_quota must be >= 1")
+        if max_resume_attempts < 0:
+            raise ValueError("max_resume_attempts must be >= 0")
+        if run_ttl_seconds is not None and float(run_ttl_seconds) <= 0:
+            raise ValueError("run_ttl_seconds must be > 0 when provided")
+        if float(zombie_grace_seconds) < 0:
+            raise ValueError("zombie_grace_seconds must be >= 0")
 
         base = Path(state_path) if state_path else (Path.home() / ".clawlite" / "state" / "subagents")
         self._state_file = (base / "runs.json") if base.suffix == "" else base
@@ -61,6 +83,9 @@ class SubagentManager:
         self.max_concurrent_runs = int(max_concurrent_runs)
         self.max_queued_runs = int(max_queued_runs)
         self.per_session_quota = int(per_session_quota)
+        self.max_resume_attempts = int(max_resume_attempts)
+        self.run_ttl_seconds = None if run_ttl_seconds is None else float(run_ttl_seconds)
+        self.zombie_grace_seconds = float(zombie_grace_seconds)
         self._runs: dict[str, SubagentRun] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._queue: deque[str] = deque()
@@ -68,6 +93,157 @@ class SubagentManager:
         self._lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._load_state()
+
+    @staticmethod
+    def _metadata_int(
+        metadata: dict[str, str | int | bool],
+        key: str,
+        default: int,
+    ) -> int:
+        try:
+            return int(metadata.get(key, default))
+        except Exception:
+            return int(default)
+
+    def _sync_retry_metadata(self, run: SubagentRun) -> None:
+        attempts = max(0, self._metadata_int(run.metadata, "resume_attempts", 0))
+        attempts_max = max(0, self._metadata_int(run.metadata, "resume_attempts_max", self.max_resume_attempts))
+        run.metadata["resume_attempts"] = attempts
+        run.metadata["resume_attempts_max"] = attempts_max
+        run.metadata["retry_budget_remaining"] = max(0, attempts_max - attempts)
+
+    def _default_expires_at(self, *, now_dt: datetime | None = None) -> str:
+        if self.run_ttl_seconds is None:
+            return ""
+        current = now_dt or datetime.now(timezone.utc)
+        return (current + timedelta(seconds=self.run_ttl_seconds)).isoformat()
+
+    def _ensure_run_defaults(self, run: SubagentRun, *, now_dt: datetime | None = None, refresh_expiry: bool = False) -> None:
+        self._sync_retry_metadata(run)
+        if self.run_ttl_seconds is None:
+            return
+        if refresh_expiry or not str(run.metadata.get("expires_at", "") or "").strip():
+            run.metadata["expires_at"] = self._default_expires_at(now_dt=now_dt)
+
+    def _run_is_expired(self, run: SubagentRun, *, now_dt: datetime) -> bool:
+        expires_at = _parse_utc(str(run.metadata.get("expires_at", "") or ""))
+        return bool(expires_at is not None and expires_at <= now_dt)
+
+    def _run_is_stale(self, run: SubagentRun, *, now_dt: datetime) -> bool:
+        reference = _parse_utc(str(run.updated_at or "") or "") or _parse_utc(str(run.started_at or "") or "")
+        if reference is None:
+            return True
+        return (now_dt - reference).total_seconds() >= self.zombie_grace_seconds
+
+    def _mark_terminal(
+        self,
+        run: SubagentRun,
+        *,
+        status: str,
+        reason: str,
+        error: str = "",
+        resumable: bool,
+        now_iso: str,
+    ) -> None:
+        run.status = status
+        run.finished_at = now_iso
+        run.updated_at = now_iso
+        if error:
+            run.error = error
+        run.metadata["resumable"] = resumable
+        run.metadata["last_status_reason"] = reason
+        run.metadata["last_status_at"] = now_iso
+        self._sync_retry_metadata(run)
+
+    def _empty_sweep_stats(self) -> dict[str, int]:
+        return {
+            "expired": 0,
+            "orphaned_running": 0,
+            "orphaned_queued": 0,
+        }
+
+    def _remove_from_queue_locked(self, run_id: str) -> None:
+        if run_id not in self._queue:
+            return
+        self._queue = deque(item for item in self._queue if item != run_id)
+
+    def _sweep_locked(self) -> dict[str, int]:
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
+        stats = self._empty_sweep_stats()
+        changed = False
+
+        for run in self._runs.values():
+            self._ensure_run_defaults(run, now_dt=now_dt, refresh_expiry=False)
+
+            if run.status == "queued":
+                if self._run_is_expired(run, now_dt=now_dt):
+                    self._remove_from_queue_locked(run.run_id)
+                    self._pending_runners.pop(run.run_id, None)
+                    self._mark_terminal(
+                        run,
+                        status="expired",
+                        reason="expired",
+                        error="subagent run expired before execution",
+                        resumable=False,
+                        now_iso=now_iso,
+                    )
+                    stats["expired"] += 1
+                    changed = True
+                    continue
+                has_pending = run.run_id in self._pending_runners
+                in_queue = run.run_id in self._queue
+                if (not has_pending or not in_queue) and self._run_is_stale(run, now_dt=now_dt):
+                    self._remove_from_queue_locked(run.run_id)
+                    self._pending_runners.pop(run.run_id, None)
+                    self._mark_terminal(
+                        run,
+                        status="interrupted",
+                        reason="orphaned_queue_entry",
+                        error="subagent queue entry lost before execution",
+                        resumable=bool(run.metadata.get("retry_budget_remaining", 0)),
+                        now_iso=now_iso,
+                    )
+                    stats["orphaned_queued"] += 1
+                    changed = True
+                    continue
+
+            if run.status == "running":
+                task = self._tasks.get(run.run_id)
+                if self._run_is_expired(run, now_dt=now_dt):
+                    if task is not None and not task.done():
+                        task.cancel()
+                    self._tasks.pop(run.run_id, None)
+                    self._pending_runners.pop(run.run_id, None)
+                    self._mark_terminal(
+                        run,
+                        status="expired",
+                        reason="expired",
+                        error="subagent run expired while running",
+                        resumable=False,
+                        now_iso=now_iso,
+                    )
+                    stats["expired"] += 1
+                    changed = True
+                    continue
+                if (task is None or task.done()) and self._run_is_stale(run, now_dt=now_dt):
+                    self._tasks.pop(run.run_id, None)
+                    self._pending_runners.pop(run.run_id, None)
+                    self._mark_terminal(
+                        run,
+                        status="interrupted",
+                        reason="orphaned_task",
+                        error="subagent worker disappeared before completion",
+                        resumable=bool(run.metadata.get("retry_budget_remaining", 0)),
+                        now_iso=now_iso,
+                    )
+                    stats["orphaned_running"] += 1
+                    changed = True
+
+        if changed:
+            self._drain_queue_locked()
+            self._save_state()
+        return stats
 
     def _bind_loop(self) -> None:
         loop = asyncio.get_running_loop()
@@ -179,20 +355,33 @@ class SubagentManager:
         if not isinstance(queue_raw, list):
             queue_raw = []
 
-        now_iso = _utc_now()
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
         for row in runs_raw:
             if not isinstance(row, dict):
                 continue
             run = self._from_payload(row)
             if run is None:
                 continue
+            self._ensure_run_defaults(run, now_dt=now_dt, refresh_expiry=False)
             if run.status in {"running", "queued"}:
-                run.status = "interrupted"
-                run.finished_at = run.finished_at or now_iso
-                run.updated_at = now_iso
-                run.metadata["resumable"] = True
-                run.metadata["last_status_reason"] = "manager_restart"
-                run.metadata["last_status_at"] = now_iso
+                if self._run_is_expired(run, now_dt=now_dt):
+                    self._mark_terminal(
+                        run,
+                        status="expired",
+                        reason="expired",
+                        error="subagent run expired during restart recovery",
+                        resumable=False,
+                        now_iso=now_iso,
+                    )
+                else:
+                    self._mark_terminal(
+                        run,
+                        status="interrupted",
+                        reason="manager_restart",
+                        resumable=bool(run.metadata.get("retry_budget_remaining", 0)),
+                        now_iso=now_iso,
+                    )
             self._runs[run.run_id] = run
 
         for run_id in queue_raw:
@@ -218,6 +407,7 @@ class SubagentManager:
         run.metadata["resumable"] = False
         run.metadata["last_status_reason"] = reason
         run.metadata["last_status_at"] = now_iso
+        self._sync_retry_metadata(run)
 
     def _mark_running(self, run: SubagentRun, *, reason: str) -> None:
         now_iso = _utc_now()
@@ -230,6 +420,7 @@ class SubagentManager:
         run.metadata["resumable"] = False
         run.metadata["last_status_reason"] = reason
         run.metadata["last_status_at"] = now_iso
+        self._sync_retry_metadata(run)
 
     def _ensure_limits(self, session_id: str) -> None:
         outstanding = self._session_outstanding(session_id)
@@ -258,15 +449,25 @@ class SubagentManager:
                     active = self._runs.get(run.run_id)
                     if active is None:
                         return
+                    if active.status == "expired":
+                        self._tasks.pop(run.run_id, None)
+                        self._pending_runners.pop(run.run_id, None)
+                        self._drain_queue_locked()
+                        self._save_state()
+                        return
                     now_iso = _utc_now()
                     active.status = status
                     active.result = result
                     active.error = error
                     active.finished_at = now_iso
                     active.updated_at = now_iso
-                    active.metadata["resumable"] = status in {"error", "cancelled", "interrupted"}
+                    active.metadata["resumable"] = (
+                        status in {"error", "cancelled", "interrupted"}
+                        and bool(active.metadata.get("retry_budget_remaining", 0))
+                    )
                     active.metadata["last_status_reason"] = status
                     active.metadata["last_status_at"] = now_iso
+                    self._sync_retry_metadata(active)
                     self._tasks.pop(run.run_id, None)
                     self._pending_runners.pop(run.run_id, None)
                     self._drain_queue_locked()
@@ -290,16 +491,39 @@ class SubagentManager:
             raise ValueError("run_id is required")
 
         async with self._lock:
+            self._sweep_locked()
             run = self._runs.get(clean_run_id)
             if run is None:
                 raise KeyError(clean_run_id)
             resumable = bool(run.metadata.get("resumable"))
             if run.status in {"done", "running"} and not resumable:
                 raise ValueError(f"run '{clean_run_id}' is not resumable")
+            now_dt = datetime.now(timezone.utc)
+            if self._run_is_expired(run, now_dt=now_dt):
+                now_iso = now_dt.isoformat()
+                self._mark_terminal(
+                    run,
+                    status="expired",
+                    reason="expired",
+                    error="subagent run expired before resume",
+                    resumable=False,
+                    now_iso=now_iso,
+                )
+                self._save_state()
+                raise ValueError(f"run '{clean_run_id}' expired before resume")
             self._ensure_limits(run.session_id)
+
+            attempts = self._metadata_int(run.metadata, "resume_attempts", 0)
+            attempts_max = self._metadata_int(run.metadata, "resume_attempts_max", self.max_resume_attempts)
+            if attempts >= attempts_max:
+                run.metadata["resumable"] = False
+                run.metadata["retry_budget_remaining"] = 0
+                self._save_state()
+                raise ValueError(f"run '{clean_run_id}' exhausted retry budget")
 
             attempts = int(run.metadata.get("resume_attempts", 0)) + 1
             run.metadata["resume_attempts"] = attempts
+            self._ensure_run_defaults(run, now_dt=now_dt, refresh_expiry=True)
 
             if self._running_count() < self.max_concurrent_runs:
                 self._pending_runners[run.run_id] = runner
@@ -334,9 +558,11 @@ class SubagentManager:
         normalized_metadata = self._normalize_run_metadata(metadata)
 
         async with self._lock:
+            self._sweep_locked()
             self._ensure_limits(clean_session_id)
             run_id = uuid.uuid4().hex
-            now_iso = _utc_now()
+            now_dt = datetime.now(timezone.utc)
+            now_iso = now_dt.isoformat()
             run = SubagentRun(
                 run_id=run_id,
                 session_id=clean_session_id,
@@ -355,6 +581,7 @@ class SubagentManager:
                     "last_status_at": now_iso,
                 },
             )
+            self._ensure_run_defaults(run, now_dt=now_dt, refresh_expiry=False)
             self._runs[run_id] = run
             self._pending_runners[run_id] = runner
             if self._running_count() < self.max_concurrent_runs:
@@ -384,7 +611,7 @@ class SubagentManager:
         if not clean_session_id:
             return []
         max_items = max(1, int(limit))
-        completed_statuses = {"done", "error", "cancelled", "interrupted"}
+        completed_statuses = {"done", "error", "cancelled", "interrupted", "expired"}
 
         rows = [
             run
@@ -416,6 +643,7 @@ class SubagentManager:
                 if clean_digest:
                     run.metadata["synthesized_digest_id"] = clean_digest
                 run.updated_at = now_iso
+                self._sync_retry_metadata(run)
                 count += 1
 
             if count > 0:
@@ -439,12 +667,13 @@ class SubagentManager:
             run = self._runs.get(run_id)
             if run is not None:
                 now_iso = _utc_now()
-                run.status = "cancelled"
-                run.finished_at = now_iso
-                run.updated_at = now_iso
-                run.metadata["resumable"] = True
-                run.metadata["last_status_reason"] = "cancelled_while_queued"
-                run.metadata["last_status_at"] = now_iso
+                self._mark_terminal(
+                    run,
+                    status="cancelled",
+                    reason="cancelled_while_queued",
+                    resumable=bool(run.metadata.get("retry_budget_remaining", 0)),
+                    now_iso=now_iso,
+                )
             self._pending_runners.pop(run_id, None)
             return True, True
 
@@ -487,3 +716,11 @@ class SubagentManager:
 
     def cancel_session(self, session_id: str) -> int:
         return self._run_sync(self.cancel_session_async(session_id), method_name="cancel_session()")
+
+    async def sweep_async(self) -> dict[str, int]:
+        self._bind_loop()
+        async with self._lock:
+            return self._sweep_locked()
+
+    def sweep(self) -> dict[str, int]:
+        return self._run_sync(self.sweep_async(), method_name="sweep()")
