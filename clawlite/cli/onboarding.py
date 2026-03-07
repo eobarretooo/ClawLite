@@ -510,11 +510,11 @@ def _configure_model(console: Console, config: AppConfig) -> tuple[str, str, str
     console.print("")
 
     current_provider = str(config.provider.litellm_api_key and "openai" or "openai")
-    provider = Prompt.ask(
-        "  Provider",
-        choices=list(SUPPORTED_PROVIDERS),
-        default=current_provider,
-    )
+    while True:
+        provider = Prompt.ask("  Provider", default=current_provider).strip().lower()
+        if _provider_spec(provider) is not None:
+            break
+        console.print(f"  [red]Unknown provider:[/] {provider!r}  (see list above)")
     provider_spec = _provider_spec(provider)
     provider_key = provider_spec.name if provider_spec is not None else provider
 
