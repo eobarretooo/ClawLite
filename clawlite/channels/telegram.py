@@ -2672,7 +2672,13 @@ class TelegramChannel(BaseChannel):
         if self._webhook_mode_active:
             await self._try_delete_webhook(reason="webhook_stop")
         await cancel_task(self._task)
-        await cancel_task(self._dedupe_persist_task)
+        pending_dedupe_persist_task = self._dedupe_persist_task
+        self._dedupe_persist_task = None
+        await cancel_task(pending_dedupe_persist_task)
+        try:
+            await self._persist_update_dedupe_state()
+        except Exception as exc:
+            logger.debug("telegram dedupe state shutdown persist failed error={}", exc)
         self._dedupe_persist_task = None
         self._task = None
         self._webhook_mode_active = False

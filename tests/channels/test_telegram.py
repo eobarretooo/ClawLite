@@ -1582,6 +1582,34 @@ def test_telegram_update_dedupe_state_persists_across_restarts(tmp_path: Path) -
     asyncio.run(_scenario())
 
 
+def test_telegram_stop_flushes_pending_dedupe_state_before_restart(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        dedupe_path = tmp_path / "telegram-dedupe.json"
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+                "update_dedupe_limit": 8,
+            }
+        )
+
+        channel._running = True
+        assert channel._remember_update_dedupe_key("update:301", source="polling") is True
+        assert channel._dedupe_persist_task is not None
+        await channel.stop()
+
+        reloaded = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+                "update_dedupe_limit": 8,
+            }
+        )
+        assert reloaded._remember_update_dedupe_key("update:301", source="polling") is False
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_update_dedupe_state_uses_durable_atomic_write(tmp_path: Path) -> None:
     async def _scenario() -> None:
         dedupe_path = tmp_path / "telegram-dedupe.json"
