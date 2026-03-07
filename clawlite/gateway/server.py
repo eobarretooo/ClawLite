@@ -2896,7 +2896,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             component["running"] = False
             component["last_error"] = "resume_runner_factory_missing"
             return {"replayed": 0, "replayed_groups": 0, "failed": 0, "failed_groups": 0}
-        rows = runtime.engine.subagents.list_resumable_runs(reason="manager_restart", limit=64)
+        auto_replay_reasons = {"manager_restart", "orphaned_task", "orphaned_queue_entry"}
+        rows = [
+            run
+            for run in runtime.engine.subagents.list_resumable_runs(limit=128)
+            if str(dict(getattr(run, "metadata", {}) or {}).get("last_status_reason", "") or "").strip()
+            in auto_replay_reasons
+        ][:64]
         replayed = 0
         failed: list[dict[str, str]] = []
         grouped_run_ids: dict[str, set[str]] = {}

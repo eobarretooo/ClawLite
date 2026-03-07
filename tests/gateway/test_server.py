@@ -1028,6 +1028,68 @@ def test_gateway_startup_replays_parallel_subagent_group_after_restart(tmp_path:
                 assert provider.calls >= 2
 
 
+def test_gateway_startup_replays_orphaned_resumable_subagent_after_restart(tmp_path: Path) -> None:
+    state_root = tmp_path / "state" / "subagents"
+    manager = SubagentManager(state_path=state_root)
+    run = SubagentRun(
+        run_id="run-orphaned-1",
+        session_id="cli:owner",
+        task="retry orphaned task",
+        status="interrupted",
+        started_at="2026-03-06T10:00:00+00:00",
+        updated_at="2026-03-06T10:00:30+00:00",
+        metadata={
+            "target_session_id": "cli:owner:subagent",
+            "run_version": 1,
+            "resume_attempts": 0,
+            "resume_attempts_max": 2,
+            "retry_budget_remaining": 2,
+            "resume_token": "tok-orphaned-1",
+            "resumable": True,
+            "last_status_reason": "orphaned_queue_entry",
+            "last_status_at": "2026-03-06T10:00:30+00:00",
+        },
+    )
+    manager._runs[run.run_id] = run
+    manager._save_state()
+
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    provider = ReplayProvider()
+    with patch.object(gateway_server, "build_provider", return_value=provider):
+        with patch.object(
+            gateway_server,
+            "probe_local_provider_runtime",
+            return_value={"checked": False, "ok": True},
+        ):
+            app = create_app(cfg)
+            app.state.runtime.channels.send = AsyncMock(return_value="ok")
+            with TestClient(app) as client:
+                deadline = time.time() + 1.0
+                rows = client.app.state.runtime.engine.subagents.list_runs(session_id="cli:owner")
+                while time.time() < deadline:
+                    rows = client.app.state.runtime.engine.subagents.list_runs(session_id="cli:owner")
+                    if rows and rows[0].status == "done":
+                        break
+                    time.sleep(0.01)
+
+                assert rows
+                assert rows[0].run_id == "run-orphaned-1"
+                assert rows[0].status == "done"
+                assert rows[0].result == "replayed"
+                assert rows[0].metadata["resume_attempts"] == 1
+                assert rows[0].metadata["retry_budget_remaining"] == 1
+                replay_component = client.app.state.lifecycle.components["subagent_replay"]
+                assert replay_component["replayed"] == 1
+                assert replay_component["failed"] == 0
+                assert replay_component["last_group_ids"] == ["run-orphaned-1"]
+                assert provider.calls >= 1
+
+
 def test_run_heartbeat_skips_suggestions_when_memory_monitor_missing() -> None:
     class _Engine:
         async def run(self, *, session_id: str, user_text: str):
