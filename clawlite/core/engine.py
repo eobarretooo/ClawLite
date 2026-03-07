@@ -155,6 +155,7 @@ class InMemorySessionStore(SessionStoreProtocol):
 class AgentEngine:
     """Core autonomous loop used by channels, cron and CLI."""
 
+    _TOOL_CALL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
     _TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
     _TOOL_RESULT_TRUNCATED_SUFFIX = "\n...[tool result truncated]"
     _MAX_DYNAMIC_MESSAGES_PER_TURN = 192
@@ -660,13 +661,36 @@ class AgentEngine:
         return getattr(tool_call, "name", "")
 
     @staticmethod
-    def _tool_call_id(tool_call: Any, idx: int) -> str:
+    def _tool_call_raw_id(tool_call: Any) -> Any:
         if isinstance(tool_call, dict):
-            raw_value = tool_call.get("id", "")
-        else:
-            raw_value = getattr(tool_call, "id", "")
-        raw = str(raw_value or "").strip()
-        return raw or f"call_{idx}"
+            return tool_call.get("id", "")
+        return getattr(tool_call, "id", "")
+
+    @classmethod
+    def _tool_call_id(cls, tool_call: Any, idx: int) -> str:
+        raw_value = cls._tool_call_raw_id(tool_call)
+        if isinstance(raw_value, str):
+            raw = raw_value.strip()
+            if raw and cls._TOOL_CALL_ID_RE.fullmatch(raw):
+                return raw
+        return f"call_{idx}"
+
+    @classmethod
+    def _tool_call_ids(cls, tool_calls: list[Any]) -> list[str]:
+        resolved: list[str] = []
+        used: set[str] = set()
+        for idx, tool_call in enumerate(tool_calls):
+            candidate = cls._tool_call_id(tool_call, idx)
+            if candidate in used:
+                candidate = f"call_{idx}"
+            suffix = 1
+            unique_candidate = candidate
+            while unique_candidate in used:
+                unique_candidate = f"{candidate}_{suffix}"
+                suffix += 1
+            used.add(unique_candidate)
+            resolved.append(unique_candidate)
+        return resolved
 
     @classmethod
     def _tool_call_name(cls, tool_call: Any, *, available_tools: set[str] | None = None) -> str:
@@ -758,8 +782,9 @@ class AgentEngine:
         return payload
 
     @staticmethod
-    def _assistant_tool_calls(tool_calls: list[Any]) -> list[dict[str, Any]]:
+    def _assistant_tool_calls(tool_calls: list[Any], *, tool_call_ids: list[str] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        normalized_ids = tool_call_ids or AgentEngine._tool_call_ids(tool_calls)
         for idx, tool_call in enumerate(tool_calls):
             try:
                 name = AgentEngine._tool_call_name(tool_call)
@@ -767,7 +792,7 @@ class AgentEngine:
                 continue
             rows.append(
                 {
-                    "id": AgentEngine._tool_call_id(tool_call, idx),
+                    "id": normalized_ids[idx],
                     "type": "function",
                     "function": {
                         "name": name,
@@ -2147,11 +2172,12 @@ class AgentEngine:
 
             if step.tool_calls:
                 run_log.debug("tool calls requested iteration={} count={}", iteration, len(step.tool_calls))
+                normalized_tool_call_ids = self._tool_call_ids(step.tool_calls)
                 messages.append(
                     {
                         "role": "assistant",
                         "content": step.text or "",
-                        "tool_calls": self._assistant_tool_calls(step.tool_calls),
+                        "tool_calls": self._assistant_tool_calls(step.tool_calls, tool_call_ids=normalized_tool_call_ids),
                     }
                 )
                 self._prune_messages_for_turn(
@@ -2179,7 +2205,7 @@ class AgentEngine:
                         run_log.error("tool-call budget reached iteration={} max_tool_calls={}", iteration, budget.max_tool_calls)
                         break
 
-                    call_id = self._tool_call_id(tool_call, idx)
+                    call_id = normalized_tool_call_ids[idx]
                     tool_name_error = ""
                     try:
                         name = self._tool_call_name(tool_call, available_tools=available_tool_names)

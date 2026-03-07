@@ -915,6 +915,32 @@ class FakeInvalidToolCallsContainerProvider:
         }
 
 
+class FakeDuplicateAndInvalidToolIdProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        self.snapshots.append(messages)
+        if self.calls == 1:
+            return {
+                "text": "use duplicate ids",
+                "tool_calls": [
+                    {"name": "echo", "arguments": {"text": "first"}, "id": "dup"},
+                    {"name": "echo", "arguments": {"text": "second"}, "id": "dup"},
+                    {"name": "echo", "arguments": {"text": "third"}, "id": "bad id!"},
+                ],
+                "model": "fake/model",
+            }
+        return {
+            "text": "done",
+            "tool_calls": [],
+            "model": "fake/model",
+        }
+
+
 class ContextCaptureTools:
     def __init__(self) -> None:
         self.last_channel = ""
@@ -1110,6 +1136,31 @@ def test_engine_ignores_invalid_tool_call_containers_from_provider() -> None:
         metrics = engine.turn_metrics_snapshot()
         assert metrics["tool_calls_executed"] == 0
         assert metrics["last_model"] == "fake/model"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_normalizes_duplicate_and_invalid_tool_call_ids() -> None:
+    async def _scenario() -> None:
+        provider = FakeDuplicateAndInvalidToolIdProvider()
+        tools = ExecuteCaptureTools()
+        engine = AgentEngine(provider=provider, tools=tools)
+
+        out = await engine.run(session_id="cli:dup-tool-id", user_text="say hi")
+        assert out.text == "done"
+        assert [call["arguments"]["text"] for call in tools.execute_calls] == ["first", "second", "third"]
+
+        assistant_rows = [
+            row
+            for row in provider.snapshots[1]
+            if row.get("role") == "assistant" and isinstance(row.get("tool_calls"), list)
+        ]
+        assert len(assistant_rows) == 1
+        assistant_tool_calls = assistant_rows[0]["tool_calls"]
+        assert [item["id"] for item in assistant_tool_calls] == ["dup", "call_1", "call_2"]
+
+        tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
+        assert [row["tool_call_id"] for row in tool_rows] == ["dup", "call_1", "call_2"]
 
     asyncio.run(_scenario())
 
