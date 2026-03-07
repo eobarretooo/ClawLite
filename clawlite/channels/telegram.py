@@ -1090,7 +1090,11 @@ class TelegramChannel(BaseChannel):
         max_ttl_s = max(1.0, float(self.typing_max_ttl_s))
         interval_s = max(0.2, float(self.typing_interval_s))
         timeout_s = max(0.1, float(self.typing_timeout_s))
-        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
+        active_thread_id = self._normalize_api_message_thread_id(
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+        )
+        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=active_thread_id)
         try:
             while True:
                 remaining_s = max_ttl_s - (time.monotonic() - started_at)
@@ -1114,16 +1118,17 @@ class TelegramChannel(BaseChannel):
                         "chat_id": chat_id,
                         "action": "typing",
                     }
-                    if message_thread_id is not None:
-                        payload["message_thread_id"] = message_thread_id
+                    if active_thread_id is not None:
+                        payload["message_thread_id"] = active_thread_id
                     await asyncio.wait_for(
                         bot.send_chat_action(**payload),
                         timeout=timeout_s,
                     )
                     self._on_typing_auth_success()
                 except TypeError as exc:
-                    if message_thread_id is None or "message_thread_id" not in str(exc):
+                    if active_thread_id is None or "message_thread_id" not in str(exc):
                         raise
+                    active_thread_id = None
                     await asyncio.wait_for(
                         bot.send_chat_action(chat_id=chat_id, action="typing"),
                         timeout=timeout_s,
@@ -1132,6 +1137,31 @@ class TelegramChannel(BaseChannel):
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    if (
+                        active_thread_id is not None
+                        and self._threadless_retry_allowed(chat_id=chat_id)
+                        and _is_thread_not_found_error(exc)
+                    ):
+                        logger.debug(
+                            "telegram typing thread not found chat={}; retrying without message_thread_id",
+                            chat_id,
+                        )
+                        active_thread_id = None
+                        try:
+                            await asyncio.wait_for(
+                                bot.send_chat_action(chat_id=chat_id, action="typing"),
+                                timeout=timeout_s,
+                            )
+                            self._on_typing_auth_success()
+                            remaining_s = max_ttl_s - (time.monotonic() - started_at)
+                            if remaining_s <= 0:
+                                return
+                            await asyncio.sleep(min(interval_s, remaining_s))
+                            continue
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as retry_exc:
+                            exc = retry_exc
                     if _is_auth_failure(exc):
                         self._on_typing_auth_failure()
                     logger.debug("telegram typing keepalive failed chat={} error={}", chat_id, exc)
@@ -1155,7 +1185,11 @@ class TelegramChannel(BaseChannel):
             return
         if not chat_id:
             return
-        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
+        normalized_thread_id = self._normalize_api_message_thread_id(
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+        )
+        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=normalized_thread_id)
         if typing_key in self._typing_start_guard:
             return
         task = self._typing_tasks.get(typing_key)
@@ -1169,7 +1203,7 @@ class TelegramChannel(BaseChannel):
             if self._typing_task_is_active(latest_task):
                 return
             created_task = asyncio.create_task(
-                self._typing_loop(chat_id=chat_id, message_thread_id=message_thread_id)
+                self._typing_loop(chat_id=chat_id, message_thread_id=normalized_thread_id)
             )
             self._typing_tasks[typing_key] = created_task
         finally:
@@ -1177,7 +1211,11 @@ class TelegramChannel(BaseChannel):
                 self._typing_start_guard.discard(typing_key)
 
     async def _stop_typing_keepalive(self, *, chat_id: str, message_thread_id: int | None = None) -> None:
-        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=message_thread_id)
+        normalized_thread_id = self._normalize_api_message_thread_id(
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+        )
+        typing_key = self._typing_key(chat_id=chat_id, message_thread_id=normalized_thread_id)
         task = self._typing_tasks.pop(typing_key, None)
         self._typing_start_guard.discard(typing_key)
         await cancel_task(task)

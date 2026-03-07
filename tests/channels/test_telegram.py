@@ -2843,6 +2843,46 @@ def test_telegram_typing_keepalive_uses_chat_and_thread_context() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_typing_keepalive_normalizes_general_topic_thread_key() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 0.2,
+            }
+        )
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.chat_action_calls: list[dict[str, object]] = []
+
+            async def send_chat_action(self, **kwargs):
+                self.chat_action_calls.append(kwargs)
+
+            async def send_message(self, **kwargs):
+                del kwargs
+                return True
+
+        bot = FakeBot()
+        channel.bot = bot
+        channel._running = True
+
+        channel._start_typing_keepalive(chat_id="-10042", message_thread_id=1)
+        await asyncio.sleep(0.03)
+
+        assert "-10042" in channel._typing_tasks
+        assert "-10042:1" not in channel._typing_tasks
+        assert bot.chat_action_calls
+        assert all("message_thread_id" not in call for call in bot.chat_action_calls)
+
+        await channel.send(target="-10042:1", text="hello")
+        assert "-10042" not in channel._typing_tasks
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(
@@ -2886,6 +2926,52 @@ def test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat()
 
         await channel._stop_typing_keepalive(chat_id="42")
         assert "42" not in channel._typing_tasks
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_typing_thread_not_found_retries_without_thread_context() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 0.2,
+                "typing_timeout_s": 0.2,
+            }
+        )
+
+        threadless_retry_succeeded = asyncio.Event()
+
+        class ThreadNotFoundError(RuntimeError):
+            status_code = 400
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def send_chat_action(self, **kwargs):
+                self.calls.append(kwargs)
+                if kwargs.get("message_thread_id") == 7:
+                    raise ThreadNotFoundError("Bad Request: message thread not found")
+                threadless_retry_succeeded.set()
+                return True
+
+            async def send_message(self, **kwargs):
+                return kwargs
+
+        bot = FakeBot()
+        channel.bot = bot
+        channel._running = True
+
+        channel._start_typing_keepalive(chat_id="42", message_thread_id=7)
+        await asyncio.wait_for(threadless_retry_succeeded.wait(), timeout=1.0)
+        await channel._stop_typing_keepalive(chat_id="42", message_thread_id=7)
+
+        assert bot.calls[0]["message_thread_id"] == 7
+        assert any("message_thread_id" not in call for call in bot.calls[1:])
+        assert "42:7" not in channel._typing_tasks
 
     asyncio.run(_scenario())
 
