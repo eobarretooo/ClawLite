@@ -438,11 +438,19 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
             "model": str(probe.get("model", "") or ""),
             "status_code": int(probe.get("status_code", 0) or 0),
             "error": str(probe.get("error", "") or ""),
+            "error_detail": str(probe.get("error_detail", "") or ""),
+            "error_class": str(probe.get("error_class", "") or ""),
             "base_url": str(probe.get("base_url", "") or ""),
             "base_url_source": str(probe.get("base_url_source", "") or ""),
+            "default_base_url": str(probe.get("default_base_url", "") or ""),
             "endpoint": str(probe.get("endpoint", "") or ""),
+            "transport": str(probe.get("transport", "") or ""),
+            "probe_method": str(probe.get("probe_method", "") or ""),
             "api_key_masked": str(probe.get("api_key_masked", "") or ""),
             "api_key_source": str(probe.get("api_key_source", "") or ""),
+            "key_envs": list(probe.get("key_envs", []) or []),
+            "model_check": dict(probe.get("model_check", {}) or {}),
+            "hints": list(probe.get("hints", []) or []),
         }
 
     telegram_live_check: dict[str, Any] = {"enabled": bool(args.telegram_live), "ok": True}

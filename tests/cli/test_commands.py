@@ -600,11 +600,19 @@ def test_cli_validate_preflight_optional_probes_success(tmp_path: Path, capsys, 
             "model": str(config.provider.model),
             "status_code": 200,
             "error": "",
+            "error_detail": "",
+            "error_class": "",
             "base_url": "https://api.openai.com/v1",
             "base_url_source": "spec:openai.default_base_url",
+            "default_base_url": "https://api.openai.com/v1",
             "endpoint": "/models",
+            "transport": "openai_compatible",
+            "probe_method": "GET",
             "api_key_masked": "********1234",
             "api_key_source": "env:OPENAI_API_KEY",
+            "key_envs": ["OPENAI_API_KEY"],
+            "model_check": {"checked": False, "ok": True},
+            "hints": ["Credenciais validas."],
         },
     )
     monkeypatch.setattr(
@@ -637,6 +645,9 @@ def test_cli_validate_preflight_optional_probes_success(tmp_path: Path, capsys, 
     assert payload["gateway_probe"]["ok"] is True
     assert payload["provider_live_probe"]["enabled"] is True
     assert payload["provider_live_probe"]["ok"] is True
+    assert payload["provider_live_probe"]["transport"] == "openai_compatible"
+    assert payload["provider_live_probe"]["probe_method"] == "GET"
+    assert payload["provider_live_probe"]["hints"] == ["Credenciais validas."]
     assert payload["telegram_live_probe"]["enabled"] is True
     assert payload["telegram_live_probe"]["ok"] is True
 
@@ -1412,6 +1423,8 @@ def test_cli_provider_status_openai_api_key_provider_success(tmp_path: Path, cap
     assert payload["api_key_source"] == "env:OPENAI_API_KEY"
     assert payload["env_key_present"] is True
     assert payload["base_url"] == "https://api.openai.com/v1"
+    assert payload["default_base_url"] == "https://api.openai.com/v1"
+    assert payload["key_envs"] == ["OPENAI_API_KEY"]
     assert any("live probe" in row.lower() for row in payload["hints"])
 
 
@@ -1453,7 +1466,68 @@ def test_provider_live_probe_vllm_network_error_returns_runtime_hint(tmp_path: P
     assert payload["provider"] == "vllm"
     assert payload["transport"] == "local_runtime"
     assert payload["probe_method"] == "GET"
+    assert payload["error_class"] == "network"
     assert any("Inicie o servidor vLLM" in row for row in payload["hints"])
+
+
+def test_provider_live_probe_ollama_success_detects_missing_model(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "ollama/llama3.2"},
+                "agents": {"defaults": {"model": "ollama/llama3.2"}},
+                "providers": {"ollama": {"api_base": "http://127.0.0.1:11434/v1"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Response:
+        def __init__(self, status_code: int, payload: dict[str, object], *, is_success: bool = True, text: str = "") -> None:
+            self.status_code = status_code
+            self._payload = payload
+            self.is_success = is_success
+            self.text = text
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, headers=None):
+            del headers
+            if url.endswith("/api/tags"):
+                return _Response(200, {"models": [{"name": "mistral:latest"}]})
+            raise AssertionError(url)
+
+        def post(self, url, json=None):
+            assert url.endswith("/api/show")
+            assert json == {"name": "llama3.2"}
+            return _Response(404, {}, is_success=False)
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _Client)
+    monkeypatch.setattr("clawlite.providers.discovery.httpx.Client", _Client)
+
+    from clawlite.config.loader import load_config
+
+    payload = provider_live_probe(load_config(config_path), timeout=0.1)
+    assert payload["ok"] is False
+    assert payload["error"] == "provider_config_error:ollama_model_missing:llama3.2"
+    assert payload["error_class"] == "config"
+    assert payload["model_check"]["checked"] is True
+    assert payload["model_check"]["available_models"] == ["mistral:latest"]
+    assert any("ollama pull llama3.2" in row for row in payload["hints"])
 
 
 def test_cli_provider_status_unsupported_provider_returns_rc2(tmp_path: Path, capsys) -> None:
