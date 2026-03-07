@@ -925,6 +925,30 @@ class AgentEngine:
             return {"allow_memory_write": payload}
         return {}
 
+    async def _memory_integration_policy_async(self, *, actor: str, session_id: str = "") -> dict[str, Any]:
+        policy_fn = getattr(self.memory, "integration_policy", None)
+        if not callable(policy_fn):
+            return {}
+        try:
+            payload = policy_fn(actor, session_id=session_id)
+        except TypeError:
+            try:
+                payload = policy_fn(actor)
+            except Exception:
+                return {}
+        except Exception:
+            return {}
+        if inspect.isawaitable(payload):
+            try:
+                payload = await payload
+            except Exception:
+                return {}
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, bool):
+            return {"allow_memory_write": payload}
+        return {}
+
     @staticmethod
     def _clamp_memory_search_limit(raw: Any, *, default: int = 6) -> int:
         try:
@@ -968,14 +992,45 @@ class AgentEngine:
                 return ""
         return str(value or "").strip()
 
-    def _plan_memory_snippets(self, *, session_id: str = "", user_id: str = "", user_text: str, run_log: Any) -> list[str]:
+    async def _emotion_guidance(self, user_text: str, *, session_id: str = "") -> str:
+        guidance_fn = getattr(self.memory, "emotion_guidance", None)
+        if not callable(guidance_fn):
+            return ""
+        try:
+            value = guidance_fn(user_text, session_id=session_id)
+        except TypeError:
+            try:
+                value = guidance_fn(user_text)
+            except Exception:
+                return ""
+        except Exception:
+            return ""
+        if inspect.isawaitable(value):
+            try:
+                value = await value
+            except Exception:
+                return ""
+        return str(value or "").strip()
+
+    def _plan_memory_snippets(
+        self,
+        *,
+        session_id: str = "",
+        user_id: str = "",
+        user_text: str,
+        run_log: Any,
+        policy: dict[str, Any] | None = None,
+    ) -> list[str]:
         route = self._MEMORY_ROUTE_NO_RETRIEVE
         selected_query = ""
         attempts = 0
         hits = 0
         rewrites = 0
-        policy = self._memory_integration_policy(actor="agent", session_id=session_id)
-        search_limit = self._clamp_memory_search_limit(policy.get("recommended_search_limit", 6), default=6)
+        effective_policy = dict(policy or {}) if isinstance(policy, dict) else self._memory_integration_policy(
+            actor="agent",
+            session_id=session_id,
+        )
+        search_limit = self._clamp_memory_search_limit(effective_policy.get("recommended_search_limit", 6), default=6)
         try:
             if not self._is_memory_retrieval_candidate(user_text):
                 run_log.debug("memory planner route={} query=- rows=0", route)
@@ -1836,12 +1891,13 @@ class AgentEngine:
         budget = self._resolve_turn_budget(turn_budget)
         progress_counter = [0]
         history = self.sessions.read(session_id, limit=self.memory_window)
-        memory_policy = self._memory_integration_policy(actor="agent", session_id=session_id)
+        memory_policy = await self._memory_integration_policy_async(actor="agent", session_id=session_id)
         memories = self._plan_memory_snippets(
             session_id=session_id,
             user_id=runtime_chat_id,
             user_text=user_text,
             run_log=run_log,
+            policy=memory_policy,
         )
         skills = self.skills_loader.render_for_prompt()
         always_names = [item.name for item in self.skills_loader.always_on()]
@@ -1864,21 +1920,13 @@ class AgentEngine:
             messages.append({"role": "system", "content": prompt.memory_section})
         if prompt.skills_context:
             messages.append({"role": "system", "content": f"[Skill Guides]\n{prompt.skills_context}"})
-        emotion_guidance_fn = getattr(self.memory, "emotion_guidance", None)
-        if callable(emotion_guidance_fn):
-            try:
-                guidance = emotion_guidance_fn(user_text, session_id=session_id)
-            except TypeError:
-                try:
-                    guidance = emotion_guidance_fn(user_text)
-                except Exception as exc:
-                    run_log.warning("emotional guidance failed session={} error={}", session_id or "-", exc)
-                    guidance = ""
-            except Exception as exc:
-                run_log.warning("emotional guidance failed session={} error={}", session_id or "-", exc)
-                guidance = ""
-            if str(guidance or "").strip():
-                messages.append({"role": "system", "content": str(guidance).strip()})
+        try:
+            guidance = await self._emotion_guidance(user_text, session_id=session_id)
+        except Exception as exc:
+            run_log.warning("emotional guidance failed session={} error={}", session_id or "-", exc)
+            guidance = ""
+        if guidance:
+            messages.append({"role": "system", "content": guidance})
         integration_hint = await self._memory_integration_hint(actor="agent", session_id=session_id)
         if integration_hint:
             messages.append({"role": "system", "content": integration_hint})

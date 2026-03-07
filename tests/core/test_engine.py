@@ -121,6 +121,13 @@ class FakeMemoryWithEmotionGuidance(FakeMemory):
         return "User seems frustrated. Be more empathetic and brief."
 
 
+class FakeMemoryWithAsyncEmotionGuidance(FakeMemory):
+    async def emotion_guidance(self, user_text: str, *, session_id: str = "") -> str:
+        del user_text, session_id
+        await asyncio.sleep(0)
+        return "Async guidance: keep the reply calm and direct."
+
+
 class FakeMemoryWithAsyncMemorize(FakeMemory):
     def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
         super().__init__(rows)
@@ -326,6 +333,29 @@ class FakeMemoryWithPolicySearch(FakeMemory):
             }
         )
         return self.rows[:limit]
+
+
+class FakeMemoryWithAsyncPolicySearch(FakeMemoryWithContextKwargs):
+    def __init__(self, rows: list[MemoryRecord] | None = None, *, search_limit: int = 6) -> None:
+        super().__init__(rows)
+        self.search_limit = int(search_limit)
+        self.policy_calls: list[dict[str, Any]] = []
+
+    async def integration_policy(self, actor: str, *, session_id: str = "") -> dict[str, Any]:
+        self.policy_calls.append({"actor": actor, "session_id": session_id})
+        await asyncio.sleep(0)
+        return {
+            "actor": actor,
+            "recommended_search_limit": self.search_limit,
+            "allow_memory_write": True,
+        }
+
+
+class FakeMemoryWithAsyncWriteBlock(FakeMemoryWithAsyncMemorize):
+    async def integration_policy(self, actor: str, *, session_id: str = "") -> dict[str, Any]:
+        del actor, session_id
+        await asyncio.sleep(0)
+        return {"allow_memory_write": False}
 
 
 class FakeMemoryPolicyBlocksWrite(FakeMemoryWithAsyncMemorize):
@@ -1241,6 +1271,27 @@ def test_engine_injects_emotional_guidance_as_system_message() -> None:
     asyncio.run(_scenario())
 
 
+def test_engine_injects_async_emotional_guidance_as_system_message() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithAsyncEmotionGuidance()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="cli:emotion-async", user_text="I am blocked")
+        assert out.text == "ok"
+
+        first_prompt = provider.snapshots[0]
+        guidance_rows = [
+            row
+            for row in first_prompt
+            if row.get("role") == "system"
+            and "Async guidance: keep the reply calm and direct." in str(row.get("content", ""))
+        ]
+        assert guidance_rows
+
+    asyncio.run(_scenario())
+
+
 def test_engine_prefers_async_memorize_over_consolidate() -> None:
     async def _scenario() -> None:
         provider = FakePromptCaptureProvider()
@@ -1354,6 +1405,31 @@ def test_engine_memory_planner_uses_recommended_search_limit_from_integration_po
     asyncio.run(_scenario())
 
 
+def test_engine_memory_planner_uses_async_recommended_search_limit_from_integration_policy() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithAsyncPolicySearch(
+            rows=[
+                MemoryRecord(
+                    id="ctx-limit-async-1",
+                    text="Timezone is America/Sao_Paulo.",
+                    source="session:telegram:42",
+                    created_at="2026-03-04T12:00:00+00:00",
+                )
+            ],
+            search_limit=4,
+        )
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="telegram:42", user_text="what is my timezone preference")
+        assert out.text == "ok"
+        assert memory.policy_calls == [{"actor": "agent", "session_id": "telegram:42"}]
+        assert memory.search_calls
+        assert memory.search_calls[0]["limit"] == 4
+
+    asyncio.run(_scenario())
+
+
 def test_engine_skips_memory_persistence_when_integration_policy_blocks_write() -> None:
     async def _scenario() -> None:
         provider = FakePromptCaptureProvider()
@@ -1364,6 +1440,19 @@ def test_engine_skips_memory_persistence_when_integration_policy_blocks_write() 
         assert out.text == "ok"
         assert memory.memorize_calls == []
         assert memory.consolidate_calls == 0
+
+    asyncio.run(_scenario())
+
+
+def test_engine_skips_memory_persistence_when_async_integration_policy_blocks_write() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        memory = FakeMemoryWithAsyncWriteBlock()
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="cli:async-write-blocked", user_text="remember this")
+        assert out.text == "ok"
+        assert memory.memorize_calls == []
 
     asyncio.run(_scenario())
 
