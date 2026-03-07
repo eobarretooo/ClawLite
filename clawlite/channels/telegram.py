@@ -2716,6 +2716,7 @@ class TelegramChannel(BaseChannel):
             return
         self._running = True
         self._webhook_mode_active = False
+        self._startup_drop_done = False
         logger.info("telegram channel starting mode={}", self.mode)
         if self._webhook_requested():
             activated = await self._activate_webhook_mode()
@@ -2742,6 +2743,7 @@ class TelegramChannel(BaseChannel):
         self._task = None
         self._webhook_mode_active = False
         self._connected = False
+        self._startup_drop_done = False
         logger.info("telegram channel stopped")
 
     async def handle_webhook_update(self, payload: dict[str, Any]) -> bool:

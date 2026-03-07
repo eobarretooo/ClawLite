@@ -761,6 +761,30 @@ def test_telegram_drop_pending_updates_on_startup() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_start_resets_startup_drop_state_for_reuse() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(config={"token": "x:token", "drop_pending_updates": True})
+        channel._startup_drop_done = True
+        observed_states: list[bool] = []
+
+        async def _fake_poll_loop() -> None:
+            observed_states.append(channel._startup_drop_done)
+            channel._running = False
+
+        channel._poll_loop = _fake_poll_loop  # type: ignore[method-assign]
+        await channel.start()
+        assert channel._task is not None
+        await channel._task
+
+        assert observed_states == [False]
+
+        channel._startup_drop_done = True
+        await channel.stop()
+        assert channel._startup_drop_done is False
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_command_help_is_handled_locally(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
