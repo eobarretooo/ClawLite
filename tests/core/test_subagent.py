@@ -162,6 +162,45 @@ def test_subagent_manager_restores_resumable_state(tmp_path: Path) -> None:
     asyncio.run(_scenario())
 
 
+def test_subagent_manager_restart_clears_phantom_queue_entries(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        blocker = asyncio.Event()
+        resumed_gate = asyncio.Event()
+
+        async def _blocking_runner(_session_id: str, task: str) -> str:
+            await blocker.wait()
+            return f"done:{task}"
+
+        async def _resumed_runner(_session_id: str, task: str) -> str:
+            await resumed_gate.wait()
+            return f"resumed:{task}"
+
+        state_path = tmp_path / "state"
+        mgr = SubagentManager(state_path=state_path, max_concurrent_runs=1, max_queued_runs=1)
+        running = await mgr.spawn(session_id="s1", task="long-running", runner=_blocking_runner)
+        queued = await mgr.spawn(session_id="s1", task="long-queued", runner=_blocking_runner)
+        assert queued.status == "queued"
+
+        restored_mgr = SubagentManager(state_path=state_path, max_concurrent_runs=1, max_queued_runs=1)
+        assert list(restored_mgr._queue) == []
+
+        resumed = await restored_mgr.spawn(session_id="s1", task="new-running", runner=_resumed_runner)
+        assert resumed.status == "running"
+
+        follow_up = await restored_mgr.spawn(session_id="s1", task="new-queued", runner=_resumed_runner)
+        assert follow_up.status == "queued"
+        assert list(restored_mgr._queue) == [follow_up.run_id]
+
+        assert await mgr.cancel_async(running.run_id) is True
+        assert await mgr.cancel_async(queued.run_id) is True
+        await asyncio.sleep(0)
+        assert await restored_mgr.cancel_async(resumed.run_id) is True
+        assert await restored_mgr.cancel_async(follow_up.run_id) is True
+        await asyncio.sleep(0)
+
+    asyncio.run(_scenario())
+
+
 def test_subagent_manager_enforces_retry_budget_on_resume(tmp_path: Path) -> None:
     async def _scenario() -> None:
         mgr = SubagentManager(state_path=tmp_path / "state", max_resume_attempts=1)
@@ -190,6 +229,61 @@ def test_subagent_manager_enforces_retry_budget_on_resume(tmp_path: Path) -> Non
         run = mgr.list_runs(session_id="s1")[0]
         assert run.metadata["resumable"] is False
         assert run.metadata["retry_budget_remaining"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_subagent_manager_resume_rejects_already_queued_run(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        blocker = asyncio.Event()
+
+        async def _blocking_runner(_session_id: str, task: str) -> str:
+            await blocker.wait()
+            return f"done:{task}"
+
+        mgr = SubagentManager(
+            state_path=tmp_path / "state",
+            max_concurrent_runs=1,
+            max_queued_runs=4,
+            max_resume_attempts=2,
+        )
+        active = await mgr.spawn(session_id="s1", task="active", runner=_blocking_runner)
+        run = SubagentRun(
+            run_id="resume-once",
+            session_id="s1",
+            task="retry-me",
+            status="interrupted",
+            finished_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "resumable": True,
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+            },
+        )
+        mgr._runs[run.run_id] = run
+
+        queued = await mgr.resume(run_id=run.run_id, runner=_blocking_runner)
+        assert queued.status == "queued"
+        assert queued.metadata["resume_attempts"] == 1
+        assert queued.metadata["retry_budget_remaining"] == 1
+        assert list(mgr._queue) == [run.run_id]
+
+        try:
+            await mgr.resume(run_id=run.run_id, runner=_blocking_runner)
+            raise AssertionError("expected queued run to be non-resumable")
+        except ValueError as exc:
+            assert "not resumable" in str(exc)
+
+        current = mgr.get_run(run.run_id)
+        assert current is not None
+        assert current.metadata["resume_attempts"] == 1
+        assert current.metadata["retry_budget_remaining"] == 1
+        assert list(mgr._queue) == [run.run_id]
+
+        assert await mgr.cancel_async(active.run_id) is True
+        assert await mgr.cancel_async(run.run_id) is True
+        await asyncio.sleep(0)
 
     asyncio.run(_scenario())
 
@@ -324,6 +418,53 @@ def test_mark_synthesized_persists_across_reload(tmp_path: Path) -> None:
     assert run.metadata.get("synthesized") is True
     assert str(run.metadata.get("synthesized_at", "")).strip()
     assert run.metadata.get("synthesized_digest_id") == "dig-01"
+
+
+def test_subagent_resume_clears_stale_synthesis_metadata(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        blocker = asyncio.Event()
+
+        async def _blocking_runner(_session_id: str, task: str) -> str:
+            await blocker.wait()
+            return f"done:{task}"
+
+        mgr = SubagentManager(state_path=tmp_path / "state", max_concurrent_runs=1, max_resume_attempts=2)
+        run = SubagentRun(
+            run_id="r-synth-retry",
+            session_id="s1",
+            task="retry task",
+            status="interrupted",
+            finished_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "resumable": True,
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+                "synthesized": True,
+                "synthesized_at": "2026-03-05T10:01:00+00:00",
+                "synthesized_digest_id": "dig-old",
+            },
+        )
+        mgr._runs[run.run_id] = run
+
+        resumed = await mgr.resume(run_id=run.run_id, runner=_blocking_runner)
+        assert resumed.status == "running"
+        assert "synthesized" not in resumed.metadata
+        assert "synthesized_at" not in resumed.metadata
+        assert "synthesized_digest_id" not in resumed.metadata
+
+        blocker.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        final = mgr.get_run(run.run_id)
+        assert final is not None
+        assert final.status == "done"
+        assert "synthesized" not in final.metadata
+        assert "synthesized_at" not in final.metadata
+        assert "synthesized_digest_id" not in final.metadata
+
+    asyncio.run(_scenario())
 
 
 def test_subagent_manager_concurrent_spawn_cancel_and_synthesize(tmp_path: Path) -> None:

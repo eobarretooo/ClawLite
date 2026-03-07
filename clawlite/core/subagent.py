@@ -412,10 +412,16 @@ class SubagentManager:
                     )
             self._runs[run.run_id] = run
 
+        seen_queue_ids: set[str] = set()
         for run_id in queue_raw:
             clean_run_id = str(run_id or "").strip()
-            if clean_run_id and clean_run_id in self._runs:
-                self._queue.append(clean_run_id)
+            if not clean_run_id or clean_run_id in seen_queue_ids:
+                continue
+            run = self._runs.get(clean_run_id)
+            if run is None or run.status != "queued":
+                continue
+            self._queue.append(clean_run_id)
+            seen_queue_ids.add(clean_run_id)
 
     def _session_outstanding(self, session_id: str) -> int:
         return sum(
@@ -432,6 +438,7 @@ class SubagentManager:
         run.status = "queued"
         run.queued_at = run.queued_at or now_iso
         run.updated_at = now_iso
+        self._clear_synthesis_metadata(run)
         run.metadata["resumable"] = False
         run.metadata["last_status_reason"] = reason
         run.metadata["last_status_at"] = now_iso
@@ -445,10 +452,17 @@ class SubagentManager:
         run.error = ""
         run.result = ""
         run.updated_at = now_iso
+        self._clear_synthesis_metadata(run)
         run.metadata["resumable"] = False
         run.metadata["last_status_reason"] = reason
         run.metadata["last_status_at"] = now_iso
         self._sync_retry_metadata(run)
+
+    @staticmethod
+    def _clear_synthesis_metadata(run: SubagentRun) -> None:
+        run.metadata.pop("synthesized", None)
+        run.metadata.pop("synthesized_at", None)
+        run.metadata.pop("synthesized_digest_id", None)
 
     def _ensure_limits(self, session_id: str) -> None:
         outstanding = self._session_outstanding(session_id)
@@ -524,7 +538,7 @@ class SubagentManager:
             if run is None:
                 raise KeyError(clean_run_id)
             resumable = bool(run.metadata.get("resumable"))
-            if run.status in {"done", "running"} and not resumable:
+            if not resumable:
                 raise ValueError(f"run '{clean_run_id}' is not resumable")
             now_dt = datetime.now(timezone.utc)
             if self._run_is_expired(run, now_dt=now_dt):

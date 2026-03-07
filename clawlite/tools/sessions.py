@@ -262,6 +262,7 @@ def _read_session_messages(
     session_id: str,
     *,
     limit: int,
+    include_tools: bool = True,
 ) -> list[dict[str, Any]]:
     path = _session_file_path(sessions, session_id)
     if not path.exists():
@@ -282,6 +283,8 @@ def _read_session_messages(
         role = str(payload.get("role", "")).strip()
         content = str(payload.get("content", "")).strip()
         if not role or not content:
+            continue
+        if not include_tools and role.lower() == "tool":
             continue
         row: dict[str, Any] = {
             "role": role,
@@ -590,9 +593,7 @@ class SessionsHistoryTool(Tool):
             minimum=1,
             maximum=200,
         )
-        rows = _read_session_messages(self.sessions, session_id, limit=limit)
-        if not include_tools:
-            rows = [row for row in rows if str(row.get("role", "")).strip().lower() != "tool"]
+        rows = _read_session_messages(self.sessions, session_id, limit=limit, include_tools=include_tools)
         runs: list[SubagentRun] = []
         if include_subagents and self.manager is not None:
             runs = self.manager.list_runs(session_id=session_id)[:subagent_limit]
@@ -1010,7 +1011,7 @@ class SubagentsTool(Tool):
             target_runs: list[SubagentRun] = []
             if run_id:
                 run = self.manager.get_run(run_id)
-                if run is None:
+                if run is None or run.session_id != session_id:
                     return _json(
                         {
                             "status": "failed",
@@ -1061,7 +1062,7 @@ class SubagentsTool(Tool):
                     failed.append({"run_id": run.run_id, "error": str(exc)})
                     continue
                 resumed.append(_run_to_payload(updated))
-            status = "ok" if resumed or not failed else "failed"
+            status = "ok" if resumed and not failed else "partial" if resumed else "failed"
             return _json(
                 {
                     "status": status,
@@ -1096,6 +1097,17 @@ class SubagentsTool(Tool):
                         "status": "failed",
                         "action": "kill",
                         "error": "run_id/runId is required when all=false",
+                    }
+                )
+            run = self.manager.get_run(run_id)
+            if run is None or run.session_id != session_id:
+                return _json(
+                    {
+                        "status": "failed",
+                        "action": "kill",
+                        "run_id": run_id,
+                        "cancelled": False,
+                        "error": "run_not_found",
                     }
                 )
             cancelled = bool(await self.manager.cancel_async(run_id))

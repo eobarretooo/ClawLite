@@ -134,6 +134,35 @@ def test_sessions_history_include_and_exclude_tool_messages(tmp_path) -> None:
     asyncio.run(_scenario())
 
 
+def test_sessions_history_excludes_tools_before_limit_slice(tmp_path) -> None:
+    async def _scenario() -> None:
+        sessions = SessionStore(root=tmp_path / "sessions")
+        sessions.append("cli:h", "user", "older-user")
+        sessions.append("cli:h", "assistant", "older-assistant")
+        sessions.append("cli:h", "tool", "tool-1")
+        sessions.append("cli:h", "tool", "tool-2")
+        sessions.append("cli:h", "tool", "tool-3")
+
+        tool = SessionsHistoryTool(sessions)
+        payload = json.loads(
+            await tool.run(
+                {
+                    "sessionId": "cli:h",
+                    "limit": 2,
+                    "includeTools": False,
+                },
+                ToolContext(session_id="cli:caller"),
+            )
+        )
+
+        assert payload["status"] == "ok"
+        assert payload["count"] == 2
+        assert [row["role"] for row in payload["messages"]] == ["user", "assistant"]
+        assert [row["content"] for row in payload["messages"]] == ["older-user", "older-assistant"]
+
+    asyncio.run(_scenario())
+
+
 def test_sessions_history_surfaces_subagent_runs_and_timeline(tmp_path) -> None:
     async def _scenario() -> None:
         sessions = SessionStore(root=tmp_path / "sessions")
@@ -379,6 +408,59 @@ def test_sessions_spawn_success_and_subagents_list_kill(tmp_path) -> None:
 
         gate.set()
         await asyncio.sleep(0)
+
+    asyncio.run(_scenario())
+
+
+def test_subagents_kill_and_resume_are_scoped_to_current_session(tmp_path) -> None:
+    async def _scenario() -> None:
+        manager = SubagentManager(state_path=tmp_path / "subagents", max_concurrent_runs=1, max_resume_attempts=2)
+        manager._runs["run-other"] = SubagentRun(
+            run_id="run-other",
+            session_id="cli:other",
+            task="foreign task",
+            status="interrupted",
+            updated_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+                "resumable": True,
+                "last_status_reason": "manager_restart",
+            },
+        )
+        manager._save_state()
+
+        async def _resume_runner(_session_id: str, task: str) -> str:
+            return f"done:{task}"
+
+        tool = SubagentsTool(manager, resume_runner_factory=lambda row: _resume_runner)
+        resumed = json.loads(
+            await tool.run(
+                {"action": "resume", "run_id": "run-other"},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+        killed = json.loads(
+            await tool.run(
+                {"action": "kill", "run_id": "run-other"},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+
+        assert resumed == {
+            "status": "failed",
+            "action": "resume",
+            "run_id": "run-other",
+            "error": "run_not_found",
+        }
+        assert killed == {
+            "status": "failed",
+            "action": "kill",
+            "run_id": "run-other",
+            "cancelled": False,
+            "error": "run_not_found",
+        }
 
     asyncio.run(_scenario())
 
@@ -865,6 +947,80 @@ def test_subagents_resume_restarts_parallel_group_by_group_id(tmp_path) -> None:
         assert {row["run_id"] for row in payload["runs"]} == {"run-resume-a", "run-resume-b"}
         assert {row["parallel_group_id"] for row in payload["runs"]} == {group_id}
         assert {call[0] for call in calls} == {"cli:owner:subagent:1", "cli:owner:subagent:2"}
+
+    asyncio.run(_scenario())
+
+
+def test_subagents_resume_reports_partial_when_group_has_mixed_outcome(tmp_path) -> None:
+    async def _scenario() -> None:
+        manager = SubagentManager(
+            state_path=tmp_path / "subagents",
+            max_concurrent_runs=1,
+            max_queued_runs=0,
+            max_resume_attempts=2,
+        )
+        group_id = "grp-mixed"
+        manager._runs["run-mixed-a"] = SubagentRun(
+            run_id="run-mixed-a",
+            session_id="cli:owner",
+            task="retry task a",
+            status="interrupted",
+            updated_at="2026-03-05T10:00:00+00:00",
+            metadata={
+                "parallel_group_id": group_id,
+                "parallel_group_index": 1,
+                "parallel_group_size": 2,
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+                "resumable": True,
+                "last_status_reason": "manager_restart",
+            },
+        )
+        manager._runs["run-mixed-b"] = SubagentRun(
+            run_id="run-mixed-b",
+            session_id="cli:owner",
+            task="retry task b",
+            status="interrupted",
+            updated_at="2026-03-05T10:00:01+00:00",
+            metadata={
+                "parallel_group_id": group_id,
+                "parallel_group_index": 2,
+                "parallel_group_size": 2,
+                "resume_attempts": 0,
+                "resume_attempts_max": 2,
+                "retry_budget_remaining": 2,
+                "resumable": True,
+                "last_status_reason": "manager_restart",
+            },
+        )
+        manager._save_state()
+
+        blocker = asyncio.Event()
+
+        async def _resume_runner(_session_id: str, task: str) -> str:
+            await blocker.wait()
+            return f"done:{task}"
+
+        tool = SubagentsTool(manager, resume_runner_factory=lambda row: _resume_runner)
+        payload = json.loads(
+            await tool.run(
+                {"action": "resume", "group_id": group_id},
+                ToolContext(session_id="cli:owner"),
+            )
+        )
+
+        assert payload["status"] == "partial"
+        assert payload["requested"] == 2
+        assert payload["resumed"] == 1
+        assert len(payload["failed"]) == 1
+        assert payload["failed"][0]["run_id"] in {"run-mixed-a", "run-mixed-b"}
+        assert "queue limit reached" in payload["failed"][0]["error"]
+        assert len(payload["runs"]) == 1
+
+        blocker.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
     asyncio.run(_scenario())
 
