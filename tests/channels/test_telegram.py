@@ -2527,13 +2527,23 @@ def test_telegram_save_offset_writes_v2_payload_with_fingerprint(tmp_path: Path)
     channel._offset_path = lambda: offset_path  # type: ignore[method-assign]
     channel._offset = 123
 
-    channel._save_offset()
+    fsync_fds: list[int] = []
+    real_fsync = telegram_module.os.fsync
+
+    def _tracking_fsync(fd: int) -> None:
+        fsync_fds.append(fd)
+        real_fsync(fd)
+
+    with patch("clawlite.channels.telegram.os.fsync", side_effect=_tracking_fsync):
+        channel._save_offset()
 
     persisted = json.loads(offset_path.read_text(encoding="utf-8"))
     assert persisted["schema_version"] == 2
     assert persisted["offset"] == 123
     assert isinstance(persisted["updated_at"], str) and persisted["updated_at"]
     assert persisted["token_fingerprint"] == hashlib.sha256("x:token".encode("utf-8")).hexdigest()[:12]
+    assert len(fsync_fds) >= 1
+    assert not list(tmp_path.glob("offset.json.tmp*"))
     assert channel.signals()["offset_persist_error_count"] == 0
 
 

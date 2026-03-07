@@ -1488,8 +1488,28 @@ class TelegramChannel(BaseChannel):
         }
         tmp_path = path.with_suffix(f"{path.suffix}.tmp")
         try:
-            tmp_path.write_text(json.dumps(payload), encoding="utf-8")
-            tmp_path.replace(path)
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload))
+                fh.flush()
+                try:
+                    os.fsync(fh.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp_path, path)
+            try:
+                dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            except OSError:
+                dir_fd = -1
+            if dir_fd >= 0:
+                try:
+                    os.fsync(dir_fd)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        os.close(dir_fd)
+                    except OSError:
+                        pass
         except OSError as exc:
             self._signals["offset_persist_error_count"] += 1
             logger.warning("telegram offset persist failed path={} error={}", path, exc)
