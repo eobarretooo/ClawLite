@@ -2191,6 +2191,85 @@ def test_telegram_send_supports_media_attachments_and_delivery_receipt() -> None
     asyncio.run(_scenario())
 
 
+def test_telegram_send_assigns_caption_to_first_caption_capable_media_item() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(config={"token": "x:token"})
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.sticker_calls: list[dict] = []
+                self.photo_calls: list[dict] = []
+                self.message_calls: list[dict] = []
+
+            async def send_sticker(self, **kwargs):
+                self.sticker_calls.append(kwargs)
+                return SimpleNamespace(message_id=301)
+
+            async def send_photo(self, **kwargs):
+                self.photo_calls.append(kwargs)
+                return SimpleNamespace(message_id=302)
+
+            async def send_message(self, **kwargs):
+                self.message_calls.append(kwargs)
+                return SimpleNamespace(message_id=303)
+
+        bot = FakeBot()
+        channel.bot = bot
+        metadata: dict[str, object] = {
+            "media": [
+                {"type": "sticker", "file_id": "sticker-1"},
+                {"type": "photo", "file_id": "photo-1"},
+            ],
+        }
+
+        out = await channel.send(target="42", text="**hello**", metadata=metadata)
+
+        assert out == "telegram:sent:2"
+        assert len(bot.sticker_calls) == 1
+        assert "caption" not in bot.sticker_calls[0]
+        assert len(bot.photo_calls) == 1
+        assert bot.photo_calls[0]["caption"] == markdown_to_telegram_html("**hello**")
+        assert bot.photo_calls[0]["parse_mode"] == "HTML"
+        assert bot.message_calls == []
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_send_falls_back_to_follow_up_text_when_media_has_no_caption_support() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(config={"token": "x:token"})
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.video_note_calls: list[dict] = []
+                self.message_calls: list[dict] = []
+
+            async def send_video_note(self, **kwargs):
+                self.video_note_calls.append(kwargs)
+                return SimpleNamespace(message_id=401)
+
+            async def send_message(self, **kwargs):
+                self.message_calls.append(kwargs)
+                return SimpleNamespace(message_id=402)
+
+        bot = FakeBot()
+        channel.bot = bot
+        metadata: dict[str, object] = {
+            "media": [{"type": "video_note", "file_id": "video-note-1"}],
+        }
+
+        out = await channel.send(target="42", text="hello", metadata=metadata)
+
+        assert out == "telegram:sent:2"
+        assert len(bot.video_note_calls) == 1
+        assert "caption" not in bot.video_note_calls[0]
+        assert len(bot.message_calls) == 1
+        assert bot.message_calls[0]["text"] == "hello"
+        assert "parse_mode" not in bot.message_calls[0] or bot.message_calls[0]["parse_mode"] == "HTML"
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_send_places_reply_markup_on_follow_up_text_when_media_caption_is_too_long() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
@@ -2826,6 +2905,62 @@ def test_telegram_typing_starts_on_inbound_and_stops_before_outbound_send() -> N
 
         assert bot.typing_calls >= 1
         assert bot.send_calls == 1
+        assert "42" not in channel._typing_tasks
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_typing_stops_after_inbound_handler_without_immediate_reply() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "typing_enabled": True,
+                "typing_interval_s": 0.01,
+                "typing_max_ttl_s": 1.0,
+                "typing_timeout_s": 0.5,
+            }
+        )
+
+        typing_started = asyncio.Event()
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.typing_calls = 0
+
+            async def send_chat_action(self, **kwargs):
+                del kwargs
+                self.typing_calls += 1
+                typing_started.set()
+                await asyncio.sleep(0.5)
+
+        channel.bot = FakeBot()
+        channel._running = True
+
+        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+            del session_id, user_id, text, metadata
+            await asyncio.wait_for(typing_started.wait(), timeout=1.0)
+
+        channel.on_message = _on_message
+
+        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text="hello",
+            caption=None,
+            chat_id=42,
+            from_user=user,
+            message_id=11,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(update_id=101, message=message, edited_message=None, effective_message=message)
+
+        await channel._handle_update(update)
+
+        assert channel.bot.typing_calls >= 1
         assert "42" not in channel._typing_tasks
 
     asyncio.run(_scenario())
@@ -3736,6 +3871,57 @@ def test_telegram_webhook_success_persists_dedupe_state_before_restart(tmp_path:
         )
         duplicate = await reloaded.handle_webhook_update(payload)
         assert duplicate is False
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_webhook_refreshes_persisted_dedupe_across_live_instances(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted_a: list[str] = []
+        emitted_b: list[str] = []
+        dedupe_path = tmp_path / "telegram-dedupe.json"
+
+        async def _on_message_a(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+            del session_id, user_id, metadata
+            emitted_a.append(text)
+
+        async def _on_message_b(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+            del session_id, user_id, metadata
+            emitted_b.append(text)
+
+        channel_a = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+            },
+            on_message=_on_message_a,
+        )
+        channel_b = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(dedupe_path),
+            },
+            on_message=_on_message_b,
+        )
+
+        payload = {
+            "update_id": 902,
+            "message": {
+                "message_id": 56,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 7, "username": "alice"},
+                "text": "shared dedupe",
+            },
+        }
+
+        first = await channel_a.handle_webhook_update(payload)
+        duplicate = await channel_b.handle_webhook_update(payload)
+
+        assert first is True
+        assert duplicate is False
+        assert emitted_a == ["shared dedupe"]
+        assert emitted_b == []
+        assert channel_b.signals()["webhook_update_duplicate_count"] == 1
 
     asyncio.run(_scenario())
 

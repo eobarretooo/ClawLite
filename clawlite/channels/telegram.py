@@ -582,6 +582,37 @@ class TelegramChannel(BaseChannel):
             self._signals["update_dedupe_state_load_error_count"] += 1
             logger.warning("telegram dedupe state load failed path={} error={}", path, exc)
 
+    def _refresh_update_dedupe_state(self) -> None:
+        path = self.dedupe_state_path
+        try:
+            if not path.exists():
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            keys_raw = data.get("keys", []) if isinstance(data, dict) else []
+            if not isinstance(keys_raw, list):
+                return
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            self._signals["update_dedupe_state_load_error_count"] += 1
+            logger.warning("telegram dedupe state refresh failed path={} error={}", path, exc)
+            return
+
+        changed = False
+        for item in keys_raw:
+            key = str(item or "").strip()
+            if key.startswith("polling:") or key.startswith("webhook:"):
+                _, _, maybe_key = key.partition(":")
+                key = maybe_key.strip()
+            if not key or key in self._seen_update_keys:
+                continue
+            self._seen_update_keys.add(key)
+            self._seen_update_order.append(key)
+            changed = True
+        if not changed:
+            return
+        while len(self._seen_update_order) > self._update_dedupe_limit:
+            oldest = self._seen_update_order.popleft()
+            self._seen_update_keys.discard(oldest)
+
     async def _persist_update_dedupe_state(self) -> None:
         path = self.dedupe_state_path
         tmp_path = path.with_suffix(f"{path.suffix}.tmp.{secrets.token_hex(4)}")
@@ -937,6 +968,10 @@ class TelegramChannel(BaseChannel):
             return False
         self._commit_update_dedupe_key(dedupe_key)
         return True
+
+    @staticmethod
+    def _media_type_supports_caption(media_type: str) -> bool:
+        return media_type in {"animation", "audio", "document", "photo", "video", "voice"}
 
     async def _ensure_bot(self) -> Any:
         if self.bot is not None:
@@ -2079,6 +2114,7 @@ class TelegramChannel(BaseChannel):
         except Exception:
             await self._stop_typing_keepalive(chat_id=chat_id, message_thread_id=message_thread_id)
             raise
+        await self._stop_typing_keepalive(chat_id=chat_id, message_thread_id=message_thread_id)
         self._remember_message_signature(msg_key=msg_key, signature=signature)
         return True
 
@@ -2573,6 +2609,12 @@ class TelegramChannel(BaseChannel):
         message_ids: list[int],
     ) -> int:
         policy = self._send_retry_policy.normalized()
+        caption_index: int | None = None
+        if caption_text:
+            for idx, item in enumerate(items, start=1):
+                if self._media_type_supports_caption(str(item.get("type", "") or "").strip()):
+                    caption_index = idx
+                    break
 
         def _remember_message_id(result: Any) -> None:
             if result is None:
@@ -2587,7 +2629,7 @@ class TelegramChannel(BaseChannel):
 
         for idx, item in enumerate(items, start=1):
             sender, payload_key = self._resolve_media_sender(self.bot, str(item["type"]))
-            raw_caption = caption_text if idx == 1 else None
+            raw_caption = caption_text if idx == caption_index else None
             if raw_caption:
                 caption_payload, caption_parse_mode = self._render_outbound_text(
                     raw_caption,
@@ -2759,6 +2801,7 @@ class TelegramChannel(BaseChannel):
             return False
 
         self._signals["webhook_update_received_count"] += 1
+        self._refresh_update_dedupe_state()
         normalized = self._normalize_webhook_payload(payload)
         dedupe_key = self._build_update_dedupe_key(normalized)
 
@@ -2939,6 +2982,13 @@ class TelegramChannel(BaseChannel):
         total_messages = 0
         if media_items:
             caption_text, follow_up_text = self._split_media_caption(text)
+            if caption_text and not any(
+                self._media_type_supports_caption(str(item.get("type", "") or "").strip()) for item in media_items
+            ):
+                follow_up_text = "\n\n".join(
+                    chunk for chunk in (caption_text, follow_up_text) if isinstance(chunk, str) and chunk.strip()
+                ) or None
+                caption_text = None
             total_messages += await self._send_media_items(
                 chat_id=chat_id,
                 items=media_items,
