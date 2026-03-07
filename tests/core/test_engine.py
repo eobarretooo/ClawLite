@@ -805,6 +805,42 @@ class FakeBlockedToolProvider:
         return ProviderResult(text="done", tool_calls=[], model="fake/model")
 
 
+class FakeJsonStringToolProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        self.snapshots.append(messages)
+        if self.calls == 1:
+            return ProviderResult(
+                text="use tool with json string args",
+                tool_calls=[ToolCall(name="echo", arguments='{"text":"hello"}')],  # type: ignore[arg-type]
+                model="fake/model",
+            )
+        return ProviderResult(text="done", tool_calls=[], model="fake/model")
+
+
+class FakeInvalidToolArgumentsProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        self.snapshots.append(messages)
+        if self.calls == 1:
+            return ProviderResult(
+                text="use tool with broken args",
+                tool_calls=[ToolCall(name="echo", arguments='{"text":hello}')],  # type: ignore[arg-type]
+                model="fake/model",
+            )
+        return ProviderResult(text="done", tool_calls=[], model="fake/model")
+
+
 class ContextCaptureTools:
     def __init__(self) -> None:
         self.last_channel = ""
@@ -828,6 +864,26 @@ class ExecNoopTool(Tool):
 
     async def run(self, arguments: dict[str, Any], ctx: ToolContext) -> str:
         return "ok"
+
+
+class ExecuteCaptureTools:
+    def __init__(self) -> None:
+        self.execute_calls: list[dict[str, Any]] = []
+
+    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+        self.execute_calls.append(
+            {
+                "name": name,
+                "arguments": dict(arguments),
+                "session_id": session_id,
+                "channel": channel,
+                "user_id": user_id,
+            }
+        )
+        return f"{name}:{arguments.get('text', '')}:{session_id}"
+
+    def schema(self):
+        return [{"name": "echo", "description": "echo text", "arguments": {"text": "string"}}]
 
 
 class BlockingConcurrencyProvider:
@@ -866,6 +922,46 @@ def test_engine_runs_tool_roundtrip() -> None:
         assert metrics["turns_cancelled"] == 0
         assert metrics["last_outcome"] == "success"
         assert metrics["last_model"] == "fake/model"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_accepts_tool_arguments_from_json_string_payload() -> None:
+    async def _scenario() -> None:
+        provider = FakeJsonStringToolProvider()
+        tools = ExecuteCaptureTools()
+        engine = AgentEngine(provider=provider, tools=tools)
+
+        out = await engine.run(session_id="cli:json-args", user_text="say hi")
+        assert out.text == "done"
+        assert tools.execute_calls == [
+            {
+                "name": "echo",
+                "arguments": {"text": "hello"},
+                "session_id": "cli:json-args",
+                "channel": "cli",
+                "user_id": "json-args",
+            }
+        ]
+        tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
+        assert len(tool_rows) == 1
+        assert tool_rows[0]["content"] == "echo:hello:cli:json-args"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_rejects_invalid_tool_argument_payloads_before_dispatch() -> None:
+    async def _scenario() -> None:
+        provider = FakeInvalidToolArgumentsProvider()
+        tools = ExecuteCaptureTools()
+        engine = AgentEngine(provider=provider, tools=tools)
+
+        out = await engine.run(session_id="cli:bad-args", user_text="say hi")
+        assert out.text == "done"
+        assert tools.execute_calls == []
+        tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
+        assert len(tool_rows) == 1
+        assert "tool_error:echo:tool_call_arguments_invalid_json" in str(tool_rows[0]["content"])
 
     asyncio.run(_scenario())
 

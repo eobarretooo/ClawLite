@@ -631,9 +631,53 @@ class AgentEngine:
         return str(getattr(tool_call, "name", "") or "").strip()
 
     @staticmethod
+    def _tool_call_raw_arguments(tool_call: Any) -> Any:
+        return getattr(tool_call, "arguments", {})
+
+    @staticmethod
     def _tool_call_arguments(tool_call: Any) -> dict[str, Any]:
-        raw = getattr(tool_call, "arguments", {})
-        return raw if isinstance(raw, dict) else {}
+        raw = AgentEngine._tool_call_raw_arguments(tool_call)
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return dict(raw)
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return {}
+            try:
+                payload = json.loads(text)
+            except Exception as exc:
+                raise ValueError("tool_call_arguments_invalid_json") from exc
+            if not isinstance(payload, dict):
+                raise ValueError("tool_call_arguments_expected_object")
+            return payload
+        raise ValueError(f"tool_call_arguments_invalid_type:{type(raw).__name__}")
+
+    @staticmethod
+    def _tool_call_arguments_for_transcript(tool_call: Any) -> str:
+        raw = AgentEngine._tool_call_raw_arguments(tool_call)
+        if isinstance(raw, dict):
+            return json.dumps(raw, ensure_ascii=False)
+        if isinstance(raw, str):
+            return raw.strip() or "{}"
+        if raw is None:
+            return "{}"
+        try:
+            return json.dumps({"_invalid_arguments_type": type(raw).__name__}, ensure_ascii=False)
+        except Exception:
+            return "{}"
+
+    @staticmethod
+    def _tool_call_signature_arguments(raw: Any, *, fallback_error: str = "") -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if raw is None:
+            return {}
+        payload = {"_invalid_arguments": str(raw)}
+        if fallback_error:
+            payload["_error"] = str(fallback_error)
+        return payload
 
     @staticmethod
     def _assistant_tool_calls(tool_calls: list[Any]) -> list[dict[str, Any]]:
@@ -648,7 +692,7 @@ class AgentEngine:
                     "type": "function",
                     "function": {
                         "name": name,
-                        "arguments": json.dumps(AgentEngine._tool_call_arguments(tool_call), ensure_ascii=False),
+                        "arguments": AgentEngine._tool_call_arguments_for_transcript(tool_call),
                     },
                 }
             )
@@ -2056,11 +2100,22 @@ class AgentEngine:
 
                     call_id = self._tool_call_id(tool_call, idx)
                     name = self._tool_call_name(tool_call)
-                    arguments = self._tool_call_arguments(tool_call)
                     if not name:
                         run_log.error("tool call without name iteration={} idx={}", iteration, idx)
                         continue
+                    raw_arguments = self._tool_call_raw_arguments(tool_call)
+                    tool_argument_error = ""
+                    try:
+                        arguments = self._tool_call_arguments(tool_call)
+                    except ValueError as exc:
+                        arguments = {}
+                        tool_argument_error = str(exc)
                     signature = self._tool_signature(name, arguments)
+                    if tool_argument_error:
+                        signature = self._tool_signature(
+                            name,
+                            self._tool_call_signature_arguments(raw_arguments, fallback_error=tool_argument_error),
+                        )
                     if self.loop_detection.enabled:
                         should_stop, severity, streak = self._detect_tool_loop(tool_history, signature)
                         if should_stop:
@@ -2166,18 +2221,27 @@ class AgentEngine:
                         limit=budget.max_progress_events or 1,
                     )
                     bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).debug("executing call_id={}", call_id)
-                    try:
-                        tool_result = await self.tools.execute(
-                            name,
-                            arguments,
-                            session_id=session_id,
-                            channel=runtime_channel,
-                            user_id=runtime_chat_id,
+                    if tool_argument_error:
+                        bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).warning(
+                            "tool call rejected call_id={} error={} raw_type={}",
+                            call_id,
+                            tool_argument_error,
+                            type(raw_arguments).__name__,
                         )
-                    except Exception as exc:
-                        bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).error("execution failed call_id={} error={}", call_id, exc)
-                        tool_result = f"tool_error:{name}:{exc}"
-                    tool_calls_executed += 1
+                        tool_result = f"tool_error:{name}:{tool_argument_error}"
+                    else:
+                        try:
+                            tool_result = await self.tools.execute(
+                                name,
+                                arguments,
+                                session_id=session_id,
+                                channel=runtime_channel,
+                                user_id=runtime_chat_id,
+                            )
+                        except Exception as exc:
+                            bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).error("execution failed call_id={} error={}", call_id, exc)
+                            tool_result = f"tool_error:{name}:{exc}"
+                        tool_calls_executed += 1
 
                     failure_fingerprint = self._failure_fingerprint(tool_signature=signature, tool_result=tool_result)
 
