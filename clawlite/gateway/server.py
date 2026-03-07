@@ -1273,7 +1273,7 @@ async def _run_proactive_monitor(runtime: RuntimeContainer) -> dict[str, Any]:
             )
 
     try:
-        channel, target = await _latest_memory_route(memory_store)
+        channel, target = await _latest_memory_route(memory_store, preferred_channel="telegram")
         if memory_store is not None and hasattr(memory_store, "retrieve"):
             proactive = await memory_store.retrieve(
                 "What should be the next proactive follow-up question?",
@@ -1395,7 +1395,7 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
     memory_store = getattr(getattr(runtime, "engine", None), "memory", None)
 
     if decision.action == "run" and decision.text:
-        channel, target = await _latest_memory_route(memory_store)
+        channel, target = await _latest_memory_route(memory_store, preferred_channel="telegram")
         metadata = {
             "source": "heartbeat",
             "trigger": "heartbeat_loop",

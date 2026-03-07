@@ -1864,6 +1864,48 @@ def test_run_heartbeat_contract_runs_on_actionable_output(tmp_path: Path) -> Non
     asyncio.run(_scenario())
 
 
+def test_run_heartbeat_prefers_telegram_route_over_newer_cli_history(tmp_path: Path) -> None:
+    _LATEST_MEMORY_ROUTE_CACHE.clear()
+    history_path = tmp_path / "memory.jsonl"
+    history_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"source": "session:telegram:chat42", "created_at": "2026-03-05T00:00:00+00:00"}),
+                json.dumps({"source": "session:cli:profile", "created_at": "2026-03-06T00:00:00+00:00"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _Memory:
+        def __init__(self, path: Path) -> None:
+            self.history_path = path
+
+    class _Engine:
+        def __init__(self) -> None:
+            self.memory = _Memory(history_path)
+
+        async def run(self, *, session_id: str, user_text: str):
+            del session_id, user_text
+            return SimpleNamespace(text="Alert: queue backlog is growing")
+
+    async def _scenario() -> None:
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels)
+
+        decision = await _run_heartbeat(runtime)
+
+        assert decision.action == "run"
+        assert decision.reason == "actionable_dispatched"
+        channels.send.assert_awaited_once()
+        kwargs = channels.send.await_args.kwargs
+        assert kwargs["channel"] == "telegram"
+        assert kwargs["target"] == "chat42"
+
+    asyncio.run(_scenario())
+
+
 def test_run_heartbeat_injects_workspace_content_when_available() -> None:
     class _Engine:
         def __init__(self) -> None:
@@ -2040,6 +2082,69 @@ def test_run_proactive_monitor_sends_next_step_query_proactive_suggestion(tmp_pa
         assert kwargs["metadata"]["trigger"] == "next_step_query"
         assert monitor.delivered == 1
         assert monitor.failed == 0
+
+    asyncio.run(_scenario())
+
+
+def test_run_proactive_monitor_next_step_prefers_telegram_route_over_newer_cli_history(tmp_path: Path) -> None:
+    _LATEST_MEMORY_ROUTE_CACHE.clear()
+    history_path = tmp_path / "memory.jsonl"
+    history_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"source": "session:telegram:chat42", "created_at": "2026-03-05T00:00:00+00:00"}),
+                json.dumps({"source": "session:cli:profile", "created_at": "2026-03-06T00:00:00+00:00"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _Memory:
+        def __init__(self, path: Path) -> None:
+            self.history_path = path
+
+        async def retrieve(self, query: str, *, method: str = "rag", limit: int = 5):
+            assert query
+            assert method == "llm"
+            assert limit == 5
+            return {
+                "status": "ok",
+                "method": "llm",
+                "next_step_query": "Should we confirm the deployment owner?",
+            }
+
+    class _Engine:
+        def __init__(self) -> None:
+            self.memory = _Memory(history_path)
+
+    class _Monitor:
+        async def scan(self):
+            return []
+
+        def should_deliver(self, suggestion, *, min_priority: float = 0.0) -> bool:
+            return float(getattr(suggestion, "priority", 0.0) or 0.0) >= float(min_priority)
+
+        def mark_delivered(self, suggestion) -> bool:
+            del suggestion
+            return True
+
+        def mark_failed(self, suggestion, *, error: str = "") -> bool:
+            del suggestion, error
+            return True
+
+    async def _scenario() -> None:
+        monitor = _Monitor()
+        channels = SimpleNamespace(send=AsyncMock(return_value="msg-1"))
+        runtime = SimpleNamespace(engine=_Engine(), channels=channels, memory_monitor=monitor)
+
+        result = await _run_proactive_monitor(runtime)
+
+        assert result["status"] == "ok"
+        channels.send.assert_awaited_once()
+        kwargs = channels.send.await_args.kwargs
+        assert kwargs["channel"] == "telegram"
+        assert kwargs["target"] == "chat42"
 
     asyncio.run(_scenario())
 
