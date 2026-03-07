@@ -30,6 +30,7 @@ from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.providers import build_provider, detect_provider_name
 from clawlite.providers.discovery import probe_local_provider_runtime
+from clawlite.providers.reliability import is_quota_429_error
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
@@ -2495,6 +2496,25 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             payload = {"error": "http_error", "status": exc.status_code, "code": "http_error", "detail": detail}
         return JSONResponse(status_code=exc.status_code, content=payload)
 
+    def _parse_failover_cooling_down(raw: str) -> str:
+        parts: list[str] = []
+        for item in str(raw or "").split(","):
+            text = str(item or "").strip()
+            if not text:
+                continue
+            model, sep, remaining_raw = text.rpartition(":")
+            if not sep:
+                parts.append(text)
+                continue
+            try:
+                remaining_s = float(remaining_raw)
+            except ValueError:
+                parts.append(text)
+                continue
+            label = model.strip() or text
+            parts.append(f"{label} ({remaining_s:.1f}s)")
+        return ", ".join(parts[:4])
+
     def _provider_error_payload(exc: RuntimeError) -> tuple[int, str]:
         message = str(exc)
         if message == "engine_run_timeout":
@@ -2513,6 +2533,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 400,
                 f"Chave de API ausente para o provedor '{provider}'. Defina CLAWLITE_LITELLM_API_KEY ou a chave especifica do provedor.",
             )
+        if message.startswith("provider_auth_error:"):
+            provider = message.rsplit(":", 1)[-1]
+            return (
+                502,
+                f"Falha de autenticacao no provedor '{provider}'. Verifique a chave configurada e refaça a autenticacao se necessario.",
+            )
         if message.startswith("provider_config_error:missing_base_url:"):
             provider = message.rsplit(":", 1)[-1]
             return (
@@ -2521,16 +2547,37 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
         if message.startswith("provider_config_error:"):
             return (400, "Configuracao invalida do provedor. Revise modelo, base URL e chave de API.")
+        if message.startswith("provider_failover_cooldown:all_candidates_cooling_down:"):
+            detail = message.partition("provider_failover_cooldown:all_candidates_cooling_down:")[2]
+            formatted = _parse_failover_cooling_down(detail)
+            suffix = f" Candidatos em cooldown: {formatted}." if formatted else ""
+            return (503, f"Todos os providers candidatos do failover estao em cooldown temporario.{suffix}")
+        if message.startswith("provider_circuit_open:"):
+            _, _, raw = message.partition("provider_circuit_open:")
+            provider, _, cooldown_raw = raw.partition(":")
+            provider_name = provider.strip() or "desconhecido"
+            cooldown_hint = ""
+            try:
+                cooldown_hint = f" Aguarde cerca de {float(cooldown_raw):.1f}s antes de tentar novamente."
+            except ValueError:
+                cooldown_hint = ""
+            return (
+                503,
+                f"Provider '{provider_name}' entrou em modo de protecao apos falhas consecutivas.{cooldown_hint}",
+            )
         if provider_http_code == "400":
             hint = provider_http_detail or "Verifique modelo, chave de API e base URL do provedor."
             return (400, f"Requisicao invalida ao provedor (400). {hint}")
-        if provider_http_code == "401":
+        if provider_http_code in {"401", "403"}:
             return (
                 502,
-                "Falha de autenticacao no provedor (401). Verifique CLAWLITE_MODEL e CLAWLITE_LITELLM_API_KEY."
+                f"Falha de autenticacao no provedor (HTTP {provider_http_code}). Verifique CLAWLITE_MODEL e CLAWLITE_LITELLM_API_KEY."
                 + (f" Detalhe: {provider_http_detail}" if provider_http_detail else ""),
             )
         if provider_http_code == "429" or message == "provider_429_exhausted":
+            if is_quota_429_error(message):
+                detail = f" Detalhe: {provider_http_detail}" if provider_http_detail else ""
+                return (429, f"Quota ou limite de billing esgotado no provedor.{detail}")
             return (429, "Limite de requisicoes no provedor. Tente novamente em instantes.")
         if provider_http_code:
             detail = f" Detalhe: {provider_http_detail}" if provider_http_detail else ""

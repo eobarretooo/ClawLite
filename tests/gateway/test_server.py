@@ -1329,6 +1329,79 @@ def test_gateway_provider_error_payload_codex_missing_token_guidance(tmp_path: P
         assert "provider login openai-codex" in str(payload.get("error", "")).lower()
 
 
+def test_gateway_provider_error_payload_failover_cooldown_lists_candidates(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    async def _raise_provider(*, session_id: str, user_text: str):
+        raise RuntimeError(
+            "provider_failover_cooldown:all_candidates_cooling_down:openai/gpt-4o-mini:30.000,groq/llama-3.1-8b-instant:12.500"
+        )
+
+    app.state.runtime.engine.run = _raise_provider
+
+    with TestClient(app) as client:
+        chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
+        assert chat.status_code == 503
+        payload = chat.json()
+        text = str(payload.get("error", "")).lower()
+        assert "cooldown" in text
+        assert "openai/gpt-4o-mini" in text
+        assert "groq/llama-3.1-8b-instant" in text
+
+
+def test_gateway_provider_error_payload_circuit_open_includes_provider_and_cooldown(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    async def _raise_provider(*, session_id: str, user_text: str):
+        raise RuntimeError("provider_circuit_open:openai:30.0")
+
+    app.state.runtime.engine.run = _raise_provider
+
+    with TestClient(app) as client:
+        chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
+        assert chat.status_code == 503
+        payload = chat.json()
+        text = str(payload.get("error", "")).lower()
+        assert "openai" in text
+        assert "30.0s" in text
+        assert "protecao" in text
+
+
+def test_gateway_provider_error_payload_quota_429_is_specific(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    async def _raise_provider(*, session_id: str, user_text: str):
+        raise RuntimeError("provider_http_error:429:insufficient_quota: billing exhausted")
+
+    app.state.runtime.engine.run = _raise_provider
+
+    with TestClient(app) as client:
+        chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
+        assert chat.status_code == 429
+        payload = chat.json()
+        text = str(payload.get("error", "")).lower()
+        assert "quota" in text
+        assert "billing" in text
+
+
 def test_run_heartbeat_contract_skips_on_heartbeat_ok() -> None:
     class _Engine:
         async def run(self, *, session_id: str, user_text: str):
