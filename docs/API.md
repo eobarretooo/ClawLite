@@ -48,6 +48,7 @@ Example response:
     "channels": {"enabled": true, "running": true, "last_error": ""},
     "cron": {"enabled": true, "running": true, "last_error": ""},
     "heartbeat": {"enabled": true, "running": true, "last_error": ""},
+    "subagent_maintenance": {"enabled": true, "running": true, "last_error": ""},
     "supervisor": {"enabled": true, "running": true, "last_error": ""},
     "autonomy": {"enabled": false, "running": false, "last_error": "disabled"},
     "engine": {"enabled": true, "running": true, "last_error": ""}
@@ -74,6 +75,7 @@ Scheduler diagnostics/status payloads are additive and include reliability telem
 - `autonomy` may include `last_error_kind`, `skipped_provider_backoff`, `provider_backoff_remaining_s`, `provider_backoff_reason`, `provider_backoff_provider`, and a trimmed provider snapshot in `last_snapshot.provider`.
 - `last_snapshot.provider` may include `suppression_reason`, `suppression_backoff_s`, and `suppression_hint` when autonomy is intentionally holding off on provider calls.
 - `supervisor` may include per-component recovery budgets and cooldown telemetry in `component_recovery`, plus aggregate `recovery_skipped_budget` counters.
+- control-plane `components` may include `subagent_maintenance`, a background sweeper loop that keeps subagent queue/run state fresh and recoverable.
 
 ## `GET /v1/diagnostics`
 
@@ -94,6 +96,14 @@ If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostic
 - queue/state: `pending`, `cooldown_seconds`, `suggestions_path`
 
 Purpose: operational visibility for proactive memory suggestions (generation, suppression, and delivery outcomes) without exposing raw memory content.
+
+`subagents` is additive and reports persisted subagent manager/runtime telemetry:
+
+- manager snapshot: `state_path`, concurrency/queue/quota limits, `run_count`, `running_count`, `queued_count`, `resumable_count`, `queue_depth`, `status_counts`
+- maintenance snapshot: `maintenance_interval_s` plus `maintenance` counters (`sweep_runs`, `last_sweep_at`, `last_sweep_changed`, `last_sweep_stats`, `totals`)
+- runner snapshot: nested `runner` map for the gateway background maintenance loop (`enabled`, `running`, `interval_seconds`, `ticks`, `success_count`, `error_count`, `last_result`, `last_error`, `last_run_iso`)
+
+Purpose: operational visibility for subagent replay/sweep health, heartbeat freshness, and supervisor-managed maintenance recovery.
 
 Memory quality tuning diagnostics (stages 15-18) are additive and may appear in:
 
@@ -155,6 +165,7 @@ Example response:
   "heartbeat": {},
   "supervisor": {},
   "autonomy": {},
+  "subagents": {},
   "autonomy_actions": {},
   "environment": {}
 }
@@ -462,8 +473,10 @@ Campos baseline de contrato:
 - `generated_at`: timestamp UTC ISO-8601 da geracao do snapshot.
 - `uptime_s`: uptime do processo do gateway em segundos.
 - `contract_version`: versao estavel do contrato HTTP do gateway.
+- `control_plane.components.subagent_maintenance`: estado do loop de manutencao/sweep de subagentes supervisionado pela gateway.
 - `channels_delivery`: contadores de entrega agregados do `ChannelManager` (`total` e `per_channel`).
 - `memory_monitor`: telemetria do monitor proativo de memoria (`enabled`, contadores de scan/geracao/entrega, pendencias, cooldown e path do backlog).
+- `subagents`: snapshot operacional do `SubagentManager`, incluindo limites, contagens por status, telemetria de sweep/manutencao e o estado do runner de manutencao em background.
 - `channels_delivery.recent`: snapshots por mensagem (mais recentes primeiro) com outcome e recibo seguro por envio, sem texto da mensagem.
   Inclui contadores aditivos de confirmacao/falha final e supressao de duplicatas (`delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`).
 - `http`: telemetria HTTP em memoria (aditiva) com `total_requests`,
