@@ -28,20 +28,17 @@ QuickStart validates the provider live, configures a local token-protected gatew
 - `BOOTSTRAP.md`
 - `memory/MEMORY.md`
 
+For Discord, Email, WhatsApp, Slack, and manual Telegram variants, use the channel reference in `docs/channels.md` after QuickStart finishes.
+
+If you want to skip the wizard and configure a provider manually, use `docs/providers.md`.
+
 Use the manual section-by-section flow when you need custom gateway or channel settings:
 
 ```bash
 clawlite configure --flow advanced
 ```
 
-## 3. Configure provider
-
-```bash
-export CLAWLITE_MODEL="gemini/gemini-2.5-flash"
-export CLAWLITE_LITELLM_API_KEY="<your-key>"
-```
-
-## 4. Start gateway
+## 3. Start gateway
 
 ```bash
 clawlite start --host 127.0.0.1 --port 8787
@@ -53,12 +50,32 @@ Equivalent alias:
 clawlite gateway --host 127.0.0.1 --port 8787
 ```
 
-## 5. Test `/v1/chat`
+## 4. Send the first message
 
 ```bash
-curl -sS http://127.0.0.1:8787/v1/chat \
-  -H 'content-type: application/json' \
-  -d '{"session_id":"cli:quickstart","text":"who are you?"}'
+clawlite run "hello, introduce yourself and confirm the active model"
 ```
 
-If `gateway.auth.mode=required`, send the token via `Authorization: Bearer <token>` or query `?token=<token>`.
+## 5. Optional HTTP smoke test for `/v1/chat`
+
+```bash
+python - <<'PY'
+import json
+import pathlib
+import urllib.request
+
+cfg = json.loads((pathlib.Path.home() / ".clawlite" / "config.json").read_text())
+token = cfg["gateway"]["auth"]["token"]
+req = urllib.request.Request(
+    "http://127.0.0.1:8787/v1/chat",
+    data=b'{"session_id":"cli:quickstart","text":"who are you?"}',
+    headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    },
+)
+print(urllib.request.urlopen(req).read().decode())
+PY
+```
+
+QuickStart sets `gateway.auth.mode=required`, so authenticated HTTP requests must send `Authorization: Bearer <token>` or use `?token=<token>`.

@@ -177,6 +177,7 @@ Example:
   - `retry_max_attempts`, `retry_initial_backoff_s`, `retry_max_backoff_s`, `retry_jitter_s`
   - `circuit_failure_threshold`, `circuit_cooldown_s`
   - `fallback_model` (optional second model path for retryable provider failures)
+- Runtime note: the gateway helper currently forwards `model`, `auth`, and `providers` into provider construction, but not the top-level `provider.retry_*`, `provider.circuit_*`, or `provider.fallback_model` fields. The provider classes still use their built-in default retry/circuit behavior, but persisted provider-level failover intent is not fully wired through the live gateway path yet.
 
 ## Codex OAuth auth block
 
@@ -223,8 +224,8 @@ In `channels.telegram`, besides `enabled` and `token`, the most used operational
 - `media_download_dir` (override where inbound Telegram media files are stored)
 - `transcribe_voice`, `transcribe_audio` (enable voice/audio transcription enrichment on inbound media; default `true` when an API key is available)
 - `transcription_api_key`, `transcription_language`, `transcription_base_url`, `transcription_model`, `transcription_timeout_s` (voice/audio transcription settings; `transcription_api_key` falls back to `GROQ_API_KEY`)
-- `dm_policy`, `group_policy`, `topic_policy` (`open|allowlist|disabled`; invalid values default to `open`)
-- `dm_allow_from`, `group_allow_from`, `topic_allow_from` (per-context allowlists used when matching `*_policy=allowlist`)
+- `dm_policy`, `group_policy`, `topic_policy` (`open|allowlist|disabled|pairing`; `pairing` is only meaningful for private chats, invalid values default to `open`)
+- `dm_allow_from`, `group_allow_from`, `topic_allow_from` (per-context allowlists used when matching `*_policy=allowlist`; when `dm_policy=pairing`, approved pairing entries are merged into DM access)
 - `group_overrides` (per-chat policy override map; supports per-topic overrides by `message_thread_id`)
 
 Context-aware Telegram access policy:

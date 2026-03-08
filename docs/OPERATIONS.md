@@ -105,8 +105,8 @@ Notas:
 
 ## Bootstrap one-shot lifecycle
 
-- `BOOTSTRAP.md` é processado como etapa one-shot: após o primeiro turno de usuário bem-sucedido (sessões não internas), o gateway remove o arquivo e grava `memory/bootstrap-state.json`.
-- Sessões internas (`heartbeat:*`, `autonomy:*`, `bootstrap:*`) não finalizam bootstrap automaticamente.
+- `BOOTSTRAP.md` é processado como etapa one-shot com ciclo de startup: quando o arquivo ainda está pendente, o gateway executa bootstrap usando a sessão interna `bootstrap:system`, grava o estado em `memory/bootstrap-state.json` e remove `BOOTSTRAP.md` após sucesso.
+- Sessões internas continuam separadas do tráfego normal de usuário; o bootstrap não depende mais do primeiro turno externo bem-sucedido para ser finalizado.
 - Visibilidade local: `clawlite status` (`bootstrap_pending`, `bootstrap_last_status`) e `clawlite diagnostics` (`local.bootstrap`).
 
 ## Retrieval observability + eval

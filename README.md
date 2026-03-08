@@ -1,177 +1,159 @@
-<div align="center">
-  <img src="assets/clawlite-logo.png" alt="ClawLite Logo" width="200"/>
+# ClawLite
 
-  # ClawLite
+ClawLite is a Python autonomous assistant with a local gateway, pluggable LLM providers, persistent memory, workspace bootstrap files, scheduled jobs, and messaging channels.
 
-  **Autonomous AI agent for Linux and Android, no cloud required.**
+It is built for developers who want to get a bot running locally first, then wire it into Telegram, Discord, Email, WhatsApp, or Slack.
 
-  [Releases](https://github.com/eobarretooo/ClawLite/releases) · [Report Bug](https://github.com/eobarretooo/ClawLite/issues)
-</div>
+## Why ClawLite
 
----
+- Local-first runtime with CLI, HTTP, and WebSocket entry points.
+- Provider routing across hosted APIs, local Ollama/vLLM, OpenAI Codex OAuth, and custom OpenAI-compatible backends.
+- Persistent memory with JSONL history, SQLite or pgvector indexing, snapshots, branches, privacy rules, and working-memory state.
+- Built-in tools for exec, files, web, MCP, cron, messaging, sessions, skills, and memory operations.
+- Channel adapters for Telegram, Discord, Email, WhatsApp, and Slack.
+- Workspace bootstrap files that shape identity, user context, operating style, heartbeat behavior, and long-term notes.
 
-![Python](https://img.shields.io/badge/python-3.10+-blue?logo=python&logoColor=white) ![License](https://img.shields.io/github/license/eobarretooo/ClawLite) ![Version](https://img.shields.io/github/v/release/eobarretooo/ClawLite)
+## 5-minute Quickstart
 
-![Stars](https://img.shields.io/github/stars/eobarretooo/ClawLite?style=social) ![Forks](https://img.shields.io/github/forks/eobarretooo/ClawLite?style=social) ![Last Commit](https://img.shields.io/github/last-commit/eobarretooo/ClawLite)
-
----
-
-ClawLite is an autonomous AI assistant written in Python, designed to run entirely locally on Linux and Android (Termux). It supports multiple LLM providers via LiteLLM, persistent memory, autonomous tool use, scheduled tasks (cron), and multi-channel integration — processing inputs from CLI, WebSockets, Telegram, Discord, and WhatsApp natively.
-
-## ✨ Features
-
-- ✅ **Real agent loop** — iterative Think → Act → Observe cycle without human intervention
-- ✅ **Native system tools** — built-in `bash_runner` and `file_editor` for direct OS access
-- ✅ **Multi-provider routing** — switch between Gemini, OpenAI, Anthropic, Groq, OpenRouter, and local Ollama
-- ✅ **Persistent memory** — JSONL-based store with BM25 semantic retrieval and deduplication
-- ✅ **Multi-channel endpoints** — process messages via Telegram, Discord, WhatsApp, REST, and WebSockets
-- ✅ **Background operations** — built-in cron scheduler and heartbeat monitoring
-- ✅ **Extensible skills** — add capabilities instantly via Markdown (`SKILL.md`) drops
-
-## 🚀 Quick Start
+### 1) Install
 
 ```bash
 git clone https://github.com/eobarretooo/ClawLite.git
 cd ClawLite
-pip install -e .
-clawlite configure --flow quickstart
-clawlite gateway
-```
-
-That's it. Your agent is running at `http://127.0.0.1:8787` and via CLI.
-
-Use `clawlite configure --flow advanced` when you want the manual section-by-section wizard.
-
-## 📦 Installation
-
-**Requirements:** Python 3.10+
-
-```bash
-# Clone the repository
-git clone https://github.com/eobarretooo/ClawLite.git
-cd ClawLite
-
-# Install in editable mode
-pip install -e .
-```
-
-**Android (Termux via Ubuntu proot):**
-
-For the best experience and full compatibility on Android, use a prooted Ubuntu environment:
-
-```bash
-# 1. In Termux, install and run Ubuntu:
-pkg update && pkg upgrade -y
-pkg install proot-distro -y
-proot-distro install ubuntu
-proot-distro login ubuntu
-
-# 2. Inside Ubuntu, install dependencies:
-apt update && apt upgrade -y
-apt install python3 python3-pip python3-venv git -y
-
-# 3. Clone and install:
-git clone https://github.com/eobarretooo/ClawLite.git
-cd ClawLite
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
+pip install -U pip
 pip install -e .
 ```
 
-## ⚙️ Configuration
+On Windows PowerShell, activate the virtualenv with `./.venv/Scripts/Activate.ps1`.
 
-Config lives at `~/.clawlite/config.json`:
+### 2) Run the guided setup
 
-```json
-{
-  "provider": {
-    "model": "gemini/gemini-2.5-flash"
-  },
-  "providers": {
-    "gemini": {
-      "api_key": "your-gemini-key"
-    }
-  },
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token": "your-bot-token"
-    }
-  }
-}
+```bash
+clawlite configure --flow quickstart
 ```
 
-## 📖 Usage
+Quickstart does four things for you:
 
-**Start the gateway:**
+- Validates the selected provider live.
+- Keeps the gateway local on `127.0.0.1:8787`.
+- Enables token auth on the gateway.
+- Offers Telegram setup and bootstraps the workspace files.
+
+### 3) Start the gateway
+
 ```bash
 clawlite gateway
-# or with specific host/port
-clawlite gateway --host 127.0.0.1 --port 8787
 ```
 
-**Chat via CLI:**
+### 4) Send the first message
+
 ```bash
-clawlite run "hello agent, what is your status?"
+clawlite run "hello, introduce yourself and confirm the active model"
 ```
 
-**Switch active model and provider:**
+Optional HTTP smoke test against the running gateway:
+
 ```bash
-clawlite provider use ollama --model openai/llama3.2
-clawlite provider set-auth openai --api-key "sk-..."
+python - <<'PY'
+import json
+import pathlib
+import urllib.request
+
+cfg = json.loads((pathlib.Path.home() / ".clawlite" / "config.json").read_text())
+token = cfg["gateway"]["auth"]["token"]
+req = urllib.request.Request(
+    "http://127.0.0.1:8787/v1/chat",
+    data=b'{"session_id":"readme:quickstart","text":"who are you?"}',
+    headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    },
+)
+print(urllib.request.urlopen(req).read().decode())
+PY
 ```
 
-**System diagnostics and validation:**
+## Channels Available Today
+
+| Channel | Inbound | Outbound | Status | Notes |
+| --- | --- | --- | --- | --- |
+| Telegram | Yes | Yes | Most complete | Polling and webhook, pairing flows, reactions, topics, typing keepalive, voice/audio transcription |
+| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, attachments arrive as text placeholders |
+| Email | Yes | Yes | Usable | IMAP receive plus SMTP reply/send |
+| WhatsApp | Yes | Yes | Usable | Inbound webhook plus outbound bridge `/send` |
+| Slack | No | Yes | Send-only | Outbound `chat.postMessage`; no inbound event loop yet |
+| Signal, Google Chat, Matrix, IRC, iMessage, DingTalk, Feishu, Mochat, QQ | No | No | Placeholders | Registered channel names, but passive stubs only |
+
+See `docs/channels.md` for real config examples and channel-specific caveats.
+
+## Providers Available Today
+
+ClawLite currently supports:
+
+- Hosted OpenAI-compatible providers: OpenAI, Gemini, Groq, DeepSeek, OpenRouter, Together, Hugging Face, xAI, Mistral, Moonshot, Qianfan, Z.AI, NVIDIA, BytePlus, Doubao, Volcengine, KiloCode.
+- Hosted Anthropic-compatible providers: Anthropic, MiniMax, Xiaomi, Kimi Coding.
+- Local runtimes: Ollama and vLLM.
+- Special cases: OpenAI Codex OAuth and `custom/<model>` providers.
+
+The default model is `gemini/gemini-2.5-flash`.
+
+See `docs/providers.md` for auth resolution, aliases, base URLs, and failover notes.
+
+## Workspace and Memory
+
+Quickstart bootstraps these workspace files under `~/.clawlite/workspace` by default:
+
+- `IDENTITY.md`
+- `SOUL.md`
+- `USER.md`
+- `AGENTS.md`
+- `TOOLS.md`
+- `HEARTBEAT.md`
+- `BOOTSTRAP.md`
+- `memory/MEMORY.md`
+
+ClawLite also keeps session state under `~/.clawlite/state` and structured memory data under `~/.clawlite/memory`.
+
+See `docs/workspace.md` and `docs/memory.md` for the current file layout and lifecycle.
+
+## Useful CLI Commands
+
 ```bash
+clawlite status
+clawlite validate config
 clawlite validate preflight --gateway-url http://127.0.0.1:8787
 clawlite diagnostics --gateway-url http://127.0.0.1:8787
-```
-
-**Available Skills:**
-```bash
+clawlite provider use openai --model openai/gpt-4o-mini
 clawlite skills list
-clawlite skills check
+clawlite memory doctor --repair
 ```
 
-## 🗂️ Project Structure
+The full command reference lives in `docs/cli.md`.
 
-```text
-clawlite/
-├── core/         # Engine, prompt generation, memory, skills, subagents
-├── tools/        # Tool registry and built-in capabilities
-├── channels/     # Telegram, Discord, and WhatsApp adapters
-├── gateway/      # FastAPI REST and WebSocket server
-├── scheduler/    # Cron and heartbeat automation
-├── providers/    # LiteLLM routing and model configurations
-├── session/      # JSONL session persistence layer
-└── workspace/    # Identity templates (IDENTITY.md, SOUL.md, USER.md)
-```
+## Documentation
 
-## 🤝 Contributing
+- `docs/cli.md` - every CLI command with examples
+- `docs/channels.md` - Telegram, Discord, Email, WhatsApp, Slack, and channel runtime behavior
+- `docs/providers.md` - supported providers, auth, aliases, local runtimes, and failover notes
+- `docs/tools.md` - built-in tool catalog, aliases, and config
+- `docs/workspace.md` - workspace bootstrap, runtime-critical files, and bootstrap lifecycle
+- `docs/memory.md` - memory config, backends, files, privacy, quality, and snapshots
+- `docs/QUICKSTART.md` - quickstart walkthrough
+- `docs/API.md` - gateway HTTP and WebSocket surfaces
+- `docs/SKILLS.md` - skill discovery and lifecycle
+- `docs/ARCHITECTURE.md` - runtime architecture
+- `docs/OPERATIONS.md` - diagnostics and operational runbooks
 
-Pull requests are welcome. For major changes, open an issue first.
+## Development
 
 ```bash
-git clone https://github.com/eobarretooo/ClawLite.git
-cd ClawLite
-pip install -e ".[dev]"
-pytest -q tests
+pip install -e .
+python -m pytest tests -q --tb=short
+python -m ruff check --select=E,F,W .
 ```
 
+## License
 
-
-## 🙏 Acknowledgements
-
-ClawLite was built on the shoulders of giants. Special thanks to:
-
-- [Nanobot](https://github.com/HKUDS/nanobot) — for the ultra-lightweight agent architecture inspiration
-- [OpenClaw](https://github.com/openclaw/openclaw) — for the conceptual foundation and multi-channel approach
-- [memU](https://github.com/NevaMind-AI/memU) — for the advanced persistent memory and retrieval concepts
-
-## ⭐️ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=eobarretooo/ClawLite&type=Date)](https://star-history.com/#eobarretooo/ClawLite&Date)
-
-## 📄 License
-
-[MIT](LICENSE) © 2026 eobarretooo
+MIT. See `LICENSE`.
