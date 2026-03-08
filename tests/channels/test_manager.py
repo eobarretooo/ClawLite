@@ -524,6 +524,11 @@ def test_channel_manager_target_from_session_id_parses_telegram_topic_format() -
     assert target == "-10042:9"
 
 
+def test_channel_manager_target_from_session_id_parses_telegram_private_thread_format() -> None:
+    target = ChannelManager._target_from_session_id("telegram", "telegram:42:thread:7")
+    assert target == "42:7"
+
+
 def test_channel_manager_dispatch_preserves_telegram_thread_target() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()
@@ -542,6 +547,29 @@ def test_channel_manager_dispatch_preserves_telegram_thread_target() -> None:
 
         assert telegram.sent
         assert telegram.sent[0][0] == "42:9"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_send_outbound_parses_telegram_private_thread_session() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("telegram", FakeChannel)
+        await mgr.start({"channels": {"telegram": {"enabled": True}}})
+
+        telegram = mgr._channels["telegram"]
+        out = await mgr.send_outbound(
+            channel="telegram",
+            session_id="telegram:42:thread:7",
+            text="hello thread",
+        )
+
+        assert out == "ok"
+        assert telegram.sent
+        assert telegram.sent[0][0] == "42:7"
 
         await mgr.stop()
 

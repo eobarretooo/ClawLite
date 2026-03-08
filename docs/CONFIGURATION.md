@@ -219,6 +219,10 @@ In `channels.telegram`, besides `enabled` and `token`, the most used operational
 - `typing_circuit_cooldown_s` (cooldown while typing auth circuit is open)
 - `reaction_notifications` (`off|own|all`, default `own`; `own` only forwards reactions for messages sent by this bot instance)
 - `reaction_own_cache_limit` (max cached `(chat_id,message_id)` keys used by `reaction_notifications=own`, default `4096`)
+- `dedupe_state_path`, `offset_state_path` (override persisted Telegram dedupe/watermark files)
+- `media_download_dir` (override where inbound Telegram media files are stored)
+- `transcribe_voice`, `transcribe_audio` (enable voice/audio transcription enrichment on inbound media; default `true` when an API key is available)
+- `transcription_api_key`, `transcription_language`, `transcription_base_url`, `transcription_model`, `transcription_timeout_s` (voice/audio transcription settings; `transcription_api_key` falls back to `GROQ_API_KEY`)
 - `dm_policy`, `group_policy`, `topic_policy` (`open|allowlist|disabled`; invalid values default to `open`)
 - `dm_allow_from`, `group_allow_from`, `topic_allow_from` (per-context allowlists used when matching `*_policy=allowlist`)
 - `group_overrides` (per-chat policy override map; supports per-topic overrides by `message_thread_id`)
@@ -256,6 +260,7 @@ Webhook notes:
 - Webhook activates when `mode=webhook` or `webhook_enabled=true` and both `webhook_url` + `webhook_secret` are configured.
 - Gateway ingests Telegram updates on configured `webhook_path` (default `/api/webhooks/telegram`) and validates header `X-Telegram-Bot-Api-Secret-Token`.
 - If webhook activation is not possible (missing fields or Telegram setWebhook failure), channel falls back safely to polling.
+- Inbound voice/audio can be transcribed and appended to the forwarded user text when `transcription_api_key` or `GROQ_API_KEY` is available.
 
 ## Example
 

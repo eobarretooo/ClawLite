@@ -13,6 +13,12 @@ from clawlite.channels.telegram import markdown_to_telegram_html
 from clawlite.channels.telegram import split_message
 from clawlite.channels.telegram import TelegramCircuitOpenError
 from clawlite.channels.telegram import TelegramChannel
+from clawlite.channels.telegram_offset_store import TelegramOffsetStore
+
+
+def _bind_offset_path(channel: TelegramChannel, path: Path) -> None:
+    channel._offset_store.path = path
+    channel._offset = channel._load_offset()
 
 
 def test_telegram_split_message_chunking() -> None:
@@ -30,7 +36,9 @@ def test_telegram_allow_from_empty_allows_anyone() -> None:
 
 
 def test_telegram_allow_from_blocks_not_listed() -> None:
-    channel = TelegramChannel(config={"token": "x:token", "allowFrom": ["123", "@owner"]})
+    channel = TelegramChannel(
+        config={"token": "x:token", "allowFrom": ["123", "@owner"]}
+    )
     assert channel._is_allowed_sender("123")
     assert channel._is_allowed_sender("777", "owner")
     assert not channel._is_allowed_sender("777", "guest")
@@ -40,14 +48,18 @@ def test_telegram_dm_policy_disabled_blocks_private_message() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
             config={"token": "x:token", "dm_policy": "disabled"},
             on_message=_on_message,
         )
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         message = SimpleNamespace(
             text="hello",
             caption=None,
@@ -59,7 +71,12 @@ def test_telegram_dm_policy_disabled_blocks_private_message() -> None:
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         processed = await channel._handle_update(update)
 
@@ -76,18 +93,26 @@ def test_telegram_dm_allowlist_policy_allows_listed_user_and_blocks_others() -> 
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
-            config={"token": "x:token", "dm_policy": "allowlist", "dm_allow_from": ["123", "@owner"]},
+            config={
+                "token": "x:token",
+                "dm_policy": "allowlist",
+                "dm_allow_from": ["123", "@owner"],
+            },
             on_message=_on_message,
         )
         allowed_message = SimpleNamespace(
             text="allowed",
             caption=None,
             chat_id=11,
-            from_user=SimpleNamespace(id=123, username="owner", first_name="Owner", language_code="en"),
+            from_user=SimpleNamespace(
+                id=123, username="owner", first_name="Owner", language_code="en"
+            ),
             message_id=10,
             chat=SimpleNamespace(type="private"),
             date=None,
@@ -98,7 +123,9 @@ def test_telegram_dm_allowlist_policy_allows_listed_user_and_blocks_others() -> 
             text="blocked",
             caption=None,
             chat_id=12,
-            from_user=SimpleNamespace(id=999, username="guest", first_name="Guest", language_code="en"),
+            from_user=SimpleNamespace(
+                id=999, username="guest", first_name="Guest", language_code="en"
+            ),
             message_id=11,
             chat=SimpleNamespace(type="private"),
             date=None,
@@ -107,10 +134,20 @@ def test_telegram_dm_allowlist_policy_allows_listed_user_and_blocks_others() -> 
         )
 
         await channel._handle_update(
-            SimpleNamespace(update_id=101, message=allowed_message, edited_message=None, effective_message=allowed_message)
+            SimpleNamespace(
+                update_id=101,
+                message=allowed_message,
+                edited_message=None,
+                effective_message=allowed_message,
+            )
         )
         await channel._handle_update(
-            SimpleNamespace(update_id=102, message=blocked_message, edited_message=None, effective_message=blocked_message)
+            SimpleNamespace(
+                update_id=102,
+                message=blocked_message,
+                edited_message=None,
+                effective_message=blocked_message,
+            )
         )
 
         assert len(emitted) == 1
@@ -122,11 +159,15 @@ def test_telegram_dm_allowlist_policy_allows_listed_user_and_blocks_others() -> 
     asyncio.run(_scenario())
 
 
-def test_telegram_dm_policy_pairing_blocks_private_message_and_sends_pairing_notice(tmp_path: Path) -> None:
+def test_telegram_dm_policy_pairing_blocks_private_message_and_sends_pairing_notice(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -148,7 +189,9 @@ def test_telegram_dm_policy_pairing_blocks_private_message_and_sends_pairing_not
 
         bot = FakeBot()
         channel.bot = bot
-        user = SimpleNamespace(id=321, username="guest", first_name="Guest", language_code="en")
+        user = SimpleNamespace(
+            id=321, username="guest", first_name="Guest", language_code="en"
+        )
         message = SimpleNamespace(
             text="hello",
             caption=None,
@@ -160,7 +203,12 @@ def test_telegram_dm_policy_pairing_blocks_private_message_and_sends_pairing_not
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=120, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=120,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         processed = await channel._handle_update(update)
 
@@ -184,7 +232,9 @@ def test_telegram_dm_policy_pairing_allows_after_approval(tmp_path: Path) -> Non
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -206,7 +256,9 @@ def test_telegram_dm_policy_pairing_allows_after_approval(tmp_path: Path) -> Non
 
         bot = FakeBot()
         channel.bot = bot
-        user = SimpleNamespace(id=321, username="guest", first_name="Guest", language_code="en")
+        user = SimpleNamespace(
+            id=321, username="guest", first_name="Guest", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
 
         first_message = SimpleNamespace(
@@ -220,7 +272,12 @@ def test_telegram_dm_policy_pairing_allows_after_approval(tmp_path: Path) -> Non
             edit_date=None,
             reply_to_message=None,
         )
-        first_update = SimpleNamespace(update_id=121, message=first_message, edited_message=None, effective_message=first_message)
+        first_update = SimpleNamespace(
+            update_id=121,
+            message=first_message,
+            edited_message=None,
+            effective_message=first_message,
+        )
 
         await channel._handle_update(first_update)
 
@@ -241,7 +298,12 @@ def test_telegram_dm_policy_pairing_allows_after_approval(tmp_path: Path) -> Non
             edit_date=None,
             reply_to_message=None,
         )
-        second_update = SimpleNamespace(update_id=122, message=second_message, edited_message=None, effective_message=second_message)
+        second_update = SimpleNamespace(
+            update_id=122,
+            message=second_message,
+            edited_message=None,
+            effective_message=second_message,
+        )
 
         processed = await channel._handle_update(second_update)
 
@@ -264,7 +326,9 @@ def test_telegram_group_policy_disabled_blocks_group_message() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -275,7 +339,9 @@ def test_telegram_group_policy_disabled_blocks_group_message() -> None:
             text="group",
             caption=None,
             chat_id=-1001,
-            from_user=SimpleNamespace(id=55, username="alice", first_name="Alice", language_code="en"),
+            from_user=SimpleNamespace(
+                id=55, username="alice", first_name="Alice", language_code="en"
+            ),
             message_id=10,
             chat=SimpleNamespace(type="group"),
             date=None,
@@ -284,7 +350,12 @@ def test_telegram_group_policy_disabled_blocks_group_message() -> None:
         )
 
         processed = await channel._handle_update(
-            SimpleNamespace(update_id=103, message=message, edited_message=None, effective_message=message)
+            SimpleNamespace(
+                update_id=103,
+                message=message,
+                edited_message=None,
+                effective_message=message,
+            )
         )
 
         assert processed is True
@@ -294,15 +365,23 @@ def test_telegram_group_policy_disabled_blocks_group_message() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_nonlisted() -> None:
+def test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_nonlisted() -> (
+    None
+):
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
-            config={"token": "x:token", "topic_policy": "allowlist", "topic_allow_from": ["@alice"]},
+            config={
+                "token": "x:token",
+                "topic_policy": "allowlist",
+                "topic_allow_from": ["@alice"],
+            },
             on_message=_on_message,
         )
         allowed_message = SimpleNamespace(
@@ -310,7 +389,9 @@ def test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_no
             caption=None,
             chat_id=-1002,
             message_thread_id=7,
-            from_user=SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en"),
+            from_user=SimpleNamespace(
+                id=1, username="alice", first_name="Alice", language_code="en"
+            ),
             message_id=20,
             chat=SimpleNamespace(type="supergroup"),
             date=None,
@@ -322,7 +403,9 @@ def test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_no
             caption=None,
             chat_id=-1002,
             message_thread_id=7,
-            from_user=SimpleNamespace(id=2, username="bob", first_name="Bob", language_code="en"),
+            from_user=SimpleNamespace(
+                id=2, username="bob", first_name="Bob", language_code="en"
+            ),
             message_id=21,
             chat=SimpleNamespace(type="supergroup"),
             date=None,
@@ -331,10 +414,20 @@ def test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_no
         )
 
         await channel._handle_update(
-            SimpleNamespace(update_id=104, message=allowed_message, edited_message=None, effective_message=allowed_message)
+            SimpleNamespace(
+                update_id=104,
+                message=allowed_message,
+                edited_message=None,
+                effective_message=allowed_message,
+            )
         )
         await channel._handle_update(
-            SimpleNamespace(update_id=105, message=blocked_message, edited_message=None, effective_message=blocked_message)
+            SimpleNamespace(
+                update_id=105,
+                message=blocked_message,
+                edited_message=None,
+                effective_message=blocked_message,
+            )
         )
 
         assert len(emitted) == 1
@@ -350,7 +443,9 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -376,7 +471,9 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
             text="group override open",
             caption=None,
             chat_id=-1009,
-            from_user=SimpleNamespace(id=22, username="guest", first_name="Guest", language_code="en"),
+            from_user=SimpleNamespace(
+                id=22, username="guest", first_name="Guest", language_code="en"
+            ),
             message_id=31,
             chat=SimpleNamespace(type="group"),
             date=None,
@@ -388,7 +485,9 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
             caption=None,
             chat_id=-1009,
             message_thread_id=7,
-            from_user=SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en"),
+            from_user=SimpleNamespace(
+                id=1, username="alice", first_name="Alice", language_code="en"
+            ),
             message_id=32,
             chat=SimpleNamespace(type="supergroup"),
             date=None,
@@ -400,7 +499,9 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
             caption=None,
             chat_id=-1009,
             message_thread_id=7,
-            from_user=SimpleNamespace(id=2, username="bob", first_name="Bob", language_code="en"),
+            from_user=SimpleNamespace(
+                id=2, username="bob", first_name="Bob", language_code="en"
+            ),
             message_id=33,
             chat=SimpleNamespace(type="supergroup"),
             date=None,
@@ -409,7 +510,12 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
         )
 
         await channel._handle_update(
-            SimpleNamespace(update_id=106, message=group_message, edited_message=None, effective_message=group_message)
+            SimpleNamespace(
+                update_id=106,
+                message=group_message,
+                edited_message=None,
+                effective_message=group_message,
+            )
         )
         await channel._handle_update(
             SimpleNamespace(
@@ -429,7 +535,10 @@ def test_telegram_group_override_supersedes_base_group_and_topic_policy() -> Non
         )
 
         assert len(emitted) == 2
-        assert [entry[2] for entry in emitted] == ["group override open", "topic allowed"]
+        assert [entry[2] for entry in emitted] == [
+            "group override open",
+            "topic allowed",
+        ]
         signals = channel.signals()
         assert signals["policy_allowed_count"] == 2
         assert signals["policy_blocked_count"] == 1
@@ -441,7 +550,9 @@ def test_telegram_business_message_is_forwarded_with_business_metadata() -> None
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -453,7 +564,9 @@ def test_telegram_business_message_is_forwarded_with_business_metadata() -> None
             caption=None,
             chat_id=6001,
             business_connection_id="bc-1",
-            from_user=SimpleNamespace(id=77, username="merchant", first_name="Merchant", language_code="en"),
+            from_user=SimpleNamespace(
+                id=77, username="merchant", first_name="Merchant", language_code="en"
+            ),
             message_id=501,
             chat=SimpleNamespace(type="private"),
             date=None,
@@ -488,7 +601,9 @@ def test_telegram_edited_business_message_marks_edit_metadata() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -500,7 +615,9 @@ def test_telegram_edited_business_message_marks_edit_metadata() -> None:
             caption=None,
             chat_id=6002,
             business_connection_id="bc-2",
-            from_user=SimpleNamespace(id=88, username="agent", first_name="Agent", language_code="en"),
+            from_user=SimpleNamespace(
+                id=88, username="agent", first_name="Agent", language_code="en"
+            ),
             message_id=502,
             chat=SimpleNamespace(type="private"),
             date=None,
@@ -624,14 +741,18 @@ def test_telegram_my_chat_member_updates_connection_state() -> None:
 
         connected_update = SimpleNamespace(
             update_id=606,
-            my_chat_member=SimpleNamespace(new_chat_member=SimpleNamespace(status="administrator")),
+            my_chat_member=SimpleNamespace(
+                new_chat_member=SimpleNamespace(status="administrator")
+            ),
             message=None,
             edited_message=None,
             effective_message=None,
         )
         blocked_update = SimpleNamespace(
             update_id=607,
-            my_chat_member=SimpleNamespace(new_chat_member=SimpleNamespace(status="kicked")),
+            my_chat_member=SimpleNamespace(
+                new_chat_member=SimpleNamespace(status="kicked")
+            ),
             message=None,
             edited_message=None,
             effective_message=None,
@@ -650,7 +771,9 @@ def test_telegram_callback_query_policy_blocked_when_context_denies() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -704,11 +827,17 @@ def test_telegram_message_reaction_policy_blocked_when_context_denies() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
-            config={"token": "x:token", "reaction_notifications": "all", "group_policy": "disabled"},
+            config={
+                "token": "x:token",
+                "reaction_notifications": "all",
+                "group_policy": "disabled",
+            },
             on_message=_on_message,
         )
         update = SimpleNamespace(
@@ -737,10 +866,13 @@ def test_telegram_message_reaction_policy_blocked_when_context_denies() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_drop_pending_updates_on_startup() -> None:
+def test_telegram_drop_pending_updates_on_startup(tmp_path: Path) -> None:
     async def _scenario() -> None:
-        channel = TelegramChannel(config={"token": "x:token", "drop_pending_updates": True})
-        channel._save_offset = lambda: None  # type: ignore[method-assign]
+        channel = TelegramChannel(
+            config={"token": "x:token", "drop_pending_updates": True}
+        )
+        offset_path = tmp_path / "offset.json"
+        _bind_offset_path(channel, offset_path)
 
         class FakeBot:
             def __init__(self) -> None:
@@ -749,7 +881,10 @@ def test_telegram_drop_pending_updates_on_startup() -> None:
             async def get_updates(self, *, offset, timeout, allowed_updates):
                 self.calls += 1
                 if self.calls == 1:
-                    return [SimpleNamespace(update_id=12), SimpleNamespace(update_id=13)]
+                    return [
+                        SimpleNamespace(update_id=12),
+                        SimpleNamespace(update_id=13),
+                    ]
                 return []
 
         channel.bot = FakeBot()
@@ -757,13 +892,18 @@ def test_telegram_drop_pending_updates_on_startup() -> None:
         await channel._drop_pending_updates()
 
         assert channel._offset == 14
+        persisted = json.loads(offset_path.read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] == 13
+        assert persisted["next_offset"] == 14
 
     asyncio.run(_scenario())
 
 
 def test_telegram_start_resets_startup_drop_state_for_reuse() -> None:
     async def _scenario() -> None:
-        channel = TelegramChannel(config={"token": "x:token", "drop_pending_updates": True})
+        channel = TelegramChannel(
+            config={"token": "x:token", "drop_pending_updates": True}
+        )
         channel._startup_drop_done = True
         observed_states: list[bool] = []
 
@@ -789,7 +929,9 @@ def test_telegram_command_help_is_handled_locally(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -810,7 +952,9 @@ def test_telegram_command_help_is_handled_locally(tmp_path: Path) -> None:
         bot = FakeBot()
         channel.bot = bot
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="/help",
@@ -823,7 +967,12 @@ def test_telegram_command_help_is_handled_locally(tmp_path: Path) -> None:
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -838,7 +987,9 @@ def test_telegram_command_stop_is_forwarded_with_metadata(tmp_path: Path) -> Non
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -849,7 +1000,9 @@ def test_telegram_command_stop_is_forwarded_with_metadata(tmp_path: Path) -> Non
             on_message=_on_message,
         )
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="/stop",
@@ -862,7 +1015,12 @@ def test_telegram_command_stop_is_forwarded_with_metadata(tmp_path: Path) -> Non
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -882,7 +1040,9 @@ def test_telegram_edited_message_duplicate_is_deduped(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -893,7 +1053,9 @@ def test_telegram_edited_message_duplicate_is_deduped(tmp_path: Path) -> None:
             on_message=_on_message,
         )
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         base = {
             "caption": None,
@@ -908,8 +1070,18 @@ def test_telegram_edited_message_duplicate_is_deduped(tmp_path: Path) -> None:
         message = SimpleNamespace(text="hello", **base)
         edited_same = SimpleNamespace(text="hello", **base)
 
-        update_message = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
-        update_edit = SimpleNamespace(update_id=101, message=None, edited_message=edited_same, effective_message=edited_same)
+        update_message = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
+        update_edit = SimpleNamespace(
+            update_id=101,
+            message=None,
+            edited_message=edited_same,
+            effective_message=edited_same,
+        )
 
         await channel._handle_update(update_message)
         await channel._handle_update(update_edit)
@@ -925,7 +1097,9 @@ def test_telegram_reply_metadata_is_emitted(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -936,9 +1110,13 @@ def test_telegram_reply_metadata_is_emitted(tmp_path: Path) -> None:
             on_message=_on_message,
         )
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         reply_user = SimpleNamespace(id=9, username="bob")
-        reply_to = SimpleNamespace(message_id=3, text="parent", caption=None, from_user=reply_user)
+        reply_to = SimpleNamespace(
+            message_id=3, text="parent", caption=None, from_user=reply_user
+        )
         chat = SimpleNamespace(type="group")
         message = SimpleNamespace(
             text="child",
@@ -951,7 +1129,12 @@ def test_telegram_reply_metadata_is_emitted(tmp_path: Path) -> None:
             edit_date=None,
             reply_to_message=reply_to,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -970,12 +1153,16 @@ def test_telegram_inbound_metadata_includes_message_thread_id() -> None:
     async def _scenario() -> None:
         emitted: list[dict] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, text
             emitted.append(metadata)
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="group")
         message = SimpleNamespace(
             text="hello thread",
@@ -989,7 +1176,12 @@ def test_telegram_inbound_metadata_includes_message_thread_id() -> None:
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -1003,11 +1195,15 @@ def test_telegram_supergroup_topic_message_uses_topic_session_id() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="supergroup")
         message = SimpleNamespace(
             text="topic hello",
@@ -1021,7 +1217,12 @@ def test_telegram_supergroup_topic_message_uses_topic_session_id() -> None:
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -1031,16 +1232,62 @@ def test_telegram_supergroup_topic_message_uses_topic_session_id() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_private_thread_message_uses_thread_session_id() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text="dm topic hello",
+            caption=None,
+            chat_id=42,
+            message_thread_id=7,
+            from_user=user,
+            message_id=10,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
+
+        await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "telegram:42:thread:7"
+        assert emitted[0][3]["message_thread_id"] == 7
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text=None,
@@ -1057,7 +1304,12 @@ def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=101, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=101,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -1078,16 +1330,129 @@ def test_telegram_media_only_message_is_forwarded_with_placeholder() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_media_group_messages_are_aggregated_into_one_turn() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
+        chat = SimpleNamespace(type="private")
+        first = SimpleNamespace(
+            text=None,
+            caption="first caption",
+            photo=[SimpleNamespace(file_id="p1")],
+            voice=None,
+            audio=None,
+            document=None,
+            video=None,
+            animation=None,
+            video_note=None,
+            sticker=None,
+            contact=None,
+            location=None,
+            media_group_id="album-1",
+            chat_id=42,
+            from_user=user,
+            message_id=31,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        second = SimpleNamespace(
+            text=None,
+            caption="second caption",
+            photo=[SimpleNamespace(file_id="p2")],
+            voice=None,
+            audio=None,
+            document=None,
+            video=None,
+            animation=None,
+            video_note=None,
+            sticker=None,
+            contact=None,
+            location=None,
+            media_group_id="album-1",
+            chat_id=42,
+            from_user=user,
+            message_id=32,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        first_update = SimpleNamespace(
+            update_id=500,
+            message=first,
+            edited_message=None,
+            effective_message=first,
+        )
+        second_update = SimpleNamespace(
+            update_id=501,
+            message=second,
+            edited_message=None,
+            effective_message=second,
+        )
+
+        with patch.object(channel, "_start_typing_keepalive") as start_typing:
+            with patch.object(
+                channel, "_stop_typing_keepalive", AsyncMock()
+            ) as stop_typing:
+                with patch.object(
+                    telegram_module.asyncio,
+                    "sleep",
+                    new=AsyncMock(return_value=None),
+                ):
+                    await channel._handle_update(first_update)
+                    await channel._handle_update(second_update)
+                    task = channel._media_group_tasks.get("42:album-1")
+                    assert task is not None
+                    await asyncio.wait_for(task, timeout=1.0)
+
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:42"
+        assert user_id == "1"
+        assert text == (
+            "[telegram media message: photo(2)]\n\nfirst caption\n\nsecond caption"
+        )
+        assert metadata["media_group_id"] == "album-1"
+        assert metadata["message_ids"] == [31, 32]
+        assert metadata["update_ids"] == [500, 501]
+        assert metadata["media_group_message_count"] == 2
+        assert metadata["media_counts"] == {"photo": 2}
+        assert metadata["media_total_count"] == 2
+        assert len(metadata["media_items"]) == 2
+        start_typing.assert_called_once_with(chat_id="42", message_thread_id=None)
+        stop_typing.assert_awaited_once_with(chat_id="42", message_thread_id=None)
+        signals = channel.signals()
+        assert signals["media_group_buffered_count"] == 2
+        assert signals["media_group_flush_count"] == 1
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_media_placeholder_covers_extended_media_types() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text=None,
@@ -1110,14 +1475,29 @@ def test_telegram_media_placeholder_covers_extended_media_types() -> None:
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=102, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=102,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
         assert len(emitted) == 1
         _, _, text, metadata = emitted[0]
-        assert text == "[telegram media message: animation, contact, location, sticker, video, video_note]"
-        assert metadata["media_types"] == ["animation", "contact", "location", "sticker", "video", "video_note"]
+        assert (
+            text
+            == "[telegram media message: animation, contact, location, sticker, video, video_note]"
+        )
+        assert metadata["media_types"] == [
+            "animation",
+            "contact",
+            "location",
+            "sticker",
+            "video",
+            "video_note",
+        ]
         assert metadata["media_items"] == [
             {"type": "video", "file_id": "v1"},
             {"type": "animation", "file_id": "a1"},
@@ -1134,7 +1514,9 @@ def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) ->
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
@@ -1160,7 +1542,9 @@ def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) ->
         channel.bot = bot
         channel._media_download_dir = lambda: tmp_path
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text=None,
@@ -1177,7 +1561,12 @@ def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) ->
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=103, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=103,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -1192,11 +1581,106 @@ def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) ->
     asyncio.run(_scenario())
 
 
+def test_telegram_voice_media_transcription_enriches_text_and_metadata(
+    tmp_path: Path,
+) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "media_download_dir": str(tmp_path / "media"),
+                "transcription_api_key": "gkey",
+                "transcription_language": "en",
+                "transcribe_voice": True,
+            },
+            on_message=_on_message,
+        )
+
+        class FakeRemoteFile:
+            async def download_to_drive(self, path: str) -> None:
+                Path(path).write_bytes(b"voice")
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.file_ids: list[str] = []
+
+            async def get_file(self, file_id: str):
+                self.file_ids.append(file_id)
+                return FakeRemoteFile()
+
+        bot = FakeBot()
+        channel.bot = bot
+        provider_instance = Mock()
+        provider_instance.transcribe = AsyncMock(return_value="hello from voice note")
+
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=None,
+            voice=SimpleNamespace(file_id="v1"),
+            audio=None,
+            document=None,
+            chat_id=42,
+            from_user=user,
+            message_id=16,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=104,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
+
+        with patch(
+            "clawlite.providers.transcription.TranscriptionProvider",
+            return_value=provider_instance,
+        ) as provider_cls:
+            await channel._handle_update(update)
+
+        assert bot.file_ids == ["v1"]
+        provider_cls.assert_called_once()
+        provider_instance.transcribe.assert_awaited_once()
+        assert len(emitted) == 1
+        _, _, text, metadata = emitted[0]
+        assert text == (
+            "[telegram media message: voice]\n\n"
+            "[voice transcription: hello from voice note]"
+        )
+        media_item = metadata["media_items"][0]
+        assert media_item["file_id"] == "v1"
+        assert media_item["transcription"] == "hello from voice note"
+        assert media_item["transcription_language"] == "en"
+        assert Path(media_item["local_path"]).parent == tmp_path / "media" / "42"
+        signals = channel.signals()
+        assert signals["media_download_count"] == 1
+        assert signals["media_transcription_count"] == 1
+        assert signals["media_transcription_error_count"] == 0
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_callback_query_is_forwarded_and_acknowledged() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
@@ -1264,7 +1748,9 @@ def test_telegram_callback_query_supergroup_topic_uses_topic_session_id() -> Non
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
@@ -1286,7 +1772,13 @@ def test_telegram_callback_query_supergroup_topic_uses_topic_session_id() -> Non
                 chat_id=-10077,
             ),
         )
-        update = SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+        update = SimpleNamespace(
+            update_id=100,
+            callback_query=callback_query,
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
 
         await channel._handle_update(update)
 
@@ -1300,7 +1792,9 @@ def test_telegram_message_reaction_supergroup_topic_uses_topic_session_id() -> N
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -1335,7 +1829,9 @@ def test_telegram_callback_query_blocked_by_allowlist_does_not_emit() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -1447,7 +1943,9 @@ def test_telegram_callback_signing_accepts_valid_signed_callback() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -1470,11 +1968,19 @@ def test_telegram_callback_signing_accepts_valid_signed_callback() -> None:
             data=signed,
             chat_instance="inst-sign",
             from_user=SimpleNamespace(id=7, username="alice"),
-            message=SimpleNamespace(message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42),
+            message=SimpleNamespace(
+                message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42
+            ),
         )
 
         await channel._handle_update(
-            SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+            SimpleNamespace(
+                update_id=100,
+                callback_query=callback_query,
+                message=None,
+                edited_message=None,
+                effective_message=None,
+            )
         )
 
         assert len(emitted) == 1
@@ -1492,7 +1998,9 @@ def test_telegram_callback_signing_blocks_tampered_signed_callback() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -1516,11 +2024,19 @@ def test_telegram_callback_signing_blocks_tampered_signed_callback() -> None:
             data=tampered,
             chat_instance="inst-sign",
             from_user=SimpleNamespace(id=7, username="alice"),
-            message=SimpleNamespace(message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42),
+            message=SimpleNamespace(
+                message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42
+            ),
         )
 
         await channel._handle_update(
-            SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+            SimpleNamespace(
+                update_id=100,
+                callback_query=callback_query,
+                message=None,
+                edited_message=None,
+                effective_message=None,
+            )
         )
 
         assert emitted == []
@@ -1536,10 +2052,14 @@ def test_telegram_callback_require_signed_controls_unsigned_behavior() -> None:
         allow_emitted: list[tuple[str, str, str, dict]] = []
         block_emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _allow_handler(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _allow_handler(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             allow_emitted.append((session_id, user_id, text, metadata))
 
-        async def _block_handler(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _block_handler(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             block_emitted.append((session_id, user_id, text, metadata))
 
         allow_channel = TelegramChannel(
@@ -1563,9 +2083,17 @@ def test_telegram_callback_require_signed_controls_unsigned_behavior() -> None:
             data="plain:callback",
             chat_instance="inst-unsigned",
             from_user=SimpleNamespace(id=7, username="alice"),
-            message=SimpleNamespace(message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42),
+            message=SimpleNamespace(
+                message_id=55, chat=SimpleNamespace(id=42, type="group"), chat_id=42
+            ),
         )
-        update = SimpleNamespace(update_id=100, callback_query=callback_query, message=None, edited_message=None, effective_message=None)
+        update = SimpleNamespace(
+            update_id=100,
+            callback_query=callback_query,
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
 
         await allow_channel._handle_update(update)
         await block_channel._handle_update(update)
@@ -1589,8 +2117,12 @@ def test_telegram_update_dedupe_state_persists_across_restarts(tmp_path: Path) -
             }
         )
 
-        assert channel._remember_update_dedupe_key("update:101", source="polling") is True
-        assert channel._remember_update_dedupe_key("update:102", source="polling") is True
+        assert (
+            channel._remember_update_dedupe_key("update:101", source="polling") is True
+        )
+        assert (
+            channel._remember_update_dedupe_key("update:102", source="polling") is True
+        )
         await channel._persist_update_dedupe_state()
 
         reloaded = TelegramChannel(
@@ -1600,13 +2132,20 @@ def test_telegram_update_dedupe_state_persists_across_restarts(tmp_path: Path) -
                 "update_dedupe_limit": 8,
             }
         )
-        assert reloaded._remember_update_dedupe_key("update:101", source="polling") is False
-        assert reloaded._remember_update_dedupe_key("update:103", source="polling") is True
+        assert (
+            reloaded._remember_update_dedupe_key("update:101", source="polling")
+            is False
+        )
+        assert (
+            reloaded._remember_update_dedupe_key("update:103", source="polling") is True
+        )
 
     asyncio.run(_scenario())
 
 
-def test_telegram_stop_flushes_pending_dedupe_state_before_restart(tmp_path: Path) -> None:
+def test_telegram_stop_flushes_pending_dedupe_state_before_restart(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         dedupe_path = tmp_path / "telegram-dedupe.json"
         channel = TelegramChannel(
@@ -1618,7 +2157,9 @@ def test_telegram_stop_flushes_pending_dedupe_state_before_restart(tmp_path: Pat
         )
 
         channel._running = True
-        assert channel._remember_update_dedupe_key("update:301", source="polling") is True
+        assert (
+            channel._remember_update_dedupe_key("update:301", source="polling") is True
+        )
         assert channel._dedupe_persist_task is not None
         await channel.stop()
 
@@ -1629,7 +2170,10 @@ def test_telegram_stop_flushes_pending_dedupe_state_before_restart(tmp_path: Pat
                 "update_dedupe_limit": 8,
             }
         )
-        assert reloaded._remember_update_dedupe_key("update:301", source="polling") is False
+        assert (
+            reloaded._remember_update_dedupe_key("update:301", source="polling")
+            is False
+        )
 
     asyncio.run(_scenario())
 
@@ -1666,13 +2210,16 @@ def test_telegram_update_dedupe_state_uses_durable_atomic_write(tmp_path: Path) 
 def test_telegram_markdown_code_tokens_do_not_collide_with_user_text() -> None:
     markdown = (
         "prefix \\x00TG_CB_deadbeefdeadbeef\\x00 and \\x00TG_IC_deadbeefdeadbeef\\x00\n\n"
-        "```py\nif x < y and y > z:\n    print(\"ok\")\n```\n"
+        '```py\nif x < y and y > z:\n    print("ok")\n```\n'
         "inline `a < b` tail"
     )
 
     rendered = markdown_to_telegram_html(markdown)
 
-    assert "<pre><code>if x &lt; y and y &gt; z:\n    print(\"ok\")\n</code></pre>" in rendered
+    assert (
+        '<pre><code>if x &lt; y and y &gt; z:\n    print("ok")\n</code></pre>'
+        in rendered
+    )
     assert "<code>a &lt; b</code>" in rendered
     assert "\\x00TG_CB_deadbeefdeadbeef\\x00" in rendered
     assert "\\x00TG_IC_deadbeefdeadbeef\\x00" in rendered
@@ -1730,7 +2277,9 @@ def test_telegram_send_supports_raw_html_parse_mode_from_metadata() -> None:
         channel.bot = bot
 
         html_text = "<b>hello</b> <i>team</i> <code>x=1</code>"
-        out = await channel.send(target="42", text=html_text, metadata={"telegram_parse_mode": "html"})
+        out = await channel.send(
+            target="42", text=html_text, metadata={"telegram_parse_mode": "html"}
+        )
 
         assert out == "telegram:sent:1"
         assert len(bot.calls) == 1
@@ -2009,7 +2558,9 @@ def test_telegram_send_supports_message_thread_id_from_metadata() -> None:
         bot = FakeBot()
         channel.bot = bot
 
-        out = await channel.send(target="42", text="hello", metadata={"message_thread_id": 13})
+        out = await channel.send(
+            target="42", text="hello", metadata={"message_thread_id": 13}
+        )
 
         assert out == "telegram:sent:1"
         assert bot.calls[0]["chat_id"] == "42"
@@ -2042,6 +2593,54 @@ def test_telegram_send_supports_message_thread_id_from_target() -> None:
     asyncio.run(_scenario())
 
 
+def test_telegram_send_accepts_topic_style_session_target() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(config={"token": "x:token"})
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            async def send_message(self, **kwargs):
+                self.calls.append(kwargs)
+                return True
+
+        bot = FakeBot()
+        channel.bot = bot
+
+        out = await channel.send(target="telegram:-10042:topic:9", text="hello")
+
+        assert out == "telegram:sent:1"
+        assert bot.calls[0]["chat_id"] == "-10042"
+        assert bot.calls[0]["message_thread_id"] == 9
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_send_accepts_private_thread_style_session_target() -> None:
+    async def _scenario() -> None:
+        channel = TelegramChannel(config={"token": "x:token"})
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            async def send_message(self, **kwargs):
+                self.calls.append(kwargs)
+                return True
+
+        bot = FakeBot()
+        channel.bot = bot
+
+        out = await channel.send(target="telegram:42:thread:7", text="hello")
+
+        assert out == "telegram:sent:1"
+        assert bot.calls[0]["chat_id"] == "42"
+        assert bot.calls[0]["message_thread_id"] == 7
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_send_retries_without_thread_when_dm_thread_is_not_found() -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
@@ -2056,7 +2655,9 @@ def test_telegram_send_retries_without_thread_when_dm_thread_is_not_found() -> N
             async def send_message(self, **kwargs):
                 self.calls.append(kwargs)
                 if len(self.calls) == 1:
-                    raise ThreadNotFoundError("400: Bad Request: message thread not found")
+                    raise ThreadNotFoundError(
+                        "400: Bad Request: message thread not found"
+                    )
                 return SimpleNamespace(message_id=101)
 
         bot = FakeBot()
@@ -2235,7 +2836,9 @@ def test_telegram_send_assigns_caption_to_first_caption_capable_media_item() -> 
     asyncio.run(_scenario())
 
 
-def test_telegram_send_falls_back_to_follow_up_text_when_media_has_no_caption_support() -> None:
+def test_telegram_send_falls_back_to_follow_up_text_when_media_has_no_caption_support() -> (
+    None
+):
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
 
@@ -2265,12 +2868,17 @@ def test_telegram_send_falls_back_to_follow_up_text_when_media_has_no_caption_su
         assert "caption" not in bot.video_note_calls[0]
         assert len(bot.message_calls) == 1
         assert bot.message_calls[0]["text"] == "hello"
-        assert "parse_mode" not in bot.message_calls[0] or bot.message_calls[0]["parse_mode"] == "HTML"
+        assert (
+            "parse_mode" not in bot.message_calls[0]
+            or bot.message_calls[0]["parse_mode"] == "HTML"
+        )
 
     asyncio.run(_scenario())
 
 
-def test_telegram_send_places_reply_markup_on_follow_up_text_when_media_caption_is_too_long() -> None:
+def test_telegram_send_places_reply_markup_on_follow_up_text_when_media_caption_is_too_long() -> (
+    None
+):
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
 
@@ -2292,7 +2900,9 @@ def test_telegram_send_places_reply_markup_on_follow_up_text_when_media_caption_
         long_text = "A" * 1030
         metadata: dict[str, object] = {
             "media": [{"type": "photo", "file_id": "photo-1"}],
-            "telegram_inline_keyboard": [[{"text": "Open", "url": "https://example.com"}]],
+            "telegram_inline_keyboard": [
+                [{"text": "Open", "url": "https://example.com"}]
+            ],
         }
 
         out = await channel.send(target="42", text=long_text, metadata=metadata)
@@ -2313,7 +2923,9 @@ def test_telegram_send_places_reply_markup_on_follow_up_text_when_media_caption_
     asyncio.run(_scenario())
 
 
-def test_telegram_send_media_caption_supports_raw_html_parse_mode_from_metadata() -> None:
+def test_telegram_send_media_caption_supports_raw_html_parse_mode_from_metadata() -> (
+    None
+):
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
 
@@ -2354,7 +2966,9 @@ def test_telegram_send_retries_without_thread_kwarg_on_old_library() -> None:
             async def send_message(self, **kwargs):
                 self.calls.append(kwargs)
                 if "message_thread_id" in kwargs:
-                    raise TypeError("got an unexpected keyword argument 'message_thread_id'")
+                    raise TypeError(
+                        "got an unexpected keyword argument 'message_thread_id'"
+                    )
                 return True
 
         bot = FakeBot()
@@ -2370,7 +2984,9 @@ def test_telegram_send_retries_without_thread_kwarg_on_old_library() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_send_media_retries_without_thread_when_dm_thread_is_not_found() -> None:
+def test_telegram_send_media_retries_without_thread_when_dm_thread_is_not_found() -> (
+    None
+):
     async def _scenario() -> None:
         channel = TelegramChannel(config={"token": "x:token"})
 
@@ -2384,7 +3000,9 @@ def test_telegram_send_media_retries_without_thread_when_dm_thread_is_not_found(
             async def send_photo(self, **kwargs):
                 self.photo_calls.append(kwargs)
                 if len(self.photo_calls) == 1:
-                    raise ThreadNotFoundError("400: Bad Request: message thread not found")
+                    raise ThreadNotFoundError(
+                        "400: Bad Request: message thread not found"
+                    )
                 return SimpleNamespace(message_id=301)
 
         bot = FakeBot()
@@ -2504,7 +3122,9 @@ def test_telegram_offset_commits_after_successful_processing(tmp_path: Path) -> 
     async def _scenario() -> None:
         emitted: list[str] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             emitted.append(text)
 
@@ -2516,10 +3136,12 @@ def test_telegram_offset_commits_after_successful_processing(tmp_path: Path) -> 
             },
             on_message=_on_message,
         )
-        saved: list[int] = []
-        channel._save_offset = lambda: saved.append(channel._offset)  # type: ignore[method-assign]
+        offset_path = tmp_path / "offset.json"
+        _bind_offset_path(channel, offset_path)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="hello",
@@ -2532,7 +3154,12 @@ def test_telegram_offset_commits_after_successful_processing(tmp_path: Path) -> 
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         class FakeBot:
             def __init__(self) -> None:
@@ -2555,14 +3182,19 @@ def test_telegram_offset_commits_after_successful_processing(tmp_path: Path) -> 
 
         assert emitted == ["hello"]
         assert channel._offset == 101
-        assert saved[-1] == 101
+        persisted = json.loads(offset_path.read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] == 100
+        assert persisted["next_offset"] == 101
+        assert persisted["pending_update_ids"] == []
 
     asyncio.run(_scenario())
 
 
 def test_telegram_offset_not_committed_when_processing_fails(tmp_path: Path) -> None:
     async def _scenario() -> None:
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, text, metadata
             channel._running = False
             raise RuntimeError("boom")
@@ -2575,10 +3207,12 @@ def test_telegram_offset_not_committed_when_processing_fails(tmp_path: Path) -> 
             },
             on_message=_on_message,
         )
-        saved: list[int] = []
-        channel._save_offset = lambda: saved.append(channel._offset)  # type: ignore[method-assign]
+        offset_path = tmp_path / "offset.json"
+        _bind_offset_path(channel, offset_path)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="hello",
@@ -2591,7 +3225,12 @@ def test_telegram_offset_not_committed_when_processing_fails(tmp_path: Path) -> 
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         class FakeBot:
             async def get_updates(self, *, offset, timeout, allowed_updates):
@@ -2607,7 +3246,9 @@ def test_telegram_offset_not_committed_when_processing_fails(tmp_path: Path) -> 
             await channel._poll_loop()
 
         assert channel._offset == 0
-        assert saved == []
+        persisted = json.loads(offset_path.read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] is None
+        assert persisted["pending_update_ids"] == [100]
 
     asyncio.run(_scenario())
 
@@ -2616,7 +3257,7 @@ def test_telegram_load_offset_accepts_legacy_payload(tmp_path: Path) -> None:
     channel = TelegramChannel(config={"token": "x:token"})
     offset_path = tmp_path / "offset.json"
     offset_path.write_text(json.dumps({"offset": 77}), encoding="utf-8")
-    channel._offset_path = lambda: offset_path  # type: ignore[method-assign]
+    channel._offset_store.path = offset_path
 
     loaded = channel._load_offset()
 
@@ -2624,10 +3265,12 @@ def test_telegram_load_offset_accepts_legacy_payload(tmp_path: Path) -> None:
     assert channel.signals()["offset_load_error_count"] == 0
 
 
-def test_telegram_save_offset_writes_v2_payload_with_fingerprint(tmp_path: Path) -> None:
+def test_telegram_save_offset_writes_safe_watermark_payload(
+    tmp_path: Path,
+) -> None:
     channel = TelegramChannel(config={"token": "x:token"})
     offset_path = tmp_path / "offset.json"
-    channel._offset_path = lambda: offset_path  # type: ignore[method-assign]
+    channel._offset_store.path = offset_path
     channel._offset = 123
 
     fsync_fds: list[int] = []
@@ -2641,20 +3284,74 @@ def test_telegram_save_offset_writes_v2_payload_with_fingerprint(tmp_path: Path)
         channel._save_offset()
 
     persisted = json.loads(offset_path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 2
-    assert persisted["offset"] == 123
+    assert persisted["schema_version"] == 3
+    assert persisted["safe_update_id"] == 122
+    assert persisted["highest_completed_update_id"] == 122
+    assert persisted["next_offset"] == 123
+    assert persisted["pending_update_ids"] == []
     assert isinstance(persisted["updated_at"], str) and persisted["updated_at"]
-    assert persisted["token_fingerprint"] == hashlib.sha256("x:token".encode("utf-8")).hexdigest()[:12]
+    assert (
+        persisted["token_fingerprint"]
+        == hashlib.sha256("x:token".encode("utf-8")).hexdigest()[:16]
+    )
     assert len(fsync_fds) >= 1
     assert not list(tmp_path.glob("offset.json.tmp*"))
     assert channel.signals()["offset_persist_error_count"] == 0
 
 
-def test_telegram_polling_transient_failure_recovers_and_processes_update(tmp_path: Path) -> None:
+def test_telegram_offset_store_keeps_watermark_below_pending_until_gap_closes(
+    tmp_path: Path,
+) -> None:
+    store = TelegramOffsetStore(token="x:token", state_path=tmp_path / "offset.json")
+
+    store.force_commit(100)
+    store.begin(101)
+    store.begin(102)
+    partial = store.mark_completed(102, tracked_pending=True)
+
+    assert partial.safe_update_id == 100
+    assert partial.next_offset == 101
+    assert partial.pending_update_ids == (101,)
+    assert partial.completed_update_ids == (102,)
+
+    complete = store.mark_completed(101, tracked_pending=True)
+
+    assert complete.safe_update_id == 102
+    assert complete.next_offset == 103
+    assert complete.pending_update_ids == ()
+    assert complete.completed_update_ids == ()
+
+
+def test_telegram_offset_state_path_config_persists_to_custom_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "telegram-offset.json"
+    channel = TelegramChannel(
+        config={
+            "token": "x:token",
+            "offset_state_path": str(path),
+        }
+    )
+
+    assert channel._offset_path() == path
+
+    channel._force_commit_offset_update(55)
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["safe_update_id"] == 55
+    assert persisted["next_offset"] == 56
+    assert channel._offset == 56
+
+
+def test_telegram_polling_transient_failure_recovers_and_processes_update(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             emitted.append(text)
             channel._running = False
@@ -2669,9 +3366,11 @@ def test_telegram_polling_transient_failure_recovers_and_processes_update(tmp_pa
             },
             on_message=_on_message,
         )
-        channel._save_offset = lambda: None  # type: ignore[method-assign]
+        _bind_offset_path(channel, tmp_path / "offset.json")
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="hello",
@@ -2684,7 +3383,12 @@ def test_telegram_polling_transient_failure_recovers_and_processes_update(tmp_pa
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         class FirstBot:
             async def get_updates(self, *, offset, timeout, allowed_updates):
@@ -2706,8 +3410,9 @@ def test_telegram_polling_transient_failure_recovers_and_processes_update(tmp_pa
         bot_factory = Mock(side_effect=[FirstBot(), SecondBot()])
         channel._running = True
         fake_module = SimpleNamespace(Bot=bot_factory)
-        with patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()), patch.dict(
-            sys.modules, {"telegram": fake_module}
+        with (
+            patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()),
+            patch.dict(sys.modules, {"telegram": fake_module}),
         ):
             await channel._poll_loop()
 
@@ -2718,11 +3423,15 @@ def test_telegram_polling_transient_failure_recovers_and_processes_update(tmp_pa
     asyncio.run(_scenario())
 
 
-def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(tmp_path: Path) -> None:
+def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             emitted.append(text)
 
@@ -2736,9 +3445,11 @@ def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(tmp_path: Pat
             },
             on_message=_on_message,
         )
-        channel._save_offset = lambda: None  # type: ignore[method-assign]
+        _bind_offset_path(channel, tmp_path / "offset.json")
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="stabilized",
@@ -2751,7 +3462,12 @@ def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(tmp_path: Pat
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         class FailingBot:
             async def get_updates(self, *, offset, timeout, allowed_updates):
@@ -2773,8 +3489,9 @@ def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(tmp_path: Pat
         bot_factory = Mock(side_effect=[FailingBot(), FailingBot(), RecoveringBot()])
         fake_module = SimpleNamespace(Bot=bot_factory)
         channel._running = True
-        with patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()), patch.dict(
-            sys.modules, {"telegram": fake_module}
+        with (
+            patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()),
+            patch.dict(sys.modules, {"telegram": fake_module}),
         ):
             await channel._poll_loop()
 
@@ -2789,12 +3506,16 @@ def test_telegram_polling_soak_recovery_reconnects_then_stabilizes(tmp_path: Pat
     asyncio.run(_scenario())
 
 
-def test_telegram_redelivery_reprocesses_after_failed_emit_then_commits_offset() -> None:
+def test_telegram_redelivery_reprocesses_after_failed_emit_then_commits_offset(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
         attempts = 0
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             nonlocal attempts
             attempts += 1
@@ -2803,10 +3524,12 @@ def test_telegram_redelivery_reprocesses_after_failed_emit_then_commits_offset()
             emitted.append(text)
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
-        saved: list[int] = []
-        channel._save_offset = lambda: saved.append(channel._offset)  # type: ignore[method-assign]
+        offset_path = tmp_path / "offset.json"
+        _bind_offset_path(channel, offset_path)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="hello",
@@ -2819,7 +3542,12 @@ def test_telegram_redelivery_reprocesses_after_failed_emit_then_commits_offset()
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         try:
             await channel._handle_update(update)
@@ -2830,17 +3558,19 @@ def test_telegram_redelivery_reprocesses_after_failed_emit_then_commits_offset()
         assert attempts == 1
         assert emitted == []
         assert channel._offset == 0
-        assert saved == []
+        assert not offset_path.exists()
 
         processed_ok = await channel._handle_update(update)
         assert processed_ok is True
-        channel._offset = max(channel._offset, int(update.update_id) + 1)
-        channel._save_offset()
+        channel._begin_safe_offset_update(int(update.update_id))
+        channel._complete_safe_offset_update(int(update.update_id))
 
         assert attempts == 2
         assert emitted == ["hello"]
         assert channel._offset == 101
-        assert saved == [101]
+        persisted = json.loads(offset_path.read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] == 100
+        assert persisted["next_offset"] == 101
 
     asyncio.run(_scenario())
 
@@ -2879,14 +3609,18 @@ def test_telegram_typing_starts_on_inbound_and_stops_before_outbound_send() -> N
         channel.bot = bot
         channel._running = True
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, text, metadata
             await asyncio.wait_for(typing_started.wait(), timeout=1.0)
             await channel.send(target="42", text="response")
 
         channel.on_message = _on_message
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="hello",
@@ -2899,7 +3633,12 @@ def test_telegram_typing_starts_on_inbound_and_stops_before_outbound_send() -> N
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=100, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=100,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -2937,13 +3676,17 @@ def test_telegram_typing_stops_after_inbound_handler_without_immediate_reply() -
         channel.bot = FakeBot()
         channel._running = True
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, text, metadata
             await asyncio.wait_for(typing_started.wait(), timeout=1.0)
 
         channel.on_message = _on_message
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="hello",
@@ -2956,7 +3699,12 @@ def test_telegram_typing_stops_after_inbound_handler_without_immediate_reply() -
             edit_date=None,
             reply_to_message=None,
         )
-        update = SimpleNamespace(update_id=101, message=message, edited_message=None, effective_message=message)
+        update = SimpleNamespace(
+            update_id=101,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         await channel._handle_update(update)
 
@@ -3042,7 +3790,9 @@ def test_telegram_typing_keepalive_normalizes_general_topic_thread_key() -> None
     asyncio.run(_scenario())
 
 
-def test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat() -> None:
+def test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat() -> (
+    None
+):
     async def _scenario() -> None:
         channel = TelegramChannel(
             config={
@@ -3075,7 +3825,10 @@ def test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat()
             create_task_calls += 1
             return real_create_task(coro)
 
-        with patch("clawlite.channels.telegram.asyncio.create_task", side_effect=_tracking_create_task):
+        with patch(
+            "clawlite.channels.telegram.asyncio.create_task",
+            side_effect=_tracking_create_task,
+        ):
             channel._start_typing_keepalive(chat_id="42")
             channel._start_typing_keepalive(chat_id="42")
             await asyncio.wait_for(started.wait(), timeout=1.0)
@@ -3409,11 +4162,15 @@ def test_telegram_send_mixed_chaos_chunking_retry_after_timeout_then_success() -
     asyncio.run(_scenario())
 
 
-def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_updates(tmp_path: Path) -> None:
+def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_updates(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             emitted.append(text)
 
@@ -3427,10 +4184,12 @@ def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_update
             },
             on_message=_on_message,
         )
-        saved_offsets: list[int] = []
-        channel._save_offset = lambda: saved_offsets.append(channel._offset)  # type: ignore[method-assign]
+        offset_path = tmp_path / "offset.json"
+        _bind_offset_path(channel, offset_path)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
 
         def _update(update_id: int, text: str):
@@ -3445,7 +4204,12 @@ def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_update
                 edit_date=None,
                 reply_to_message=None,
             )
-            return SimpleNamespace(update_id=update_id, message=msg, edited_message=None, effective_message=msg)
+            return SimpleNamespace(
+                update_id=update_id,
+                message=msg,
+                edited_message=None,
+                effective_message=msg,
+            )
 
         updates = [
             _update(100, "u100"),
@@ -3472,19 +4236,24 @@ def test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_update
                 channel._running = False
                 return []
 
-        bot_factory = Mock(side_effect=[FailingBot(), FailingBot(), FailingBot(), StableBot()])
+        bot_factory = Mock(
+            side_effect=[FailingBot(), FailingBot(), FailingBot(), StableBot()]
+        )
         fake_module = SimpleNamespace(Bot=bot_factory)
 
         channel._running = True
-        with patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()), patch.dict(
-            sys.modules, {"telegram": fake_module}
+        with (
+            patch("clawlite.channels.telegram.asyncio.sleep", new=AsyncMock()),
+            patch.dict(sys.modules, {"telegram": fake_module}),
         ):
             await channel._poll_loop()
 
         signals = channel.signals()
         assert emitted == ["u100", "u101", "u102"]
         assert channel._offset == 103
-        assert saved_offsets == [101, 102, 103]
+        persisted = json.loads(offset_path.read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] == 102
+        assert persisted["next_offset"] == 103
         assert channel._connected is True
         assert signals["reconnect_count"] == 3
         assert signals["send_auth_breaker_open"] is False
@@ -3497,7 +4266,9 @@ def test_telegram_polling_stale_update_is_skipped_and_counted(tmp_path: Path) ->
     async def _scenario() -> None:
         emitted: list[str] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             emitted.append(text)
 
@@ -3509,10 +4280,12 @@ def test_telegram_polling_stale_update_is_skipped_and_counted(tmp_path: Path) ->
             },
             on_message=_on_message,
         )
-        channel._save_offset = lambda: None  # type: ignore[method-assign]
-        channel._offset = 200
+        _bind_offset_path(channel, tmp_path / "offset.json")
+        channel._force_commit_offset_update(199)
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
         message = SimpleNamespace(
             text="stale",
@@ -3525,7 +4298,12 @@ def test_telegram_polling_stale_update_is_skipped_and_counted(tmp_path: Path) ->
             edit_date=None,
             reply_to_message=None,
         )
-        stale_update = SimpleNamespace(update_id=150, message=message, edited_message=None, effective_message=message)
+        stale_update = SimpleNamespace(
+            update_id=150,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
 
         class FakeBot:
             def __init__(self) -> None:
@@ -3550,11 +4328,15 @@ def test_telegram_polling_stale_update_is_skipped_and_counted(tmp_path: Path) ->
     asyncio.run(_scenario())
 
 
-def test_telegram_polling_duplicate_update_advances_offset_and_recovers(tmp_path: Path) -> None:
+def test_telegram_polling_duplicate_update_advances_offset_and_recovers(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[str] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             del session_id, user_id, metadata
             emitted.append(text)
             channel._running = False
@@ -3567,12 +4349,16 @@ def test_telegram_polling_duplicate_update_advances_offset_and_recovers(tmp_path
             },
             on_message=_on_message,
         )
-        saved_offsets: list[int] = []
-        channel._save_offset = lambda: saved_offsets.append(channel._offset)  # type: ignore[method-assign]
-        channel._offset = 100
-        assert channel._remember_update_dedupe_key("update:100", source="polling") is True
+        offset_path = tmp_path / "offset.json"
+        _bind_offset_path(channel, offset_path)
+        channel._force_commit_offset_update(99)
+        assert (
+            channel._remember_update_dedupe_key("update:100", source="polling") is True
+        )
 
-        user = SimpleNamespace(id=1, username="alice", first_name="Alice", language_code="en")
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
         chat = SimpleNamespace(type="private")
 
         duplicate_message = SimpleNamespace(
@@ -3631,7 +4417,9 @@ def test_telegram_polling_duplicate_update_advances_offset_and_recovers(tmp_path
 
         assert emitted == ["fresh-after-duplicate"]
         assert channel._offset == 102
-        assert saved_offsets == [101, 102]
+        persisted = json.loads(offset_path.read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] == 101
+        assert persisted["next_offset"] == 102
         assert channel.bot.offsets[:2] == [100, 101]
         assert channel.signals()["update_duplicate_skip_count"] == 1
 
@@ -3770,11 +4558,15 @@ def test_telegram_webhook_missing_config_falls_back_to_polling() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes(tmp_path: Path) -> None:
+def test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -3831,11 +4623,15 @@ def test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes(
     asyncio.run(_scenario())
 
 
-def test_telegram_webhook_success_persists_dedupe_state_before_restart(tmp_path: Path) -> None:
+def test_telegram_webhook_success_persists_dedupe_state_before_restart(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         dedupe_path = tmp_path / "telegram-dedupe.json"
@@ -3875,17 +4671,23 @@ def test_telegram_webhook_success_persists_dedupe_state_before_restart(tmp_path:
     asyncio.run(_scenario())
 
 
-def test_telegram_webhook_refreshes_persisted_dedupe_across_live_instances(tmp_path: Path) -> None:
+def test_telegram_webhook_refreshes_persisted_dedupe_across_live_instances(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted_a: list[str] = []
         emitted_b: list[str] = []
         dedupe_path = tmp_path / "telegram-dedupe.json"
 
-        async def _on_message_a(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message_a(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             del session_id, user_id, metadata
             emitted_a.append(text)
 
-        async def _on_message_b(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message_b(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             del session_id, user_id, metadata
             emitted_b.append(text)
 
@@ -3926,7 +4728,9 @@ def test_telegram_webhook_refreshes_persisted_dedupe_across_live_instances(tmp_p
     asyncio.run(_scenario())
 
 
-def test_telegram_webhook_failed_processing_allows_redelivery_then_commits_dedupe(tmp_path: Path) -> None:
+def test_telegram_webhook_failed_processing_allows_redelivery_then_commits_dedupe(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         channel = TelegramChannel(
             config={
@@ -3968,11 +4772,15 @@ def test_telegram_webhook_failed_processing_allows_redelivery_then_commits_dedup
     asyncio.run(_scenario())
 
 
-def test_telegram_dedupe_skips_duplicate_callback_query_without_update_id(tmp_path: Path) -> None:
+def test_telegram_dedupe_skips_duplicate_callback_query_without_update_id(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -4021,7 +4829,9 @@ def test_telegram_dedupe_is_unified_across_polling_and_webhook(tmp_path: Path) -
                 "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
             }
         )
-        assert channel._remember_update_dedupe_key("update:991", source="polling") is True
+        assert (
+            channel._remember_update_dedupe_key("update:991", source="polling") is True
+        )
 
         payload = {
             "update_id": 991,
@@ -4043,11 +4853,15 @@ def test_telegram_dedupe_is_unified_across_polling_and_webhook(tmp_path: Path) -
     asyncio.run(_scenario())
 
 
-def test_telegram_dedupe_skips_duplicate_message_key_without_update_id(tmp_path: Path) -> None:
+def test_telegram_dedupe_skips_duplicate_message_key_without_update_id(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -4078,11 +4892,74 @@ def test_telegram_dedupe_skips_duplicate_message_key_without_update_id(tmp_path:
     asyncio.run(_scenario())
 
 
+def test_telegram_webhook_out_of_order_updates_buffer_until_gap_closes(
+    tmp_path: Path,
+) -> None:
+    async def _scenario() -> None:
+        emitted: list[str] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
+            del session_id, user_id, metadata
+            emitted.append(text)
+
+        channel = TelegramChannel(
+            config={
+                "token": "x:token",
+                "dedupe_state_path": str(tmp_path / "telegram-dedupe.json"),
+            },
+            on_message=_on_message,
+        )
+        _bind_offset_path(channel, tmp_path / "offset.json")
+        channel._force_commit_offset_update(900)
+
+        payload_902 = {
+            "update_id": 902,
+            "message": {
+                "message_id": 57,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 7, "username": "alice"},
+                "text": "u902",
+            },
+        }
+        payload_901 = {
+            "update_id": 901,
+            "message": {
+                "message_id": 56,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 7, "username": "alice"},
+                "text": "u901",
+            },
+        }
+
+        processed_902 = await channel.handle_webhook_update(payload_902)
+        assert processed_902 is True
+        assert channel._offset == 901
+
+        processed_901 = await channel.handle_webhook_update(payload_901)
+        duplicate_902 = await channel.handle_webhook_update(payload_902)
+
+        assert processed_901 is True
+        assert duplicate_902 is False
+        assert emitted == ["u902", "u901"]
+        assert channel._offset == 903
+        persisted = json.loads((tmp_path / "offset.json").read_text(encoding="utf-8"))
+        assert persisted["safe_update_id"] == 902
+        assert persisted["completed_update_ids"] == []
+        signals = channel.signals()
+        assert signals["webhook_stale_update_skip_count"] == 1
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_channel_post_is_forwarded() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
@@ -4126,7 +5003,9 @@ def test_telegram_edited_channel_post_is_forwarded_as_edit() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
@@ -4165,11 +5044,15 @@ def test_telegram_edited_channel_post_is_forwarded_as_edit() -> None:
     asyncio.run(_scenario())
 
 
-def test_telegram_handle_webhook_update_normalizes_channel_post_payload(tmp_path: Path) -> None:
+def test_telegram_handle_webhook_update_normalizes_channel_post_payload(
+    tmp_path: Path,
+) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict[str, object]) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -4202,11 +5085,203 @@ def test_telegram_handle_webhook_update_normalizes_channel_post_payload(tmp_path
     asyncio.run(_scenario())
 
 
+def test_telegram_chat_member_update_emits_normalized_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, object]]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        update = SimpleNamespace(
+            update_id=701,
+            chat_member=SimpleNamespace(
+                chat=SimpleNamespace(id=-10042, type="supergroup"),
+                from_user=SimpleNamespace(id=5, username="owner"),
+                old_chat_member=SimpleNamespace(status="member"),
+                new_chat_member=SimpleNamespace(
+                    status="administrator",
+                    user=SimpleNamespace(id=7, username="alice"),
+                ),
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:-10042"
+        assert user_id == "7"
+        assert text == "[telegram chat member] member -> administrator"
+        assert metadata["update_kind"] == "chat_member"
+        assert metadata["member_user_id"] == 7
+        assert metadata["old_status"] == "member"
+        assert metadata["new_status"] == "administrator"
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_chat_join_request_emits_normalized_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, object]]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        update = SimpleNamespace(
+            update_id=702,
+            chat_join_request=SimpleNamespace(
+                chat=SimpleNamespace(id=-10055, type="supergroup"),
+                from_user=SimpleNamespace(id=8, username="bob"),
+                bio="hello",
+                invite_link="https://example.com/invite",
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:-10055"
+        assert user_id == "8"
+        assert text == "[telegram chat join request]"
+        assert metadata["update_kind"] == "chat_join_request"
+        assert metadata["bio"] == "hello"
+        assert metadata["invite_link"] == "https://example.com/invite"
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_deleted_business_messages_emit_normalized_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, object]]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        update = SimpleNamespace(
+            update_id=703,
+            deleted_business_messages=SimpleNamespace(
+                chat=SimpleNamespace(id=6001, type="private"),
+                business_connection_id="bc-1",
+                message_ids=[11, 12],
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        metadata = emitted[0][3]
+        assert metadata["update_kind"] == "deleted_business_messages"
+        assert metadata["business_connection_id"] == "bc-1"
+        assert metadata["message_ids"] == [11, 12]
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_chat_boost_update_emits_normalized_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, object]]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        update = SimpleNamespace(
+            update_id=704,
+            chat_boost=SimpleNamespace(
+                chat=SimpleNamespace(id=-10077, type="supergroup"),
+                boost=SimpleNamespace(
+                    boost_id="boost-1",
+                    source=SimpleNamespace(
+                        user=SimpleNamespace(id=9, username="carol")
+                    ),
+                ),
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:-10077"
+        assert user_id == "9"
+        assert text == "[telegram chat boost]"
+        assert metadata["update_kind"] == "chat_boost"
+        assert metadata["boost_id"] == "boost-1"
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_purchased_paid_media_emits_normalized_metadata() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, object]]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict[str, object]
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(config={"token": "x:token"}, on_message=_on_message)
+        update = SimpleNamespace(
+            update_id=705,
+            purchased_paid_media=SimpleNamespace(
+                chat=SimpleNamespace(id=6010, type="private"),
+                user=SimpleNamespace(id=14, username="dora"),
+                payload="media-token-1",
+            ),
+            message=None,
+            edited_message=None,
+            effective_message=None,
+        )
+
+        processed = await channel._handle_update(update)
+
+        assert processed is True
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "telegram:6010"
+        assert user_id == "14"
+        assert text == "[telegram purchased paid media]"
+        assert metadata["update_kind"] == "purchased_paid_media"
+        assert metadata["payload"] == "media-token-1"
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_message_reaction_notifications_all_emits_event() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -4256,7 +5331,9 @@ def test_telegram_message_reaction_notifications_off_blocks_event() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -4294,7 +5371,9 @@ def test_telegram_message_reaction_notifications_own_requires_sent_cache() -> No
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(
@@ -4361,7 +5440,9 @@ def test_telegram_message_reaction_bot_user_is_ignored() -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
 
-        async def _on_message(session_id: str, user_id: str, text: str, metadata: dict) -> None:
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
             emitted.append((session_id, user_id, text, metadata))
 
         channel = TelegramChannel(

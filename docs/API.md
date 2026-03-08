@@ -86,6 +86,8 @@ If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostic
 
 `channels` entries are additive and may include channel-specific `signals` maps for operational counters/state.
 
+For Telegram, `signals` may also include safe-offset reliability fields such as `offset_next`, `offset_watermark_update_id`, `offset_highest_completed_update_id`, `offset_pending_count`, and `offset_min_pending_update_id`, plus additive counters like `offset_safe_advance_count`, `polling_stale_update_skip_count`, `webhook_stale_update_skip_count`, `media_download_count`, `media_download_error_count`, `media_transcription_count`, and `media_transcription_error_count`.
+
 `channels_delivery` is additive and includes manager-level delivery counters with this shape:
 
 - `total`: aggregate counters (`attempts`, `success`, `failures`, `dead_lettered`, `replayed`, `channel_unavailable`, `policy_dropped`, `delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`)
@@ -537,6 +539,7 @@ Diagnóstico de autenticação do gateway.
 - Validates `X-Telegram-Bot-Api-Secret-Token` against channel secret when configured.
 - Accepts JSON object payload up to 1 MB and returns `{ "ok": true, "processed": <bool> }`.
 - Applies a 5s body-read timeout and returns `408` with code `telegram_webhook_payload_timeout` on slow/incomplete payload reads.
+- `processed=false` is valid for stale or duplicate webhook redeliveries that were safely ignored.
 
 Response:
 

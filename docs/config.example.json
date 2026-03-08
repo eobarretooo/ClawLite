@@ -79,6 +79,9 @@
       "webhook_secret": "",
       "webhook_path": "/api/webhooks/telegram",
       "webhook_url": "",
+      "dedupe_state_path": "",
+      "offset_state_path": "",
+      "media_download_dir": "",
       "allow_from": [],
       "poll_interval_s": 1.0,
       "poll_timeout_s": 20,
@@ -96,7 +99,11 @@
       "typing_max_ttl_s": 30.0,
       "typing_timeout_s": 5.0,
       "typing_circuit_failure_threshold": 1,
-      "typing_circuit_cooldown_s": 60.0
+      "typing_circuit_cooldown_s": 60.0,
+      "transcribe_voice": true,
+      "transcribe_audio": true,
+      "transcription_api_key": "",
+      "transcription_language": "pt"
     }
   }
 }

@@ -635,6 +635,15 @@ class TelegramChannelConfig(BaseChannelConfig):
     webhook_fail_fast_on_error: bool = False
     update_dedupe_limit: int = 4096
     dedupe_state_path: str = ""
+    offset_state_path: str = ""
+    media_download_dir: str = ""
+    transcribe_voice: bool = True
+    transcribe_audio: bool = True
+    transcription_api_key: str = ""
+    transcription_base_url: str = "https://api.groq.com/openai/v1"
+    transcription_model: str = "whisper-large-v3-turbo"
+    transcription_language: str = "pt"
+    transcription_timeout_s: float = 90.0
     poll_interval_s: float = 1.0
     poll_timeout_s: int = 20
     reconnect_initial_s: float = 2.0
@@ -703,6 +712,25 @@ class TelegramChannelConfig(BaseChannelConfig):
                 ),
             ),
             dedupe_state_path=str(data.get("dedupe_state_path", data.get("dedupeStatePath", "")) or "").strip(),
+            offset_state_path=str(data.get("offset_state_path", data.get("offsetStatePath", "")) or "").strip(),
+            media_download_dir=str(data.get("media_download_dir", data.get("mediaDownloadDir", "")) or "").strip(),
+            transcribe_voice=bool(data.get("transcribe_voice", data.get("transcribeVoice", True))),
+            transcribe_audio=bool(data.get("transcribe_audio", data.get("transcribeAudio", True))),
+            transcription_api_key=str(data.get("transcription_api_key", data.get("transcriptionApiKey", "")) or "").strip(),
+            transcription_base_url=str(
+                data.get("transcription_base_url", data.get("transcriptionBaseUrl", "https://api.groq.com/openai/v1"))
+                or "https://api.groq.com/openai/v1"
+            ).strip(),
+            transcription_model=str(
+                data.get("transcription_model", data.get("transcriptionModel", "whisper-large-v3-turbo"))
+                or "whisper-large-v3-turbo"
+            ).strip(),
+            transcription_language=str(
+                data.get("transcription_language", data.get("transcriptionLanguage", "pt")) or "pt"
+            ).strip(),
+            transcription_timeout_s=float(
+                data.get("transcription_timeout_s", data.get("transcriptionTimeoutS", 90.0)) or 90.0
+            ),
             poll_interval_s=float(data.get("poll_interval_s", data.get("pollIntervalS", 1.0)) or 1.0),
             poll_timeout_s=int(data.get("poll_timeout_s", data.get("pollTimeoutS", 20)) or 20),
             reconnect_initial_s=float(data.get("reconnect_initial_s", data.get("reconnectInitialS", 2.0)) or 2.0),
