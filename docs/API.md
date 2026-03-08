@@ -71,7 +71,8 @@ Queue diagnostics are additive and may include delivery/dead-letter observabilit
 Scheduler diagnostics/status payloads are additive and include reliability telemetry:
 - `heartbeat` may include trigger/reason counters, state-save counters, `consecutive_error_count`, and `state_last_error`.
 - `cron` may include load/save durability counters plus service-level execution/schedule counters; cron jobs include per-job health fields (`last_status`, `last_error`, `consecutive_failures`, `run_count`).
-- `autonomy` may include `last_error_kind`, `skipped_provider_backoff`, `provider_backoff_remaining_s`, and a trimmed provider snapshot in `last_snapshot.provider`.
+- `autonomy` may include `last_error_kind`, `skipped_provider_backoff`, `provider_backoff_remaining_s`, `provider_backoff_reason`, `provider_backoff_provider`, and a trimmed provider snapshot in `last_snapshot.provider`.
+- `last_snapshot.provider` may include `suppression_reason`, `suppression_backoff_s`, and `suppression_hint` when autonomy is intentionally holding off on provider calls.
 - `supervisor` may include per-component recovery budgets and cooldown telemetry in `component_recovery`, plus aggregate `recovery_skipped_budget` counters.
 
 ## `GET /v1/diagnostics`

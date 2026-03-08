@@ -1322,6 +1322,8 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
             "last_result_excerpt",
             "last_error",
             "last_error_kind",
+            "provider_backoff_reason",
+            "provider_backoff_provider",
             "consecutive_error_count",
             "last_snapshot",
             "cooldown_remaining_s",
@@ -1333,6 +1335,7 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
         assert payload["autonomy"]["run_success"] >= 1
         assert payload["autonomy"]["last_result_excerpt"] == "AUTONOMY_IDLE"
         assert payload["autonomy"]["last_snapshot"]["provider"]["state"] == "healthy"
+        assert payload["autonomy"]["last_snapshot"]["provider"]["suppression_reason"] == ""
         assert set(payload["autonomy_wake"].keys()) >= {
             "running",
             "worker_state",
@@ -1591,6 +1594,7 @@ def test_gateway_autonomy_respects_provider_backoff_without_calling_model(tmp_pa
         )
         app = create_app(cfg)
         provider_complete = AsyncMock(side_effect=AssertionError("provider should not be called while cooling down"))
+        app.state.runtime.workspace.should_run_bootstrap = lambda: False
         app.state.runtime.engine.provider = SimpleNamespace(
             provider_name="failover",
             model="openai/gpt-4.1-mini",
@@ -1625,9 +1629,65 @@ def test_gateway_autonomy_respects_provider_backoff_without_calling_model(tmp_pa
             assert first["run_attempts"] >= 1
             assert first["run_failures"] >= 1
             assert first["last_error_kind"] == "provider_backoff"
+            assert first["provider_backoff_reason"] == "cooldown"
+            assert first["provider_backoff_provider"] == "failover"
             assert first["provider_backoff_remaining_s"] >= 29.0
             assert first["last_snapshot"]["provider"]["state"] == "cooldown"
             assert first["last_snapshot"]["provider"]["provider"] == "failover"
+            assert first["last_snapshot"]["provider"]["suppression_reason"] == "cooldown"
+            assert second["skipped_provider_backoff"] >= 1
+            assert provider_complete.await_count == baseline_calls
+
+    asyncio.run(_scenario())
+
+
+def test_gateway_autonomy_suppresses_provider_quota_without_calling_model(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        cfg = AppConfig(
+            workspace_path=str(tmp_path / "workspace"),
+            state_path=str(tmp_path / "state"),
+            scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+            gateway={
+                "heartbeat": {"enabled": False},
+                "autonomy": {"enabled": True, "interval_s": 9999, "cooldown_s": 0, "timeout_s": 5},
+            },
+            channels={},
+        )
+        app = create_app(cfg)
+        provider_complete = AsyncMock(side_effect=AssertionError("provider should not be called while quota is exhausted"))
+        app.state.runtime.workspace.should_run_bootstrap = lambda: False
+        app.state.runtime.engine.provider = SimpleNamespace(
+            provider_name="openai",
+            model="openai/gpt-4.1-mini",
+            complete=provider_complete,
+            diagnostics=lambda: {
+                "provider": "openai",
+                "model": "openai/gpt-4.1-mini",
+                "counters": {"last_error_class": "quota"},
+            },
+        )
+
+        async with app.router.lifespan_context(app):
+            runtime = app.state.runtime
+            assert runtime.autonomy is not None
+            baseline_calls = provider_complete.await_count
+            runtime.autonomy.cooldown_s = 0.0
+            runtime.autonomy._cooldown_until = 0.0
+            runtime.autonomy._provider_backoff_until = 0.0
+
+            first = await runtime.autonomy.run_once(force=True)
+            second = await runtime.autonomy.run_once(force=False)
+
+            assert first["run_attempts"] >= 1
+            assert first["run_failures"] >= 1
+            assert first["last_error_kind"] == "provider_backoff"
+            assert first["provider_backoff_reason"] == "quota"
+            assert first["provider_backoff_provider"] == "openai"
+            assert first["provider_backoff_remaining_s"] >= 1799.0
+            assert first["last_snapshot"]["provider"]["state"] == "degraded"
+            assert first["last_snapshot"]["provider"]["suppression_reason"] == "quota"
+            assert first["last_snapshot"]["provider"]["suppression_backoff_s"] == 1800.0
+            assert "quota" in str(first["last_snapshot"]["provider"]["suppression_hint"]).lower()
             assert second["skipped_provider_backoff"] >= 1
             assert provider_complete.await_count == baseline_calls
 

@@ -537,6 +537,8 @@ class AutonomyService:
         self._running = False
         self._cooldown_until = 0.0
         self._provider_backoff_until = 0.0
+        self._provider_backoff_reason = ""
+        self._provider_backoff_provider = ""
 
         self._ticks = 0
         self._run_attempts = 0
@@ -615,6 +617,9 @@ class AutonomyService:
             "state": str(provider.get("state", "") or ""),
             "cooldown_remaining_s": float(provider.get("cooldown_remaining_s", 0.0) or 0.0),
             "last_error_class": str(provider.get("last_error_class", "") or ""),
+            "suppression_reason": str(provider.get("suppression_reason", "") or ""),
+            "suppression_backoff_s": float(provider.get("suppression_backoff_s", 0.0) or 0.0),
+            "suppression_hint": str(provider.get("suppression_hint", "") or ""),
         }
 
         return {
@@ -625,22 +630,24 @@ class AutonomyService:
         }
 
     @staticmethod
-    def _classify_run_error(exc: Exception) -> tuple[str, float]:
+    def _classify_run_error(exc: Exception) -> tuple[str, float, str, str]:
         message = str(exc or "").strip()
         if message.startswith("autonomy_provider_backoff:"):
             parts = message.split(":")
+            provider = str(parts[1] if len(parts) >= 2 else "").strip().lower()
+            reason = str(parts[2] if len(parts) >= 3 else "").strip().lower()
             backoff_s = 0.0
             if len(parts) >= 2:
                 try:
                     backoff_s = max(0.0, float(parts[-1] or 0.0))
                 except (TypeError, ValueError):
                     backoff_s = 0.0
-            return ("provider_backoff", backoff_s)
+            return ("provider_backoff", backoff_s, reason, provider)
         if message.startswith("autonomy_tick_unsatisfied:"):
-            return ("unsatisfied", 0.0)
+            return ("unsatisfied", 0.0, "", "")
         if message == "engine_run_timeout":
-            return ("timeout", 0.0)
-        return ("error", 0.0)
+            return ("timeout", 0.0, "", "")
+        return ("error", 0.0, "", "")
 
     async def _read_snapshot(self) -> dict[str, Any]:
         if self._snapshot_callback is None:
@@ -681,6 +688,8 @@ class AutonomyService:
                 self._consecutive_error_count += 1
                 self._last_error = "autonomy_callback_unavailable"
                 self._last_error_kind = "error"
+                self._provider_backoff_reason = ""
+                self._provider_backoff_provider = ""
                 self._cooldown_until = now + self.cooldown_s
                 return self.status()
 
@@ -694,16 +703,20 @@ class AutonomyService:
             self._last_error_kind = ""
             self._consecutive_error_count = 0
             self._provider_backoff_until = 0.0
+            self._provider_backoff_reason = ""
+            self._provider_backoff_provider = ""
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._run_failures += 1
             self._consecutive_error_count += 1
             self._last_error = str(exc)
-            error_kind, error_backoff_s = self._classify_run_error(exc)
+            error_kind, error_backoff_s, error_reason, error_provider = self._classify_run_error(exc)
             self._last_error_kind = error_kind
             if error_backoff_s > 0.0:
                 self._provider_backoff_until = max(self._provider_backoff_until, now + error_backoff_s)
+            self._provider_backoff_reason = error_reason if error_kind == "provider_backoff" else ""
+            self._provider_backoff_provider = error_provider if error_kind == "provider_backoff" else ""
             bind_event("autonomy.tick", session=self.session_id).error("autonomy run failed error={}", exc)
         return self.status()
 
@@ -779,6 +792,8 @@ class AutonomyService:
             "last_result_excerpt": self._last_result_excerpt,
             "last_error": task_error or self._last_error,
             "last_error_kind": self._last_error_kind,
+            "provider_backoff_reason": self._provider_backoff_reason,
+            "provider_backoff_provider": self._provider_backoff_provider,
             "consecutive_error_count": self._consecutive_error_count,
             "last_snapshot": dict(self._last_snapshot),
             "cooldown_remaining_s": round(cooldown_remaining_s, 3),

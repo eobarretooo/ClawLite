@@ -680,6 +680,22 @@ def _provider_telemetry_snapshot(provider: Any) -> dict[str, Any]:
     return telemetry
 
 
+def _autonomy_provider_suppression_hint(*, provider: str, reason: str) -> str:
+    provider_name = str(provider or "provider").strip() or "provider"
+    normalized_reason = str(reason or "").strip().lower()
+    hints = {
+        "auth": f"Provider {provider_name} needs valid credentials before autonomy should try again.",
+        "quota": f"Provider {provider_name} appears out of quota or billing; restore credits or switch provider/model.",
+        "rate_limit": f"Provider {provider_name} is rate-limited; wait for the limit window or use another provider.",
+        "retry_exhausted": f"Provider {provider_name} exhausted retries; wait briefly before autonomy retries.",
+        "network": f"Provider {provider_name} is unreachable; restore connectivity before autonomy retries.",
+        "http_transient": f"Provider {provider_name} is seeing transient HTTP failures; let it recover before autonomy retries.",
+        "circuit_open": f"Provider {provider_name} circuit breaker is open; autonomy will wait for cooldown.",
+        "cooldown": f"Provider {provider_name} still has candidates cooling down; autonomy will wait before retrying.",
+    }
+    return hints.get(normalized_reason, "")
+
+
 def _provider_autonomy_snapshot(*, provider: Any, default_circuit_cooldown_s: float = 30.0) -> dict[str, Any]:
     telemetry = _provider_telemetry_snapshot(provider)
     summary = telemetry.get("summary", {}) if isinstance(telemetry, dict) else {}
@@ -709,15 +725,39 @@ def _provider_autonomy_snapshot(*, provider: Any, default_circuit_cooldown_s: fl
             cooldown_candidates.append(value)
 
     state = str(summary.get("state", "healthy") or "healthy").strip().lower() or "healthy"
+    provider_name = str(telemetry.get("provider", "") or "")
+    last_error_class = str(telemetry.get("last_error_class", counters.get("last_error_class", "")) or "")
     cooldown_remaining_s = max(cooldown_candidates, default=0.0)
     if state == "circuit_open" and cooldown_remaining_s <= 0.0:
         cooldown_remaining_s = max(0.0, float(default_circuit_cooldown_s or 0.0))
 
+    suppression_reason = ""
+    suppression_backoff_s = 0.0
+    if state in {"circuit_open", "cooldown"}:
+        suppression_reason = state
+        suppression_backoff_s = cooldown_remaining_s
+    else:
+        synthetic_backoff_s = {
+            "auth": 900.0,
+            "quota": 1800.0,
+            "rate_limit": 120.0,
+            "retry_exhausted": 120.0,
+            "network": 60.0,
+            "http_transient": 60.0,
+        }
+        suppression_backoff_s = float(synthetic_backoff_s.get(last_error_class, 0.0) or 0.0)
+        if suppression_backoff_s > 0.0:
+            suppression_reason = last_error_class
+    suppression_hint = _autonomy_provider_suppression_hint(provider=provider_name, reason=suppression_reason)
+
     return {
-        "provider": str(telemetry.get("provider", "") or ""),
+        "provider": provider_name,
         "state": state,
         "cooldown_remaining_s": round(cooldown_remaining_s, 3),
-        "last_error_class": str(telemetry.get("last_error_class", counters.get("last_error_class", "")) or ""),
+        "last_error_class": last_error_class,
+        "suppression_reason": suppression_reason,
+        "suppression_backoff_s": round(suppression_backoff_s, 3),
+        "suppression_hint": suppression_hint,
     }
 
 
@@ -1841,17 +1881,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     async def _run_autonomy_tick(snapshot: dict[str, Any]) -> str:
         provider_snapshot = snapshot.get("provider") if isinstance(snapshot, dict) else {}
-        provider_state = str(provider_snapshot.get("state", "") or "").strip().lower() if isinstance(provider_snapshot, dict) else ""
         provider_name = str(provider_snapshot.get("provider", "") or "provider").strip().lower() or "provider"
-        provider_cooldown_remaining_s = 0.0
+        suppression_reason = ""
+        suppression_backoff_s = 0.0
         if isinstance(provider_snapshot, dict):
+            suppression_reason = str(provider_snapshot.get("suppression_reason", "") or "").strip().lower()
             try:
-                provider_cooldown_remaining_s = float(provider_snapshot.get("cooldown_remaining_s", 0.0) or 0.0)
+                suppression_backoff_s = float(provider_snapshot.get("suppression_backoff_s", 0.0) or 0.0)
             except (TypeError, ValueError):
-                provider_cooldown_remaining_s = 0.0
-        if provider_state in {"circuit_open", "cooldown"}:
+                suppression_backoff_s = 0.0
+        if suppression_reason and suppression_backoff_s > 0.0:
             raise RuntimeError(
-                f"autonomy_provider_backoff:{provider_name}:{provider_state}:{round(max(0.0, provider_cooldown_remaining_s), 3)}"
+                f"autonomy_provider_backoff:{provider_name}:{suppression_reason}:{round(max(0.0, suppression_backoff_s), 3)}"
             )
 
         prompt_text = (
@@ -1872,16 +1913,16 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 provider=runtime.engine.provider,
                 default_circuit_cooldown_s=float(cfg.provider.circuit_cooldown_s or 30.0),
             )
-            provider_state = str(provider_snapshot.get("state", "") or "").strip().lower()
             provider_name = str(provider_snapshot.get("provider", "") or "provider").strip().lower() or "provider"
-            provider_cooldown_remaining_s = 0.0
+            suppression_reason = str(provider_snapshot.get("suppression_reason", "") or "").strip().lower()
+            suppression_backoff_s = 0.0
             try:
-                provider_cooldown_remaining_s = float(provider_snapshot.get("cooldown_remaining_s", 0.0) or 0.0)
+                suppression_backoff_s = float(provider_snapshot.get("suppression_backoff_s", 0.0) or 0.0)
             except (TypeError, ValueError):
-                provider_cooldown_remaining_s = 0.0
-            if provider_state in {"circuit_open", "cooldown"}:
+                suppression_backoff_s = 0.0
+            if suppression_reason and suppression_backoff_s > 0.0:
                 raise RuntimeError(
-                    f"autonomy_provider_backoff:{provider_name}:{provider_state}:{round(max(0.0, provider_cooldown_remaining_s), 3)}"
+                    f"autonomy_provider_backoff:{provider_name}:{suppression_reason}:{round(max(0.0, suppression_backoff_s), 3)}"
                 )
             raise RuntimeError(f"autonomy_tick_unsatisfied:{model_name or 'unknown_model'}")
 

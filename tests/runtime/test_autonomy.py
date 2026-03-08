@@ -138,6 +138,9 @@ def test_autonomy_provider_backoff_skips_until_window_expires() -> None:
                 "state": "cooldown",
                 "cooldown_remaining_s": 45.0,
                 "last_error_class": "rate_limit",
+                "suppression_reason": "cooldown",
+                "suppression_backoff_s": 45.0,
+                "suppression_hint": "provider cooldown active",
             },
         }
 
@@ -163,7 +166,11 @@ def test_autonomy_provider_backoff_skips_until_window_expires() -> None:
         assert first["run_attempts"] == 1
         assert first["run_failures"] == 1
         assert first["last_error_kind"] == "provider_backoff"
+        assert first["provider_backoff_reason"] == "cooldown"
+        assert first["provider_backoff_provider"] == "failover"
         assert first["provider_backoff_remaining_s"] == 45.0
+        assert first["last_snapshot"]["provider"]["suppression_reason"] == "cooldown"
+        assert first["last_snapshot"]["provider"]["suppression_backoff_s"] == 45.0
 
         second = await service.run_once(force=False)
         assert second["run_attempts"] == 1
