@@ -1455,6 +1455,64 @@ def test_gateway_supervisor_recovers_crashed_heartbeat_task(tmp_path: Path) -> N
     asyncio.run(_scenario())
 
 
+def test_gateway_supervisor_recovers_crashed_autonomy_task(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        cfg = AppConfig(
+            workspace_path=str(tmp_path / "workspace"),
+            state_path=str(tmp_path / "state"),
+            scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+            gateway={
+                "heartbeat": {"enabled": False},
+                "autonomy": {"enabled": True, "interval_s": 9999, "cooldown_s": 0, "timeout_s": 5},
+                "supervisor": {"enabled": False, "interval_s": 60, "cooldown_s": 0},
+            },
+            channels={},
+        )
+        app = create_app(cfg)
+        app.state.runtime.engine.provider = AutonomyIdleProvider()
+
+        async with app.router.lifespan_context(app):
+            runtime = app.state.runtime
+            assert runtime.supervisor is not None
+            assert runtime.autonomy is not None
+            runtime.channels.send = AsyncMock(return_value="ok")
+
+            autonomy_task = runtime.autonomy._task
+            assert autonomy_task is not None
+            autonomy_task.cancel()
+            try:
+                await autonomy_task
+            except asyncio.CancelledError:
+                pass
+
+            assert runtime.autonomy.status()["worker_state"] == "cancelled"
+
+            await runtime.supervisor.run_once()
+
+            replacement_task = runtime.autonomy._task
+            assert replacement_task is not None
+            assert replacement_task is not autonomy_task
+            assert runtime.autonomy.status()["running"] is True
+
+            supervisor_status = runtime.supervisor.status()
+            assert supervisor_status["recovery_attempts"] >= 1
+            assert supervisor_status["recovery_success"] >= 1
+            assert supervisor_status["component_incidents"]["autonomy"] >= 1
+            send_kwargs = next(
+                call.kwargs
+                for call in runtime.channels.send.await_args_list
+                if dict(call.kwargs.get("metadata", {})).get("autonomy_action") == "component_recovery"
+                and dict(call.kwargs.get("metadata", {})).get("component") == "autonomy"
+            )
+            assert send_kwargs["metadata"]["source"] == "supervisor"
+            assert send_kwargs["metadata"]["autonomy_notice"] is True
+            assert send_kwargs["metadata"]["autonomy_action"] == "component_recovery"
+            assert send_kwargs["metadata"]["component"] == "autonomy"
+            assert "supervisor recovered component=autonomy" in str(send_kwargs["text"])
+
+    asyncio.run(_scenario())
+
+
 def test_gateway_supervisor_reports_provider_circuit_open_once_per_cooldown(tmp_path: Path) -> None:
     async def _scenario() -> None:
         cfg = AppConfig(
