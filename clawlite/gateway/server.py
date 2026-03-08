@@ -52,6 +52,7 @@ from clawlite.tools.apply_patch import ApplyPatchTool
 from clawlite.tools.exec import ExecTool
 from clawlite.tools.files import EditFileTool, EditTool, ListDirTool, ReadFileTool, ReadTool, WriteFileTool, WriteTool
 from clawlite.tools.mcp import MCPTool
+from clawlite.tools.discord_admin import DiscordAdminTool
 from clawlite.tools.message import MessageTool
 from clawlite.tools.memory import (
     MemoryAnalyzeTool,
@@ -1262,6 +1263,13 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     channels = ChannelManager(bus=bus, engine=engine)
     autonomy_log = AutonomyLog(path=Path(config.state_path) / "autonomy-events.json")
     tools.register(MessageTool(_MessageAPI(channels)))
+    tools.register(
+        DiscordAdminTool(
+            token=config.channels.discord.token,
+            api_base=config.channels.discord.api_base,
+            timeout_s=config.channels.discord.timeout_s,
+        )
+    )
 
     # Phase 7 – Self-Evolution Engine
     from clawlite.runtime.self_evolution import SelfEvolutionEngine

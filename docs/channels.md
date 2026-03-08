@@ -214,6 +214,8 @@ Notes:
 - For proactive sends, prefer typed targets: `channel:<discord_channel_id>` for guild channels/threads and `user:<discord_user_id>` for DMs.
 - Bare numeric Discord targets are ambiguous. ClawLite now tries them as channel IDs first and only falls back to DM creation if Discord returns `404`.
 - Automatic replies to inbound Discord messages now route back to the originating `channel_id` and preserve native reply references when Discord provides a `message_id`.
+- If you want the agent to build or reorganize a server, the bot also needs Discord permissions like `View Channels`, `Send Messages`, `Manage Channels`, and `Manage Roles`.
+- Server-building requests are now handled through the `discord_admin` tool, which can list guilds/channels/roles, create roles, create channels/categories, and apply a full layout template.
 
 ## Email
 

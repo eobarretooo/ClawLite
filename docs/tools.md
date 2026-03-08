@@ -198,6 +198,7 @@ Notes:
 | Tool | What it does | Typical use |
 | --- | --- | --- |
 | `message` | Sends proactive outbound messages to channels | Push a message to Telegram, Discord, WhatsApp, Email, or Slack |
+| `discord_admin` | Inspects and administers Discord guild structure | List guilds, channels, roles, or build server layout |
 | `cron` | Adds, removes, runs, lists, enables, or disables scheduled jobs | Schedule a later reminder or recurring task |
 | `mcp` | Calls tools from configured MCP servers | Reach remote tool servers through the registry |
 | `run_skill` | Executes a discovered `SKILL.md` binding | Invoke built-in or workspace skills |
@@ -205,6 +206,7 @@ Notes:
 Useful arguments:
 
 - `message`: `channel`, `target`, `text`, `action`, `message_id`, `reply_to_message_id`, `emoji`, `topic_name`, `metadata`, `media`, `buttons`
+- `discord_admin`: `action`, `guild_id`, `name`, `kind`, `parent_id`, `topic`, `permissions`, `reason`, `template`
 - `cron`: `action`, `expression`, `every_seconds`, `cron_expr`, `at`, `timezone`, `prompt`, `name`, `session_id`, `channel`, `target`, `force`, `run_once`
 - `mcp`: `server`, `tool`, `arguments`, `timeout_s`
 - `run_skill`: `name`, `input`, `args`, `timeout`, `query`, `location`, `tool_arguments`
@@ -213,6 +215,7 @@ Notes:
 
 - `message.action` defaults to `send`.
 - Telegram-only `message` actions are `reply`, `edit`, `delete`, `react`, and `create_topic`.
+- `discord_admin` expects a configured `channels.discord.token`; server mutations also require matching Discord bot permissions.
 - `mcp` accepts namespaced tools like `server::tool`.
 - `run_skill` can execute command-based skills, script shims, and tool-backed skills.
 
@@ -251,6 +254,17 @@ For Discord, prefer typed targets:
 ```json
 {"name":"message","arguments":{"channel":"discord","target":"user:746561804100042812","text":"Can you review this?","action":"send"}}
 ```
+
+List accessible Discord guilds:
+
+```json
+{"name":"discord_admin","arguments":{"action":"list_guilds"}}
+```
+
+Apply a Discord server layout:
+
+```json
+{"name":"discord_admin","arguments":{"action":"apply_layout","guild_id":"123456789012345678","reason":"initial server setup","template":{"roles":[{"name":"Admin","permissions":"8"},{"name":"Moderator"}],"categories":[{"name":"Info","channels":[{"name":"rules","kind":"text","topic":"Leia antes de participar"},{"name":"announcements","kind":"text"}]},{"name":"Voice","channels":[{"name":"General","kind":"voice","user_limit":20}]}]}}}
 ```
 
 Call an MCP tool:
