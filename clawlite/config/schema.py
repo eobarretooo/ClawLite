@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 
+def _config_value_or_default(raw: Any, default: Any) -> Any:
+    if raw is None or raw == "":
+        return default
+    return raw
+
+
 @dataclass(slots=True)
 class GatewayHeartbeatConfig:
     enabled: bool = True
@@ -15,7 +21,7 @@ class GatewayHeartbeatConfig:
         data = dict(raw or {})
         return cls(
             enabled=bool(data.get("enabled", True)),
-            interval_s=max(5, int(data.get("interval_s", data.get("intervalS", 1800)) or 1800)),
+            interval_s=max(5, int(_config_value_or_default(data.get("interval_s", data.get("intervalS", 1800)), 1800))),
         )
 
 
@@ -85,8 +91,8 @@ class GatewaySupervisorConfig:
             cooldown_raw = data.get("cooldown_s", 30)
         return cls(
             enabled=bool(data.get("enabled", True)),
-            interval_s=max(1, int(interval_raw or 20)),
-            cooldown_s=max(0, int(cooldown_raw or 30)),
+            interval_s=max(1, int(_config_value_or_default(interval_raw, 20))),
+            cooldown_s=max(0, int(_config_value_or_default(cooldown_raw, 30))),
         )
 
 
@@ -236,43 +242,49 @@ class GatewayAutonomyConfig:
         self_evolution_enabled_raw = _raw_with_alias("self_evolution_enabled", "selfEvolutionEnabled", False)
         self_evolution_cooldown_raw = _raw_with_alias("self_evolution_cooldown_s", "selfEvolutionCooldownS", 3600)
 
-        action_cooldown_s = max(0.0, float(action_cooldown_raw or 120.0))
-        action_rate_limit_per_hour = max(1, int(action_rate_limit_raw or 20))
-        min_action_confidence = float(min_action_confidence_raw or 0.55)
+        action_cooldown_s = max(0.0, float(_config_value_or_default(action_cooldown_raw, 120.0)))
+        action_rate_limit_per_hour = max(1, int(_config_value_or_default(action_rate_limit_raw, 20)))
+        min_action_confidence = float(_config_value_or_default(min_action_confidence_raw, 0.55))
         if min_action_confidence < 0.0:
             min_action_confidence = 0.0
         if min_action_confidence > 1.0:
             min_action_confidence = 1.0
-        degraded_backlog_threshold = max(1, int(degraded_backlog_threshold_raw or 300))
-        degraded_supervisor_error_threshold = max(1, int(degraded_supervisor_error_threshold_raw or 3))
+        degraded_backlog_threshold = max(1, int(_config_value_or_default(degraded_backlog_threshold_raw, 300)))
+        degraded_supervisor_error_threshold = max(
+            1,
+            int(_config_value_or_default(degraded_supervisor_error_threshold_raw, 3)),
+        )
 
         return cls(
             enabled=bool(data.get("enabled", False)),
-            interval_s=max(1, int(interval_raw or 900)),
-            cooldown_s=max(0, int(cooldown_raw or 300)),
-            timeout_s=max(0.1, float(timeout_raw or 45.0)),
-            max_queue_backlog=max(0, int(max_backlog_raw or 200)),
+            interval_s=max(1, int(_config_value_or_default(interval_raw, 900))),
+            cooldown_s=max(0, int(_config_value_or_default(cooldown_raw, 300))),
+            timeout_s=max(0.1, float(_config_value_or_default(timeout_raw, 45.0))),
+            max_queue_backlog=max(0, int(_config_value_or_default(max_backlog_raw, 200))),
             session_id=str(session_raw or "autonomy:system").strip() or "autonomy:system",
-            max_actions_per_run=max(1, int(max_actions_raw or 1)),
+            max_actions_per_run=max(1, int(_config_value_or_default(max_actions_raw, 1))),
             action_cooldown_s=action_cooldown_s,
             action_rate_limit_per_hour=action_rate_limit_per_hour,
-            max_replay_limit=max(1, int(max_replay_limit_raw or 50)),
+            max_replay_limit=max(1, int(_config_value_or_default(max_replay_limit_raw, 50))),
             action_policy=policy,
             environment_profile=environment_profile,
             min_action_confidence=min_action_confidence,
             degraded_backlog_threshold=degraded_backlog_threshold,
             degraded_supervisor_error_threshold=degraded_supervisor_error_threshold,
             audit_export_path=str(audit_export_path_raw or "").strip(),
-            audit_max_entries=max(1, int(audit_max_entries_raw or 200)),
+            audit_max_entries=max(1, int(_config_value_or_default(audit_max_entries_raw, 200))),
             tuning_loop_enabled=bool(tuning_loop_enabled_raw),
-            tuning_loop_interval_s=max(30, int(tuning_loop_interval_raw or 1800)),
-            tuning_loop_timeout_s=max(1.0, float(tuning_loop_timeout_raw or 45.0)),
-            tuning_loop_cooldown_s=max(0, int(tuning_loop_cooldown_raw or 300)),
-            tuning_degrading_streak_threshold=max(1, int(tuning_degrading_streak_threshold_raw or 2)),
-            tuning_recent_actions_limit=max(1, int(tuning_recent_actions_limit_raw or 20)),
-            tuning_error_backoff_s=max(1, int(tuning_error_backoff_raw or 900)),
+            tuning_loop_interval_s=max(30, int(_config_value_or_default(tuning_loop_interval_raw, 1800))),
+            tuning_loop_timeout_s=max(1.0, float(_config_value_or_default(tuning_loop_timeout_raw, 45.0))),
+            tuning_loop_cooldown_s=max(0, int(_config_value_or_default(tuning_loop_cooldown_raw, 300))),
+            tuning_degrading_streak_threshold=max(
+                1,
+                int(_config_value_or_default(tuning_degrading_streak_threshold_raw, 2)),
+            ),
+            tuning_recent_actions_limit=max(1, int(_config_value_or_default(tuning_recent_actions_limit_raw, 20))),
+            tuning_error_backoff_s=max(1, int(_config_value_or_default(tuning_error_backoff_raw, 900))),
             self_evolution_enabled=bool(self_evolution_enabled_raw),
-            self_evolution_cooldown_s=max(60, int(self_evolution_cooldown_raw or 3600)),
+            self_evolution_cooldown_s=max(60, int(_config_value_or_default(self_evolution_cooldown_raw, 3600))),
         )
 
 

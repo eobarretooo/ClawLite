@@ -71,6 +71,59 @@ def test_load_config_file_and_env_override(tmp_path: Path, monkeypatch) -> None:
     assert cfg.gateway.port == 7777
 
 
+def test_app_config_gateway_preserves_explicit_zero_values_and_clamps_minimums() -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "gateway": {
+                "heartbeat": {"interval_s": 0},
+                "supervisor": {"interval_s": 0, "cooldown_s": 0},
+                "autonomy": {
+                    "interval_s": 0,
+                    "cooldown_s": 0,
+                    "timeout_s": 0,
+                    "max_queue_backlog": 0,
+                    "max_actions_per_run": 0,
+                    "action_cooldown_s": 0,
+                    "action_rate_limit_per_hour": 0,
+                    "max_replay_limit": 0,
+                    "degraded_backlog_threshold": 0,
+                    "degraded_supervisor_error_threshold": 0,
+                    "audit_max_entries": 0,
+                    "tuning_loop_interval_s": 0,
+                    "tuning_loop_timeout_s": 0,
+                    "tuning_loop_cooldown_s": 0,
+                    "tuning_degrading_streak_threshold": 0,
+                    "tuning_recent_actions_limit": 0,
+                    "tuning_error_backoff_s": 0,
+                    "self_evolution_cooldown_s": 0,
+                },
+            }
+        }
+    )
+
+    assert cfg.gateway.heartbeat.interval_s == 5
+    assert cfg.gateway.supervisor.interval_s == 1
+    assert cfg.gateway.supervisor.cooldown_s == 0
+    assert cfg.gateway.autonomy.interval_s == 1
+    assert cfg.gateway.autonomy.cooldown_s == 0
+    assert cfg.gateway.autonomy.timeout_s == 0.1
+    assert cfg.gateway.autonomy.max_queue_backlog == 0
+    assert cfg.gateway.autonomy.max_actions_per_run == 1
+    assert cfg.gateway.autonomy.action_cooldown_s == 0.0
+    assert cfg.gateway.autonomy.action_rate_limit_per_hour == 1
+    assert cfg.gateway.autonomy.max_replay_limit == 1
+    assert cfg.gateway.autonomy.degraded_backlog_threshold == 1
+    assert cfg.gateway.autonomy.degraded_supervisor_error_threshold == 1
+    assert cfg.gateway.autonomy.audit_max_entries == 1
+    assert cfg.gateway.autonomy.tuning_loop_interval_s == 30
+    assert cfg.gateway.autonomy.tuning_loop_timeout_s == 1.0
+    assert cfg.gateway.autonomy.tuning_loop_cooldown_s == 0
+    assert cfg.gateway.autonomy.tuning_degrading_streak_threshold == 1
+    assert cfg.gateway.autonomy.tuning_recent_actions_limit == 1
+    assert cfg.gateway.autonomy.tuning_error_backoff_s == 1
+    assert cfg.gateway.autonomy.self_evolution_cooldown_s == 60
+
+
 def test_load_config_tools_flags(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(
