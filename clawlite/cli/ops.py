@@ -848,6 +848,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
                     "content": [{"type": "input_text", "text": "ping"}],
                 }
             ],
+            "instructions": "You are a concise assistant. Reply briefly.",
             "max_output_tokens": 1,
             "store": False,
         }
@@ -1326,6 +1327,8 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
     provider_api_base = str(getattr(selected, "api_base", "") or "")
     resolved_api_key = provider_api_key or global_api_key
     resolved_base_url = provider_api_base or global_base_url
+    if provider_name == "openai_codex":
+        resolved_base_url, _ = _resolve_codex_base_url(config)
 
     env_hits: dict[str, bool] = {}
     env_names: list[str] = []

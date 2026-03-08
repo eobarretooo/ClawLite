@@ -1854,6 +1854,7 @@ def test_provider_live_probe_openai_codex_uses_responses_backend(tmp_path: Path,
     assert captured["url"] == "https://chatgpt.com/backend-api/codex/responses"
     assert captured["headers"]["Authorization"] == "Bearer tok-codex-1234"
     assert captured["json"]["store"] is False
+    assert captured["json"]["instructions"] == "You are a concise assistant. Reply briefly."
     assert captured["json"]["max_output_tokens"] == 1
     assert captured["json"]["input"] == [
         {

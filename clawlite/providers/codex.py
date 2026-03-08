@@ -15,6 +15,7 @@ from clawlite.providers.reliability import ReliabilitySettings, classify_provide
 
 
 CODEX_DEFAULT_BASE_URL = "https://chatgpt.com/backend-api"
+CODEX_DEFAULT_INSTRUCTIONS = "You are a helpful and concise assistant."
 
 
 class CodexProvider(LLMProvider):
@@ -216,7 +217,10 @@ class CodexProvider(LLMProvider):
         for row in messages:
             role = str(row.get("role", "") or "").strip().lower()
             content = row.get("content", "")
-            if role in {"system", "developer", "user"}:
+            if role in {"system", "developer"}:
+                continue
+
+            if role == "user":
                 text = cls._extract_text(content)
                 if not text:
                     continue
@@ -277,6 +281,18 @@ class CodexProvider(LLMProvider):
                     }
                 )
         return rows
+
+    @classmethod
+    def _responses_instructions(cls, messages: list[dict[str, Any]]) -> str:
+        parts: list[str] = []
+        for row in messages:
+            role = str(row.get("role", "") or "").strip().lower()
+            if role not in {"system", "developer"}:
+                continue
+            text = cls._extract_text(row.get("content", ""))
+            if text:
+                parts.append(text)
+        return "\n\n".join(parts).strip()
 
     @classmethod
     def _parse_responses_tool_calls(cls, payload: dict[str, Any]) -> list[ToolCall]:
@@ -384,9 +400,11 @@ class CodexProvider(LLMProvider):
         attempts = self.reliability.retry_max_attempts
         use_responses_api = self._uses_responses_api()
         if use_responses_api:
+            instructions = self._responses_instructions(messages) or CODEX_DEFAULT_INSTRUCTIONS
             payload = {
                 "model": self.model,
                 "input": self._responses_input(messages),
+                "instructions": instructions,
                 "store": False,
             }
             if max_tokens is not None:

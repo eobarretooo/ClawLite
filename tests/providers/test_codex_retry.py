@@ -90,7 +90,10 @@ def test_codex_provider_uses_responses_backend_by_default() -> None:
         )
         with patch("httpx.AsyncClient.post", new=post_mock):
             out = await provider.complete(
-                messages=[{"role": "user", "content": "hi"}],
+                messages=[
+                    {"role": "system", "content": "Be concise."},
+                    {"role": "user", "content": "hi"},
+                ],
                 tools=[],
                 reasoning_effort="medium",
             )
@@ -99,6 +102,7 @@ def test_codex_provider_uses_responses_backend_by_default() -> None:
         assert post_mock.call_args.args[0] == "https://chatgpt.com/backend-api/codex/responses"
         payload = post_mock.call_args.kwargs["json"]
         assert payload["store"] is False
+        assert payload["instructions"] == "Be concise."
         assert payload["reasoning"] == {"effort": "medium"}
         assert payload["input"] == [
             {
