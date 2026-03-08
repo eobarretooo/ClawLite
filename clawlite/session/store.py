@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from urllib.parse import quote, unquote
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,13 +53,32 @@ class SessionStore:
         }
 
     def _safe_session_id(self, session_id: str) -> str:
-        return "".join(ch if ch.isalnum() or ch in {"-", "_", ":"} else "_" for ch in session_id).strip("_")
+        clean = str(session_id or "").strip()
+        return quote(clean, safe="-_.").strip("_")
+
+    @staticmethod
+    def _legacy_safe_session_id(session_id: str) -> str:
+        return "".join(
+            ch if ch.isalnum() or ch in {"-", "_", ":"} else "_"
+            for ch in str(session_id or "")
+        ).strip("_")
+
+    @staticmethod
+    def _restore_session_id(stem: str) -> str:
+        return unquote(str(stem or "").strip())
 
     def _path(self, session_id: str) -> Path:
         sid = self._safe_session_id(str(session_id or "").strip())
         if not sid:
             raise ValueError("session_id is required")
-        return self.root / f"{sid}.jsonl"
+        encoded_path = self.root / f"{sid}.jsonl"
+        legacy_sid = self._legacy_safe_session_id(str(session_id or "").strip())
+        legacy_path = self.root / f"{legacy_sid}.jsonl"
+        if encoded_path.exists():
+            return encoded_path
+        if legacy_path != encoded_path and legacy_path.exists():
+            return legacy_path
+        return encoded_path
 
     def append(
         self,
@@ -207,14 +227,21 @@ class SessionStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_path, path)
-            dir_fd = os.open(path.parent, os.O_RDONLY)
+            dir_fd = -1
             try:
+                dir_fd = os.open(str(path.parent), os.O_RDONLY)
                 os.fsync(dir_fd)
+            except OSError:
+                pass
             finally:
-                os.close(dir_fd)
+                if dir_fd >= 0:
+                    os.close(dir_fd)
         finally:
             if tmp_path.exists():
-                tmp_path.unlink()
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
 
     def _compact_session_file(self, path: Path) -> int | None:
         limit = self.max_messages_per_session
@@ -263,7 +290,7 @@ class SessionStore:
         }
 
     def list_sessions(self) -> list[str]:
-        return sorted(path.stem for path in self.root.glob("*.jsonl"))
+        return sorted(self._restore_session_id(path.stem) for path in self.root.glob("*.jsonl"))
 
     def delete(self, session_id: str) -> bool:
         path = self._path(session_id)

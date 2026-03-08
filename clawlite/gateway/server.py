@@ -81,6 +81,7 @@ from clawlite.workspace.loader import WorkspaceLoader
 
 GATEWAY_CONTRACT_VERSION = "2026-03-04"
 TELEGRAM_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
+WHATSAPP_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S = 300.0
 GATEWAY_CRON_ENGINE_TIMEOUT_S = 90.0
 GATEWAY_HEARTBEAT_ENGINE_TIMEOUT_S = 120.0
@@ -4027,6 +4028,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.http_telemetry = http_telemetry
     app.state.ws_telemetry = ws_telemetry
     telegram_webhook_path = _normalize_webhook_path(cfg.channels.telegram.webhook_path)
+    whatsapp_webhook_path = _normalize_webhook_path(
+        getattr(cfg.channels.whatsapp, "webhook_path", "/api/webhooks/whatsapp"),
+        default="/api/webhooks/whatsapp",
+    )
 
     @app.middleware("http")
     async def _http_telemetry_middleware(request: Request, call_next):
@@ -4652,6 +4657,55 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return {"ok": True, "processed": processed}
 
     app.add_api_route(telegram_webhook_path, _telegram_webhook, methods=["POST"])
+
+    async def _whatsapp_webhook(request: Request) -> dict[str, Any]:
+        if not cfg.channels.whatsapp.enabled:
+            raise HTTPException(status_code=409, detail="whatsapp_channel_disabled")
+
+        channel = runtime.channels.get_channel("whatsapp")
+        if channel is None:
+            raise HTTPException(status_code=409, detail="whatsapp_channel_unavailable")
+
+        expected_secret = str(
+            getattr(cfg.channels.whatsapp, "webhook_secret", "")
+            or getattr(channel, "webhook_secret", "")
+            or ""
+        ).strip()
+        if not expected_secret:
+            raise HTTPException(status_code=409, detail="whatsapp_webhook_secret_missing")
+        auth_header = str(request.headers.get("Authorization", "") or "")
+        bearer = ""
+        if auth_header.lower().startswith("bearer "):
+            bearer = auth_header[7:].strip()
+        supplied_secret = str(request.headers.get("X-Webhook-Secret", "") or "").strip()
+        if not supplied_secret:
+            supplied_secret = bearer
+        if not supplied_secret or not hmac.compare_digest(
+            supplied_secret, expected_secret
+        ):
+            raise HTTPException(status_code=401, detail="whatsapp_webhook_secret_invalid")
+
+        try:
+            raw_body = await asyncio.wait_for(request.body(), timeout=5.0)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(status_code=408, detail="whatsapp_webhook_payload_timeout") from exc
+        if len(raw_body) > WHATSAPP_WEBHOOK_MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="whatsapp_webhook_payload_too_large")
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="whatsapp_webhook_payload_invalid") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="whatsapp_webhook_payload_invalid")
+
+        handler = getattr(channel, "receive_hook", None)
+        if not callable(handler):
+            raise HTTPException(status_code=409, detail="whatsapp_webhook_handler_unavailable")
+
+        processed = bool(await handler(payload))
+        return {"ok": True, "processed": processed}
+
+    app.add_api_route(whatsapp_webhook_path, _whatsapp_webhook, methods=["POST"])
 
     @app.post("/v1/cron/add")
     async def cron_add(req: CronAddRequest, request: Request) -> dict[str, Any]:

@@ -800,6 +800,7 @@ class AutonomyService:
             else:
                 return
         self._running = True
+        await self.run_once(force=False)
         self._task = asyncio.create_task(self._run_loop())
         bind_event("autonomy.lifecycle").info(
             "autonomy started enabled={} interval_s={} cooldown_s={} timeout_s={} max_queue_backlog={} session_id={}",

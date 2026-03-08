@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import os
+import threading
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,8 @@ DEFAULT_CALLBACK_TIMEOUT_SECONDS = 300.0
 
 
 class CronService:
+    _PATH_LOCKS: dict[str, threading.RLock] = {}
+    _PATH_LOCKS_GUARD = threading.Lock()
     _LOOP_SLEEP_MIN_SECONDS = 0.05
     _LOOP_SLEEP_MAX_SECONDS = 5.0
     _OVERDUE_THRESHOLD_SECONDS = 1.0
@@ -87,6 +90,16 @@ class CronService:
             "last_save_error": "",
         }
         self._load()
+
+    @classmethod
+    def _path_lock(cls, path: Path) -> threading.RLock:
+        key = str(path.expanduser().resolve())
+        with cls._PATH_LOCKS_GUARD:
+            lock = cls._PATH_LOCKS.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                cls._PATH_LOCKS[key] = lock
+            return lock
 
     def _task_snapshot(self) -> tuple[str, str]:
         task = self._task
@@ -155,7 +168,10 @@ class CronService:
     def _store_lock(self):
         fd: int | None = None
         lock_file = None
+        fallback_lock = self._path_lock(self.path) if fcntl is None else None
         try:
+            if fallback_lock is not None:
+                fallback_lock.acquire()
             lock_file = self._lock_path.open("a+", encoding="utf-8")
             fd = lock_file.fileno()
             if fcntl is not None:
@@ -166,6 +182,8 @@ class CronService:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             if lock_file is not None:
                 lock_file.close()
+            if fallback_lock is not None:
+                fallback_lock.release()
 
     def _read_rows_unlocked(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -201,10 +219,14 @@ class CronService:
         os.replace(tmp_path, self.path)
         dir_fd: int | None = None
         try:
-            dir_fd = os.open(self.path.parent, os.O_RDONLY)
+            dir_fd = os.open(str(self.path.parent), os.O_RDONLY)
             os.fsync(dir_fd)
         except OSError:
-            pass
+            try:
+                dir_fd = os.open(str(self.path), os.O_RDONLY)
+                os.fsync(dir_fd)
+            except OSError:
+                pass
         finally:
             if dir_fd is not None:
                 os.close(dir_fd)

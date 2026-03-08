@@ -43,7 +43,7 @@ def test_session_store_append_retries_once_on_transient_oserror(tmp_path: Path, 
 
 def test_session_store_read_recovers_from_malformed_json_and_repairs_file(tmp_path: Path) -> None:
     store = SessionStore(root=tmp_path / "sessions")
-    target = tmp_path / "sessions" / "telegram:3.jsonl"
+    target = store._path("telegram:3")
     valid1 = {"session_id": "telegram:3", "role": "user", "content": "hello", "ts": "t1", "metadata": {}}
     valid2 = {"session_id": "telegram:3", "role": "assistant", "content": "world", "ts": "t2", "metadata": {}}
     target.write_text(
@@ -107,7 +107,7 @@ def test_session_store_compaction_updates_diagnostics_counters(tmp_path: Path, m
     assert diag["compaction_trimmed_lines"] == 1
     assert diag["compaction_failures"] == 0
 
-    target = tmp_path / "sessions" / "telegram:6.jsonl"
+    target = store._path("telegram:6")
 
     original_read_text = Path.read_text
 

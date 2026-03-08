@@ -4,6 +4,7 @@ import json
 import importlib
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -112,12 +113,22 @@ class SQLiteMemoryBackend:
     def is_supported(self) -> bool:
         return True
 
+    @contextmanager
+    def _connect(self):
+        if self._db_file is None:
+            raise RuntimeError("sqlite backend not initialized")
+        conn = sqlite3.connect(str(self._db_file))
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def initialize(self, memory_home: str | Path) -> None:
         with self._lock:
             if self._db_file is None:
                 self._db_file = Path(memory_home).expanduser() / "memory-index.sqlite3"
             self._db_file.parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute(
                     """
@@ -163,7 +174,7 @@ class SQLiteMemoryBackend:
         if self._db_file is None:
             return
         with self._lock:
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO layer_records (layer, record_id, category, payload, created_at, updated_at)
@@ -192,7 +203,7 @@ class SQLiteMemoryBackend:
             return 0
         placeholders = ", ".join("?" for _ in ids)
         with self._lock:
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute(f"DELETE FROM layer_records WHERE record_id IN ({placeholders})", ids)
                 conn.commit()
                 return int(cursor.rowcount or 0)
@@ -214,7 +225,7 @@ class SQLiteMemoryBackend:
             return []
 
         with self._lock:
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 rows = conn.execute(query, params).fetchall()
 
         out: list[dict[str, Any]] = []
@@ -246,7 +257,7 @@ class SQLiteMemoryBackend:
         if self._db_file is None:
             return
         with self._lock:
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO embeddings (record_id, embedding, created_at, source)
@@ -273,7 +284,7 @@ class SQLiteMemoryBackend:
             return 0
         placeholders = ", ".join("?" for _ in ids)
         with self._lock:
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute(f"DELETE FROM embeddings WHERE record_id IN ({placeholders})", ids)
                 conn.commit()
                 return int(cursor.rowcount or 0)
@@ -294,7 +305,7 @@ class SQLiteMemoryBackend:
         params.append(bounded_limit)
 
         with self._lock:
-            with sqlite3.connect(str(self._db_file)) as conn:
+            with self._connect() as conn:
                 rows = conn.execute(query, params).fetchall()
 
         out: dict[str, list[float]] = {}

@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 from clawlite.tools.base import Tool, ToolContext
@@ -18,6 +19,29 @@ class ExecTool(Tool):
     DEFAULT_MAX_OUTPUT_CHARS = 65536
     MIN_MAX_OUTPUT_CHARS = 1024
     MAX_MAX_OUTPUT_CHARS = 1000000
+    _WINDOWS_CMD_BUILTINS = {
+        "assoc",
+        "cd",
+        "cls",
+        "copy",
+        "date",
+        "del",
+        "dir",
+        "echo",
+        "erase",
+        "md",
+        "mkdir",
+        "move",
+        "rd",
+        "ren",
+        "rename",
+        "rmdir",
+        "set",
+        "time",
+        "type",
+        "ver",
+        "vol",
+    }
 
     def __init__(
         self,
@@ -178,6 +202,45 @@ class ExecTool(Tool):
 
         return None
 
+    @staticmethod
+    def _normalize_windows_command(command: str, env_path: str) -> tuple[list[str], str]:
+        resolved_command = str(command or "")
+        argv = shlex.split(resolved_command)
+        if argv and argv[0] == "python3":
+            python3_path = shutil.which("python3", path=env_path)
+            if python3_path is None:
+                python_path = shutil.which("python", path=env_path)
+                if python_path:
+                    argv[0] = python_path
+                    resolved_command = re.sub(
+                        r"^\s*python3\b",
+                        "python",
+                        resolved_command,
+                        count=1,
+                    )
+        return argv, resolved_command
+
+    @staticmethod
+    def _resolve_windows_path_command(raw_command: str, env_path: str) -> Path | None:
+        command_name = str(raw_command or "").strip()
+        if not command_name:
+            return None
+        candidate = Path(command_name)
+        if candidate.is_absolute() or any(sep in command_name for sep in ("/", "\\")):
+            return candidate if candidate.exists() else None
+        for entry in [item for item in env_path.split(os.pathsep) if item]:
+            candidate = Path(entry) / command_name
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        return None
+
+    @staticmethod
+    def _bash_compatible_path(path: Path) -> str:
+        value = path.resolve().as_posix()
+        if re.match(r"^[A-Za-z]:/", value):
+            return f"/{value[0].lower()}/{value[3:]}"
+        return value
+
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         command = str(arguments.get("command", "")).strip()
         log = bind_event("tool.exec", session=ctx.session_id, tool=self.name)
@@ -203,20 +266,87 @@ class ExecTool(Tool):
         if self.path_append:
             current = env.get("PATH", "")
             env["PATH"] = f"{current}{os.pathsep}{self.path_append}" if current else self.path_append
+        env_path = str(env.get("PATH", "") or "")
+
+        bash_path = shutil.which("bash", path=env_path) if os.name == "nt" else None
+        exec_argv = list(argv)
+        shell_command = command
+        if os.name == "nt":
+            try:
+                exec_argv, shell_command = self._normalize_windows_command(command, env_path)
+            except ValueError:
+                log.warning("invalid command syntax blocked")
+                return "exit=-1\nstdout=\nstderr=invalid_command_syntax"
+        resolved_path_command = (
+            self._resolve_windows_path_command(exec_argv[0], env_path)
+            if os.name == "nt" and exec_argv
+            else None
+        )
 
         cwd = str(self.workspace_path) if self.restrict_to_workspace else None
 
         try:
             process = await asyncio.create_subprocess_exec(
-                *argv,
+                *exec_argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
                 env=env,
             )
         except OSError as exc:
-            log.error("spawn failed error={}", exc)
-            return f"exit=-1\nstdout=\nstderr={exc}"
+            if os.name == "nt":
+                cmd_path = os.environ.get("COMSPEC", "").strip() or shutil.which("cmd", path=env_path)
+                command_name = str(exec_argv[0] if exec_argv else "").strip().lower()
+                suffix = str(resolved_path_command.suffix).lower() if resolved_path_command is not None else ""
+                use_cmd = bool(
+                    cmd_path
+                    and (
+                        command_name in self._WINDOWS_CMD_BUILTINS
+                        or suffix in {".cmd", ".bat"}
+                    )
+                )
+                try:
+                    if use_cmd and cmd_path:
+                        process = await asyncio.create_subprocess_exec(
+                            cmd_path,
+                            "/d",
+                            "/s",
+                            "/c",
+                            shell_command,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=cwd,
+                            env=env,
+                        )
+                    elif bash_path:
+                        if resolved_path_command is not None:
+                            process = await asyncio.create_subprocess_exec(
+                                bash_path,
+                                self._bash_compatible_path(resolved_path_command),
+                                *exec_argv[1:],
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                                cwd=cwd,
+                                env=env,
+                            )
+                        else:
+                            process = await asyncio.create_subprocess_exec(
+                                bash_path,
+                                "-lc",
+                                shell_command,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                                cwd=cwd,
+                                env=env,
+                            )
+                    else:
+                        raise exc
+                except OSError as shell_exc:
+                    log.error("spawn failed error={}", shell_exc)
+                    return f"exit=-1\nstdout=\nstderr={shell_exc}"
+            else:
+                log.error("spawn failed error={}", exc)
+                return f"exit=-1\nstdout=\nstderr={exc}"
         try:
             out, err = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except asyncio.TimeoutError:

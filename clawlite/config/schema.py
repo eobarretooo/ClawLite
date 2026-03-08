@@ -785,6 +785,12 @@ class DiscordChannelConfig(BaseChannelConfig):
     token: str = ""
     api_base: str = "https://discord.com/api/v10"
     timeout_s: float = 10.0
+    gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
+    gateway_intents: int = 37377
+    gateway_backoff_base_s: float = 2.0
+    gateway_backoff_max_s: float = 30.0
+    typing_enabled: bool = True
+    typing_interval_s: float = 8.0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> DiscordChannelConfig:
@@ -795,6 +801,78 @@ class DiscordChannelConfig(BaseChannelConfig):
             token=str(data.get("token", "") or ""),
             api_base=str(data.get("api_base", data.get("apiBase", "https://discord.com/api/v10")) or "https://discord.com/api/v10"),
             timeout_s=max(0.1, float(data.get("timeout_s", data.get("timeoutS", 10.0)) or 10.0)),
+            gateway_url=str(
+                data.get("gateway_url", data.get("gatewayUrl", "wss://gateway.discord.gg/?v=10&encoding=json"))
+                or "wss://gateway.discord.gg/?v=10&encoding=json"
+            ).strip(),
+            gateway_intents=max(
+                0,
+                int(data.get("gateway_intents", data.get("gatewayIntents", 37377)) or 37377),
+            ),
+            gateway_backoff_base_s=max(
+                0.1,
+                float(data.get("gateway_backoff_base_s", data.get("gatewayBackoffBaseS", 2.0)) or 2.0),
+            ),
+            gateway_backoff_max_s=max(
+                0.1,
+                float(data.get("gateway_backoff_max_s", data.get("gatewayBackoffMaxS", 30.0)) or 30.0),
+            ),
+            typing_enabled=bool(data.get("typing_enabled", data.get("typingEnabled", True))),
+            typing_interval_s=max(
+                0.5,
+                float(data.get("typing_interval_s", data.get("typingIntervalS", 8.0)) or 8.0),
+            ),
+        )
+
+
+@dataclass(slots=True)
+class EmailChannelConfig(BaseChannelConfig):
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_user: str = ""
+    imap_password: str = ""
+    imap_use_ssl: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_ssl: bool = True
+    smtp_use_starttls: bool = True
+    poll_interval_s: float = 30.0
+    mailbox: str = "INBOX"
+    mark_seen: bool = True
+    dedupe_state_path: str = ""
+    max_body_chars: int = 12000
+    from_address: str = ""
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> EmailChannelConfig:
+        data = dict(raw or {})
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            allow_from=cls._allow_from(data),
+            imap_host=str(data.get("imap_host", data.get("imapHost", "")) or "").strip(),
+            imap_port=max(1, int(data.get("imap_port", data.get("imapPort", 993)) or 993)),
+            imap_user=str(data.get("imap_user", data.get("imapUser", "")) or "").strip(),
+            imap_password=str(data.get("imap_password", data.get("imapPassword", "")) or ""),
+            imap_use_ssl=bool(data.get("imap_use_ssl", data.get("imapUseSsl", True))),
+            smtp_host=str(data.get("smtp_host", data.get("smtpHost", "")) or "").strip(),
+            smtp_port=max(1, int(data.get("smtp_port", data.get("smtpPort", 465)) or 465)),
+            smtp_user=str(data.get("smtp_user", data.get("smtpUser", "")) or "").strip(),
+            smtp_password=str(data.get("smtp_password", data.get("smtpPassword", "")) or ""),
+            smtp_use_ssl=bool(data.get("smtp_use_ssl", data.get("smtpUseSsl", True))),
+            smtp_use_starttls=bool(
+                data.get("smtp_use_starttls", data.get("smtpUseStarttls", True))
+            ),
+            poll_interval_s=max(
+                1.0,
+                float(data.get("poll_interval_s", data.get("pollIntervalS", 30.0)) or 30.0),
+            ),
+            mailbox=str(data.get("mailbox", data.get("imapMailbox", "INBOX")) or "INBOX").strip() or "INBOX",
+            mark_seen=bool(data.get("mark_seen", data.get("markSeen", True))),
+            dedupe_state_path=str(data.get("dedupe_state_path", data.get("dedupeStatePath", "")) or "").strip(),
+            max_body_chars=max(256, int(data.get("max_body_chars", data.get("maxBodyChars", 12000)) or 12000)),
+            from_address=str(data.get("from_address", data.get("fromAddress", "")) or "").strip(),
         )
 
 
@@ -823,6 +901,8 @@ class WhatsAppChannelConfig(BaseChannelConfig):
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""
     timeout_s: float = 10.0
+    webhook_path: str = "/api/webhooks/whatsapp"
+    webhook_secret: str = ""
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> WhatsAppChannelConfig:
@@ -833,6 +913,9 @@ class WhatsAppChannelConfig(BaseChannelConfig):
             bridge_url=str(data.get("bridge_url", data.get("bridgeUrl", "ws://localhost:3001")) or "ws://localhost:3001"),
             bridge_token=str(data.get("bridge_token", data.get("bridgeToken", "")) or ""),
             timeout_s=max(0.1, float(data.get("timeout_s", data.get("timeoutS", 10.0)) or 10.0)),
+            webhook_path=str(data.get("webhook_path", data.get("webhookPath", "/api/webhooks/whatsapp")) or "/api/webhooks/whatsapp").strip()
+            or "/api/webhooks/whatsapp",
+            webhook_secret=str(data.get("webhook_secret", data.get("webhookSecret", "")) or "").strip(),
         )
 
 
@@ -849,6 +932,7 @@ class ChannelsConfig:
     delivery_persistence_path: str = ""
     telegram: TelegramChannelConfig = field(default_factory=TelegramChannelConfig)
     discord: DiscordChannelConfig = field(default_factory=DiscordChannelConfig)
+    email: EmailChannelConfig = field(default_factory=EmailChannelConfig)
     slack: SlackChannelConfig = field(default_factory=SlackChannelConfig)
     whatsapp: WhatsAppChannelConfig = field(default_factory=WhatsAppChannelConfig)
     extra: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -877,6 +961,7 @@ class ChannelsConfig:
             "deliveryPersistencePath",
             "telegram",
             "discord",
+            "email",
             "slack",
             "whatsapp",
         }
@@ -910,6 +995,7 @@ class ChannelsConfig:
             ).strip(),
             telegram=TelegramChannelConfig.from_dict(dict(data.get("telegram") or {})),
             discord=DiscordChannelConfig.from_dict(dict(data.get("discord") or {})),
+            email=EmailChannelConfig.from_dict(dict(data.get("email") or {})),
             slack=SlackChannelConfig.from_dict(dict(data.get("slack") or {})),
             whatsapp=WhatsAppChannelConfig.from_dict(dict(data.get("whatsapp") or {})),
             extra=extra,
@@ -928,6 +1014,7 @@ class ChannelsConfig:
             "delivery_persistence_path": self.delivery_persistence_path,
             "telegram": asdict(self.telegram),
             "discord": asdict(self.discord),
+            "email": asdict(self.email),
             "slack": asdict(self.slack),
             "whatsapp": asdict(self.whatsapp),
         }
@@ -937,7 +1024,7 @@ class ChannelsConfig:
 
     def enabled_names(self) -> list[str]:
         rows: list[str] = []
-        for name in ("telegram", "discord", "slack", "whatsapp"):
+        for name in ("telegram", "discord", "email", "slack", "whatsapp"):
             payload = getattr(self, name)
             if bool(payload.enabled):
                 rows.append(name)

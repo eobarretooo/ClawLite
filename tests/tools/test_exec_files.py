@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -41,12 +42,18 @@ def test_exec_tool_path_append(tmp_path: Path) -> None:
     async def _scenario() -> None:
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        script = bin_dir / "hello_from_path_append"
-        script.write_text("#!/usr/bin/env sh\necho path_append_ok\n", encoding="utf-8")
-        script.chmod(0o755)
+        if os.name == "nt":
+            script = bin_dir / "hello_from_path_append.cmd"
+            script.write_text("@echo off\necho path_append_ok\n", encoding="utf-8", newline="\n")
+            command = "hello_from_path_append.cmd"
+        else:
+            script = bin_dir / "hello_from_path_append"
+            script.write_text("#!/usr/bin/env sh\necho path_append_ok\n", encoding="utf-8", newline="\n")
+            script.chmod(0o755)
+            command = "hello_from_path_append"
 
         out = await ExecTool(path_append=str(bin_dir)).run(
-            {"command": "hello_from_path_append"},
+            {"command": command},
             ToolContext(session_id="s"),
         )
         assert "exit=0" in out

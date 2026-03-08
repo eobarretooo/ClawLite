@@ -26,6 +26,20 @@ _ACTIVE_CONFIG_CACHE: dict[str, object] = {
 }
 
 
+def _resolved_home() -> Path:
+    home_env = str(os.getenv("HOME", "") or "").strip()
+    if home_env:
+        return Path(home_env).expanduser()
+    userprofile = str(os.getenv("USERPROFILE", "") or "").strip()
+    if userprofile:
+        return Path(userprofile).expanduser()
+    home_drive = str(os.getenv("HOMEDRIVE", "") or "").strip()
+    home_path = str(os.getenv("HOMEPATH", "") or "").strip()
+    if home_drive and home_path:
+        return Path(f"{home_drive}{home_path}").expanduser()
+    return Path.home()
+
+
 def _to_bool(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -435,15 +449,16 @@ class SkillsLoader:
         now_monotonic=None,
     ) -> None:
         default_builtin = Path(__file__).resolve().parents[1] / "skills"
+        user_home = _resolved_home()
         self.roots = [
             Path(builtin_root) if builtin_root else default_builtin,
-            Path.home() / ".clawlite" / "workspace" / "skills",
-            Path.home() / ".clawlite" / "marketplace" / "skills",
+            user_home / ".clawlite" / "workspace" / "skills",
+            user_home / ".clawlite" / "marketplace" / "skills",
         ]
         self.state_path = (
             Path(state_path)
             if state_path is not None
-            else (Path.home() / ".clawlite" / "state" / "skills-state.json")
+            else (user_home / ".clawlite" / "state" / "skills-state.json")
         )
         self.watch_debounce_ms = max(0, int(watch_debounce_ms or 0))
         default_watch_interval = max(0.1, float(self.watch_debounce_ms) / 1000.0) if self.watch_debounce_ms else 0.5

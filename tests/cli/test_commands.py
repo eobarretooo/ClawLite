@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
+import pytest
+
+# Keep CLI command tests importable while channel modules are being replaced in
+# parallel worktrees. These tests do not exercise WhatsApp channel behavior.
+if importlib.util.find_spec("clawlite.channels.whatsapp") is None:
+    whatsapp_stub = types.ModuleType("clawlite.channels.whatsapp")
+
+    class _StubWhatsAppChannel:
+        pass
+
+    whatsapp_stub.WhatsAppChannel = _StubWhatsAppChannel
+    sys.modules["clawlite.channels.whatsapp"] = whatsapp_stub
+
+from clawlite.cli.commands import cmd_provider_login
+from clawlite.cli.commands import cmd_provider_logout
 from clawlite.cli.commands import main
 from clawlite.cli.ops import provider_live_probe
 from clawlite.channels.telegram_pairing import TelegramPairingStore
@@ -1357,6 +1374,151 @@ def test_cli_memory_branching_commands_do_not_import_gateway_runtime(tmp_path: P
     assert "clawlite.gateway.server" not in sys.modules
 
 
+def test_cli_memory_branches_empty_returns_main_branch(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory", "branches"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["current"] == "main"
+    assert list(payload["branches"].keys()) == ["main"]
+    assert payload["branches"]["main"]["head"] == ""
+
+
+def test_cli_memory_branch_create_returns_branch_metadata(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory", "branch", "feature-empty"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["name"] == "feature-empty"
+    assert payload["current"] == "main"
+    assert payload["checkout"] is False
+    assert payload["head"] == ""
+
+
+def test_cli_memory_checkout_switches_current_branch(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--config", str(config_path), "memory", "branch", "feature-checkout"]) == 0
+    capsys.readouterr()
+
+    rc = main(["--config", str(config_path), "memory", "checkout", "feature-checkout"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["current"] == "feature-checkout"
+    assert payload["head"] == ""
+
+    rc_branches = main(["--config", str(config_path), "memory", "branches"])
+    assert rc_branches == 0
+    branches_payload = json.loads(capsys.readouterr().out)
+    assert branches_payload["current"] == "feature-checkout"
+
+
+def test_cli_memory_merge_returns_import_metadata(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "clawlite.cli.commands.memory_merge_branches",
+        lambda cfg, source, target, tag: {
+            "ok": True,
+            "source": source,
+            "target": target,
+            "source_head": "src-1",
+            "target_head_before": "dst-1",
+            "target_head_after": "dst-2",
+            "version": "20260308T130000Z-sync",
+            "imported": True,
+        },
+    )
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "memory",
+            "merge",
+            "--source",
+            "feature-merge",
+            "--target",
+            "main",
+            "--tag",
+            "sync",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["source"] == "feature-merge"
+    assert payload["target"] == "main"
+    assert payload["imported"] is True
+    assert payload["version"]
+    assert payload["target_head_before"]
+    assert payload["target_head_after"]
+
+
+def test_cli_memory_share_optin_enable_returns_enabled_true(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "memory", "share-optin", "--user", "42", "--enabled", "true"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": True, "user_id": "42", "enabled": True}
+
+
 def test_cli_new_memory_commands_do_not_import_gateway_runtime(tmp_path: Path, capsys) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -1745,6 +1907,58 @@ def test_cli_provider_status_unsupported_provider_returns_rc2(tmp_path: Path, ca
 
     rc_status = main(["--config", str(config_path), "provider", "status", "unknown-provider"])
     assert rc_status == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": False, "error": "unsupported_provider:unknown-provider"}
+
+
+def test_cli_provider_login_unsupported_returns_rc2(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cmd_provider_login(
+        types.SimpleNamespace(
+            config=str(config_path),
+            provider="unknown-provider",
+            access_token="",
+            account_id="",
+            set_model=False,
+            no_interactive=True,
+        )
+    )
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": False, "error": "unsupported_provider:unknown-provider"}
+
+
+def test_cli_provider_logout_unsupported_returns_rc2(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cmd_provider_logout(
+        types.SimpleNamespace(
+            config=str(config_path),
+            provider="unknown-provider",
+        )
+    )
+    assert rc == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"ok": False, "error": "unsupported_provider:unknown-provider"}
 

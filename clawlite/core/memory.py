@@ -111,6 +111,8 @@ class MemoryLayer(str, Enum):
 class MemoryStore:
     """Durable two-layer memory with optional history/curated split."""
 
+    _PATH_LOCKS: dict[str, threading.RLock] = {}
+    _PATH_LOCKS_GUARD = threading.Lock()
     _MAX_HISTORY_RECORDS = 2000
     _MAX_CURATED_FACTS = 250
     _MAX_CURATED_SESSIONS_PER_FACT = 12
@@ -873,8 +875,25 @@ class MemoryStore:
                     pass
 
     def _atomic_write_text_locked(self, path: Path, content: str) -> None:
+        # On Windows, replacing an open target file raises WinError 5. The
+        # POSIX flock path still benefits from holding the target open, but the
+        # fallback path must avoid opening the destination during os.replace().
+        if fcntl is None:
+            with self._path_lock(path):
+                self._atomic_write_text(path, content)
+            return
         with self._locked_file(path, "a+", exclusive=True):
             self._atomic_write_text(path, content)
+
+    @classmethod
+    def _path_lock(cls, path: Path) -> threading.RLock:
+        key = str(path.expanduser().resolve())
+        with cls._PATH_LOCKS_GUARD:
+            lock = cls._PATH_LOCKS.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                cls._PATH_LOCKS[key] = lock
+            return lock
 
     @staticmethod
     def _utcnow_iso() -> str:
@@ -2683,15 +2702,22 @@ class MemoryStore:
 
     @contextmanager
     def _locked_file(self, path: Path, mode: str, *, exclusive: bool):
-        with path.open(mode, encoding="utf-8") as fh:
-            if fcntl is not None:
-                lock_mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-                fcntl.flock(fh.fileno(), lock_mode)
-            try:
-                yield fh
-            finally:
+        fallback_lock = self._path_lock(path) if fcntl is None else None
+        if fallback_lock is not None:
+            fallback_lock.acquire()
+        try:
+            with path.open(mode, encoding="utf-8") as fh:
                 if fcntl is not None:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    lock_mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                    fcntl.flock(fh.fileno(), lock_mode)
+                try:
+                    yield fh
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            if fallback_lock is not None:
+                fallback_lock.release()
 
     @staticmethod
     def _normalize_memory_text(text: str) -> str:

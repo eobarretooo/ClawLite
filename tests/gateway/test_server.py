@@ -670,6 +670,71 @@ def test_gateway_telegram_webhook_processing_failure_returns_503_in_fail_fast_mo
             assert payload["code"] == "telegram_webhook_processing_failed"
 
 
+def test_gateway_whatsapp_webhook_requires_secret_and_dispatches(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={
+            "whatsapp": {
+                "enabled": True,
+                "bridge_url": "http://localhost:3001",
+                "webhook_secret": "secret-wa-1",
+            }
+        },
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        unauthorized = client.post("/api/webhooks/whatsapp", json={"messageId": "wa-1"})
+        assert unauthorized.status_code == 401
+        assert unauthorized.json()["code"] == "whatsapp_webhook_secret_invalid"
+
+        channel = app.state.runtime.channels.get_channel("whatsapp")
+        assert channel is not None
+        webhook_handler = AsyncMock(return_value=True)
+        channel.receive_hook = webhook_handler
+
+        authorized = client.post(
+            "/api/webhooks/whatsapp",
+            json={"from": "5511999999999@c.us", "body": "hello", "messageId": "wa-2"},
+            headers={"Authorization": "Bearer secret-wa-1"},
+        )
+        assert authorized.status_code == 200
+        assert authorized.json() == {"ok": True, "processed": True}
+        webhook_handler.assert_awaited_once_with(
+            {"from": "5511999999999@c.us", "body": "hello", "messageId": "wa-2"}
+        )
+
+
+def test_gateway_whatsapp_webhook_rejects_non_dict_payload(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={
+            "whatsapp": {
+                "enabled": True,
+                "bridge_url": "http://localhost:3001",
+                "webhook_secret": "secret-wa-1",
+            }
+        },
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/webhooks/whatsapp",
+            json=["not", "a", "dict"],
+            headers={"X-Webhook-Secret": "secret-wa-1"},
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error"] == "whatsapp_webhook_payload_invalid"
+    assert payload["code"] == "whatsapp_webhook_payload_invalid"
+
+
 def test_gateway_startup_completes_bootstrap_lifecycle_without_user_turn(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
