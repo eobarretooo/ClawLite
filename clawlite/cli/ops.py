@@ -839,6 +839,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
                 ),
             }
         headers["Authorization"] = f"Bearer {api_key}"
+        headers["Accept"] = "text/event-stream"
         payload = {
             "model": model.split("/", 1)[1] if "/" in model else model,
             "input": [
@@ -849,8 +850,12 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
                 }
             ],
             "instructions": "You are a concise assistant. Reply briefly.",
+            "tools": [],
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
             "max_output_tokens": 1,
             "store": False,
+            "stream": True,
         }
     elif provider == "anthropic":
         endpoint = "/models"

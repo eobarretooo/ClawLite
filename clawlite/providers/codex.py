@@ -202,6 +202,13 @@ class CodexProvider(LLMProvider):
         return self._uses_responses_api_base(self.base_url)
 
     @staticmethod
+    def _api_model_name(model: str) -> str:
+        normalized = str(model or "").strip()
+        if "/" in normalized:
+            return normalized.split("/", 1)[1].strip() or normalized
+        return normalized
+
+    @staticmethod
     def _responses_url(base_url: str) -> str:
         normalized = str(base_url or "").strip().rstrip("/")
         lowered = normalized.lower()
@@ -210,6 +217,39 @@ class CodexProvider(LLMProvider):
         if "chatgpt.com/backend-api" in lowered:
             return f"{normalized}/codex/responses"
         return f"{normalized}/responses"
+
+    @staticmethod
+    def _responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for raw in tools or []:
+            if not isinstance(raw, dict):
+                continue
+            row_type = str(raw.get("type") or "").strip().lower()
+            if row_type == "function" and isinstance(raw.get("function"), dict):
+                raw = dict(raw.get("function") or {})
+                row_type = "function"
+            if row_type == "function" and str(raw.get("name") or "").strip():
+                item = dict(raw)
+                item.setdefault("strict", False)
+                rows.append(item)
+                continue
+
+            name = str(raw.get("name") or "").strip()
+            if not name:
+                continue
+            parameters = raw.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}}
+            rows.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": str(raw.get("description") or "").strip(),
+                    "strict": False,
+                    "parameters": parameters,
+                }
+            )
+        return rows
 
     @classmethod
     def _responses_input(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -352,6 +392,91 @@ class CodexProvider(LLMProvider):
                     parts.append(text)
         return "\n".join(parts).strip()
 
+    @staticmethod
+    def _responses_event_error_detail(payload: dict[str, Any]) -> str:
+        detail = ""
+        response = payload.get("response")
+        if isinstance(response, dict):
+            error_payload = response.get("error")
+            if isinstance(error_payload, dict):
+                detail = str(
+                    error_payload.get("message", "")
+                    or error_payload.get("detail", "")
+                    or error_payload.get("code", "")
+                    or error_payload.get("type", "")
+                ).strip()
+            if not detail:
+                detail = str(response.get("message", "") or response.get("detail", "")).strip()
+        if not detail:
+            detail = str(payload.get("message", "") or payload.get("detail", "") or payload.get("error", "")).strip()
+        return " ".join(detail.split())[:300]
+
+    @classmethod
+    def _parse_responses_sse_text(cls, raw_text: str) -> dict[str, Any]:
+        output_items: list[dict[str, Any]] = []
+        text_deltas: list[str] = []
+        event_name = ""
+        data_lines: list[str] = []
+
+        def _flush_event(current_event: str, current_lines: list[str]) -> None:
+            payload_raw = "\n".join(current_lines).strip()
+            if not payload_raw or payload_raw == "[DONE]":
+                return
+            try:
+                payload = json.loads(payload_raw)
+            except Exception:
+                return
+            if not isinstance(payload, dict):
+                return
+            kind = str(payload.get("type") or current_event or "").strip().lower()
+            if kind == "response.output_text.delta":
+                delta = str(payload.get("delta") or "")
+                if delta:
+                    text_deltas.append(delta)
+                return
+            if kind == "response.output_item.done":
+                item = payload.get("item")
+                if isinstance(item, dict):
+                    output_items.append(item)
+                return
+            if kind in {"response.failed", "response.incomplete", "error"}:
+                detail = cls._responses_event_error_detail(payload) or kind
+                raise RuntimeError(f"codex_stream_error:{detail}")
+
+        for line in str(raw_text or "").splitlines():
+            current = line.rstrip("\r")
+            if not current:
+                _flush_event(event_name, data_lines)
+                event_name = ""
+                data_lines = []
+                continue
+            if current.startswith(":"):
+                continue
+            if current.startswith("event:"):
+                event_name = current[6:].strip()
+                continue
+            if current.startswith("data:"):
+                data_lines.append(current[5:].lstrip())
+        if data_lines:
+            _flush_event(event_name, data_lines)
+
+        payload: dict[str, Any] = {"output": output_items}
+        if not output_items or not cls._extract_responses_text({"output": output_items}):
+            output_text = "".join(text_deltas).strip()
+            if output_text:
+                payload["output_text"] = output_text
+        return payload
+
+    @classmethod
+    def _decode_responses_payload(cls, response: httpx.Response) -> dict[str, Any]:
+        content_type = str(response.headers.get("content-type", "") or "").lower()
+        if "text/event-stream" in content_type:
+            return cls._parse_responses_sse_text(response.text)
+        data = response.json()
+        if isinstance(data, dict):
+            return data
+        raise RuntimeError("codex_response_invalid:malformed_payload")
+
     @classmethod
     def _parse_tool_calls(cls, message: dict[str, Any]) -> list[ToolCall]:
         rows = message.get("tool_calls")
@@ -391,21 +516,26 @@ class CodexProvider(LLMProvider):
             self._record_failure(error=error, status_code=401)
             raise RuntimeError(error)
 
-        headers = {"content-type": "application/json"}
+        headers = {"Content-Type": "application/json"}
         if self.access_token:
-            headers["authorization"] = f"Bearer {self.access_token}"
+            headers["Authorization"] = f"Bearer {self.access_token}"
         if self.account_id and not self._uses_responses_api():
-            headers["openai-organization"] = self.account_id
+            headers["OpenAI-Organization"] = self.account_id
 
         attempts = self.reliability.retry_max_attempts
         use_responses_api = self._uses_responses_api()
+        api_model = self._api_model_name(self.model)
         if use_responses_api:
             instructions = self._responses_instructions(messages) or CODEX_DEFAULT_INSTRUCTIONS
             payload = {
-                "model": self.model,
+                "model": api_model,
                 "input": self._responses_input(messages),
                 "instructions": instructions,
+                "tools": self._responses_tools(tools),
+                "tool_choice": "auto",
+                "parallel_tool_calls": bool(tools),
                 "store": False,
+                "stream": True,
             }
             if max_tokens is not None:
                 payload["max_output_tokens"] = max(1, int(max_tokens))
@@ -413,12 +543,10 @@ class CodexProvider(LLMProvider):
                 payload["temperature"] = float(temperature)
             if reasoning_effort is not None:
                 payload["reasoning"] = {"effort": reasoning_effort}
-            if tools:
-                payload["tools"] = [{"type": "function", "function": row} for row in tools]
-                payload["tool_choice"] = "auto"
+            headers["Accept"] = "text/event-stream"
             url = self._responses_url(self.base_url)
         else:
-            payload = {"model": self.model, "messages": messages}
+            payload = {"model": api_model, "messages": messages}
             if max_tokens is not None:
                 payload["max_tokens"] = max(1, int(max_tokens))
             if temperature is not None:
@@ -435,13 +563,14 @@ class CodexProvider(LLMProvider):
                 try:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
-                    data = response.json()
-                    if not isinstance(data, dict):
-                        raise RuntimeError("codex_response_invalid:malformed_payload")
                     if use_responses_api:
+                        data = self._decode_responses_payload(response)
                         text = self._extract_responses_text(data)
                         tool_calls = self._parse_responses_tool_calls(data)
                     else:
+                        data = response.json()
+                        if not isinstance(data, dict):
+                            raise RuntimeError("codex_response_invalid:malformed_payload")
                         message = data.get("choices", [{}])[0].get("message", {})
                         text = str(message.get("content", "")).strip()
                         tool_calls = self._parse_tool_calls(message)
@@ -462,6 +591,9 @@ class CodexProvider(LLMProvider):
                         error = f"{error}:{detail}"
                     self._record_failure(error=error, status_code=status)
                     raise RuntimeError(error) from exc
+                except RuntimeError as exc:
+                    self._record_failure(error=str(exc))
+                    raise
                 except httpx.TimeoutException as exc:
                     self._diagnostics["timeouts"] = int(self._diagnostics["timeouts"]) + 1
                     self._diagnostics["network_errors"] = int(self._diagnostics["network_errors"]) + 1

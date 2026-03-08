@@ -13,15 +13,17 @@ class _FakeResponse:
     def __init__(
         self,
         status_code: int,
-        payload: dict,
+        payload: dict | None,
         headers: dict[str, str] | None = None,
         *,
         request_url: str = "https://api.openai.com/v1/chat/completions",
+        text: str = "",
     ) -> None:
         self.status_code = status_code
         self._payload = payload
         self.headers = dict(headers or {})
         self.request_url = request_url
+        self.text = text
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -30,6 +32,8 @@ class _FakeResponse:
             raise httpx.HTTPStatusError("err", request=request, response=response)
 
     def json(self) -> dict:
+        if self._payload is None:
+            raise ValueError("no json payload")
         return self._payload
 
 
@@ -101,14 +105,113 @@ def test_codex_provider_uses_responses_backend_by_default() -> None:
         assert out.text == "ok"
         assert post_mock.call_args.args[0] == "https://chatgpt.com/backend-api/codex/responses"
         payload = post_mock.call_args.kwargs["json"]
+        headers = post_mock.call_args.kwargs["headers"]
         assert payload["store"] is False
+        assert payload["stream"] is True
         assert payload["instructions"] == "Be concise."
         assert payload["reasoning"] == {"effort": "medium"}
+        assert payload["tools"] == []
+        assert payload["tool_choice"] == "auto"
+        assert payload["parallel_tool_calls"] is False
+        assert headers["Accept"] == "text/event-stream"
         assert payload["input"] == [
             {
                 "type": "message",
                 "role": "user",
                 "content": [{"type": "input_text", "text": "hi"}],
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_codex_provider_parses_sse_responses_backend() -> None:
+    async def _scenario() -> None:
+        provider = CodexProvider(
+            model="openai-codex/gpt-5.3-codex",
+            access_token="token",
+            retry_max_attempts=1,
+        )
+
+        sse_text = "\n".join(
+            [
+                'data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":""}]}}',
+                "",
+                'data: {"type":"response.output_text.delta","delta":"ok"}',
+                "",
+                'data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}',
+                "",
+                'data: {"type":"response.completed","response":{"id":"resp_123"}}',
+                "",
+            ]
+        )
+        post_mock = AsyncMock(
+            side_effect=[
+                _FakeResponse(
+                    200,
+                    None,
+                    headers={"content-type": "text/event-stream"},
+                    request_url="https://chatgpt.com/backend-api/codex/responses",
+                    text=sse_text,
+                )
+            ]
+        )
+
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+        payload = post_mock.call_args.kwargs["json"]
+        assert payload["model"] == "gpt-5.3-codex"
+        assert out.text == "ok"
+
+    asyncio.run(_scenario())
+
+
+def test_codex_provider_serializes_tools_for_responses_backend() -> None:
+    async def _scenario() -> None:
+        provider = CodexProvider(
+            model="openai-codex/gpt-5.3-codex",
+            access_token="token",
+            retry_max_attempts=1,
+        )
+
+        post_mock = AsyncMock(
+            side_effect=[
+                _FakeResponse(
+                    200,
+                    {
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "call_id": "call_1",
+                                "name": "lookup_user",
+                                "arguments": '{"user_id": 42}',
+                            }
+                        ]
+                    },
+                    request_url="https://chatgpt.com/backend-api/codex/responses",
+                )
+            ]
+        )
+        tools = [
+            {
+                "name": "lookup_user",
+                "description": "Look up a user.",
+                "parameters": {"type": "object", "properties": {"user_id": {"type": "integer"}}},
+            }
+        ]
+        with patch("httpx.AsyncClient.post", new=post_mock):
+            await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=tools)
+
+        payload = post_mock.call_args.kwargs["json"]
+        assert payload["parallel_tool_calls"] is True
+        assert payload["tools"] == [
+            {
+                "type": "function",
+                "name": "lookup_user",
+                "description": "Look up a user.",
+                "strict": False,
+                "parameters": {"type": "object", "properties": {"user_id": {"type": "integer"}}},
             }
         ]
 
@@ -376,6 +479,6 @@ def test_codex_provider_openai_compatible_override_keeps_chat_completions() -> N
 
         assert out.text == "ok"
         assert post_mock.call_args.args[0] == "https://api.openai.com/v1/chat/completions"
-        assert post_mock.call_args.kwargs["headers"]["openai-organization"] == "org-abc"
+        assert post_mock.call_args.kwargs["headers"]["OpenAI-Organization"] == "org-abc"
 
     asyncio.run(_scenario())
