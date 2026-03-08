@@ -37,7 +37,14 @@ from clawlite.providers.reliability import is_quota_429_error
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatDecision, HeartbeatService
 from clawlite.session.store import SessionStore
-from clawlite.runtime import AutonomyLog, AutonomyService, AutonomyWakeCoordinator, RuntimeSupervisor, SupervisorIncident
+from clawlite.runtime import (
+    AutonomyLog,
+    AutonomyService,
+    AutonomyWakeCoordinator,
+    RuntimeSupervisor,
+    SupervisorComponentPolicy,
+    SupervisorIncident,
+)
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.tools.agents import AgentsListTool
 from clawlite.tools.cron import CronTool
@@ -3234,12 +3241,23 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         )
         return recovered
 
+    supervisor_component_policies = {
+        "heartbeat": SupervisorComponentPolicy(max_recoveries=12, budget_window_s=3600.0),
+        "cron": SupervisorComponentPolicy(max_recoveries=8, budget_window_s=3600.0),
+        "autonomy_wake": SupervisorComponentPolicy(max_recoveries=16, budget_window_s=3600.0),
+        "autonomy": SupervisorComponentPolicy(max_recoveries=8, budget_window_s=3600.0),
+        "skills_watcher": SupervisorComponentPolicy(max_recoveries=6, budget_window_s=3600.0),
+        "proactive_monitor": SupervisorComponentPolicy(max_recoveries=6, budget_window_s=3600.0),
+        "memory_quality_tuning": SupervisorComponentPolicy(max_recoveries=4, budget_window_s=3600.0),
+    }
+
     runtime.supervisor = RuntimeSupervisor(
         interval_s=cfg.gateway.supervisor.interval_s,
         cooldown_s=cfg.gateway.supervisor.cooldown_s,
         incident_checks=_supervisor_incident_checks,
         recover=_recover_supervised_component,
         on_incident=_handle_supervisor_incident,
+        component_policies=supervisor_component_policies,
     )
 
     async def _resume_recoverable_subagents() -> dict[str, Any]:

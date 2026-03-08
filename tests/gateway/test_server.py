@@ -1383,13 +1383,17 @@ def test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity(tmp_path: P
             "recovery_success",
             "recovery_failures",
             "recovery_skipped_cooldown",
+            "recovery_skipped_budget",
             "component_incidents",
+            "component_recovery",
             "last_incident",
             "last_recovery_at",
             "last_error",
             "consecutive_error_count",
             "cooldown_active",
         }
+        assert payload["supervisor"]["component_recovery"]["autonomy"]["max_recoveries"] >= 1
+        assert payload["supervisor"]["component_recovery"]["autonomy"]["budget_window_s"] == 3600.0
         alias_autonomy = dict(alias_payload["autonomy"])
         payload_autonomy = dict(payload["autonomy"])
         alias_cooldown = float(alias_autonomy.pop("cooldown_remaining_s", 0.0) or 0.0)
