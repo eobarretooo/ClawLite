@@ -56,6 +56,8 @@ Use `clawlite configure --flow advanced` when you want the manual section-by-sec
 clawlite gateway
 ```
 
+Then open `http://127.0.0.1:8787` for the local dashboard.
+
 ### 4) Send the first message
 
 ```bash

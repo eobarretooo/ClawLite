@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClawLite Dashboard</title>
+    <link rel="stylesheet" href="/_clawlite/dashboard.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Gateway Control Plane</p>
+          <h1>ClawLite Dashboard</h1>
+          <p class="lede">Operator view for health, chat, diagnostics, tools, and WebSocket connectivity.</p>
+        </div>
+        <div class="status-pills">
+          <div class="pill"><span class="pill__label">Connection</span><span class="pill__value" id="pill-connection">booting</span></div>
+          <div class="pill"><span class="pill__label">Phase</span><span class="pill__value" id="pill-phase">created</span></div>
+          <div class="pill"><span class="pill__label">Auth</span><span class="pill__value" id="pill-auth">off</span></div>
+        </div>
+      </header>
+
+      <div class="shell-grid">
+        <aside class="nav-card">
+          <button class="nav-button is-active" data-tab-target="overview">Overview</button>
+          <button class="nav-button" data-tab-target="chat">Chat</button>
+          <button class="nav-button" data-tab-target="runtime">Runtime</button>
+          <button class="nav-button" data-tab-target="tools">Tools</button>
+          <div class="nav-spacer"></div>
+          <button class="action-button" id="refresh-all" type="button">Refresh</button>
+        </aside>
+
+        <main class="content-stack">
+          <section class="panel is-active" data-tab-panel="overview">
+            <div class="card-grid card-grid--stats">
+              <article class="metric-card"><span class="metric-card__label">Readiness</span><strong class="metric-card__value" id="metric-ready">starting</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Gateway phase</span><strong class="metric-card__value" id="metric-phase">created</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Contract</span><strong class="metric-card__value" id="metric-contract">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Server time</span><strong class="metric-card__value" id="metric-server-time">-</strong></article>
+            </div>
+
+            <div class="card-grid">
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Gateway Access</h2>
+                  <span class="badge" id="auth-badge">loopback-open</span>
+                </div>
+                <p class="panel-card__text" id="auth-summary">Public bootstrap is available. Add a token only when control auth is required.</p>
+                <label class="field" for="token-input">
+                  <span>Gateway token</span>
+                  <input id="token-input" type="password" autocomplete="off" placeholder="Paste token when auth is required" />
+                </label>
+                <div class="button-row">
+                  <button class="action-button" id="save-token" type="button">Save token</button>
+                  <button class="ghost-button" id="clear-token" type="button">Clear token</button>
+                </div>
+                <pre class="code-block" id="token-preview">Token metadata unavailable.</pre>
+              </article>
+
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Endpoints</h2>
+                  <span class="badge">compat</span>
+                </div>
+                <ul class="endpoint-list" id="endpoint-list"></ul>
+              </article>
+            </div>
+
+            <article class="panel-card">
+              <div class="panel-card__header">
+                <h2>Diagnostics Snapshot</h2>
+                <span class="badge" id="diag-status">pending</span>
+              </div>
+              <div class="diag-grid">
+                <div>
+                  <h3>Components</h3>
+                  <pre class="code-block" id="components-preview">Loading...</pre>
+                </div>
+                <div>
+                  <h3>Runtime</h3>
+                  <pre class="code-block" id="runtime-preview">Waiting for diagnostics...</pre>
+                </div>
+              </div>
+            </article>
+          </section>
+
+          <section class="panel" data-tab-panel="chat">
+            <div class="card-grid">
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Live Chat</h2>
+                  <span class="badge" id="ws-status">offline</span>
+                </div>
+                <label class="field" for="session-input">
+                  <span>Session ID</span>
+                  <input id="session-input" type="text" value="dashboard:operator" />
+                </label>
+                <label class="field" for="chat-input">
+                  <span>Message</span>
+                  <textarea id="chat-input" rows="4" placeholder="Ask the agent for status, memory checks, or runtime context."></textarea>
+                </label>
+                <div class="button-row">
+                  <button class="action-button" id="send-chat" type="button">Send over WebSocket</button>
+                  <button class="ghost-button" id="send-rest" type="button">Send over HTTP</button>
+                </div>
+              </article>
+
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Conversation</h2>
+                  <span class="badge">live</span>
+                </div>
+                <div class="chat-log" id="chat-log"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel" data-tab-panel="runtime">
+            <div class="card-grid">
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Status Payload</h2>
+                  <span class="badge">/api/status</span>
+                </div>
+                <pre class="code-block" id="status-json">Loading...</pre>
+              </article>
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Diagnostics Payload</h2>
+                  <span class="badge">/api/diagnostics</span>
+                </div>
+                <pre class="code-block" id="diagnostics-json">Loading...</pre>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel" data-tab-panel="tools">
+            <article class="panel-card">
+              <div class="panel-card__header">
+                <h2>Tool Catalog</h2>
+                <span class="badge">/api/tools/catalog</span>
+              </div>
+              <pre class="code-block" id="tools-json">Loading...</pre>
+            </article>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = __CLAWLITE_DASHBOARD_BOOTSTRAP_JSON__;
+    </script>
+    <script type="module" src="/_clawlite/dashboard.js"></script>
+  </body>
+</html>

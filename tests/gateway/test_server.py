@@ -2277,21 +2277,40 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         root = client.get("/")
         assert root.status_code == 200
         body = root.text
-        assert "<h1>ClawLite Gateway</h1>" in body
+        assert "<h1>ClawLite Dashboard</h1>" in body
         assert "Gateway Control Plane" in body
-        assert "Lightweight operational entrypoint" in body
-        assert "Phase" in body
-        assert "Readiness" in body
-        assert "Auth transport" in body
-        assert "GET /v1/status" in body
-        assert "GET /api/status" in body
-        assert "GET /v1/tools/catalog" in body
-        assert "GET /api/tools/catalog" in body
-        assert "POST /v1/chat" in body
-        assert "POST /api/message" in body
-        assert "GET /api/token" in body
-        assert "WS /v1/ws" in body
-        assert "WS /ws" in body
+        assert "Operator view for health, chat, diagnostics, tools, and WebSocket connectivity." in body
+        assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
+        assert "/_clawlite/dashboard.css" in body
+        assert "/_clawlite/dashboard.js" in body
+        assert '"status": "/api/status"' in body
+        assert '"diagnostics": "/api/diagnostics"' in body
+        assert '"message": "/api/message"' in body
+        assert '"tools": "/api/tools/catalog"' in body
+        assert '"ws": "/ws"' in body
+
+
+def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        css = client.get("/_clawlite/dashboard.css")
+        js = client.get("/_clawlite/dashboard.js")
+
+    assert css.status_code == 200
+    assert "--accent" in css.text
+    assert css.headers["content-type"].startswith("text/css")
+
+    assert js.status_code == 200
+    assert "const bootstrap = window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ || {}" in js.text
+    assert "connectWs" in js.text
+    assert js.headers["content-type"].startswith("application/javascript")
 
 
 def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Path) -> None:

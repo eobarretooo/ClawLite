@@ -57,6 +57,11 @@ Scope:
 - preserve compatibility endpoints while improving operator UX and observability
 - keep the gateway contract stable while replacing the simple root page with a real dashboard
 
+Recent progress:
+
+- the first dashboard slice is now served from packaged assets at `/`
+- the shell already exposes token-aware status, diagnostics, tools, and chat controls using the existing gateway endpoints
+
 Exit criteria:
 
 - dashboard assets are served by ClawLite

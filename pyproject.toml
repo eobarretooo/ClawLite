@@ -43,4 +43,5 @@ clawlite = [
   "workspace/templates/*.md",
   "workspace/templates/memory/*.md",
   "skills/*/SKILL.md",
+  "dashboard/*",
 ]
