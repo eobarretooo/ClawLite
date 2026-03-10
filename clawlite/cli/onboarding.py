@@ -264,6 +264,29 @@ def build_dashboard_handoff(
         else "bootstrap pending" if bootstrap_pending else "not seeded"
     )
     resolved_config_path = str(Path(config_path) if config_path else DEFAULT_CONFIG_PATH)
+    brave_enabled = bool(str(config.tools.web.brave_api_key or "").strip())
+    searxng_enabled = bool(str(config.tools.web.searxng_base_url or "").strip())
+
+    if brave_enabled and searxng_enabled:
+        web_search_body = (
+            "Web search is available with DuckDuckGo first, plus Brave and your configured SearXNG fallback. "
+            "See `docs/tools.md` for backend order and network policy controls."
+        )
+    elif brave_enabled:
+        web_search_body = (
+            "Web search is available with DuckDuckGo first and Brave configured as an additional backend. "
+            "See `docs/tools.md` for backend order and network policy controls."
+        )
+    elif searxng_enabled:
+        web_search_body = (
+            "Web search is available with DuckDuckGo first and your configured SearXNG backend as an additional fallback. "
+            "See `docs/tools.md` for backend order and network policy controls."
+        )
+    else:
+        web_search_body = (
+            "Web search works with DuckDuckGo by default. Add `tools.web.brave_api_key` or `tools.web.searxng_base_url` "
+            "later if you want more controllable search backends."
+        )
 
     guidance: list[dict[str, str]] = [
         {
@@ -280,6 +303,11 @@ def build_dashboard_handoff(
                 "The gateway token is shared auth for the API and dashboard. The browser keeps tokenized URLs in memory "
                 "for the current tab and strips them from the address bar after load."
             ),
+        },
+        {
+            "id": "web_search",
+            "title": "Web search",
+            "body": web_search_body,
         },
         {
             "id": "workspace_backup",

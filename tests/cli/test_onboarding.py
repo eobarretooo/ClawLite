@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from clawlite.cli.onboarding import apply_provider_selection
+from clawlite.cli.onboarding import build_dashboard_handoff
 from clawlite.cli.onboarding import ensure_gateway_token
 from clawlite.cli.onboarding import probe_provider
 from clawlite.cli.onboarding import probe_telegram
@@ -86,6 +87,31 @@ def test_ensure_gateway_token_generates_when_missing() -> None:
     generated = ensure_gateway_token(cfg)
     assert generated
     assert cfg.gateway.auth.token == generated
+
+
+def test_build_dashboard_handoff_reports_default_web_search_guidance() -> None:
+    cfg = AppConfig.from_dict({"gateway": {"auth": {"mode": "required", "token": "tok-123456"}}})
+
+    payload = build_dashboard_handoff(cfg)
+
+    web_row = next(item for item in payload["guidance"] if item["id"] == "web_search")
+    assert "DuckDuckGo" in web_row["body"]
+    assert "brave_api_key" in web_row["body"]
+
+
+def test_build_dashboard_handoff_reports_configured_web_search_backends() -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "gateway": {"auth": {"mode": "required", "token": "tok-123456"}},
+            "tools": {"web": {"brave_api_key": "brv-123", "searxng_base_url": "https://searx.example"}},
+        }
+    )
+
+    payload = build_dashboard_handoff(cfg)
+
+    web_row = next(item for item in payload["guidance"] if item["id"] == "web_search")
+    assert "Brave" in web_row["body"]
+    assert "SearXNG" in web_row["body"]
 
 
 def test_probe_provider_openai_success(monkeypatch) -> None:

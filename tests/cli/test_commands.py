@@ -308,6 +308,7 @@ def test_cli_dashboard_no_open_returns_tokenized_handoff_and_bootstrap_state(tmp
     assert payload["recommended_first_message"] == "Wake up, my friend!"
     assert payload["hatch_session_id"] == "hatch:operator"
     assert any(item["id"] == "hatch" for item in payload["guidance"])
+    assert any(item["id"] == "web_search" for item in payload["guidance"])
     assert any(item["id"] == "security" for item in payload["guidance"])
 
     saved = json.loads(config_path.read_text(encoding="utf-8"))
