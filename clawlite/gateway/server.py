@@ -653,6 +653,7 @@ def _provider_autonomy_snapshot(*, provider: Any, default_circuit_cooldown_s: fl
     state = str(summary.get("state", "healthy") or "healthy").strip().lower() or "healthy"
     provider_name = str(telemetry.get("provider", "") or "")
     last_error_class = str(telemetry.get("last_error_class", counters.get("last_error_class", "")) or "")
+    summary_suppression_reason = str(summary.get("suppression_reason", "") or "").strip().lower()
     cooldown_remaining_s = max(cooldown_candidates, default=0.0)
     if state == "circuit_open" and cooldown_remaining_s <= 0.0:
         cooldown_remaining_s = max(0.0, float(default_circuit_cooldown_s or 0.0))
@@ -660,7 +661,7 @@ def _provider_autonomy_snapshot(*, provider: Any, default_circuit_cooldown_s: fl
     suppression_reason = ""
     suppression_backoff_s = 0.0
     if state in {"circuit_open", "cooldown"}:
-        suppression_reason = state
+        suppression_reason = summary_suppression_reason or state
         suppression_backoff_s = cooldown_remaining_s
     else:
         synthetic_backoff_s = {

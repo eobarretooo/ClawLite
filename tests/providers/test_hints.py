@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from clawlite.providers.hints import provider_probe_hints
+from clawlite.providers.hints import provider_telemetry_summary
 
 
 def test_hint_401_message() -> None:
@@ -55,3 +56,36 @@ def test_hints_empty_for_unknown_error() -> None:
     )
 
     assert hints == []
+
+
+def test_provider_telemetry_summary_surfaces_suppressed_failover_candidates() -> None:
+    summary = provider_telemetry_summary(
+        {
+            "provider": "failover",
+            "provider_name": "failover",
+            "model": "openai/gpt-4o-mini",
+            "transport": "openai_compatible",
+            "counters": {"fallback_attempts": 1, "last_error_class": "auth"},
+            "candidates": [
+                {
+                    "role": "primary",
+                    "model": "openai/gpt-4o-mini",
+                    "in_cooldown": True,
+                    "cooldown_remaining_s": 900.0,
+                    "suppression_reason": "auth",
+                },
+                {
+                    "role": "fallback",
+                    "model": "groq/llama-3.1-8b-instant",
+                    "in_cooldown": False,
+                    "cooldown_remaining_s": 0.0,
+                    "suppression_reason": "",
+                },
+            ],
+        }
+    )
+
+    assert summary["state"] == "cooldown"
+    assert summary["suppression_reason"] == "auth"
+    assert summary["suppressed_candidates"][0]["model"] == "openai/gpt-4o-mini"
+    assert any("autenticacao" in hint.lower() for hint in summary["hints"])

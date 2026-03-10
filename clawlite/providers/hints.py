@@ -232,12 +232,14 @@ def provider_telemetry_summary(payload: dict[str, Any]) -> dict[str, Any]:
     if provider_name == "failover":
         candidates = payload.get("candidates")
         cooling_candidates: list[dict[str, Any]] = []
+        suppressed_candidates: list[dict[str, Any]] = []
         if isinstance(candidates, list):
             for row in candidates:
                 if not isinstance(row, dict):
                     continue
                 if not bool(row.get("in_cooldown", False)):
                     continue
+                suppression_reason = str(row.get("suppression_reason", "") or row.get("last_error_class", "") or "").strip().lower()
                 cooling_candidates.append(
                     {
                         "role": str(row.get("role", "") or ""),
@@ -245,11 +247,31 @@ def provider_telemetry_summary(payload: dict[str, Any]) -> dict[str, Any]:
                         "cooldown_remaining_s": float(row.get("cooldown_remaining_s", 0.0) or 0.0),
                     }
                 )
+                if suppression_reason in {"auth", "quota", "config"}:
+                    suppressed_candidates.append(
+                        {
+                            "role": str(row.get("role", "") or ""),
+                            "model": str(row.get("model", "") or ""),
+                            "suppression_reason": suppression_reason,
+                            "cooldown_remaining_s": float(row.get("cooldown_remaining_s", 0.0) or 0.0),
+                        }
+                    )
         if cooling_candidates:
             if summary["state"] == "healthy":
                 summary["state"] = "cooldown"
             summary["cooling_candidates"] = cooling_candidates
             _append_hint(hints, "Failover com candidatos temporariamente em cooldown.")
+        if suppressed_candidates:
+            summary["suppressed_candidates"] = suppressed_candidates
+            summary["suppression_reason"] = str(suppressed_candidates[0].get("suppression_reason", "") or "")
+            reason_messages = {
+                "auth": "Um ou mais candidatos de failover foram suprimidos por falha de autenticacao.",
+                "quota": "Um ou mais candidatos de failover foram suprimidos por quota ou billing esgotado.",
+                "config": "Um ou mais candidatos de failover foram suprimidos por configuracao invalida.",
+            }
+            first_reason = summary["suppression_reason"]
+            if first_reason in reason_messages:
+                _append_hint(hints, reason_messages[first_reason])
         elif int(counters.get("fallback_attempts", 0) or 0) > 0 and summary["state"] == "healthy":
             summary["state"] = "degraded"
             _append_hint(hints, "Failover ja precisou acionar fallback nesta janela de telemetria.")

@@ -135,12 +135,14 @@ class ProviderWithFailoverDiagnostics:
                     "model": "openai/gpt-4o-mini",
                     "in_cooldown": True,
                     "cooldown_remaining_s": 17.25,
+                    "suppression_reason": "auth",
                 },
                 {
                     "role": "fallback",
                     "model": "groq/llama-3.1-8b-instant",
                     "in_cooldown": False,
                     "cooldown_remaining_s": 0.0,
+                    "suppression_reason": "",
                 },
             ],
         }
@@ -4986,9 +4988,11 @@ def test_gateway_diagnostics_provider_summary_surfaces_failover_state(tmp_path: 
         assert summary["recommended_model"] == "openai/gpt-4o-mini"
         assert "openai/gpt-4o-mini" in summary["recommended_models"]
         assert "billing" in summary["onboarding_hint"].lower()
+        assert summary["suppression_reason"] == "auth"
+        assert summary["suppressed_candidates"][0]["model"] == "openai/gpt-4o-mini"
         assert summary["cooling_candidates"][0]["model"] == "openai/gpt-4o-mini"
         assert any("cooldown" in row.lower() for row in summary["hints"])
-        assert any("rate limit" in row.lower() for row in summary["hints"])
+        assert any("autenticacao" in row.lower() for row in summary["hints"])
 
 
 def test_gateway_startup_rollback_when_subsystem_fails(tmp_path: Path) -> None:

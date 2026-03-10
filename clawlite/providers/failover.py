@@ -17,9 +17,17 @@ class FailoverCandidate:
     provider: LLMProvider
     model: str
     cooldown_until: float = 0.0
+    last_error_class: str = ""
+    suppression_reason: str = ""
 
 
 class FailoverProvider(LLMProvider):
+    _HARD_SUPPRESSION_S: dict[str, float] = {
+        "auth": 900.0,
+        "config": 900.0,
+        "quota": 1800.0,
+    }
+
     def __init__(
         self,
         *,
@@ -65,6 +73,8 @@ class FailoverProvider(LLMProvider):
             "fallback_skipped_due_cooldown": 0,
             "both_in_cooldown_fail_fast": 0,
             "auth_unavailable_activations": 0,
+            "quota_unavailable_activations": 0,
+            "config_unavailable_activations": 0,
         }
 
     @property
@@ -85,15 +95,30 @@ class FailoverProvider(LLMProvider):
         candidate = self._candidates[index]
         return max(0.0, float(candidate.cooldown_until) - cursor)
 
-    def _activate_cooldown(self, *, index: int, now: float | None = None) -> None:
-        if self.cooldown_seconds <= 0:
+    def _cooldown_duration_for_error_class(self, error_class: str) -> float:
+        base = max(0.0, float(self.cooldown_seconds))
+        hard = float(self._HARD_SUPPRESSION_S.get(str(error_class or "").strip().lower(), 0.0) or 0.0)
+        return max(base, hard)
+
+    def _activate_cooldown(self, *, index: int, error_class: str = "", now: float | None = None) -> None:
+        duration_s = self._cooldown_duration_for_error_class(error_class)
+        if duration_s <= 0:
             return
         cursor = self._now() if now is None else float(now)
-        self._candidates[index].cooldown_until = cursor + self.cooldown_seconds
+        normalized_error_class = str(error_class or "").strip().lower()
+        self._candidates[index].last_error_class = normalized_error_class
+        self._candidates[index].suppression_reason = normalized_error_class or "cooldown"
+        self._candidates[index].cooldown_until = cursor + duration_s
         if index == 0:
             self._diagnostics["primary_cooldown_activations"] = int(self._diagnostics["primary_cooldown_activations"]) + 1
         else:
             self._diagnostics["fallback_cooldown_activations"] = int(self._diagnostics["fallback_cooldown_activations"]) + 1
+        if normalized_error_class == "auth":
+            self._diagnostics["auth_unavailable_activations"] = int(self._diagnostics["auth_unavailable_activations"]) + 1
+        elif normalized_error_class == "quota":
+            self._diagnostics["quota_unavailable_activations"] = int(self._diagnostics["quota_unavailable_activations"]) + 1
+        elif normalized_error_class == "config":
+            self._diagnostics["config_unavailable_activations"] = int(self._diagnostics["config_unavailable_activations"]) + 1
 
     def _all_in_cooldown_error(self, *, remaining: list[tuple[int, float]]) -> FailoverCooldownError:
         formatted = ",".join(
@@ -147,6 +172,8 @@ class FailoverProvider(LLMProvider):
                 "model": candidate.model,
                 "cooldown_remaining_s": round(self._cooldown_remaining(index=index, now=now), 3),
                 "in_cooldown": self._cooldown_remaining(index=index, now=now) > 0,
+                "last_error_class": str(candidate.last_error_class or ""),
+                "suppression_reason": str(candidate.suppression_reason or ""),
             }
             diag_fn = getattr(candidate.provider, "diagnostics", None)
             if callable(diag_fn):
@@ -258,9 +285,7 @@ class FailoverProvider(LLMProvider):
 
                 if index == 0 and is_retryable_error(error_text):
                     self._diagnostics["primary_retryable_failures"] = int(self._diagnostics["primary_retryable_failures"]) + 1
-                if error_class == "auth":
-                    self._diagnostics["auth_unavailable_activations"] = int(self._diagnostics["auth_unavailable_activations"]) + 1
-                self._activate_cooldown(index=index)
+                self._activate_cooldown(index=index, error_class=error_class)
                 last_exc = exc
                 continue
 
@@ -270,6 +295,8 @@ class FailoverProvider(LLMProvider):
                 result.metadata["fallback_used"] = True
                 result.metadata["fallback_model"] = self._candidates[index].model
                 result.metadata["fallback_index"] = index
+            self._candidates[index].last_error_class = ""
+            self._candidates[index].suppression_reason = ""
             return result
 
         if last_exc is not None:

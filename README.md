@@ -291,7 +291,7 @@ Current tabs:
 - 🧭 `Overview` — control plane, next-step cards, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
 - 💬 `Chat` — live WS/HTTP chat and raw WebSocket frame preview
 - 🗂️ `Sessions` — recent sessions with one-click handoff into chat
-- 🤖 `Automation` — cron, channels, provider recovery, self-evolution state
+- 🤖 `Automation` — cron, channels, provider recovery/suppression, self-evolution state
 - 🧠 `Knowledge` — workspace runtime files, bootstrap status, skills, memory monitor
 - 🧰 `Tools` — tool catalog, groups, aliases
 

@@ -66,6 +66,7 @@ Recent progress:
 - workspace onboarding state is now tracked explicitly so bootstrap seeding/completion survives template sync and shows up in the knowledge view
 - the dashboard now renders shared post-onboarding guidance cards, including dashboard/token/backup/security notes and the dedicated hatch session when bootstrap is pending
 - bootstrap completion is now intentionally tied to the dedicated hatch session instead of any arbitrary first user chat turn
+- provider failover now keeps stronger auth/quota suppression windows and exposes those reasons in diagnostics so autonomy can back off more intelligently
 
 Exit criteria:
 

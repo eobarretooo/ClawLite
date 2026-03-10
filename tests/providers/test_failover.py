@@ -275,3 +275,53 @@ def test_failover_provider_cooldown_expires_and_primary_is_retried() -> None:
         assert diag["primary_cooldown_remaining_s"] == 0.0
 
     asyncio.run(_scenario())
+
+
+def test_failover_provider_auth_error_applies_hard_suppression_window() -> None:
+    async def _scenario() -> None:
+        clock = _Clock()
+        primary = _Provider(error="provider_auth_error:missing_api_key:openai")
+        fallback = _Provider(result="from fallback")
+        provider = FailoverProvider(
+            primary=primary,
+            fallback=fallback,
+            fallback_model="openai/gpt-4.1-mini",
+            cooldown_seconds=30.0,
+            now_fn=clock.now,
+        )
+
+        out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+        assert out.text == "from fallback"
+        diag = provider.diagnostics()
+        assert diag["auth_unavailable_activations"] == 1
+        assert diag["primary_in_cooldown"] is True
+        assert diag["primary_cooldown_remaining_s"] >= 899.0
+        assert diag["candidates"][0]["suppression_reason"] == "auth"
+
+    asyncio.run(_scenario())
+
+
+def test_failover_provider_quota_error_applies_extended_suppression_window() -> None:
+    async def _scenario() -> None:
+        clock = _Clock()
+        primary = _Provider(error="provider_http_error:429:insufficient_quota")
+        fallback = _Provider(result="from fallback")
+        provider = FailoverProvider(
+            primary=primary,
+            fallback=fallback,
+            fallback_model="openai/gpt-4.1-mini",
+            cooldown_seconds=30.0,
+            now_fn=clock.now,
+        )
+
+        out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+        assert out.text == "from fallback"
+        diag = provider.diagnostics()
+        assert diag["quota_unavailable_activations"] == 1
+        assert diag["primary_in_cooldown"] is True
+        assert diag["primary_cooldown_remaining_s"] >= 1799.0
+        assert diag["candidates"][0]["suppression_reason"] == "quota"
+
+    asyncio.run(_scenario())
