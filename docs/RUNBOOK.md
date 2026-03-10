@@ -22,6 +22,8 @@ Print or reopen the tokenized dashboard handoff without relaunching onboarding:
 clawlite dashboard --no-open
 ```
 
+The payload includes the current bootstrap state and the same backup/security notes shown at the end of onboarding.
+
 ## Quick Health Checks
 
 ```bash

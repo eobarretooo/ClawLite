@@ -130,6 +130,8 @@ You can also print or reopen the handoff later with:
 clawlite dashboard --no-open
 ```
 
+That command also returns the current bootstrap state plus backup/security guidance for the workspace.
+
 If onboarding is still pending, the dashboard also exposes a `Hatch agent` action that sends:
 
 ```text

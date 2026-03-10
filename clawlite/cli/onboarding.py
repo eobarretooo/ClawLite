@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.prompt import Prompt
 
+from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import save_config
 from clawlite.config.schema import AppConfig
 from clawlite.providers.catalog import ONBOARDING_PROVIDER_ORDER, default_provider_model, provider_profile
@@ -234,6 +235,7 @@ def build_dashboard_handoff(
     config_path: str | Path | None = None,
     variables: dict[str, str] | None = None,
     ensure_token: bool = False,
+    bootstrap_pending_override: bool | None = None,
 ) -> dict[str, Any]:
     token = str(config.gateway.auth.token or "").strip()
     if not token and ensure_token:
@@ -252,13 +254,62 @@ def build_dashboard_handoff(
         else {"completed": False}
     )
     bootstrap_pending = bool(
-        onboarding_status.get("bootstrap_exists", False) and not onboarding_status.get("completed", False)
+        bootstrap_pending_override
+        if bootstrap_pending_override is not None
+        else onboarding_status.get("bootstrap_exists", False) and not onboarding_status.get("completed", False)
     )
     onboarding_label = (
         "completed"
         if onboarding_status.get("completed")
         else "bootstrap pending" if bootstrap_pending else "not seeded"
     )
+    resolved_config_path = str(Path(config_path) if config_path else DEFAULT_CONFIG_PATH)
+
+    guidance: list[dict[str, str]] = [
+        {
+            "id": "dashboard",
+            "title": "Dashboard",
+            "body": (
+                f"Open the local control plane with `clawlite dashboard --no-open` or use {dashboard_url_with_token or gateway_url}."
+            ),
+        },
+        {
+            "id": "token",
+            "title": "Gateway token",
+            "body": (
+                "The gateway token is shared auth for the API and dashboard. The browser keeps tokenized URLs in memory "
+                "for the current tab and strips them from the address bar after load."
+            ),
+        },
+        {
+            "id": "workspace_backup",
+            "title": "Workspace backup",
+            "body": (
+                f"Back up `{config.workspace_path}` and `{resolved_config_path}` after the first successful hatch. "
+                "See `docs/workspace.md` for the runtime file layout."
+            ),
+        },
+        {
+            "id": "security",
+            "title": "Security",
+            "body": (
+                "Keep the gateway token private, restrict permissions under `~/.clawlite/`, and review `SECURITY.md` "
+                "before exposing the gateway or enabling risky skills."
+            ),
+        },
+    ]
+    if bootstrap_pending:
+        guidance.insert(
+            1,
+            {
+                "id": "hatch",
+                "title": "First hatch",
+                "body": (
+                    f"Bootstrap is still pending. Open the dashboard and use `Hatch agent`, which sends "
+                    f'"{_HATCH_MESSAGE}" through the dedicated `hatch:operator` session.'
+                ),
+            },
+        )
 
     return {
         "gateway_url": gateway_url,
@@ -269,6 +320,7 @@ def build_dashboard_handoff(
         "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else "",
         "onboarding": onboarding_status,
         "onboarding_label": onboarding_label,
+        "guidance": guidance,
     }
 
 
@@ -1164,13 +1216,14 @@ def run_onboarding_wizard(
         # Ensure gateway token always exists
         generated_token = ensure_gateway_token(config)
         saved_path = save_config(config, path=config_path)
+        generated_bootstrap = any(Path(path).name == "BOOTSTRAP.md" for path in generated_files)
         handoff = build_dashboard_handoff(
             config,
             config_path=config_path,
             variables=variables or {},
             ensure_token=False,
+            bootstrap_pending_override=generated_bootstrap or None,
         )
-        generated_bootstrap = any(Path(path).name == "BOOTSTRAP.md" for path in generated_files)
         gateway_url = str(handoff["gateway_url"])
         dashboard_url_with_token = str(handoff["dashboard_url_with_token"])
         onboarding_status = dict(handoff["onboarding"])
@@ -1213,6 +1266,20 @@ def run_onboarding_wizard(
                 padding=(1, 2),
             )
         )
+        guidance_lines = [
+            f"[bold]{item['title']}[/]\n{item['body']}"
+            for item in list(handoff.get("guidance", []) or [])
+            if item.get("title") and item.get("body")
+        ]
+        if guidance_lines:
+            console.print(
+                Panel(
+                    "\n\n".join(guidance_lines),
+                    title="[cyan]Next steps[/]",
+                    border_style="cyan",
+                    padding=(1, 2),
+                )
+            )
 
         return {
             "ok": True,
@@ -1261,6 +1328,7 @@ def run_onboarding_wizard(
                 "gateway_token": generated_token,
                 "bootstrap_pending": bootstrap_pending,
                 "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else str(handoff["recommended_first_message"]),
+                "guidance": list(handoff.get("guidance", []) or []),
             },
         }
     except KeyboardInterrupt:

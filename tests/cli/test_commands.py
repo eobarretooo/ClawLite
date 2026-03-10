@@ -306,6 +306,8 @@ def test_cli_dashboard_no_open_returns_tokenized_handoff_and_bootstrap_state(tmp
     assert payload["dashboard_url_with_token"].startswith("http://127.0.0.1:8787#token=")
     assert payload["bootstrap_pending"] is True
     assert payload["recommended_first_message"] == "Wake up, my friend!"
+    assert any(item["id"] == "hatch" for item in payload["guidance"])
+    assert any(item["id"] == "security" for item in payload["guidance"])
 
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["gateway"]["auth"]["token"]
@@ -338,6 +340,7 @@ def test_cli_dashboard_opens_browser_when_allowed(tmp_path: Path, capsys, monkey
     payload = json.loads(capsys.readouterr().out)
     assert payload["open_attempted"] is True
     assert payload["opened"] is True
+    assert any(item["id"] == "dashboard" for item in payload["guidance"])
     assert opened["url"] == payload["open_target"]
     assert opened["url"].startswith("http://127.0.0.1:8787#token=")
 

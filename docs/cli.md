@@ -27,7 +27,7 @@ Notes:
 
 - `run` does not require the gateway to be running.
 - `status` includes enabled channels, provider model, heartbeat interval, and bootstrap state.
-- `dashboard` prints the current dashboard URL, tokenized handoff URL, bootstrap state, and can open the browser unless `--no-open` is passed.
+- `dashboard` prints the current dashboard URL, tokenized handoff URL, bootstrap state, post-onboarding guidance, and can open the browser unless `--no-open` is passed.
 
 ## Setup and Onboarding
 
