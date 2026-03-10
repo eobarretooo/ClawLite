@@ -511,6 +511,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
         "auth": dict(control_plane.auth),
         "paths": {
             "health": "/health",
+            "dashboard_state": "/api/dashboard/state",
             "status": "/api/status",
             "diagnostics": "/api/diagnostics",
             "message": "/api/message",
@@ -4184,6 +4185,112 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
         return _control_plane_payload()
 
+    def _dashboard_preview(value: Any, *, max_chars: int = 140) -> str:
+        text = " ".join(str(value or "").strip().split())
+        if len(text) <= max_chars:
+            return text
+        return f"{text[: max(1, max_chars - 3)]}..."
+
+    def _recent_dashboard_sessions(*, limit: int = 8) -> dict[str, Any]:
+        sessions = runtime.engine.sessions
+        paths = sorted(
+            sessions.root.glob("*.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        rows: list[dict[str, Any]] = []
+        for path in paths[: max(1, int(limit or 1))]:
+            session_id = sessions._restore_session_id(path.stem)
+            history = sessions.read(session_id, limit=1)
+            last_message = history[-1] if history else {}
+            session_runs = runtime.engine.subagents.list_runs(session_id=session_id)
+            active_runs = runtime.engine.subagents.list_runs(session_id=session_id, active_only=True)
+            subagent_statuses: dict[str, int] = {}
+            for run in session_runs:
+                subagent_statuses[run.status] = subagent_statuses.get(run.status, 0) + 1
+            rows.append(
+                {
+                    "session_id": session_id,
+                    "last_role": str(last_message.get("role", "") or ""),
+                    "last_preview": _dashboard_preview(last_message.get("content", "")),
+                    "active_subagents": len(active_runs),
+                    "subagent_statuses": dict(sorted(subagent_statuses.items())),
+                    "updated_at": dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc).isoformat(),
+                }
+            )
+        return {
+            "count": len(paths),
+            "items": rows,
+        }
+
+    def _dashboard_channels_summary() -> dict[str, Any]:
+        snapshot = runtime.channels.status()
+        items: list[dict[str, Any]] = []
+        for name, payload in sorted(snapshot.items()):
+            row = dict(payload) if isinstance(payload, dict) else {"status": payload}
+            state_label = str(
+                row.get("status")
+                or row.get("worker_state")
+                or row.get("mode")
+                or ("enabled" if bool(row.get("enabled", False)) else "disabled")
+            )
+            items.append(
+                {
+                    "name": name,
+                    "enabled": bool(row.get("enabled", False)),
+                    "state": state_label,
+                    "summary": _dashboard_preview(row, max_chars=180),
+                }
+            )
+        return {
+            "count": len(items),
+            "items": items,
+        }
+
+    def _dashboard_cron_summary(*, limit: int = 8) -> dict[str, Any]:
+        jobs = runtime.cron.list_jobs()[: max(1, int(limit or 1))]
+        return {
+            "status": runtime.cron.status(),
+            "jobs": jobs,
+        }
+
+    def _dashboard_self_evolution_summary() -> dict[str, Any]:
+        evo = runtime.self_evolution
+        if evo is None:
+            return {"enabled": False, "status": {}, "runner": {}}
+        return {
+            "enabled": bool(evo.enabled),
+            "status": evo.status(),
+            "runner": dict(self_evolution_runner_state),
+        }
+
+    def _dashboard_state_payload() -> dict[str, Any]:
+        generated_at = _utc_now_iso()
+        control_plane = _control_plane_payload(server_time=generated_at)
+        provider_telemetry = _provider_telemetry_snapshot(runtime.engine.provider)
+        provider_autonomy = _provider_autonomy_snapshot(provider=runtime.engine.provider)
+        skills = runtime.skills_loader.diagnostics_report()
+        return {
+            "contract_version": GATEWAY_CONTRACT_VERSION,
+            "generated_at": generated_at,
+            "control_plane": control_plane.dict(),
+            "sessions": _recent_dashboard_sessions(),
+            "channels": _dashboard_channels_summary(),
+            "cron": _dashboard_cron_summary(),
+            "heartbeat": runtime.heartbeat.status(),
+            "subagents": runtime.engine.subagents.status(),
+            "skills": skills,
+            "provider": {
+                "telemetry": provider_telemetry,
+                "autonomy": provider_autonomy,
+            },
+            "self_evolution": _dashboard_self_evolution_summary(),
+        }
+
+    async def _dashboard_state_handler(request: Request) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        return _dashboard_state_payload()
+
     @app.get("/v1/status", response_model=ControlPlaneResponse)
     async def status(request: Request) -> ControlPlaneResponse:
         return await _status_handler(request)
@@ -4191,6 +4298,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @app.get("/api/status", response_model=ControlPlaneResponse)
     async def api_status(request: Request) -> ControlPlaneResponse:
         return await _status_handler(request)
+
+    @app.get("/v1/dashboard/state")
+    async def dashboard_state(request: Request) -> dict[str, Any]:
+        return await _dashboard_state_handler(request)
+
+    @app.get("/api/dashboard/state")
+    async def api_dashboard_state(request: Request) -> dict[str, Any]:
+        return await _dashboard_state_handler(request)
 
     async def _diagnostics_handler(request: Request) -> DiagnosticsResponse:
         if not cfg.gateway.diagnostics.enabled:

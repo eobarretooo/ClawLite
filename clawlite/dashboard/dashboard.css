@@ -424,6 +424,10 @@ select:focus {
   gap: 12px;
 }
 
+.summary-grid--wide {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
 .component-card,
 .summary-card,
 .event-entry {
@@ -463,6 +467,17 @@ select:focus {
   font-weight: 700;
 }
 
+.summary-card__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.summary-card__actions button {
+  flex: 1 1 120px;
+}
+
 .component-card__meta,
 .summary-card__meta,
 .event-entry__meta {
@@ -470,6 +485,10 @@ select:focus {
   color: var(--muted);
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.summary-card__meta code {
+  color: #ffd7be;
 }
 
 .diag-grid {

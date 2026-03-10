@@ -27,6 +27,8 @@
         <aside class="nav-card">
           <button class="nav-button is-active" data-tab-target="overview">Overview</button>
           <button class="nav-button" data-tab-target="chat">Chat</button>
+          <button class="nav-button" data-tab-target="sessions">Sessions</button>
+          <button class="nav-button" data-tab-target="automation">Automation</button>
           <button class="nav-button" data-tab-target="runtime">Runtime</button>
           <button class="nav-button" data-tab-target="tools">Tools</button>
           <div class="nav-divider"></div>
@@ -177,6 +179,66 @@
                 <span class="badge" id="ws-event-state">idle</span>
               </div>
               <pre class="code-block" id="ws-event-preview">Waiting for live websocket frames...</pre>
+            </article>
+          </section>
+
+          <section class="panel" data-tab-panel="sessions">
+            <div class="card-grid card-grid--stats">
+              <article class="metric-card"><span class="metric-card__label">Session count</span><strong class="metric-card__value" id="metric-session-count">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Recent active subagents</span><strong class="metric-card__value" id="metric-session-subagents">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Latest session update</span><strong class="metric-card__value" id="metric-session-updated">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Session routing</span><strong class="metric-card__value" id="metric-session-route">chat ready</strong></article>
+            </div>
+
+            <article class="panel-card">
+              <div class="panel-card__header">
+                <h2>Recent Sessions</h2>
+                <span class="badge" id="sessions-status">pending</span>
+              </div>
+              <div class="summary-grid summary-grid--wide" id="sessions-grid"></div>
+            </article>
+          </section>
+
+          <section class="panel" data-tab-panel="automation">
+            <div class="card-grid card-grid--stats">
+              <article class="metric-card"><span class="metric-card__label">Cron jobs</span><strong class="metric-card__value" id="metric-cron-jobs">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Provider state</span><strong class="metric-card__value" id="metric-provider-state">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Provider backoff</span><strong class="metric-card__value" id="metric-provider-backoff">-</strong></article>
+              <article class="metric-card"><span class="metric-card__label">Self evolution</span><strong class="metric-card__value" id="metric-self-evolution">-</strong></article>
+            </div>
+
+            <div class="card-grid">
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Provider Recovery</h2>
+                  <span class="badge" id="provider-status">pending</span>
+                </div>
+                <pre class="code-block" id="provider-preview">Waiting for provider telemetry...</pre>
+              </article>
+
+              <article class="panel-card">
+                <div class="panel-card__header">
+                  <h2>Self Evolution</h2>
+                  <span class="badge" id="self-evolution-status">pending</span>
+                </div>
+                <pre class="code-block" id="self-evolution-preview">Waiting for self evolution state...</pre>
+              </article>
+            </div>
+
+            <article class="panel-card">
+              <div class="panel-card__header">
+                <h2>Cron Queue</h2>
+                <span class="badge" id="cron-status">pending</span>
+              </div>
+              <div class="summary-grid summary-grid--wide" id="cron-grid"></div>
+            </article>
+
+            <article class="panel-card">
+              <div class="panel-card__header">
+                <h2>Channel Runtime</h2>
+                <span class="badge" id="channels-status">pending</span>
+              </div>
+              <div class="summary-grid summary-grid--wide" id="channels-grid"></div>
             </article>
           </section>
 

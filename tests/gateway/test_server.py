@@ -2285,6 +2285,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
         assert "/_clawlite/dashboard.css" in body
         assert "/_clawlite/dashboard.js" in body
+        assert '"dashboard_state": "/api/dashboard/state"' in body
         assert '"status": "/api/status"' in body
         assert '"diagnostics": "/api/diagnostics"' in body
         assert '"message": "/api/message"' in body
@@ -2316,6 +2317,33 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerHeartbeat" in js.text
     assert "scheduleAutoRefresh" in js.text
     assert js.headers["content-type"].startswith("application/javascript")
+
+
+def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.sessions.append("dashboard:test", "user", "hello dashboard")
+
+    with TestClient(app) as client:
+        response = client.get("/api/dashboard/state")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["contract_version"]
+    assert payload["control_plane"]["contract_version"]
+    assert payload["sessions"]["count"] >= 1
+    assert any(item["session_id"] == "dashboard:test" for item in payload["sessions"]["items"])
+    assert "status" in payload["cron"]
+    assert "jobs" in payload["cron"]
+    assert "telemetry" in payload["provider"]
+    assert "autonomy" in payload["provider"]
+    assert "items" in payload["channels"]
+    assert "enabled" in payload["self_evolution"]
 
 
 def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Path) -> None:

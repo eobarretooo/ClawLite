@@ -61,6 +61,7 @@ Recent progress:
 
 - the first dashboard slice is now served from packaged assets at `/`
 - the shell already exposes token-aware status, diagnostics, tools, chat controls, heartbeat trigger, autorefresh, and a live operator event feed using the existing gateway endpoints
+- the dashboard now also renders recent sessions and automation summaries from dedicated dashboard-state endpoints
 
 Exit criteria:
 

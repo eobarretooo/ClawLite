@@ -17,6 +17,7 @@ const state = {
   refreshInFlight: false,
   heartbeatBusy: false,
   status: bootstrap.control_plane || null,
+  dashboardState: null,
   diagnostics: null,
   tools: null,
   tokenInfo: null,
@@ -354,6 +355,149 @@ function renderToolsSummary() {
     });
 }
 
+function useSession(sessionId) {
+  state.sessionId = sessionId;
+  const input = byId("session-input");
+  if (input) {
+    input.value = sessionId;
+  }
+  setText("metric-session-route", `chat -> ${sessionId}`);
+  setActiveTab("chat");
+  recordEvent("ok", "Session selected", sessionId, "dashboard");
+}
+
+function renderSessions() {
+  const payload = (state.dashboardState || {}).sessions || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const grid = byId("sessions-grid");
+  if (grid) {
+    grid.innerHTML = "";
+    if (!items.length) {
+      const empty = document.createElement("article");
+      empty.className = "summary-card";
+      empty.textContent = "No persisted sessions yet. Send a message from the dashboard or a channel to populate this view.";
+      grid.appendChild(empty);
+    }
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "summary-card";
+
+      const title = document.createElement("span");
+      title.className = "summary-card__title";
+      title.textContent = item.session_id || "session";
+
+      const meta = document.createElement("div");
+      meta.className = "summary-card__meta";
+      meta.textContent = `${item.last_role || "unknown"}: ${item.last_preview || "No messages yet."}`;
+
+      const subMeta = document.createElement("div");
+      subMeta.className = "summary-card__meta";
+      subMeta.textContent = `updated ${formatClock(item.updated_at)} | active subagents ${numeric(item.active_subagents, 0)}`;
+
+      const actions = document.createElement("div");
+      actions.className = "summary-card__actions";
+      const useButton = document.createElement("button");
+      useButton.className = "ghost-button";
+      useButton.type = "button";
+      useButton.textContent = "Use in chat";
+      useButton.addEventListener("click", () => useSession(String(item.session_id || "dashboard:operator")));
+      actions.appendChild(useButton);
+
+      card.append(title, meta, subMeta, actions);
+      grid.appendChild(card);
+    });
+  }
+
+  setText("metric-session-count", String(numeric(payload.count, 0)));
+  setText(
+    "metric-session-subagents",
+    String(items.reduce((total, item) => total + numeric(item.active_subagents, 0), 0)),
+  );
+  setText("metric-session-updated", items[0] ? formatClock(items[0].updated_at) : "-");
+  setBadge("sessions-status", items.length ? `${items.length} recent` : "empty", items.length ? "ok" : "warn");
+}
+
+function renderAutomation() {
+  const payload = state.dashboardState || {};
+  const cronPayload = payload.cron || {};
+  const cronJobs = Array.isArray(cronPayload.jobs) ? cronPayload.jobs : [];
+  const cronGrid = byId("cron-grid");
+  if (cronGrid) {
+    cronGrid.innerHTML = "";
+    if (!cronJobs.length) {
+      const empty = document.createElement("article");
+      empty.className = "summary-card";
+      empty.textContent = "No cron jobs are currently scheduled.";
+      cronGrid.appendChild(empty);
+    }
+    cronJobs.forEach((job) => {
+      const card = document.createElement("article");
+      card.className = "summary-card";
+      const title = document.createElement("span");
+      title.className = "summary-card__title";
+      title.textContent = job.name || job.id || "cron-job";
+      const meta = document.createElement("div");
+      meta.className = "summary-card__meta";
+      meta.textContent = `${job.expression || job.schedule?.kind || "schedule"} | next ${job.next_run_iso || "pending"}`;
+      const status = document.createElement("div");
+      status.className = "summary-card__meta";
+      status.textContent = `status ${job.last_status || "idle"} | session ${job.session_id || "-"}`;
+      card.append(title, meta, status);
+      cronGrid.appendChild(card);
+    });
+  }
+
+  const channelsPayload = payload.channels || {};
+  const channels = Array.isArray(channelsPayload.items) ? channelsPayload.items : [];
+  const channelsGrid = byId("channels-grid");
+  if (channelsGrid) {
+    channelsGrid.innerHTML = "";
+    if (!channels.length) {
+      const empty = document.createElement("article");
+      empty.className = "summary-card";
+      empty.textContent = "No channel state available.";
+      channelsGrid.appendChild(empty);
+    }
+    channels.forEach((channel) => {
+      const card = document.createElement("article");
+      card.className = "summary-card";
+      const title = document.createElement("span");
+      title.className = "summary-card__title";
+      title.textContent = channel.name || "channel";
+      const meta = document.createElement("div");
+      meta.className = "summary-card__meta";
+      meta.textContent = `${channel.enabled ? "enabled" : "disabled"} | ${channel.state || "unknown"}`;
+      const summary = document.createElement("div");
+      summary.className = "summary-card__meta";
+      summary.textContent = channel.summary || "";
+      card.append(title, meta, summary);
+      channelsGrid.appendChild(card);
+    });
+  }
+
+  const provider = payload.provider || {};
+  const providerAutonomy = provider.autonomy || {};
+  const providerTelemetry = provider.telemetry || {};
+  setText("metric-provider-state", String(providerAutonomy.state || providerTelemetry.summary?.state || "unknown"));
+  setText("metric-provider-backoff", formatDuration(providerAutonomy.suppression_backoff_s || providerAutonomy.cooldown_remaining_s || 0));
+  setCode("provider-preview", {
+    autonomy: providerAutonomy,
+    summary: providerTelemetry.summary || {},
+    counters: providerTelemetry.counters || {},
+  });
+  setBadge("provider-status", String(providerAutonomy.state || "unknown"), toneForState(providerAutonomy.state));
+
+  const selfEvolution = payload.self_evolution || {};
+  setText("metric-self-evolution", selfEvolution.enabled ? "enabled" : "disabled");
+  setCode("self-evolution-preview", selfEvolution);
+  setBadge("self-evolution-status", selfEvolution.enabled ? "enabled" : "disabled", selfEvolution.enabled ? "ok" : "warn");
+
+  const cronStatus = cronPayload.status || {};
+  setText("metric-cron-jobs", String(numeric(cronStatus.jobs, cronJobs.length)));
+  setBadge("cron-status", cronJobs.length ? `${cronJobs.length} jobs` : "idle", cronJobs.length ? "ok" : "warn");
+  setBadge("channels-status", channels.length ? `${channels.length} channels` : "empty", channels.length ? "ok" : "warn");
+}
+
 function renderOverview() {
   const status = state.status || bootstrap.control_plane || {};
   const ready = Boolean(status.ready);
@@ -416,6 +560,8 @@ function renderRuntime() {
 
 function renderAll() {
   renderOverview();
+  renderSessions();
+  renderAutomation();
   renderRuntime();
 }
 
@@ -446,6 +592,10 @@ async function refreshStatus() {
   state.status = await fetchJson(paths.status || "/api/status");
 }
 
+async function refreshDashboardState() {
+  state.dashboardState = await fetchJson(paths.dashboard_state || "/api/dashboard/state");
+}
+
 async function refreshDiagnostics() {
   state.diagnostics = await fetchJson(paths.diagnostics || "/api/diagnostics");
 }
@@ -468,10 +618,10 @@ async function refreshAll(reason = "manual") {
   }
   state.refreshInFlight = true;
   try {
-    await Promise.all([refreshStatus(), refreshDiagnostics(), refreshTools(), refreshTokenInfo()]);
+    await Promise.all([refreshStatus(), refreshDashboardState(), refreshDiagnostics(), refreshTools(), refreshTokenInfo()]);
     state.lastSyncAt = new Date().toISOString();
     if (reason !== "auto") {
-      recordEvent("ok", "Dashboard sync complete", "Status, diagnostics, tools, and token metadata refreshed.", reason);
+      recordEvent("ok", "Dashboard sync complete", "Status, dashboard state, diagnostics, tools, and token metadata refreshed.", reason);
     }
   } catch (error) {
     recordEvent("danger", "Dashboard sync failed", error.message, reason);

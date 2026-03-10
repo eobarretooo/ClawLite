@@ -13,7 +13,70 @@ Default base URL: `http://127.0.0.1:8787`
 
 ## `GET /`
 
-Entrypoint leve do gateway (HTML estático e determinístico) com visão rápida dos endpoints disponíveis.
+Entrypoint do dashboard local do gateway. Serve um shell HTML/CSS/JS empacotado com visão operacional para status, diagnostics, sessions, automation, tools e chat ao vivo.
+
+## `GET /v1/dashboard/state`
+
+Resumo agregado para o dashboard local.
+
+Example response:
+
+```json
+{
+  "contract_version": "2026-03-04",
+  "generated_at": "2026-03-10T12:00:00+00:00",
+  "control_plane": {
+    "ready": true,
+    "phase": "running",
+    "contract_version": "2026-03-04",
+    "server_time": "2026-03-10T12:00:00+00:00",
+    "components": {},
+    "auth": {}
+  },
+  "sessions": {
+    "count": 2,
+    "items": [
+      {
+        "session_id": "dashboard:operator",
+        "last_role": "assistant",
+        "last_preview": "Runtime ready.",
+        "active_subagents": 0,
+        "subagent_statuses": {},
+        "updated_at": "2026-03-10T11:59:10+00:00"
+      }
+    ]
+  },
+  "channels": {
+    "count": 1,
+    "items": [
+      {
+        "name": "telegram",
+        "enabled": true,
+        "state": "running",
+        "summary": "enabled | running"
+      }
+    ]
+  },
+  "cron": {
+    "status": {"running": true, "jobs": 1},
+    "jobs": []
+  },
+  "heartbeat": {},
+  "subagents": {},
+  "skills": {},
+  "provider": {
+    "telemetry": {},
+    "autonomy": {}
+  },
+  "self_evolution": {
+    "enabled": false,
+    "status": {},
+    "runner": {}
+  }
+}
+```
+
+Alias compatível: `GET /api/dashboard/state` (mesmo payload e mesma política de autenticação).
 
 ## `GET /health`
 
