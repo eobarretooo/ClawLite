@@ -44,6 +44,15 @@ function authHeaders() {
   return { [headerName]: value };
 }
 
+function tokenFromLocationHash() {
+  const raw = String(window.location.hash || "").replace(/^#/, "").trim();
+  if (!raw) {
+    return "";
+  }
+  const params = new URLSearchParams(raw);
+  return String(params.get("token") || "").trim();
+}
+
 function buildWsUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL(`${protocol}//${window.location.host}${paths.ws || "/ws"}`);
@@ -792,6 +801,24 @@ function persistToken(nextToken) {
   }
 }
 
+function bootstrapTokenFromUrl() {
+  const hashToken = tokenFromLocationHash();
+  if (!hashToken) {
+    return;
+  }
+  persistToken(hashToken);
+  if (window.history && typeof window.history.replaceState === "function") {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  } else {
+    window.location.hash = "";
+  }
+  const tokenInput = byId("token-input");
+  if (tokenInput) {
+    tokenInput.value = state.token;
+  }
+  recordEvent("ok", "Gateway token bootstrapped", "Loaded token from dashboard URL fragment and removed it from the address bar.", "auth");
+}
+
 async function sendHttpMessage() {
   const sessionId = byId("session-input").value.trim() || state.sessionId;
   const text = byId("chat-input").value.trim();
@@ -916,6 +943,7 @@ function bindEvents() {
 }
 
 bindEvents();
+bootstrapTokenFromUrl();
 setActiveTab(state.activeTab);
 renderAll();
 recordEvent("ok", "Dashboard booted", "Packaged shell loaded with gateway bootstrap metadata.", "ui");

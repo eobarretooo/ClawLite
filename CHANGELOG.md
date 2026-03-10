@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Refreshed the root README with a richer quickstart, examples, capability matrix, and clearer explanation of the current autonomy-hardening phase.
+- Onboarding now emits a tokenized dashboard link and the dashboard can bootstrap auth from the URL fragment before stripping it from the address bar.
 - Gateway root entrypoint now serves a richer operator dashboard backed by packaged HTML/CSS/JS assets instead of a single inline landing page, with a more operational UI/UX direction for control-plane work.
 - Added dashboard state endpoints (`/v1/dashboard/state`, `/api/dashboard/state`) so the packaged UI can render recent sessions, cron state, channels, provider recovery, and self-evolution summaries without scraping raw diagnostics.
 - Expanded dashboard-state payloads so the UI can render workspace runtime health, bootstrap cycle state, skills inventory summary, and memory monitor telemetry.

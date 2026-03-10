@@ -220,6 +220,14 @@ def ensure_gateway_token(config: AppConfig) -> str:
     return generated
 
 
+def _dashboard_url_with_token(gateway_url: str, token: str) -> str:
+    clean_url = str(gateway_url or "").strip().rstrip("/")
+    clean_token = str(token or "").strip()
+    if not clean_url or not clean_token:
+        return clean_url
+    return f"{clean_url}#token={clean_token}"
+
+
 def apply_provider_selection(
     config: AppConfig,
     *,
@@ -1112,6 +1120,7 @@ def run_onboarding_wizard(
         generated_token = ensure_gateway_token(config)
         saved_path = save_config(config, path=config_path)
         gateway_url = f"http://{config.gateway.host}:{config.gateway.port}"
+        dashboard_url_with_token = _dashboard_url_with_token(gateway_url, generated_token)
         workspace_loader = WorkspaceLoader(workspace_path=config.workspace_path)
         onboarding_status_fn = getattr(workspace_loader, "onboarding_status", None)
         onboarding_status = (
@@ -1139,7 +1148,8 @@ def run_onboarding_wizard(
                 f"  [bold]Onboarding:[/]    {'completed' if onboarding_status.get('completed') else 'bootstrap pending'}\n"
                 f"  [bold]Config saved:[/]  {saved_path}\n\n"
                 f"[dim]Start the agent:[/]  [bold cyan]clawlite start[/]\n"
-                f"[dim]Dashboard:[/]        [bold cyan]{gateway_url}[/]",
+                f"[dim]Dashboard:[/]        [bold cyan]{gateway_url}[/]\n"
+                f"[dim]Dashboard + token:[/] [bold cyan]{dashboard_url_with_token}[/]",
                 title="[green]Setup complete[/]",
                 border_style="green",
                 padding=(1, 2),
@@ -1189,6 +1199,7 @@ def run_onboarding_wizard(
             },
             "final": {
                 "gateway_url": gateway_url,
+                "dashboard_url_with_token": dashboard_url_with_token,
                 "gateway_token": generated_token,
             },
         }

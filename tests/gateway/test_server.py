@@ -2318,6 +2318,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "connectWs" in js.text
     assert "triggerHeartbeat" in js.text
     assert "scheduleAutoRefresh" in js.text
+    assert "window.location.hash" in js.text
+    assert "history.replaceState" in js.text
     assert js.headers["content-type"].startswith("application/javascript")
 
 

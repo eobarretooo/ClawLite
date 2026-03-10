@@ -409,6 +409,7 @@ def test_run_onboarding_wizard_advanced_persists_custom_model_and_gateway(monkey
     assert payload["persisted"]["gateway"]["port"] == 19090
     assert payload["persisted"]["gateway"]["auth_mode"] == "required"
     assert payload["final"]["gateway_url"] == "http://0.0.0.0:19090"
+    assert payload["final"]["dashboard_url_with_token"].startswith("http://0.0.0.0:19090#token=")
     assert payload["final"]["gateway_token"]
 
 
@@ -538,6 +539,7 @@ def test_run_onboarding_wizard_quickstart_uses_guided_defaults(monkeypatch, tmp_
     assert payload["persisted"]["gateway"]["auth_mode"] == "required"
     assert payload["persisted"]["telegram"]["enabled"] is False
     assert len(payload["workspace"]["created_files"]) == 2
+    assert payload["final"]["dashboard_url_with_token"].startswith("http://127.0.0.1:8787#token=")
     assert payload["final"]["gateway_token"]
 
 

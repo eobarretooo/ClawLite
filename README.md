@@ -116,6 +116,14 @@ Then open:
 http://127.0.0.1:8787
 ```
 
+The onboarding summary also prints a tokenized dashboard URL like:
+
+```text
+http://127.0.0.1:8787#token=...
+```
+
+The dashboard consumes that fragment once, stores the token locally for the browser session, and removes it from the address bar.
+
 ### 4. Talk to the agent
 
 ```bash
