@@ -21,11 +21,13 @@ The module entry point is also available as `python -m clawlite.cli`.
 | `gateway` | Alias of `start` | `clawlite gateway --port 8787` |
 | `run <prompt>` | Runs one prompt directly through the engine | `clawlite run "summarize this repo" --session-id cli:test --timeout 30` |
 | `status` | Prints a local config/runtime summary | `clawlite status` |
+| `dashboard` | Opens or prints the local dashboard handoff | `clawlite dashboard --no-open` |
 
 Notes:
 
 - `run` does not require the gateway to be running.
 - `status` includes enabled channels, provider model, heartbeat interval, and bootstrap state.
+- `dashboard` prints the current dashboard URL, tokenized handoff URL, bootstrap state, and can open the browser unless `--no-open` is passed.
 
 ## Setup and Onboarding
 

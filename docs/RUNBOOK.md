@@ -16,6 +16,12 @@ Equivalent alias:
 clawlite gateway --host 127.0.0.1 --port 8787
 ```
 
+Print or reopen the tokenized dashboard handoff without relaunching onboarding:
+
+```bash
+clawlite dashboard --no-open
+```
+
 ## Quick Health Checks
 
 ```bash

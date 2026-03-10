@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,7 @@ from clawlite.cli.ops import provider_logout_openai_codex
 from clawlite.cli.ops import provider_status
 from clawlite.cli.ops import provider_use_model
 from clawlite.cli.ops import telegram_live_probe
+from clawlite.cli.onboarding import build_dashboard_handoff
 from clawlite.cli.onboarding import run_onboarding_wizard
 from clawlite.config.loader import load_config
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
@@ -117,6 +119,41 @@ def cmd_status(args: argparse.Namespace) -> int:
             "gateway_diagnostics_enabled": cfg.gateway.diagnostics.enabled,
             "bootstrap_pending": bool(bootstrap.get("pending", False)),
             "bootstrap_last_status": str(bootstrap.get("last_status", "") or ""),
+        }
+    )
+    return 0
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    cfg = _ensure_config_materialized(args.config)
+    config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+    handoff = build_dashboard_handoff(
+        cfg,
+        config_path=config_path,
+        ensure_token=bool(cfg.gateway.auth.mode != "off"),
+    )
+    open_target = str(handoff["dashboard_url_with_token"] or handoff["gateway_url"])
+    open_attempted = not bool(getattr(args, "no_open", False))
+    opened = False
+    open_error = ""
+    if open_attempted and open_target:
+        try:
+            opened = bool(webbrowser.open(open_target))
+        except Exception as exc:
+            open_error = str(exc)
+    _print_json(
+        {
+            "ok": True,
+            "gateway_url": handoff["gateway_url"],
+            "dashboard_url_with_token": handoff["dashboard_url_with_token"],
+            "gateway_token_masked": handoff["gateway_token_masked"],
+            "bootstrap_pending": handoff["bootstrap_pending"],
+            "recommended_first_message": handoff["recommended_first_message"],
+            "onboarding": handoff["onboarding"],
+            "open_attempted": open_attempted,
+            "opened": opened,
+            "open_target": open_target,
+            "open_error": open_error,
         }
     )
     return 0
@@ -897,6 +934,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="Show runtime/config status summary")
     p_status.set_defaults(handler=cmd_status)
+
+    p_dashboard = sub.add_parser("dashboard", help="Print or open the local dashboard URL")
+    p_dashboard.add_argument("--no-open", action="store_true", help="Print dashboard URLs without opening a browser")
+    p_dashboard.set_defaults(handler=cmd_dashboard)
 
     p_configure = sub.add_parser("configure", help="Interactive setup wizard (quickstart/advanced provider, Telegram, gateway)")
     p_configure.add_argument("--overwrite", action="store_true", help="Overwrite existing workspace files")

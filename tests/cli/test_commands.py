@@ -5,8 +5,7 @@ import json
 import sys
 import types
 from pathlib import Path
-
-import pytest
+from typing import Any
 
 # Keep CLI command tests importable while channel modules are being replaced in
 # parallel worktrees. These tests do not exercise WhatsApp channel behavior.
@@ -25,6 +24,7 @@ from clawlite.cli.commands import main
 from clawlite.cli.ops import provider_live_probe
 from clawlite.channels.telegram_pairing import TelegramPairingStore
 from clawlite.workspace.loader import TEMPLATE_FILES
+from clawlite.workspace.loader import WorkspaceLoader
 
 
 def test_cli_onboard_generates_workspace_files(tmp_path: Path) -> None:
@@ -278,6 +278,68 @@ def test_cli_status_and_version(tmp_path: Path, capsys) -> None:
     assert rc_ver == 0
     ver_out = capsys.readouterr().out.strip()
     assert ver_out
+
+
+def test_cli_dashboard_no_open_returns_tokenized_handoff_and_bootstrap_state(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    workspace_path = tmp_path / "workspace"
+    WorkspaceLoader(workspace_path=workspace_path).bootstrap()
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(workspace_path),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {"auth": {"mode": "required", "token": ""}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "dashboard", "--no-open"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["open_attempted"] is False
+    assert payload["opened"] is False
+    assert payload["gateway_url"] == "http://127.0.0.1:8787"
+    assert payload["dashboard_url_with_token"].startswith("http://127.0.0.1:8787#token=")
+    assert payload["bootstrap_pending"] is True
+    assert payload["recommended_first_message"] == "Wake up, my friend!"
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["gateway"]["auth"]["token"]
+
+
+def test_cli_dashboard_opens_browser_when_allowed(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {"auth": {"mode": "required", "token": "tok-open-123456"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    opened: dict[str, str] = {"url": ""}
+
+    def _fake_open(url: str) -> bool:
+        opened["url"] = url
+        return True
+
+    monkeypatch.setattr("clawlite.cli.commands.webbrowser.open", _fake_open)
+
+    rc = main(["--config", str(config_path), "dashboard"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["open_attempted"] is True
+    assert payload["opened"] is True
+    assert opened["url"] == payload["open_target"]
+    assert opened["url"].startswith("http://127.0.0.1:8787#token=")
 
 
 def test_cli_pairing_list_and_approve(tmp_path: Path, capsys) -> None:

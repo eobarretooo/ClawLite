@@ -124,6 +124,12 @@ http://127.0.0.1:8787#token=...
 
 The dashboard consumes that fragment once, stores the token locally for the browser session, and removes it from the address bar.
 
+You can also print or reopen the handoff later with:
+
+```bash
+clawlite dashboard --no-open
+```
+
 If onboarding is still pending, the dashboard also exposes a `Hatch agent` action that sends:
 
 ```text

@@ -228,6 +228,50 @@ def _dashboard_url_with_token(gateway_url: str, token: str) -> str:
     return f"{clean_url}#token={clean_token}"
 
 
+def build_dashboard_handoff(
+    config: AppConfig,
+    *,
+    config_path: str | Path | None = None,
+    variables: dict[str, str] | None = None,
+    ensure_token: bool = False,
+) -> dict[str, Any]:
+    token = str(config.gateway.auth.token or "").strip()
+    if not token and ensure_token:
+        token = ensure_gateway_token(config)
+        if config_path:
+            save_config(config, path=config_path)
+
+    gateway_url = f"http://{config.gateway.host}:{config.gateway.port}"
+    dashboard_url_with_token = _dashboard_url_with_token(gateway_url, token)
+
+    workspace_loader = WorkspaceLoader(workspace_path=config.workspace_path)
+    onboarding_status_fn = getattr(workspace_loader, "onboarding_status", None)
+    onboarding_status = (
+        onboarding_status_fn(variables=variables or {}, persist=True)
+        if callable(onboarding_status_fn)
+        else {"completed": False}
+    )
+    bootstrap_pending = bool(
+        onboarding_status.get("bootstrap_exists", False) and not onboarding_status.get("completed", False)
+    )
+    onboarding_label = (
+        "completed"
+        if onboarding_status.get("completed")
+        else "bootstrap pending" if bootstrap_pending else "not seeded"
+    )
+
+    return {
+        "gateway_url": gateway_url,
+        "dashboard_url_with_token": dashboard_url_with_token,
+        "gateway_token": token,
+        "gateway_token_masked": _mask_secret(token, keep=8),
+        "bootstrap_pending": bootstrap_pending,
+        "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else "",
+        "onboarding": onboarding_status,
+        "onboarding_label": onboarding_label,
+    }
+
+
 def apply_provider_selection(
     config: AppConfig,
     *,
@@ -1120,25 +1164,18 @@ def run_onboarding_wizard(
         # Ensure gateway token always exists
         generated_token = ensure_gateway_token(config)
         saved_path = save_config(config, path=config_path)
-        gateway_url = f"http://{config.gateway.host}:{config.gateway.port}"
-        dashboard_url_with_token = _dashboard_url_with_token(gateway_url, generated_token)
-        workspace_loader = WorkspaceLoader(workspace_path=config.workspace_path)
-        onboarding_status_fn = getattr(workspace_loader, "onboarding_status", None)
-        onboarding_status = (
-            onboarding_status_fn(variables=variables or {}, persist=True)
-            if callable(onboarding_status_fn)
-            else {"completed": False}
+        handoff = build_dashboard_handoff(
+            config,
+            config_path=config_path,
+            variables=variables or {},
+            ensure_token=False,
         )
         generated_bootstrap = any(Path(path).name == "BOOTSTRAP.md" for path in generated_files)
-        bootstrap_pending = bool(
-            (generated_bootstrap or onboarding_status.get("bootstrap_exists", False))
-            and not onboarding_status.get("completed", False)
-        )
-        onboarding_label = (
-            "completed"
-            if onboarding_status.get("completed")
-            else "bootstrap pending" if bootstrap_pending else "not seeded"
-        )
+        gateway_url = str(handoff["gateway_url"])
+        dashboard_url_with_token = str(handoff["dashboard_url_with_token"])
+        onboarding_status = dict(handoff["onboarding"])
+        bootstrap_pending = bool(generated_bootstrap or handoff["bootstrap_pending"])
+        onboarding_label = "completed" if onboarding_status.get("completed") else "bootstrap pending" if bootstrap_pending else str(handoff["onboarding_label"])
 
         tg_status = "[green]enabled[/]" if config.channels.telegram.enabled else "[dim]disabled[/]"
         token_display = _mask_secret(generated_token, keep=8)
@@ -1223,7 +1260,7 @@ def run_onboarding_wizard(
                 "dashboard_url_with_token": dashboard_url_with_token,
                 "gateway_token": generated_token,
                 "bootstrap_pending": bootstrap_pending,
-                "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else "",
+                "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else str(handoff["recommended_first_message"]),
             },
         }
     except KeyboardInterrupt:
