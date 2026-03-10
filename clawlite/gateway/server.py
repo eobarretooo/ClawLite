@@ -4307,6 +4307,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "subagents": runtime.engine.subagents.status(),
             "skills": skills,
             "workspace": runtime.workspace.runtime_health(),
+            "onboarding": runtime.workspace.onboarding_status(),
             "bootstrap": runtime.workspace.bootstrap_status(),
             "memory": _dashboard_memory_summary(),
             "provider": {

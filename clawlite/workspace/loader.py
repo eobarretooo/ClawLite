@@ -66,6 +66,8 @@ class WorkspaceLoader:
 
         bootstrap_status = self.bootstrap_status()
         bootstrap_completed = bool(bootstrap_status.get("completed_at")) or str(bootstrap_status.get("last_status", "")) == "completed"
+        onboarding_status = self.onboarding_status(variables=values, persist=True)
+        onboarding_completed = bool(onboarding_status.get("completed", False))
 
         for rel in TEMPLATE_FILES:
             src = self.templates / rel
@@ -73,7 +75,7 @@ class WorkspaceLoader:
             if not src.exists():
                 continue
 
-            if rel == "BOOTSTRAP.md" and bootstrap_completed:
+            if rel == "BOOTSTRAP.md" and (bootstrap_completed or onboarding_completed):
                 skipped.append(dst)
                 continue
 
@@ -94,6 +96,8 @@ class WorkspaceLoader:
                 updated.append(dst)
             else:
                 skipped.append(dst)
+
+        self._reconcile_onboarding_state(variables=values, persist=True)
 
         return {
             "created": sorted(created),
@@ -246,6 +250,9 @@ class WorkspaceLoader:
     def bootstrap_state_path(self) -> Path:
         return self.workspace / "memory" / "bootstrap-state.json"
 
+    def onboarding_state_path(self) -> Path:
+        return self.workspace / "memory" / "onboarding-state.json"
+
     @staticmethod
     def _bootstrap_state_defaults() -> dict[str, Any]:
         return {
@@ -308,6 +315,116 @@ class WorkspaceLoader:
                 except Exception:
                     pass
             return False
+
+    @staticmethod
+    def _onboarding_state_defaults() -> dict[str, Any]:
+        return {
+            "version": 1,
+            "bootstrap_seeded_at": "",
+            "onboarding_completed_at": "",
+        }
+
+    def _read_onboarding_state(self) -> dict[str, Any]:
+        defaults = self._onboarding_state_defaults()
+        path = self.onboarding_state_path()
+        if not path.exists():
+            return dict(defaults)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8").strip() or "{}")
+        except Exception:
+            return dict(defaults)
+        if not isinstance(payload, dict):
+            return dict(defaults)
+
+        state = dict(defaults)
+        state["bootstrap_seeded_at"] = str(payload.get("bootstrap_seeded_at", payload.get("bootstrapSeededAt", "")) or "")
+        state["onboarding_completed_at"] = str(payload.get("onboarding_completed_at", payload.get("onboardingCompletedAt", "")) or "")
+        return state
+
+    def _write_onboarding_state(self, payload: dict[str, Any]) -> bool:
+        path = self.onboarding_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                delete=False,
+                prefix=".onboarding-state-",
+                suffix=".tmp",
+            ) as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+                handle.write("\n")
+                temp_path = Path(handle.name)
+            if temp_path is None:
+                return False
+            temp_path.replace(path)
+            return True
+        except Exception:
+            if temp_path is not None and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+            return False
+
+    def _legacy_onboarding_completed(self, *, variables: dict[str, str] | None = None) -> bool:
+        identity_path = self.workspace / "IDENTITY.md"
+        user_path = self.workspace / "USER.md"
+        if not identity_path.exists() or not user_path.exists():
+            return False
+
+        try:
+            expected_identity = self._render_template_file("IDENTITY.md", variables=variables)
+            expected_user = self._render_template_file("USER.md", variables=variables)
+            identity_content = identity_path.read_text(encoding="utf-8", errors="ignore")
+            user_content = user_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return False
+
+        indicators = [self.workspace / "memory", self.workspace / ".git"]
+        has_user_content = any(path.exists() for path in indicators)
+        return identity_content != expected_identity or user_content != expected_user or has_user_content
+
+    def _reconcile_onboarding_state(self, *, variables: dict[str, str] | None = None, persist: bool = True) -> dict[str, Any]:
+        state = self._read_onboarding_state()
+        state_dirty = False
+        bootstrap_exists = self.bootstrap_path().exists()
+        now = self._utcnow_iso()
+
+        def mark(key: str) -> None:
+            nonlocal state_dirty
+            if not str(state.get(key, "") or ""):
+                state[key] = now
+                state_dirty = True
+
+        if bootstrap_exists:
+            mark("bootstrap_seeded_at")
+        elif str(state.get("bootstrap_seeded_at", "") or "") and not str(state.get("onboarding_completed_at", "") or ""):
+            mark("onboarding_completed_at")
+        elif not str(state.get("bootstrap_seeded_at", "") or "") and not str(state.get("onboarding_completed_at", "") or ""):
+            if self._legacy_onboarding_completed(variables=variables):
+                mark("onboarding_completed_at")
+
+        if persist and state_dirty:
+            payload = {
+                "version": 1,
+                "bootstrap_seeded_at": str(state.get("bootstrap_seeded_at", "") or ""),
+                "onboarding_completed_at": str(state.get("onboarding_completed_at", "") or ""),
+            }
+            self._write_onboarding_state(payload)
+
+        return {
+            "state_path": str(self.onboarding_state_path()),
+            "bootstrap_exists": bootstrap_exists,
+            "bootstrap_seeded_at": str(state.get("bootstrap_seeded_at", "") or ""),
+            "onboarding_completed_at": str(state.get("onboarding_completed_at", "") or ""),
+            "completed": bool(str(state.get("onboarding_completed_at", "") or "")),
+        }
+
+    def onboarding_status(self, *, variables: dict[str, str] | None = None, persist: bool = False) -> dict[str, Any]:
+        return self._reconcile_onboarding_state(variables=variables, persist=persist)
 
     def bootstrap_status(self) -> dict[str, Any]:
         state = self._read_bootstrap_state()
@@ -379,6 +496,7 @@ class WorkspaceLoader:
         if not path.exists():
             return False
         path.unlink()
+        self._reconcile_onboarding_state(persist=True)
         return True
 
     def complete(self) -> bool:

@@ -63,6 +63,7 @@ Recent progress:
 - the shell already exposes token-aware status, diagnostics, tools, chat controls, heartbeat trigger, autorefresh, and a live operator event feed using the existing gateway endpoints
 - the dashboard now also renders recent sessions and automation summaries from dedicated dashboard-state endpoints
 - the dashboard now also exposes workspace, bootstrap, skills, and memory health views from the same aggregated control-plane payloads
+- workspace onboarding state is now tracked explicitly so bootstrap seeding/completion survives template sync and shows up in the knowledge view
 
 Exit criteria:
 

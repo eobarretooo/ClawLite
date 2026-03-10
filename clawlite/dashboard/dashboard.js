@@ -501,6 +501,7 @@ function renderAutomation() {
 function renderKnowledge() {
   const payload = state.dashboardState || {};
   const workspace = payload.workspace || {};
+  const onboarding = payload.onboarding || {};
   const bootstrap = payload.bootstrap || {};
   const skills = payload.skills || {};
   const memory = payload.memory || {};
@@ -512,7 +513,11 @@ function renderKnowledge() {
   );
   setText(
     "metric-bootstrap",
-    bootstrap.pending ? "pending" : bootstrap.last_status || (bootstrap.completed_at ? "completed" : "idle"),
+    onboarding.completed
+      ? "completed"
+      : bootstrap.pending
+        ? "pending"
+        : bootstrap.last_status || (bootstrap.completed_at ? "completed" : "idle"),
   );
   setText("metric-skills-runnable", String(numeric(((skills.summary || {}).runnable), 0)));
   setText("metric-memory-pending", String(numeric(memoryMonitor.pending, 0)));
@@ -545,7 +550,10 @@ function renderKnowledge() {
     });
   }
 
-  setCode("bootstrap-preview", bootstrap);
+  setCode("bootstrap-preview", {
+    onboarding,
+    bootstrap,
+  });
   setCode("skills-preview", {
     summary: skills.summary || {},
     watcher: skills.watcher || {},
@@ -558,7 +566,11 @@ function renderKnowledge() {
   });
 
   setBadge("workspace-status", workspace.failed_count ? "attention" : "healthy", workspace.failed_count ? "warn" : "ok");
-  setBadge("bootstrap-status", bootstrap.pending ? "pending" : bootstrap.last_status || "idle", bootstrap.pending ? "warn" : "ok");
+  setBadge(
+    "bootstrap-status",
+    onboarding.completed ? "completed" : bootstrap.pending ? "pending" : bootstrap.last_status || "idle",
+    onboarding.completed ? "ok" : bootstrap.pending ? "warn" : "ok",
+  );
   setBadge("skills-status", `${numeric(((skills.summary || {}).available), 0)} available`, numeric(((skills.summary || {}).unavailable), 0) ? "warn" : "ok");
   setBadge("memory-status", memoryMonitor.enabled ? "monitoring" : "disabled", memoryMonitor.enabled ? "ok" : "warn");
 }

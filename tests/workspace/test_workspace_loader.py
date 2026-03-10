@@ -93,6 +93,10 @@ def test_workspace_bootstrap_status_and_state_persistence(tmp_path: Path) -> Non
     assert state_payload["last_status"] == "completed"
     assert state_payload["run_count"] == 1
 
+    onboarding_payload = json.loads((tmp_path / "ws" / "memory" / "onboarding-state.json").read_text(encoding="utf-8"))
+    assert onboarding_payload["bootstrap_seeded_at"]
+    assert onboarding_payload["onboarding_completed_at"]
+
 
 def test_workspace_bootstrap_not_recreated_after_completed_state(tmp_path: Path) -> None:
     loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
@@ -104,6 +108,24 @@ def test_workspace_bootstrap_not_recreated_after_completed_state(tmp_path: Path)
 
     loader.sync_templates(update_existing=False)
     assert not (tmp_path / "ws" / "BOOTSTRAP.md").exists()
+
+
+def test_workspace_onboarding_status_marks_legacy_workspace_complete(tmp_path: Path) -> None:
+    loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
+    loader.bootstrap()
+
+    identity_path = tmp_path / "ws" / "IDENTITY.md"
+    bootstrap_path = tmp_path / "ws" / "BOOTSTRAP.md"
+    identity_path.write_text("custom identity", encoding="utf-8")
+    bootstrap_path.unlink()
+
+    status = loader.onboarding_status(persist=True)
+
+    assert status["completed"] is True
+    assert status["onboarding_completed_at"]
+
+    loader.sync_templates(update_existing=False)
+    assert not bootstrap_path.exists()
 
 
 def test_workspace_runtime_health_repairs_empty_and_corrupt_core_docs(tmp_path: Path) -> None:

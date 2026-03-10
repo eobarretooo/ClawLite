@@ -1112,6 +1112,13 @@ def run_onboarding_wizard(
         generated_token = ensure_gateway_token(config)
         saved_path = save_config(config, path=config_path)
         gateway_url = f"http://{config.gateway.host}:{config.gateway.port}"
+        workspace_loader = WorkspaceLoader(workspace_path=config.workspace_path)
+        onboarding_status_fn = getattr(workspace_loader, "onboarding_status", None)
+        onboarding_status = (
+            onboarding_status_fn(variables=variables or {}, persist=True)
+            if callable(onboarding_status_fn)
+            else {"completed": False}
+        )
 
         tg_status = "[green]enabled[/]" if config.channels.telegram.enabled else "[dim]disabled[/]"
         token_display = _mask_secret(generated_token, keep=8)
@@ -1129,6 +1136,7 @@ def run_onboarding_wizard(
                 f"  [bold]Provider:[/]      {provider_display} / {model_display}\n"
                 f"  [bold]Telegram:[/]      {tg_status}\n"
                 f"  [bold]Sections:[/]      {sections_done}\n"
+                f"  [bold]Onboarding:[/]    {'completed' if onboarding_status.get('completed') else 'bootstrap pending'}\n"
                 f"  [bold]Config saved:[/]  {saved_path}\n\n"
                 f"[dim]Start the agent:[/]  [bold cyan]clawlite start[/]\n"
                 f"[dim]Dashboard:[/]        [bold cyan]{gateway_url}[/]",
@@ -1160,6 +1168,7 @@ def run_onboarding_wizard(
             "workspace": {
                 "path": str(config.workspace_path),
                 "created_files": [str(path) for path in generated_files],
+                "onboarding": onboarding_status,
             },
             "probes": {
                 "provider": {

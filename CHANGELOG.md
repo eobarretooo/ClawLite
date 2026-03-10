@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gateway root entrypoint now serves a richer operator dashboard backed by packaged HTML/CSS/JS assets instead of a single inline landing page, with a more operational UI/UX direction for control-plane work.
 - Added dashboard state endpoints (`/v1/dashboard/state`, `/api/dashboard/state`) so the packaged UI can render recent sessions, cron state, channels, provider recovery, and self-evolution summaries without scraping raw diagnostics.
 - Expanded dashboard-state payloads so the UI can render workspace runtime health, bootstrap cycle state, skills inventory summary, and memory monitor telemetry.
+- Added workspace onboarding-state tracking inspired by `ref/openclaw`, so bootstrap seeding/completion survives across syncs and the dashboard can report onboarding progress more accurately.
 - Synced README, docs index, and roadmap with the real repository state, validation commands, and milestone workflow.
 - Enforced ClawLite identity in prompts and emitted outputs to avoid assistant-name drift (`6d5c99a`).
 - Added layered tool policy resolution, then tightened tool-policy handling across memory-forget and run-skill paths (`e1a0033`, `1203c64`, `f6592b2`).

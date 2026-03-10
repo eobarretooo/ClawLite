@@ -2343,6 +2343,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "status" in payload["cron"]
     assert "jobs" in payload["cron"]
     assert "workspace" in payload
+    assert "onboarding" in payload
     assert "bootstrap" in payload
     assert "memory" in payload
     assert "telemetry" in payload["provider"]

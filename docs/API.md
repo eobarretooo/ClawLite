@@ -64,6 +64,13 @@ Example response:
   "heartbeat": {},
   "subagents": {},
   "workspace": {},
+  "onboarding": {
+    "state_path": "~/.clawlite/workspace/memory/onboarding-state.json",
+    "bootstrap_exists": true,
+    "bootstrap_seeded_at": "2026-03-10T12:00:00+00:00",
+    "onboarding_completed_at": "",
+    "completed": false
+  },
   "bootstrap": {},
   "memory": {
     "monitor": {},
