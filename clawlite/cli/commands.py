@@ -149,6 +149,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
             "gateway_token_masked": handoff["gateway_token_masked"],
             "bootstrap_pending": handoff["bootstrap_pending"],
             "recommended_first_message": handoff["recommended_first_message"],
+            "hatch_session_id": handoff["hatch_session_id"],
             "guidance": handoff["guidance"],
             "onboarding": handoff["onboarding"],
             "open_attempted": open_attempted,

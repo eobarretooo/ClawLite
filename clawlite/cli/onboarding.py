@@ -306,7 +306,7 @@ def build_dashboard_handoff(
                 "title": "First hatch",
                 "body": (
                     f"Bootstrap is still pending. Open the dashboard and use `Hatch agent`, which sends "
-                    f'"{_HATCH_MESSAGE}" through the dedicated `hatch:operator` session.'
+                    f'"{_HATCH_MESSAGE}" through the dedicated `{_HATCH_SESSION_ID}` session.'
                 ),
             },
         )
@@ -318,6 +318,7 @@ def build_dashboard_handoff(
         "gateway_token_masked": _mask_secret(token, keep=8),
         "bootstrap_pending": bootstrap_pending,
         "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else "",
+        "hatch_session_id": _HATCH_SESSION_ID,
         "onboarding": onboarding_status,
         "onboarding_label": onboarding_label,
         "guidance": guidance,
@@ -767,6 +768,7 @@ _FLOW_CHOICES = {
 
 _SUPPORTED_FLOWS = {"quickstart", "advanced"}
 _HATCH_MESSAGE = "Wake up, my friend!"
+_HATCH_SESSION_ID = "hatch:operator"
 
 
 def _print_banner(console: Console) -> None:
@@ -1328,6 +1330,7 @@ def run_onboarding_wizard(
                 "gateway_token": generated_token,
                 "bootstrap_pending": bootstrap_pending,
                 "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else str(handoff["recommended_first_message"]),
+                "hatch_session_id": str(handoff["hatch_session_id"]),
                 "guidance": list(handoff.get("guidance", []) or []),
             },
         }

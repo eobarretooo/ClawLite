@@ -64,6 +64,20 @@ Example response:
   "heartbeat": {},
   "subagents": {},
   "workspace": {},
+  "handoff": {
+    "gateway_url": "http://127.0.0.1:8787",
+    "dashboard_url_with_token": "http://127.0.0.1:8787#token=abcd",
+    "bootstrap_pending": true,
+    "recommended_first_message": "Wake up, my friend!",
+    "hatch_session_id": "hatch:operator",
+    "guidance": [
+      {
+        "id": "dashboard",
+        "title": "Dashboard",
+        "body": "Open the local control plane with `clawlite dashboard --no-open`."
+      }
+    ]
+  },
   "onboarding": {
     "state_path": "~/.clawlite/workspace/memory/onboarding-state.json",
     "bootstrap_exists": true,

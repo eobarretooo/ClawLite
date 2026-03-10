@@ -64,6 +64,7 @@ Recent progress:
 - the dashboard now also renders recent sessions and automation summaries from dedicated dashboard-state endpoints
 - the dashboard now also exposes workspace, bootstrap, skills, and memory health views from the same aggregated control-plane payloads
 - workspace onboarding state is now tracked explicitly so bootstrap seeding/completion survives template sync and shows up in the knowledge view
+- the dashboard now renders shared post-onboarding guidance cards, including dashboard/token/backup/security notes and the dedicated hatch session when bootstrap is pending
 
 Exit criteria:
 

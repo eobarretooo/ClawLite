@@ -48,6 +48,7 @@ from clawlite.runtime import (
     SupervisorIncident,
 )
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
+from clawlite.cli.onboarding import build_dashboard_handoff
 from clawlite.tools.agents import AgentsListTool
 from clawlite.tools.cron import CronTool
 from clawlite.tools.apply_patch import ApplyPatchTool
@@ -4349,6 +4350,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "subagents": runtime.engine.subagents.status(),
             "skills": skills,
             "workspace": runtime.workspace.runtime_health(),
+            "handoff": build_dashboard_handoff(runtime.config),
             "onboarding": runtime.workspace.onboarding_status(),
             "bootstrap": runtime.workspace.bootstrap_status(),
             "memory": _dashboard_memory_summary(),

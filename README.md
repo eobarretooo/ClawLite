@@ -282,6 +282,7 @@ The local dashboard is no longer a static landing page. It is a real operator sh
 Current tabs:
 
 - 🧭 `Overview` — control plane, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
+- 🧭 `Overview` — control plane, next-step cards, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
 - 💬 `Chat` — live WS/HTTP chat and raw WebSocket frame preview
 - 🗂️ `Sessions` — recent sessions with one-click handoff into chat
 - 🤖 `Automation` — cron, channels, provider recovery, self-evolution state

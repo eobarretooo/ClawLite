@@ -365,6 +365,50 @@ function renderToolsSummary() {
     });
 }
 
+function handoffPayload() {
+  return (state.dashboardState || {}).handoff || {};
+}
+
+function hatchSessionId() {
+  return String(handoffPayload().hatch_session_id || "hatch:operator");
+}
+
+function renderHandoffGuidance() {
+  const grid = byId("handoff-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+  const handoff = handoffPayload();
+  const guidance = Array.isArray(handoff.guidance) ? handoff.guidance : [];
+  if (!guidance.length) {
+    const empty = document.createElement("article");
+    empty.className = "summary-card";
+    empty.textContent = "No onboarding guidance is available yet.";
+    grid.appendChild(empty);
+    setBadge("handoff-status", "empty", "warn");
+    return;
+  }
+
+  guidance.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "summary-card";
+
+    const title = document.createElement("span");
+    title.className = "summary-card__title";
+    title.textContent = String(item.title || item.id || "guidance");
+
+    const detail = document.createElement("div");
+    detail.className = "summary-card__meta";
+    detail.textContent = String(item.body || "");
+
+    card.append(title, detail);
+    grid.appendChild(card);
+  });
+
+  setBadge("handoff-status", `${guidance.length} notes`, "ok");
+}
+
 function useSession(sessionId) {
   state.sessionId = sessionId;
   const input = byId("session-input");
@@ -628,12 +672,13 @@ function renderOverview() {
   setText(
     "hatch-summary",
     hatchReady
-      ? `Bootstrap is still pending. Click Hatch agent to send \"${HATCH_MESSAGE}\" through the normal operator session and let ClawLite define itself.`
+      ? `Bootstrap is still pending. Click Hatch agent to send \"${HATCH_MESSAGE}\" through ${hatchSessionId()} and let ClawLite define itself without polluting your main dashboard session.`
       : "Bootstrap is already settled. Use chat normally or trigger a heartbeat when you want proactive checks.",
   );
 
   renderEndpointList();
   renderComponentBoard();
+  renderHandoffGuidance();
 }
 
 function renderRuntime() {
@@ -924,10 +969,11 @@ async function triggerHatch() {
     recordEvent("warn", "Hatch action skipped", "Bootstrap is already settled for this workspace.", "hatch");
     return;
   }
-  useSession(state.sessionId || "dashboard:operator");
+  const hatchSession = hatchSessionId();
+  useSession(hatchSession);
   setActiveTab("chat");
   await sendHttpMessageText(HATCH_MESSAGE, {
-    sessionId: state.sessionId || "dashboard:operator",
+    sessionId: hatchSession,
     source: "hatch",
   });
   await refreshAll("hatch");

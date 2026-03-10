@@ -2283,6 +2283,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Operator view for health, chat, diagnostics, tools, and WebSocket connectivity." in body
         assert "Trigger heartbeat" in body
         assert "Hatch agent" in body
+        assert "Next Steps" in body
         assert "Signal Feed" in body
         assert "Workspace Runtime Files" in body
         assert "Recent Sessions" in body
@@ -2321,6 +2322,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerHeartbeat" in js.text
     assert "triggerHatch" in js.text
     assert "Wake up, my friend!" in js.text
+    assert "handoff-grid" in js.text
+    assert "hatch:operator" in js.text
     assert "scheduleAutoRefresh" in js.text
     assert "window.location.hash" in js.text
     assert "history.replaceState" in js.text
@@ -2346,6 +2349,8 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert payload["control_plane"]["contract_version"]
     assert payload["sessions"]["count"] >= 1
     assert any(item["session_id"] == "dashboard:test" for item in payload["sessions"]["items"])
+    assert payload["handoff"]["hatch_session_id"] == "hatch:operator"
+    assert any(item["id"] == "dashboard" for item in payload["handoff"]["guidance"])
     assert "status" in payload["cron"]
     assert "jobs" in payload["cron"]
     assert "workspace" in payload
