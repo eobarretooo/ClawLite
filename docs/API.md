@@ -259,6 +259,36 @@ Example response:
 
 Alias compatível: `POST /api/channels/telegram/pairing/approve`.
 
+## `POST /v1/control/channels/telegram/pairing/reject`
+
+Rejects and removes a pending Telegram pairing request by code.
+
+Example request:
+
+```json
+{
+  "code": "WXYZ9999"
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "code": "WXYZ9999",
+    "request": {
+      "chat_id": "1",
+      "user_id": "2"
+    }
+  }
+}
+```
+
+Alias compatível: `POST /api/channels/telegram/pairing/reject`.
+
 ## `POST /v1/control/channels/telegram/offset/commit`
 
 Advances the Telegram safe watermark by force-committing a specific `update_id`.

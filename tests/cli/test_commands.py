@@ -457,6 +457,18 @@ def test_cli_pairing_list_and_approve(tmp_path: Path, capsys) -> None:
     assert "guest" in payload_approve["approved_entries"]
     assert "@guest" in payload_approve["approved_entries"]
 
+    request2, created2 = store.issue_request(chat_id="56", user_id="654", username="guest2", first_name="Guest2")
+    assert created2 is True
+    code2 = str(request2["code"])
+
+    rc_reject = main(["--config", str(config_path), "pairing", "reject", "telegram", code2])
+    assert rc_reject == 0
+    payload_reject = json.loads(capsys.readouterr().out)
+    assert payload_reject["ok"] is True
+    assert payload_reject["channel"] == "telegram"
+    assert payload_reject["code"] == code2
+    assert payload_reject["request"]["user_id"] == "654"
+
 
 def test_cli_gateway_alias_parses(tmp_path: Path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"

@@ -31,6 +31,7 @@ from clawlite.cli.ops import onboarding_validation
 from clawlite.cli.ops import heartbeat_trigger
 from clawlite.cli.ops import pairing_approve
 from clawlite.cli.ops import pairing_list
+from clawlite.cli.ops import pairing_reject
 from clawlite.cli.ops import provider_clear_auth
 from clawlite.cli.ops import provider_live_probe
 from clawlite.cli.ops import provider_validation
@@ -464,6 +465,17 @@ def cmd_pairing_list(args: argparse.Namespace) -> int:
 def cmd_pairing_approve(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     payload = pairing_approve(
+        cfg,
+        channel=str(args.channel or ""),
+        code=str(args.code or ""),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_pairing_reject(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = pairing_reject(
         cfg,
         channel=str(args.channel or ""),
         code=str(args.code or ""),
@@ -1153,6 +1165,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pairing_approve.add_argument("channel")
     p_pairing_approve.add_argument("code")
     p_pairing_approve.set_defaults(handler=cmd_pairing_approve)
+
+    p_pairing_reject = pairing_sub.add_parser("reject", help="Reject a pairing code for a channel")
+    p_pairing_reject.add_argument("channel")
+    p_pairing_reject.add_argument("code")
+    p_pairing_reject.set_defaults(handler=cmd_pairing_reject)
 
     p_diagnostics = sub.add_parser("diagnostics", help="Operator diagnostics snapshot (local + optional gateway checks)")
     p_diagnostics.add_argument("--gateway-url", default="", help="Gateway base URL to probe, e.g. http://127.0.0.1:8787")

@@ -282,3 +282,34 @@ class TelegramPairingStore:
             "approved_entries": normalized_approved,
             "request": target.to_payload(),
         }
+
+    def reject(self, code: str) -> dict[str, Any] | None:
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_code:
+            return None
+        payload = self._read_store()
+        approved = self._normalize_approved(list(payload.get("approved", [])))
+        requests, removed = self._prune_pending(self._pending_requests(payload))
+
+        target: TelegramPairingRequest | None = None
+        kept: list[TelegramPairingRequest] = []
+        for request in requests:
+            if target is None and request.code == normalized_code:
+                target = request
+                continue
+            kept.append(request)
+
+        if target is None:
+            if removed:
+                payload["approved"] = approved
+                payload["pending"] = [item.to_payload() for item in kept]
+                self._write_store(payload)
+            return None
+
+        payload["approved"] = approved
+        payload["pending"] = [item.to_payload() for item in kept]
+        self._write_store(payload)
+        return {
+            "approved_entries": approved,
+            "request": target.to_payload(),
+        }

@@ -1077,6 +1077,21 @@ class TelegramChannel(BaseChannel):
             "status": self.operator_status(),
         }
 
+    async def operator_reject_pairing(self, code: str) -> dict[str, Any]:
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_code:
+            return {"ok": False, "error": "pairing_code_required"}
+        rejected = self._pairing_store.reject(normalized_code)
+        if rejected is None:
+            return {"ok": False, "code": normalized_code, "error": "pairing_code_not_found"}
+        return {
+            "ok": True,
+            "code": normalized_code,
+            "approved_entries": list(rejected.get("approved_entries", [])),
+            "request": dict(rejected.get("request", {})),
+            "status": self.operator_status(),
+        }
+
     async def operator_force_commit_offset(self, update_id: int) -> dict[str, Any]:
         normalized = self._coerce_update_id(update_id)
         self._force_commit_offset_update(normalized)

@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Operators can now inspect Telegram offset/pairing/webhook state in the dashboard and trigger a live Telegram transport refresh via `POST /v1/control/channels/telegram/refresh`.
 - Operators can now approve pending Telegram pairing codes from the control plane via `POST /v1/control/channels/telegram/pairing/approve` and the dashboard.
 - Operators can now deliberately advance the Telegram offset watermark from the control plane via `POST /v1/control/channels/telegram/offset/commit`.
+- Operators can now reject pending Telegram pairing codes from the control plane via `POST /v1/control/channels/telegram/pairing/reject` and the dashboard.
 - Heartbeat prompts now inject a cron-style current-time line from the workspace user timezone and skip model calls when `HEARTBEAT.md` exists but is effectively empty.
 - Gateway root entrypoint now serves a richer operator dashboard backed by packaged HTML/CSS/JS assets instead of a single inline landing page, with a more operational UI/UX direction for control-plane work.
 - Added dashboard state endpoints (`/v1/dashboard/state`, `/api/dashboard/state`) so the packaged UI can render recent sessions, cron state, channels, provider recovery, and self-evolution summaries without scraping raw diagnostics.

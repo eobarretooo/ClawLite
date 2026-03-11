@@ -75,6 +75,7 @@ Recent progress:
 - Telegram transport state now has dedicated dashboard/operator visibility plus a live refresh action for webhook/offset health
 - Telegram pairing approval can now be completed from the control plane/dashboard instead of only through the CLI
 - Telegram offset watermark can now be advanced deliberately from the control plane when a safe manual recovery step is needed
+- Pending Telegram pairing requests can now also be rejected directly from the control plane/dashboard
 
 Exit criteria:
 

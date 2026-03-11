@@ -283,6 +283,28 @@ def pairing_approve(config: AppConfig, *, channel: str, code: str) -> dict[str, 
     }
 
 
+def pairing_reject(config: AppConfig, *, channel: str, code: str) -> dict[str, Any]:
+    channel_name = str(channel or "").strip().lower()
+    normalized_code = str(code or "").strip().upper()
+    if channel_name != "telegram":
+        return {"ok": False, "channel": channel_name, "error": f"unsupported_channel:{channel_name or channel}"}
+    if not normalized_code:
+        return {"ok": False, "channel": channel_name, "error": "pairing_code_required"}
+    store = _telegram_pairing_store(config)
+    if store is None:
+        return {"ok": False, "channel": channel_name, "error": "telegram_token_missing"}
+    rejected = store.reject(normalized_code)
+    if rejected is None:
+        return {"ok": False, "channel": channel_name, "code": normalized_code, "error": "pairing_code_not_found"}
+    return {
+        "ok": True,
+        "channel": channel_name,
+        "code": normalized_code,
+        "approved_entries": list(rejected.get("approved_entries", [])),
+        "request": dict(rejected.get("request", {})),
+    }
+
+
 def resolve_codex_auth(config: AppConfig) -> dict[str, Any]:
     codex = config.auth.providers.openai_codex
     cfg_token = str(codex.access_token or "").strip()

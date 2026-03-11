@@ -331,6 +331,10 @@ class TelegramOffsetCommitRequest(BaseModel):
     update_id: int = 0
 
 
+class TelegramPairingRejectRequest(BaseModel):
+    code: str = ""
+
+
 class ControlPlaneResponse(BaseModel):
     ready: bool
     phase: str
@@ -556,6 +560,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
             "channels_inbound_replay": "/v1/control/channels/inbound-replay",
             "telegram_refresh": "/v1/control/channels/telegram/refresh",
             "telegram_pairing_approve": "/v1/control/channels/telegram/pairing/approve",
+            "telegram_pairing_reject": "/v1/control/channels/telegram/pairing/reject",
             "telegram_offset_commit": "/v1/control/channels/telegram/offset/commit",
             "heartbeat_trigger": "/v1/control/heartbeat/trigger",
             "ws": "/ws",
@@ -4769,6 +4774,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         summary = await operator_approve(str(payload.code or ""))
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
+    async def _telegram_pairing_reject_handler(
+        request: Request, payload: TelegramPairingRejectRequest
+    ) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        channel = runtime.channels.get_channel("telegram")
+        if channel is None:
+            raise HTTPException(status_code=404, detail="channel_not_available:telegram")
+        operator_reject = getattr(channel, "operator_reject_pairing", None)
+        if not callable(operator_reject):
+            raise HTTPException(status_code=400, detail="channel_operator_action_not_supported:telegram")
+        summary = await operator_reject(str(payload.code or ""))
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
     async def _telegram_offset_commit_handler(
         request: Request, payload: TelegramOffsetCommitRequest
     ) -> dict[str, Any]:
@@ -4829,6 +4847,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: TelegramPairingApproveRequest | None = None
     ) -> dict[str, Any]:
         return await _telegram_pairing_approve_handler(request, payload or TelegramPairingApproveRequest())
+
+    @app.post("/v1/control/channels/telegram/pairing/reject")
+    async def telegram_pairing_reject(
+        request: Request, payload: TelegramPairingRejectRequest | None = None
+    ) -> dict[str, Any]:
+        return await _telegram_pairing_reject_handler(request, payload or TelegramPairingRejectRequest())
+
+    @app.post("/api/channels/telegram/pairing/reject")
+    async def api_telegram_pairing_reject(
+        request: Request, payload: TelegramPairingRejectRequest | None = None
+    ) -> dict[str, Any]:
+        return await _telegram_pairing_reject_handler(request, payload or TelegramPairingRejectRequest())
 
     @app.post("/v1/control/channels/telegram/offset/commit")
     async def telegram_offset_commit(

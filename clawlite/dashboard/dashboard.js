@@ -811,6 +811,7 @@ function renderTelegramBoard() {
   const available = Boolean(telegram.available);
   const refreshButton = byId("refresh-telegram-transport");
   const approveButton = byId("approve-telegram-pairing");
+  const rejectButton = byId("reject-telegram-pairing");
   const offsetButton = byId("commit-telegram-offset");
 
   if (!available) {
@@ -825,6 +826,9 @@ function renderTelegramBoard() {
     }
     if (approveButton) {
       approveButton.disabled = true;
+    }
+    if (rejectButton) {
+      rejectButton.disabled = true;
     }
     if (offsetButton) {
       offsetButton.disabled = true;
@@ -877,6 +881,9 @@ function renderTelegramBoard() {
   }
   if (approveButton) {
     approveButton.disabled = false;
+  }
+  if (rejectButton) {
+    rejectButton.disabled = false;
   }
   if (offsetButton) {
     offsetButton.disabled = false;
@@ -1459,6 +1466,45 @@ async function triggerTelegramPairingApprove() {
   }
 }
 
+async function triggerTelegramPairingReject() {
+  const input = byId("telegram-pairing-code");
+  const button = byId("reject-telegram-pairing");
+  const code = String(input?.value || "").trim().toUpperCase();
+  if (!code) {
+    recordEvent("warn", "Telegram pairing rejection skipped", "Enter a pending pairing code first.", "telegram");
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.telegram_pairing_reject || "/v1/control/channels/telegram/pairing/reject", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ code }),
+    });
+    const summary = payload.summary || {};
+    recordEvent(
+      summary.ok === false ? "warn" : "ok",
+      "Telegram pairing rejection finished",
+      summary.ok === false ? String(summary.error || "unknown_error") : `${code} rejected`,
+      "telegram",
+    );
+    if (input) {
+      input.value = "";
+    }
+    await refreshAll("telegram-pairing-reject");
+  } catch (error) {
+    recordEvent("danger", "Telegram pairing rejection failed", error.message, "telegram");
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerTelegramOffsetCommit() {
   const input = byId("telegram-offset-update-id");
   const button = byId("commit-telegram-offset");
@@ -1562,6 +1608,9 @@ function bindEvents() {
   });
   byId("approve-telegram-pairing").addEventListener("click", () => {
     void triggerTelegramPairingApprove();
+  });
+  byId("reject-telegram-pairing").addEventListener("click", () => {
+    void triggerTelegramPairingReject();
   });
   byId("commit-telegram-offset").addEventListener("click", () => {
     void triggerTelegramOffsetCommit();
