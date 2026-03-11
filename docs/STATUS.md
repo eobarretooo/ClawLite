@@ -79,6 +79,7 @@ Recent progress:
 - Pending Telegram pairing requests can now also be rejected directly from the control plane/dashboard
 - Approved Telegram pairing entries can now be revoked directly from the control plane/dashboard
 - Operators can now trigger supervisor component recovery directly from the control plane/dashboard instead of only waiting for the background supervisor loop
+- Telegram status now includes operator-facing hints for webhook, offset, pairing, and transport problems
 
 Exit criteria:
 

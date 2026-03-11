@@ -4566,6 +4566,26 @@ def test_telegram_operator_status_reports_offset_and_pairing_state(tmp_path: Pat
     assert payload["offset_watermark_update_id"] == 55
     assert payload["pairing_pending_count"] == 1
     assert payload["pairing_approved_count"] == 0
+    assert any("pending review" in row for row in payload["hints"])
+
+
+def test_telegram_operator_status_surfaces_transport_hints(tmp_path: Path) -> None:
+    channel = TelegramChannel(
+        config={
+            "token": "12345:token",
+            "mode": "webhook",
+            "offset_state_path": str(tmp_path / "offset.json"),
+        }
+    )
+    channel._last_error = "webhook_broken"
+    channel._offset_store.begin(101)
+
+    payload = channel.operator_status()
+
+    assert any("no webhook URL is configured" in row for row in payload["hints"])
+    assert any("not active" in row for row in payload["hints"])
+    assert any("still pending" in row for row in payload["hints"])
+    assert any("transport error" in row for row in payload["hints"])
 
 
 def test_telegram_operator_refresh_transport_refreshes_webhook_and_reloads_offset(tmp_path: Path) -> None:

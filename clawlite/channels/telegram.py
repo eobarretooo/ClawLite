@@ -1041,6 +1041,19 @@ class TelegramChannel(BaseChannel):
         except Exception as exc:
             logger.warning("telegram pairing approved snapshot failed error={}", exc)
             pairing_approved = 0
+        hints: list[str] = []
+        if self._webhook_requested() and not self.webhook_url:
+            hints.append("Webhook mode is requested but no webhook URL is configured.")
+        if self._webhook_requested() and not self._webhook_mode_active:
+            hints.append("Webhook mode is requested but not active; try refreshing Telegram transport.")
+        if offset_snapshot.pending_count > 0:
+            hints.append(
+                f"{offset_snapshot.pending_count} Telegram updates are still pending; replay inbound events or reconcile the next offset carefully."
+            )
+        if pairing_pending > 0:
+            hints.append(f"{pairing_pending} Telegram pairing request(s) are pending review.")
+        if self._last_error:
+            hints.append("Telegram recorded a transport error; inspect the error and consider refreshing transport state.")
         return {
             "mode": self.mode,
             "webhook_requested": self._webhook_requested(),
@@ -1061,6 +1074,7 @@ class TelegramChannel(BaseChannel):
             "connected": bool(self._connected),
             "running": bool(self._running),
             "last_error": str(self._last_error or ""),
+            "hints": hints,
         }
 
     async def operator_approve_pairing(self, code: str) -> dict[str, Any]:

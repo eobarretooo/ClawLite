@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Operators can now revoke approved Telegram pairing entries from the control plane via `POST /v1/control/channels/telegram/pairing/revoke` and the dashboard.
 - Operators can now trigger runtime supervisor recovery directly from the control plane via `POST /v1/control/supervisor/recover` and the dashboard.
 - Telegram runtime operator controls are now accessible from the CLI via `clawlite telegram status|refresh|offset-commit`.
+- Telegram operator status now includes actionable hints for webhook, offset, pairing, and transport recovery.
 - Heartbeat prompts now inject a cron-style current-time line from the workspace user timezone and skip model calls when `HEARTBEAT.md` exists but is effectively empty.
 - Gateway root entrypoint now serves a richer operator dashboard backed by packaged HTML/CSS/JS assets instead of a single inline landing page, with a more operational UI/UX direction for control-plane work.
 - Added dashboard state endpoints (`/v1/dashboard/state`, `/api/dashboard/state`) so the packaged UI can render recent sessions, cron state, channels, provider recovery, and self-evolution summaries without scraping raw diagnostics.

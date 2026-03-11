@@ -2987,7 +2987,13 @@ def test_cli_telegram_status_uses_gateway_dashboard_state(tmp_path: Path, capsys
             self.is_success = True
 
         def json(self) -> dict[str, object]:
-            return {"telegram": {"available": True, "offset_next": 42}}
+            return {
+                "telegram": {
+                    "available": True,
+                    "offset_next": 42,
+                    "hints": ["Webhook mode is requested but not active; try refreshing Telegram transport."],
+                }
+            }
 
     class _FakeClient:
         def __init__(self, *, timeout, headers):
@@ -3011,6 +3017,7 @@ def test_cli_telegram_status_uses_gateway_dashboard_state(tmp_path: Path, capsys
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["telegram"]["offset_next"] == 42
+    assert payload["telegram"]["hints"] == ["Webhook mode is requested but not active; try refreshing Telegram transport."]
     assert captured["url"] == "http://127.0.0.9:8877/api/dashboard/state"
     assert captured["headers"] == {"Authorization": "Bearer gw-token-abc"}
 

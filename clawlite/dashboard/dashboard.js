@@ -877,6 +877,17 @@ function renderTelegramBoard() {
     detail: telegram.last_error ? `last error ${telegram.last_error}` : "pairing store healthy",
   });
 
+  const hints = Array.isArray(telegram.hints) ? telegram.hints : [];
+  if (hints.length) {
+    hints.slice(0, 3).forEach((hint, index) => {
+      appendSummaryCard(grid, {
+        title: `Hint ${index + 1}`,
+        body: String(hint),
+        detail: "Use the Telegram controls below or the CLI telegram commands to resolve this safely.",
+      });
+    });
+  }
+
   if (pairingGrid) {
     const pending = Array.isArray(telegram.pairing_pending) ? telegram.pairing_pending : [];
     const approved = Array.isArray(telegram.pairing_approved) ? telegram.pairing_approved : [];

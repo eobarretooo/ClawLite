@@ -155,6 +155,8 @@ clawlite telegram offset-commit 144
 clawlite telegram offset-sync 145
 ```
 
+`clawlite telegram status` now includes offset/pairing/webhook hints so operators can see the safest next action faster.
+
 ### 4. Talk to the agent
 
 ```bash
