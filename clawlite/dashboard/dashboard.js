@@ -484,6 +484,7 @@ function renderSupervisorBoard() {
 
   const supervisor = ((state.dashboardState || {}).supervisor) || {};
   const componentRecovery = supervisor.component_recovery || {};
+  const operator = supervisor.operator || {};
   const lastIncident = supervisor.last_incident || {};
   const cards = [
     {
@@ -500,6 +501,13 @@ function renderSupervisorBoard() {
       title: "Last incident",
       body: String(lastIncident.component || "none"),
       detail: lastIncident.reason ? `${lastIncident.reason} | ${formatClock(lastIncident.at)}` : "No incidents recorded.",
+    },
+    {
+      title: "Operator recovery",
+      body: `${numeric(operator.recovered, 0)} recovered | ${numeric(operator.failed, 0)} failed`,
+      detail: operator.last_at
+        ? `${formatClock(operator.last_at)} | ${numeric(operator.skipped_cooldown, 0)} cooldown skips | ${numeric(operator.skipped_budget, 0)} budget skips`
+        : "No manual supervisor recovery has been triggered yet.",
     },
   ];
 
@@ -518,6 +526,11 @@ function renderSupervisorBoard() {
 
   const healthy = String(supervisor.worker_state || "") === "running" && numeric(supervisor.recovery_failures, 0) === 0;
   setBadge("supervisor-status", healthy ? "steady" : "active", healthy ? "ok" : "warn");
+  const button = byId("recover-supervisor-component");
+  if (button) {
+    const trackedComponents = Object.keys(componentRecovery).length;
+    button.disabled = trackedComponents <= 0;
+  }
 }
 
 function renderProviderRecoveryBoard() {
@@ -1419,6 +1432,41 @@ async function triggerChannelRecovery() {
   }
 }
 
+async function triggerSupervisorRecovery() {
+  const button = byId("recover-supervisor-component");
+  const input = byId("supervisor-component-name");
+  const component = String(input?.value || "").trim();
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.supervisor_recover || "/v1/control/supervisor/recover", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ component, force: true }),
+    });
+    const summary = payload.summary || {};
+    recordEvent(
+      summary.failed ? "warn" : "ok",
+      "Supervisor recovery finished",
+      `${numeric(summary.recovered, 0)} recovered | ${numeric(summary.failed, 0)} failed | ${numeric(summary.skipped_budget, 0)} budget skips`,
+      component || "all-components",
+    );
+    if (input) {
+      input.value = "";
+    }
+    await refreshAll("supervisor-recover");
+  } catch (error) {
+    recordEvent("danger", "Supervisor recovery failed", error.message, component || "all-components");
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerTelegramRefresh() {
   const button = byId("refresh-telegram-transport");
   if (button) {
@@ -1660,6 +1708,9 @@ function bindEvents() {
 
   byId("refresh-all").addEventListener("click", () => {
     void refreshAll("manual");
+  });
+  byId("recover-supervisor-component").addEventListener("click", () => {
+    void triggerSupervisorRecovery();
   });
   byId("recover-channels").addEventListener("click", () => {
     void triggerChannelRecovery();

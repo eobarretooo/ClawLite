@@ -345,6 +345,36 @@ Example response:
 
 Alias compatível: `POST /api/channels/telegram/offset/commit`.
 
+## `POST /v1/control/supervisor/recover`
+
+Triggers operator-requested runtime supervisor recovery for one component or all tracked components.
+
+Example request:
+
+```json
+{
+  "component": "heartbeat",
+  "force": true,
+  "reason": "operator_recover"
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "attempted": 1,
+    "recovered": 1,
+    "failed": 0,
+    "forced": true
+  }
+}
+```
+
+Alias compatível: `POST /api/supervisor/recover`.
+
 ## `GET /health`
 
 Example response:

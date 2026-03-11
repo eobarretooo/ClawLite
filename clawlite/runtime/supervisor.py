@@ -71,6 +71,19 @@ class RuntimeSupervisor:
         self._last_error = ""
         self._consecutive_error_count = 0
         self._cooldown_until: dict[str, float] = {}
+        self._operator_recovery: dict[str, Any] = {
+            "running": False,
+            "last_at": "",
+            "last_error": "",
+            "attempted": 0,
+            "recovered": 0,
+            "failed": 0,
+            "skipped_cooldown": 0,
+            "skipped_budget": 0,
+            "not_found": 0,
+            "forced": False,
+            "components": [],
+        }
 
     @staticmethod
     def _normalize_component_name(value: str) -> str:
@@ -253,6 +266,74 @@ class RuntimeSupervisor:
             row["last_error"] = "recovery_returned_false"
         return False
 
+    async def operator_recover_components(
+        self,
+        *,
+        component: str = "",
+        force: bool = True,
+        reason: str = "operator_recover",
+    ) -> dict[str, Any]:
+        normalized = self._normalize_component_name(component)
+        summary: dict[str, Any] = {
+            "running": True,
+            "last_at": self._now_utc().isoformat(),
+            "last_error": "",
+            "attempted": 0,
+            "recovered": 0,
+            "failed": 0,
+            "skipped_cooldown": 0,
+            "skipped_budget": 0,
+            "not_found": 0,
+            "forced": bool(force),
+            "components": [],
+        }
+        self._operator_recovery = dict(summary)
+        try:
+            if normalized:
+                names = [normalized]
+            else:
+                names = sorted(
+                    set(self._component_incidents)
+                    | set(self._component_recovery)
+                    | set(self._component_policies)
+                    | set(self._cooldown_until)
+                )
+            now = self._now_monotonic()
+            for name in names:
+                if name not in set(self._component_incidents) | set(self._component_recovery) | set(self._component_policies) | set(self._cooldown_until):
+                    summary["not_found"] += 1
+                    summary["components"].append({"component": name, "status": "not_found"})
+                    continue
+                if not force:
+                    cooldown_until = float(self._cooldown_until.get(name, 0.0) or 0.0)
+                    if now < cooldown_until:
+                        summary["skipped_cooldown"] += 1
+                        summary["components"].append({"component": name, "status": "skipped_cooldown"})
+                        continue
+                    budget_remaining = self._budget_remaining(name, now=now)
+                    if budget_remaining is not None and budget_remaining <= 0:
+                        summary["skipped_budget"] += 1
+                        summary["components"].append({"component": name, "status": "skipped_budget"})
+                        continue
+                summary["attempted"] += 1
+                ok = await self._recover_component(component=name, reason=reason)
+                if ok:
+                    summary["recovered"] += 1
+                    summary["components"].append({"component": name, "status": "recovered"})
+                else:
+                    summary["failed"] += 1
+                    row = self._ensure_component_recovery(name)
+                    summary["components"].append(
+                        {"component": name, "status": "failed", "error": str(row.get("last_error", "") or "")}
+                    )
+        except Exception as exc:
+            summary["last_error"] = str(exc)
+            self._operator_recovery = dict(summary)
+            raise
+        summary["running"] = False
+        self._operator_recovery = dict(summary)
+        return dict(summary)
+
     async def run_once(self) -> dict[str, Any]:
         self._ticks += 1
         now = self._now_monotonic()
@@ -374,6 +455,7 @@ class RuntimeSupervisor:
             "recovery_skipped_budget": self._recovery_skipped_budget,
             "component_incidents": dict(self._component_incidents),
             "component_recovery": component_recovery,
+            "operator": dict(self._operator_recovery),
             "last_incident": dict(self._last_incident),
             "last_recovery_at": self._last_recovery_at,
             "last_error": task_error or self._last_error,

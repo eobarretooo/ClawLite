@@ -306,8 +306,15 @@
               <article class="panel-card">
                 <div class="panel-card__header">
                   <h2>Runtime Supervisor</h2>
-                  <span class="badge" id="supervisor-status">pending</span>
+                  <div class="button-row">
+                    <button class="ghost-button" id="recover-supervisor-component" type="button">Recover supervisor component</button>
+                    <span class="badge" id="supervisor-status">pending</span>
+                  </div>
                 </div>
+                <label class="field field--compact" for="supervisor-component-name">
+                  <span>Component to recover</span>
+                  <input id="supervisor-component-name" type="text" autocomplete="off" placeholder="Leave empty to recover tracked components" />
+                </label>
                 <div class="summary-grid summary-grid--wide" id="supervisor-grid"></div>
               </article>
             </div>

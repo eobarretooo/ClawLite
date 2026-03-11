@@ -339,6 +339,12 @@ class TelegramPairingRevokeRequest(BaseModel):
     entry: str = ""
 
 
+class SupervisorRecoverRequest(BaseModel):
+    component: str = ""
+    force: bool = True
+    reason: str = "operator_recover"
+
+
 class ControlPlaneResponse(BaseModel):
     ready: bool
     phase: str
@@ -567,6 +573,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
             "telegram_pairing_reject": "/v1/control/channels/telegram/pairing/reject",
             "telegram_pairing_revoke": "/v1/control/channels/telegram/pairing/revoke",
             "telegram_offset_commit": "/v1/control/channels/telegram/offset/commit",
+            "supervisor_recover": "/v1/control/supervisor/recover",
             "heartbeat_trigger": "/v1/control/heartbeat/trigger",
             "ws": "/ws",
         },
@@ -4818,6 +4825,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         summary = await operator_commit(int(payload.update_id or 0))
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
+    async def _supervisor_recover_handler(request: Request, payload: SupervisorRecoverRequest) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        if runtime.supervisor is None:
+            raise HTTPException(status_code=404, detail="supervisor_not_available")
+        summary = await runtime.supervisor.operator_recover_components(
+            component=str(payload.component or "").strip(),
+            force=bool(payload.force),
+            reason=str(payload.reason or "operator_recover").strip() or "operator_recover",
+        )
+        return {"ok": True, "summary": summary}
+
     @app.post("/v1/control/channels/replay")
     async def channels_replay(request: Request, payload: ChannelReplayRequest | None = None) -> dict[str, Any]:
         return await _channels_replay_handler(request, payload or ChannelReplayRequest())
@@ -4901,6 +4919,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: TelegramOffsetCommitRequest | None = None
     ) -> dict[str, Any]:
         return await _telegram_offset_commit_handler(request, payload or TelegramOffsetCommitRequest())
+
+    @app.post("/v1/control/supervisor/recover")
+    async def supervisor_recover(request: Request, payload: SupervisorRecoverRequest | None = None) -> dict[str, Any]:
+        return await _supervisor_recover_handler(request, payload or SupervisorRecoverRequest())
+
+    @app.post("/api/supervisor/recover")
+    async def api_supervisor_recover(request: Request, payload: SupervisorRecoverRequest | None = None) -> dict[str, Any]:
+        return await _supervisor_recover_handler(request, payload or SupervisorRecoverRequest())
 
     @app.post("/v1/control/heartbeat/trigger")
     async def trigger_heartbeat(request: Request) -> dict[str, Any]:

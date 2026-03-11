@@ -2338,6 +2338,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_pairing_reject": "/v1/control/channels/telegram/pairing/reject"' in body
         assert '"telegram_pairing_revoke": "/v1/control/channels/telegram/pairing/revoke"' in body
         assert '"telegram_offset_commit": "/v1/control/channels/telegram/offset/commit"' in body
+        assert '"supervisor_recover": "/v1/control/supervisor/recover"' in body
         assert '"heartbeat_trigger": "/v1/control/heartbeat/trigger"' in body
         assert '"tools": "/api/tools/catalog"' in body
         assert '"ws": "/ws"' in body
@@ -2378,6 +2379,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerTelegramPairingReject" in js.text
     assert "triggerTelegramPairingRevoke" in js.text
     assert "triggerTelegramOffsetCommit" in js.text
+    assert "triggerSupervisorRecovery" in js.text
     assert "hatch:operator" in js.text
     assert "scheduleAutoRefresh" in js.text
     assert "window.location.hash" in js.text
@@ -2677,6 +2679,34 @@ def test_gateway_telegram_pairing_revoke_endpoint_calls_channel_operator_hook(tm
     assert payload["ok"] is True
     assert payload["summary"]["removed_entry"] == "@alice"
     fake_channel.operator_revoke_pairing.assert_awaited_once_with("@alice")
+
+
+def test_gateway_supervisor_recover_endpoint_calls_runtime_supervisor(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.supervisor = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        operator_recover_components=AsyncMock(return_value={"attempted": 1, "recovered": 1, "failed": 0}),
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/supervisor/recover", json={"component": "heartbeat", "force": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["recovered"] == 1
+    app.state.runtime.supervisor.operator_recover_components.assert_awaited_once_with(
+        component="heartbeat",
+        force=True,
+        reason="operator_recover",
+    )
 
 
 def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Path) -> None:

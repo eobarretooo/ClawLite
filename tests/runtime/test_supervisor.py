@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 
 from clawlite.runtime.supervisor import RuntimeSupervisor, SupervisorComponentPolicy, SupervisorIncident
 
@@ -270,5 +271,71 @@ def test_supervisor_start_is_idempotent_with_healthy_running_task() -> None:
         assert supervisor._task is first_task
 
         await supervisor.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_supervisor_operator_recover_component_bypasses_cooldown_when_forced() -> None:
+    clock = _Clock()
+    calls = {"recover": 0}
+
+    async def _checks() -> list[SupervisorIncident]:
+        return []
+
+    async def _recover(component: str, reason: str) -> bool:
+        assert component == "heartbeat"
+        assert reason == "operator_recover"
+        calls["recover"] += 1
+        return True
+
+    async def _scenario() -> None:
+        supervisor = RuntimeSupervisor(
+            interval_s=20,
+            cooldown_s=30,
+            incident_checks=_checks,
+            recover=_recover,
+            now_monotonic=clock.monotonic,
+        )
+        supervisor._component_incidents["heartbeat"] = 1
+        supervisor._cooldown_until["heartbeat"] = clock.now + 999.0
+
+        summary = await supervisor.operator_recover_components(component="heartbeat", force=True)
+
+        assert summary["attempted"] == 1
+        assert summary["recovered"] == 1
+        assert calls["recover"] == 1
+        assert supervisor.status()["operator"]["recovered"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_supervisor_operator_recover_component_respects_budget_without_force() -> None:
+    clock = _Clock()
+
+    async def _checks() -> list[SupervisorIncident]:
+        return []
+
+    async def _recover(_component: str, _reason: str) -> bool:
+        raise AssertionError("recover should not run when budget is exhausted")
+
+    async def _scenario() -> None:
+        supervisor = RuntimeSupervisor(
+            interval_s=20,
+            cooldown_s=0,
+            incident_checks=_checks,
+            recover=_recover,
+            component_policies={
+                "heartbeat": SupervisorComponentPolicy(cooldown_s=0, max_recoveries=1, budget_window_s=60),
+            },
+            now_monotonic=clock.monotonic,
+        )
+        supervisor._component_incidents["heartbeat"] = 1
+        supervisor._component_recovery_windows["heartbeat"] = deque([clock.now])
+
+        summary = await supervisor.operator_recover_components(component="heartbeat", force=False)
+
+        assert summary["attempted"] == 0
+        assert summary["skipped_budget"] == 1
+        assert summary["components"][0]["status"] == "skipped_budget"
 
     asyncio.run(_scenario())
