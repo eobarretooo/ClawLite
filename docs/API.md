@@ -259,6 +259,36 @@ Example response:
 
 Alias compatível: `POST /api/channels/telegram/pairing/approve`.
 
+## `POST /v1/control/channels/telegram/offset/commit`
+
+Advances the Telegram safe watermark by force-committing a specific `update_id`.
+
+Example request:
+
+```json
+{
+  "update_id": 144
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "update_id": 144,
+    "status": {
+      "offset_watermark_update_id": 144,
+      "offset_next": 145
+    }
+  }
+}
+```
+
+Alias compatível: `POST /api/channels/telegram/offset/commit`.
+
 ## `GET /health`
 
 Example response:

@@ -1077,6 +1077,15 @@ class TelegramChannel(BaseChannel):
             "status": self.operator_status(),
         }
 
+    async def operator_force_commit_offset(self, update_id: int) -> dict[str, Any]:
+        normalized = self._coerce_update_id(update_id)
+        self._force_commit_offset_update(normalized)
+        return {
+            "ok": True,
+            "update_id": normalized,
+            "status": self.operator_status(),
+        }
+
     async def operator_refresh_transport(self) -> dict[str, Any]:
         summary: dict[str, Any] = {
             "mode": self.mode,

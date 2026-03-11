@@ -327,6 +327,10 @@ class TelegramPairingApproveRequest(BaseModel):
     code: str = ""
 
 
+class TelegramOffsetCommitRequest(BaseModel):
+    update_id: int = 0
+
+
 class ControlPlaneResponse(BaseModel):
     ready: bool
     phase: str
@@ -552,6 +556,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
             "channels_inbound_replay": "/v1/control/channels/inbound-replay",
             "telegram_refresh": "/v1/control/channels/telegram/refresh",
             "telegram_pairing_approve": "/v1/control/channels/telegram/pairing/approve",
+            "telegram_offset_commit": "/v1/control/channels/telegram/offset/commit",
             "heartbeat_trigger": "/v1/control/heartbeat/trigger",
             "ws": "/ws",
         },
@@ -4764,6 +4769,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         summary = await operator_approve(str(payload.code or ""))
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
+    async def _telegram_offset_commit_handler(
+        request: Request, payload: TelegramOffsetCommitRequest
+    ) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        channel = runtime.channels.get_channel("telegram")
+        if channel is None:
+            raise HTTPException(status_code=404, detail="channel_not_available:telegram")
+        operator_commit = getattr(channel, "operator_force_commit_offset", None)
+        if not callable(operator_commit):
+            raise HTTPException(status_code=400, detail="channel_operator_action_not_supported:telegram")
+        summary = await operator_commit(int(payload.update_id or 0))
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
     @app.post("/v1/control/channels/replay")
     async def channels_replay(request: Request, payload: ChannelReplayRequest | None = None) -> dict[str, Any]:
         return await _channels_replay_handler(request, payload or ChannelReplayRequest())
@@ -4811,6 +4829,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: TelegramPairingApproveRequest | None = None
     ) -> dict[str, Any]:
         return await _telegram_pairing_approve_handler(request, payload or TelegramPairingApproveRequest())
+
+    @app.post("/v1/control/channels/telegram/offset/commit")
+    async def telegram_offset_commit(
+        request: Request, payload: TelegramOffsetCommitRequest | None = None
+    ) -> dict[str, Any]:
+        return await _telegram_offset_commit_handler(request, payload or TelegramOffsetCommitRequest())
+
+    @app.post("/api/channels/telegram/offset/commit")
+    async def api_telegram_offset_commit(
+        request: Request, payload: TelegramOffsetCommitRequest | None = None
+    ) -> dict[str, Any]:
+        return await _telegram_offset_commit_handler(request, payload or TelegramOffsetCommitRequest())
 
     @app.post("/v1/control/heartbeat/trigger")
     async def trigger_heartbeat(request: Request) -> dict[str, Any]:

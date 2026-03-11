@@ -272,6 +272,13 @@
               <div class="button-row">
                 <button class="ghost-button" id="approve-telegram-pairing" type="button">Approve Telegram pairing</button>
               </div>
+              <label class="field field--compact" for="telegram-offset-update-id">
+                <span>Advance offset watermark</span>
+                <input id="telegram-offset-update-id" type="number" min="0" step="1" placeholder="Enter a Telegram update_id" />
+              </label>
+              <div class="button-row">
+                <button class="ghost-button" id="commit-telegram-offset" type="button">Advance Telegram offset</button>
+              </div>
               <div class="summary-grid summary-grid--wide" id="telegram-pairing-grid"></div>
             </article>
 

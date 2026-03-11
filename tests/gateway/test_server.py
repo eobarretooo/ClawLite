@@ -2335,6 +2335,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"channels_inbound_replay": "/v1/control/channels/inbound-replay"' in body
         assert '"telegram_refresh": "/v1/control/channels/telegram/refresh"' in body
         assert '"telegram_pairing_approve": "/v1/control/channels/telegram/pairing/approve"' in body
+        assert '"telegram_offset_commit": "/v1/control/channels/telegram/offset/commit"' in body
         assert '"heartbeat_trigger": "/v1/control/heartbeat/trigger"' in body
         assert '"tools": "/api/tools/catalog"' in body
         assert '"ws": "/ws"' in body
@@ -2372,6 +2373,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerInboundReplay" in js.text
     assert "triggerTelegramRefresh" in js.text
     assert "triggerTelegramPairingApprove" in js.text
+    assert "triggerTelegramOffsetCommit" in js.text
     assert "hatch:operator" in js.text
     assert "scheduleAutoRefresh" in js.text
     assert "window.location.hash" in js.text
@@ -2608,6 +2610,27 @@ def test_gateway_telegram_pairing_approve_endpoint_calls_channel_operator_hook(t
     assert payload["ok"] is True
     assert payload["summary"]["request"]["chat_id"] == "1"
     fake_channel.operator_approve_pairing.assert_awaited_once_with("ABCD1234")
+
+
+def test_gateway_telegram_offset_commit_endpoint_calls_channel_operator_hook(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    fake_channel = SimpleNamespace(operator_force_commit_offset=AsyncMock(return_value={"ok": True, "update_id": 99}))
+    app.state.runtime.channels._channels["telegram"] = fake_channel
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/channels/telegram/offset/commit", json={"update_id": 99})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["update_id"] == 99
+    fake_channel.operator_force_commit_offset.assert_awaited_once_with(99)
 
 
 def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Path) -> None:
