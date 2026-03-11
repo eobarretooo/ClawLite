@@ -24,6 +24,7 @@ The module entry point is also available as `python -m clawlite.cli`.
 | `status` | Prints a local config/runtime summary | `clawlite status` |
 | `dashboard` | Opens or prints the local dashboard handoff | `clawlite dashboard --no-open` |
 | `telegram` | Telegram operator control commands | `clawlite telegram status` |
+| `provider recover` | Clears provider failover suppression/cooldown through the gateway | `clawlite provider recover --role primary` |
 
 Notes:
 
@@ -32,6 +33,7 @@ Notes:
 - `status` includes enabled channels, provider model, heartbeat interval, and bootstrap state.
 - `dashboard` prints the current dashboard URL, tokenized handoff URL, bootstrap state, post-onboarding guidance (including web-search hints), and can open the browser unless `--no-open` is passed.
 - `telegram status` reads Telegram runtime state from `/api/dashboard/state` and includes operator hints; `telegram refresh`, `telegram offset-commit`, `telegram offset-sync`, and `telegram offset-reset` call the live gateway control endpoints.
+- `provider recover` calls the live gateway provider recovery control and is intended for failover suppression/cooldown recovery after auth/quota/config issues are fixed.
 
 ## Setup and Onboarding
 

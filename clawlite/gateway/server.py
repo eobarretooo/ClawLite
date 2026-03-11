@@ -354,6 +354,11 @@ class SupervisorRecoverRequest(BaseModel):
     reason: str = "operator_recover"
 
 
+class ProviderRecoverRequest(BaseModel):
+    role: str = ""
+    model: str = ""
+
+
 class ControlPlaneResponse(BaseModel):
     ready: bool
     phase: str
@@ -584,6 +589,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
             "telegram_offset_commit": "/v1/control/channels/telegram/offset/commit",
             "telegram_offset_sync": "/v1/control/channels/telegram/offset/sync",
             "telegram_offset_reset": "/v1/control/channels/telegram/offset/reset",
+            "provider_recover": "/v1/control/provider/recover",
             "supervisor_recover": "/v1/control/supervisor/recover",
             "heartbeat_trigger": "/v1/control/heartbeat/trigger",
             "ws": "/ws",
@@ -4875,6 +4881,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         )
         return {"ok": True, "summary": summary}
 
+    async def _provider_recover_handler(request: Request, payload: ProviderRecoverRequest) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        provider = runtime.engine.provider
+        operator_clear = getattr(provider, "operator_clear_suppression", None)
+        if not callable(operator_clear):
+            raise HTTPException(status_code=400, detail="provider_operator_action_not_supported")
+        summary = operator_clear(role=str(payload.role or "").strip(), model=str(payload.model or "").strip())
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
     @app.post("/v1/control/channels/replay")
     async def channels_replay(request: Request, payload: ChannelReplayRequest | None = None) -> dict[str, Any]:
         return await _channels_replay_handler(request, payload or ChannelReplayRequest())
@@ -4982,6 +4997,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: TelegramOffsetResetRequest | None = None
     ) -> dict[str, Any]:
         return await _telegram_offset_reset_handler(request, payload or TelegramOffsetResetRequest())
+
+    @app.post("/v1/control/provider/recover")
+    async def provider_recover(request: Request, payload: ProviderRecoverRequest | None = None) -> dict[str, Any]:
+        return await _provider_recover_handler(request, payload or ProviderRecoverRequest())
+
+    @app.post("/api/provider/recover")
+    async def api_provider_recover(request: Request, payload: ProviderRecoverRequest | None = None) -> dict[str, Any]:
+        return await _provider_recover_handler(request, payload or ProviderRecoverRequest())
 
     @app.post("/v1/control/supervisor/recover")
     async def supervisor_recover(request: Request, payload: SupervisorRecoverRequest | None = None) -> dict[str, Any]:

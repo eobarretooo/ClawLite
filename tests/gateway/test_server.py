@@ -148,6 +148,9 @@ class ProviderWithFailoverDiagnostics:
             ],
         }
 
+    def operator_clear_suppression(self, *, role: str = "", model: str = "") -> dict[str, object]:
+        return {"ok": True, "cleared": 1, "role": role, "model": model}
+
 
 class RecoveringGatewayChannel(BaseChannel):
     starts = 0
@@ -2340,6 +2343,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_offset_commit": "/v1/control/channels/telegram/offset/commit"' in body
         assert '"telegram_offset_sync": "/v1/control/channels/telegram/offset/sync"' in body
         assert '"telegram_offset_reset": "/v1/control/channels/telegram/offset/reset"' in body
+        assert '"provider_recover": "/v1/control/provider/recover"' in body
         assert '"supervisor_recover": "/v1/control/supervisor/recover"' in body
         assert '"heartbeat_trigger": "/v1/control/heartbeat/trigger"' in body
         assert '"tools": "/api/tools/catalog"' in body
@@ -2383,6 +2387,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerTelegramOffsetCommit" in js.text
     assert "triggerTelegramOffsetSync" in js.text
     assert "triggerTelegramOffsetReset" in js.text
+    assert "triggerProviderRecovery" in js.text
     assert "triggerSupervisorRecovery" in js.text
     assert "hatch:operator" in js.text
     assert "scheduleAutoRefresh" in js.text
@@ -5354,6 +5359,26 @@ def test_gateway_diagnostics_provider_summary_surfaces_failover_state(tmp_path: 
         assert summary["cooling_candidates"][0]["model"] == "openai/gpt-4o-mini"
         assert any("cooldown" in row.lower() for row in summary["hints"])
         assert any("authentication" in row.lower() for row in summary["hints"])
+
+
+def test_gateway_provider_recover_endpoint_calls_provider_operator_hook(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = ProviderWithFailoverDiagnostics()
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/provider/recover", json={"role": "primary", "model": ""})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["cleared"] == 1
+    assert payload["summary"]["role"] == "primary"
 
 
 def test_gateway_startup_rollback_when_subsystem_fails(tmp_path: Path) -> None:

@@ -40,6 +40,7 @@ from clawlite.cli.ops import telegram_refresh
 from clawlite.cli.ops import telegram_status
 from clawlite.cli.ops import provider_clear_auth
 from clawlite.cli.ops import provider_live_probe
+from clawlite.cli.ops import provider_recover
 from clawlite.cli.ops import provider_validation
 from clawlite.cli.ops import provider_login_openai_codex
 from clawlite.cli.ops import provider_set_auth
@@ -444,6 +445,20 @@ def cmd_provider_clear_auth(args: argparse.Namespace) -> int:
         config_path=args.config,
         provider=str(args.provider or ""),
         clear_api_base=bool(args.clear_api_base),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_provider_recover(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = provider_recover(
+        cfg,
+        role=str(args.role or ""),
+        model=str(args.model or ""),
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
     )
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
@@ -1227,6 +1242,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_provider_clear_auth.add_argument("provider")
     p_provider_clear_auth.add_argument("--clear-api-base", action="store_true")
     p_provider_clear_auth.set_defaults(handler=cmd_provider_clear_auth)
+
+    p_provider_recover = provider_sub.add_parser("recover", help="Clear provider suppression/cooldown through the gateway")
+    p_provider_recover.add_argument("--role", default="", help="Optional candidate role filter, e.g. primary or fallback")
+    p_provider_recover.add_argument("--model", default="", help="Optional candidate model filter")
+    p_provider_recover.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_provider_recover.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_provider_recover.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_provider_recover.set_defaults(handler=cmd_provider_recover)
 
     p_heartbeat = sub.add_parser("heartbeat", help="Heartbeat control commands")
     heartbeat_sub = p_heartbeat.add_subparsers(dest="heartbeat_command", required=True)

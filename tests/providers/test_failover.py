@@ -325,3 +325,33 @@ def test_failover_provider_quota_error_applies_extended_suppression_window() -> 
         assert diag["candidates"][0]["suppression_reason"] == "quota"
 
     asyncio.run(_scenario())
+
+
+def test_failover_provider_operator_clear_suppression_resets_candidate_state() -> None:
+    async def _scenario() -> None:
+        clock = _Clock()
+        primary = _Provider(error="provider_auth_error:missing_api_key:openai")
+        fallback = _Provider(result="from fallback")
+        provider = FailoverProvider(
+            primary=primary,
+            fallback=fallback,
+            fallback_model="openai/gpt-4.1-mini",
+            cooldown_seconds=30.0,
+            now_fn=clock.now,
+        )
+
+        out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+        assert out.text == "from fallback"
+        before = provider.diagnostics()
+        assert before["primary_in_cooldown"] is True
+
+        summary = provider.operator_clear_suppression(role="primary")
+
+        assert summary["ok"] is True
+        assert summary["cleared"] == 1
+        after = provider.diagnostics()
+        assert after["primary_in_cooldown"] is False
+        assert after["primary_cooldown_remaining_s"] == 0.0
+        assert after["candidates"][0]["suppression_reason"] == ""
+
+    asyncio.run(_scenario())

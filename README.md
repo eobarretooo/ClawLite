@@ -154,6 +154,7 @@ clawlite telegram refresh
 clawlite telegram offset-commit 144
 clawlite telegram offset-sync 145
 clawlite telegram offset-reset --yes
+clawlite provider recover
 ```
 
 `clawlite telegram status` now includes offset/pairing/webhook hints so operators can see the safest next action faster.
@@ -303,7 +304,7 @@ Current tabs:
 - 🧭 `Overview` — control plane, next-step cards, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
 - 💬 `Chat` — live WS/HTTP chat and raw WebSocket frame preview
 - 🗂️ `Sessions` — recent sessions with one-click handoff into chat
-- 🤖 `Automation` — cron, inbound journal replay, dead-letter replay, operator channel recovery, Telegram transport refresh, pairing approval/rejection/revocation, offset advance, provider recovery/suppression, and operator-triggered supervisor recovery
+- 🤖 `Automation` — cron, inbound journal replay, dead-letter replay, operator channel recovery, Telegram transport refresh, pairing approval/rejection/revocation, offset controls, provider suppression recovery, and operator-triggered supervisor recovery
 - 🧠 `Knowledge` — workspace runtime files, bootstrap status, skills, memory monitor
 - 🧰 `Tools` — tool catalog, groups, aliases
 

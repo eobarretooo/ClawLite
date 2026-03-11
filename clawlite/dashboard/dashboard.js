@@ -548,6 +548,7 @@ function renderProviderRecoveryBoard() {
   const suppressionReason = String(summary.suppression_reason || "");
   const coolingCandidates = Array.isArray(summary.cooling_candidates) ? summary.cooling_candidates : [];
   const suppressedCandidates = Array.isArray(summary.suppressed_candidates) ? summary.suppressed_candidates : [];
+  const recoverButton = byId("recover-provider");
 
   candidates.push({
     title: "Provider state",
@@ -597,6 +598,11 @@ function renderProviderRecoveryBoard() {
   }
 
   candidates.slice(0, 6).forEach((item) => appendSummaryCard(grid, item));
+
+  if (recoverButton) {
+    const blocked = suppressionReason || suppressedCandidates.length > 0 || coolingCandidates.length > 0;
+    recoverButton.disabled = !blocked;
+  }
 }
 
 function handoffPayload() {
@@ -1492,6 +1498,36 @@ async function triggerSupervisorRecovery() {
   }
 }
 
+async function triggerProviderRecovery() {
+  const button = byId("recover-provider");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.provider_recover || "/v1/control/provider/recover", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const summary = payload.summary || {};
+    recordEvent(
+      summary.cleared ? "ok" : "warn",
+      "Provider recovery finished",
+      `${numeric(summary.cleared, 0)} suppression slot(s) cleared | ${numeric(summary.matched, 0)} matched`,
+      "provider",
+    );
+    await refreshAll("provider-recover");
+  } catch (error) {
+    recordEvent("danger", "Provider recovery failed", error.message, "provider");
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerTelegramRefresh() {
   const button = byId("refresh-telegram-transport");
   if (button) {
@@ -1813,6 +1849,9 @@ function bindEvents() {
 
   byId("refresh-all").addEventListener("click", () => {
     void refreshAll("manual");
+  });
+  byId("recover-provider").addEventListener("click", () => {
+    void triggerProviderRecovery();
   });
   byId("recover-supervisor-component").addEventListener("click", () => {
     void triggerSupervisorRecovery();

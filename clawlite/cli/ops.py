@@ -408,6 +408,35 @@ def telegram_offset_reset(
     )
 
 
+def provider_recover(
+    config: AppConfig,
+    *,
+    role: str = "",
+    model: str = "",
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="POST",
+        endpoint="/v1/control/provider/recover",
+        json_body={"role": str(role or ""), "model": str(model or "")},
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict) and bool(body.get("ok", False)):
+        payload["ok"] = True
+        payload["summary"] = body.get("summary", {})
+        return payload
+    detail = body.get("detail", body.get("error", "provider_recover_failed")) if isinstance(body, dict) else str(body or "provider_recover_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
 def _telegram_pairing_store(config: AppConfig) -> TelegramPairingStore | None:
     telegram = getattr(config.channels, "telegram", None)
     if telegram is None:

@@ -402,6 +402,34 @@ Example response:
 
 Alias compatível: `POST /api/channels/telegram/offset/reset`.
 
+## `POST /v1/control/provider/recover`
+
+Clears provider failover suppression/cooldown state through the live runtime provider.
+
+Example request:
+
+```json
+{
+  "role": "primary",
+  "model": ""
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "cleared": 1,
+    "matched": 1
+  }
+}
+```
+
+Alias compatível: `POST /api/provider/recover`.
+
 ## `POST /v1/control/supervisor/recover`
 
 Triggers operator-requested runtime supervisor recovery for one component or all tracked components.

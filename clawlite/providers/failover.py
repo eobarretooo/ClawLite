@@ -197,6 +197,32 @@ class FailoverProvider(LLMProvider):
 
         return payload
 
+    def operator_clear_suppression(self, *, role: str = "", model: str = "") -> dict[str, Any]:
+        normalized_role = str(role or "").strip().lower()
+        normalized_model = str(model or "").strip()
+        cleared = 0
+        matched = 0
+        for index, candidate in enumerate(self._candidates):
+            candidate_role = "primary" if index == 0 else "fallback"
+            if normalized_role and candidate_role != normalized_role:
+                continue
+            if normalized_model and candidate.model != normalized_model:
+                continue
+            matched += 1
+            if float(candidate.cooldown_until or 0.0) > 0 or candidate.last_error_class or candidate.suppression_reason:
+                candidate.cooldown_until = 0.0
+                candidate.last_error_class = ""
+                candidate.suppression_reason = ""
+                cleared += 1
+        return {
+            "ok": True,
+            "role": normalized_role,
+            "model": normalized_model,
+            "matched": matched,
+            "cleared": cleared,
+            "state": self.diagnostics(),
+        }
+
     @staticmethod
     def _should_failover(error_class: str) -> bool:
         return error_class in {
