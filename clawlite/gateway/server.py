@@ -336,6 +336,10 @@ class TelegramOffsetSyncRequest(BaseModel):
     allow_reset: bool = False
 
 
+class TelegramOffsetResetRequest(BaseModel):
+    confirm: bool = False
+
+
 class TelegramPairingRejectRequest(BaseModel):
     code: str = ""
 
@@ -579,6 +583,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
             "telegram_pairing_revoke": "/v1/control/channels/telegram/pairing/revoke",
             "telegram_offset_commit": "/v1/control/channels/telegram/offset/commit",
             "telegram_offset_sync": "/v1/control/channels/telegram/offset/sync",
+            "telegram_offset_reset": "/v1/control/channels/telegram/offset/reset",
             "supervisor_recover": "/v1/control/supervisor/recover",
             "heartbeat_trigger": "/v1/control/heartbeat/trigger",
             "ws": "/ws",
@@ -4844,6 +4849,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         summary = await operator_sync(int(payload.next_offset or 0), allow_reset=bool(payload.allow_reset))
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
+    async def _telegram_offset_reset_handler(
+        request: Request, payload: TelegramOffsetResetRequest
+    ) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        if not bool(payload.confirm):
+            raise HTTPException(status_code=400, detail="confirmation_required")
+        channel = runtime.channels.get_channel("telegram")
+        if channel is None:
+            raise HTTPException(status_code=404, detail="channel_not_available:telegram")
+        operator_sync = getattr(channel, "operator_sync_next_offset", None)
+        if not callable(operator_sync):
+            raise HTTPException(status_code=400, detail="channel_operator_action_not_supported:telegram")
+        summary = await operator_sync(0, allow_reset=True)
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
     async def _supervisor_recover_handler(request: Request, payload: SupervisorRecoverRequest) -> dict[str, Any]:
         auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
         if runtime.supervisor is None:
@@ -4950,6 +4970,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: TelegramOffsetSyncRequest | None = None
     ) -> dict[str, Any]:
         return await _telegram_offset_sync_handler(request, payload or TelegramOffsetSyncRequest())
+
+    @app.post("/v1/control/channels/telegram/offset/reset")
+    async def telegram_offset_reset(
+        request: Request, payload: TelegramOffsetResetRequest | None = None
+    ) -> dict[str, Any]:
+        return await _telegram_offset_reset_handler(request, payload or TelegramOffsetResetRequest())
+
+    @app.post("/api/channels/telegram/offset/reset")
+    async def api_telegram_offset_reset(
+        request: Request, payload: TelegramOffsetResetRequest | None = None
+    ) -> dict[str, Any]:
+        return await _telegram_offset_reset_handler(request, payload or TelegramOffsetResetRequest())
 
     @app.post("/v1/control/supervisor/recover")
     async def supervisor_recover(request: Request, payload: SupervisorRecoverRequest | None = None) -> dict[str, Any]:

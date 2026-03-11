@@ -153,6 +153,7 @@ clawlite telegram status
 clawlite telegram refresh
 clawlite telegram offset-commit 144
 clawlite telegram offset-sync 145
+clawlite telegram offset-reset --yes
 ```
 
 `clawlite telegram status` now includes offset/pairing/webhook hints so operators can see the safest next action faster.

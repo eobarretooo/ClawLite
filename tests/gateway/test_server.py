@@ -2339,6 +2339,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_pairing_revoke": "/v1/control/channels/telegram/pairing/revoke"' in body
         assert '"telegram_offset_commit": "/v1/control/channels/telegram/offset/commit"' in body
         assert '"telegram_offset_sync": "/v1/control/channels/telegram/offset/sync"' in body
+        assert '"telegram_offset_reset": "/v1/control/channels/telegram/offset/reset"' in body
         assert '"supervisor_recover": "/v1/control/supervisor/recover"' in body
         assert '"heartbeat_trigger": "/v1/control/heartbeat/trigger"' in body
         assert '"tools": "/api/tools/catalog"' in body
@@ -2381,6 +2382,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerTelegramPairingRevoke" in js.text
     assert "triggerTelegramOffsetCommit" in js.text
     assert "triggerTelegramOffsetSync" in js.text
+    assert "triggerTelegramOffsetReset" in js.text
     assert "triggerSupervisorRecovery" in js.text
     assert "hatch:operator" in js.text
     assert "scheduleAutoRefresh" in js.text
@@ -2660,6 +2662,27 @@ def test_gateway_telegram_offset_sync_endpoint_calls_channel_operator_hook(tmp_p
     assert payload["ok"] is True
     assert payload["summary"]["next_offset"] == 145
     fake_channel.operator_sync_next_offset.assert_awaited_once_with(145, allow_reset=False)
+
+
+def test_gateway_telegram_offset_reset_endpoint_calls_channel_operator_hook(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    fake_channel = SimpleNamespace(operator_sync_next_offset=AsyncMock(return_value={"ok": True, "next_offset": 0}))
+    app.state.runtime.channels._channels["telegram"] = fake_channel
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/channels/telegram/offset/reset", json={"confirm": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["next_offset"] == 0
+    fake_channel.operator_sync_next_offset.assert_awaited_once_with(0, allow_reset=True)
 
 
 def test_gateway_telegram_pairing_reject_endpoint_calls_channel_operator_hook(tmp_path: Path) -> None:

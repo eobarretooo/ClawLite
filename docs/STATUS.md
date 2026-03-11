@@ -76,6 +76,7 @@ Recent progress:
 - Telegram pairing approval can now be completed from the control plane/dashboard instead of only through the CLI
 - Telegram offset watermark can now be advanced deliberately from the control plane when a safe manual recovery step is needed
 - Telegram `next_offset` can now be synchronized directly from the control plane as a safer reconciliation path than raw watermark forcing
+- Telegram `next_offset` can now also be reset explicitly from the control plane with confirmation when a full transport reset is required
 - Pending Telegram pairing requests can now also be rejected directly from the control plane/dashboard
 - Approved Telegram pairing entries can now be revoked directly from the control plane/dashboard
 - Operators can now trigger supervisor component recovery directly from the control plane/dashboard instead of only waiting for the background supervisor loop

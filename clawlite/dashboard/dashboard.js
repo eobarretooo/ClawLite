@@ -828,6 +828,7 @@ function renderTelegramBoard() {
   const revokeButton = byId("revoke-telegram-pairing");
   const offsetButton = byId("commit-telegram-offset");
   const offsetSyncButton = byId("sync-telegram-offset");
+  const offsetResetButton = byId("reset-telegram-offset");
 
   if (!available) {
     appendSummaryCard(grid, {
@@ -853,6 +854,9 @@ function renderTelegramBoard() {
     }
     if (offsetSyncButton) {
       offsetSyncButton.disabled = true;
+    }
+    if (offsetResetButton) {
+      offsetResetButton.disabled = true;
     }
     return;
   }
@@ -940,6 +944,9 @@ function renderTelegramBoard() {
   }
   if (offsetSyncButton) {
     offsetSyncButton.disabled = false;
+  }
+  if (offsetResetButton) {
+    offsetResetButton.disabled = false;
   }
 }
 
@@ -1720,6 +1727,42 @@ async function triggerTelegramOffsetSync() {
   }
 }
 
+async function triggerTelegramOffsetReset() {
+  const button = byId("reset-telegram-offset");
+  const confirmed = typeof window.confirm === "function"
+    ? window.confirm("Reset Telegram next_offset to zero? Use this only for deliberate recovery.")
+    : true;
+  if (!confirmed) {
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.telegram_offset_reset || "/v1/control/channels/telegram/offset/reset", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirm: true }),
+    });
+    const summary = payload.summary || {};
+    recordEvent(
+      summary.ok === false ? "warn" : "ok",
+      "Telegram offset reset finished",
+      summary.ok === false ? String(summary.error || "unknown_error") : "next offset reset to zero",
+      "telegram",
+    );
+    await refreshAll("telegram-offset-reset");
+  } catch (error) {
+    recordEvent("danger", "Telegram offset reset failed", error.message, "telegram");
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerHatch() {
   if (!hatchPending()) {
     recordEvent("warn", "Hatch action skipped", "Bootstrap is already settled for this workspace.", "hatch");
@@ -1794,6 +1837,9 @@ function bindEvents() {
   });
   byId("sync-telegram-offset").addEventListener("click", () => {
     void triggerTelegramOffsetSync();
+  });
+  byId("reset-telegram-offset").addEventListener("click", () => {
+    void triggerTelegramOffsetReset();
   });
   byId("replay-inbound-journal").addEventListener("click", () => {
     void triggerInboundReplay();

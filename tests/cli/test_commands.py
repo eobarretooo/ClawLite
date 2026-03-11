@@ -3133,6 +3133,77 @@ def test_cli_telegram_offset_sync_uses_gateway_control(tmp_path: Path, capsys, m
     )
 
 
+def test_cli_telegram_offset_reset_requires_confirmation(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "telegram", "offset-reset"])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"] == "confirmation_required"
+
+
+def test_cli_telegram_offset_reset_uses_gateway_control(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {"host": "127.0.0.1", "port": 8787, "auth": {"token": "t-123"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, str, object]] = []
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.is_success = True
+
+        def json(self) -> dict[str, object]:
+            return {"ok": True, "summary": {"next_offset": 0}}
+
+    class _FakeClient:
+        def __init__(self, *, timeout, headers):
+            del timeout, headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None):
+            calls.append(("POST", url, json))
+            return _FakeResponse()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _FakeClient)
+
+    rc = main(["--config", str(config_path), "telegram", "offset-reset", "--yes"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert calls[0] == (
+        "POST",
+        "http://127.0.0.1:8787/v1/control/channels/telegram/offset/sync",
+        {"next_offset": 0, "allow_reset": True},
+    )
+
+
 def test_cli_provider_set_auth_and_heartbeat_do_not_import_gateway_runtime(tmp_path: Path, capsys, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(

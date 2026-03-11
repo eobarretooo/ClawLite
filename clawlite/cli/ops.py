@@ -391,6 +391,23 @@ def telegram_offset_sync(
     return payload
 
 
+def telegram_offset_reset(
+    config: AppConfig,
+    *,
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    return telegram_offset_sync(
+        config,
+        next_offset=0,
+        allow_reset=True,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+    )
+
+
 def _telegram_pairing_store(config: AppConfig) -> TelegramPairingStore | None:
     telegram = getattr(config.channels, "telegram", None)
     if telegram is None:

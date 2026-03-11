@@ -376,6 +376,32 @@ Example response:
 
 Alias compatível: `POST /api/channels/telegram/offset/sync`.
 
+## `POST /v1/control/channels/telegram/offset/reset`
+
+Resets Telegram `next_offset` to zero after an explicit confirmation flag.
+
+Example request:
+
+```json
+{
+  "confirm": true
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "next_offset": 0
+  }
+}
+```
+
+Alias compatível: `POST /api/channels/telegram/offset/reset`.
+
 ## `POST /v1/control/supervisor/recover`
 
 Triggers operator-requested runtime supervisor recovery for one component or all tracked components.

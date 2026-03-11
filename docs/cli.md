@@ -31,7 +31,7 @@ Notes:
 - `hatch` does not require the gateway to be running; it uses the dedicated `hatch:operator` session and only completes bootstrap when a pending hatch exists.
 - `status` includes enabled channels, provider model, heartbeat interval, and bootstrap state.
 - `dashboard` prints the current dashboard URL, tokenized handoff URL, bootstrap state, post-onboarding guidance (including web-search hints), and can open the browser unless `--no-open` is passed.
-- `telegram status` reads Telegram runtime state from `/api/dashboard/state` and includes operator hints; `telegram refresh`, `telegram offset-commit`, and `telegram offset-sync` call the live gateway control endpoints.
+- `telegram status` reads Telegram runtime state from `/api/dashboard/state` and includes operator hints; `telegram refresh`, `telegram offset-commit`, `telegram offset-sync`, and `telegram offset-reset` call the live gateway control endpoints.
 
 ## Setup and Onboarding
 

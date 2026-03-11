@@ -34,6 +34,7 @@ from clawlite.cli.ops import pairing_list
 from clawlite.cli.ops import pairing_reject
 from clawlite.cli.ops import pairing_revoke
 from clawlite.cli.ops import telegram_offset_commit
+from clawlite.cli.ops import telegram_offset_reset
 from clawlite.cli.ops import telegram_offset_sync
 from clawlite.cli.ops import telegram_refresh
 from clawlite.cli.ops import telegram_status
@@ -543,6 +544,21 @@ def cmd_telegram_offset_sync(args: argparse.Namespace) -> int:
         cfg,
         next_offset=int(args.next_offset),
         allow_reset=bool(args.allow_reset),
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_telegram_offset_reset(args: argparse.Namespace) -> int:
+    if not bool(args.yes):
+        _print_json({"ok": False, "error": "confirmation_required", "hint": "rerun_with_yes"})
+        return 2
+    cfg = load_config(args.config)
+    payload = telegram_offset_reset(
+        cfg,
         gateway_url=str(args.gateway_url or ""),
         token=str(args.token or ""),
         timeout=float(args.timeout),
@@ -1272,6 +1288,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_telegram_offset_sync.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
     p_telegram_offset_sync.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
     p_telegram_offset_sync.set_defaults(handler=cmd_telegram_offset_sync)
+
+    p_telegram_offset_reset = telegram_sub.add_parser("offset-reset", help="Reset Telegram next_offset via the gateway")
+    p_telegram_offset_reset.add_argument("--yes", action="store_true", help="Confirm that the Telegram next_offset should be reset to zero")
+    p_telegram_offset_reset.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_telegram_offset_reset.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_telegram_offset_reset.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_telegram_offset_reset.set_defaults(handler=cmd_telegram_offset_reset)
 
     p_diagnostics = sub.add_parser("diagnostics", help="Operator diagnostics snapshot (local + optional gateway checks)")
     p_diagnostics.add_argument("--gateway-url", default="", help="Gateway base URL to probe, e.g. http://127.0.0.1:8787")
