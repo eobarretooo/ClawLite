@@ -155,6 +155,37 @@ Example response:
 
 Alias compatível: `POST /api/memory/snapshot/create`.
 
+## `POST /v1/control/memory/snapshot/rollback`
+
+Rolls memory state back to a stored snapshot version after explicit confirmation.
+
+Example request:
+
+```json
+{
+  "version_id": "20260312T120000Z-dashboard",
+  "confirm": true
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "version_id": "20260312T120000Z-dashboard",
+    "counts": {
+      "before": 10,
+      "after": 10
+    }
+  }
+}
+```
+
+Alias compatível: `POST /api/memory/snapshot/rollback`.
+
 ## `POST /v1/control/channels/replay`
 
 Replays retained dead-letter outbound events through the live channel manager.

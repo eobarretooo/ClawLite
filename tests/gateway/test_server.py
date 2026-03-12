@@ -2345,6 +2345,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_offset_reset": "/v1/control/channels/telegram/offset/reset"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
+        assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
         assert '"provider_recover": "/v1/control/provider/recover"' in body
         assert '"autonomy_wake": "/v1/control/autonomy/wake"' in body
         assert '"supervisor_recover": "/v1/control/supervisor/recover"' in body
@@ -2392,6 +2393,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerTelegramOffsetReset" in js.text
     assert "triggerMemorySuggestRefresh" in js.text
     assert "triggerMemorySnapshotCreate" in js.text
+    assert "triggerMemorySnapshotRollback" in js.text
     assert "triggerProviderRecovery" in js.text
     assert "triggerAutonomyWake" in js.text
     assert "triggerSupervisorRecovery" in js.text
@@ -2434,6 +2436,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "profile" in payload["memory"]
     assert "suggestions" in payload["memory"]
     assert "quality" in payload["memory"]
+    assert "versions" in payload["memory"]
     assert "status" in payload["cron"]
     assert "jobs" in payload["cron"]
     assert "workspace" in payload
@@ -5426,6 +5429,28 @@ def test_gateway_memory_snapshot_create_endpoint_returns_version(tmp_path: Path)
     assert payload["ok"] is True
     assert payload["summary"]["ok"] is True
     assert payload["summary"]["version_id"]
+
+
+def test_gateway_memory_snapshot_rollback_endpoint_returns_counts(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        create = client.post("/v1/control/memory/snapshot/create", json={"tag": "rollback-test"})
+        version_id = create.json()["summary"]["version_id"]
+        response = client.post("/v1/control/memory/snapshot/rollback", json={"version_id": version_id, "confirm": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["version_id"] == version_id
+    assert "counts" in payload["summary"]
 
 
 def test_gateway_autonomy_wake_endpoint_calls_runtime_wake_submitter(tmp_path: Path) -> None:

@@ -306,8 +306,7 @@ Current tabs:
 - 🧭 `Overview` — control plane, next-step cards, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
 - 💬 `Chat` — live WS/HTTP chat and raw WebSocket frame preview
 - 🗂️ `Sessions` — recent sessions with one-click handoff into chat
-- 🤖 `Automation` — cron, inbound journal replay, dead-letter replay, operator channel recovery, Telegram transport refresh, pairing approval/rejection/revocation, offset controls, provider suppression recovery, operator-triggered supervisor recovery, manual autonomy wake control, and memory snapshot/suggestion controls
-- 🧠 `Knowledge` — workspace runtime files, bootstrap status, skills, memory monitor
+- 🤖 `Automation` — cron, inbound journal replay, dead-letter replay, operator channel recovery, Telegram transport refresh, pairing approval/rejection/revocation, offset controls, provider suppression recovery, operator-triggered supervisor recovery, manual autonomy wake control, and memory snapshot/suggestion/rollback controls
 - 🧠 `Knowledge` — workspace runtime files, bootstrap status, skills, memory profile/suggestions/quality, and memory snapshot controls
 - 🧰 `Tools` — tool catalog, groups, aliases
 

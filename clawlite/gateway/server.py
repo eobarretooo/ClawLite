@@ -49,7 +49,7 @@ from clawlite.runtime import (
 )
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.cli.onboarding import build_dashboard_handoff
-from clawlite.cli.ops import memory_profile_snapshot, memory_snapshot_create, memory_suggest_snapshot
+from clawlite.cli.ops import memory_profile_snapshot, memory_snapshot_create, memory_snapshot_rollback, memory_suggest_snapshot, memory_version_snapshot
 from clawlite.tools.agents import AgentsListTool
 from clawlite.tools.cron import CronTool
 from clawlite.tools.apply_patch import ApplyPatchTool
@@ -372,6 +372,11 @@ class MemorySnapshotCreateRequest(BaseModel):
     tag: str = ""
 
 
+class MemorySnapshotRollbackRequest(BaseModel):
+    version_id: str = ""
+    confirm: bool = False
+
+
 class ControlPlaneResponse(BaseModel):
     ready: bool
     phase: str
@@ -604,6 +609,7 @@ def _dashboard_bootstrap_payload(*, control_plane: ControlPlaneResponse) -> dict
             "telegram_offset_reset": "/v1/control/channels/telegram/offset/reset",
             "memory_suggest_refresh": "/v1/control/memory/suggest/refresh",
             "memory_snapshot_create": "/v1/control/memory/snapshot/create",
+            "memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback",
             "provider_recover": "/v1/control/provider/recover",
             "autonomy_wake": "/v1/control/autonomy/wake",
             "supervisor_recover": "/v1/control/supervisor/recover",
@@ -4428,6 +4434,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         profile_payload = memory_profile_snapshot(runtime.config)
         suggest_payload = memory_suggest_snapshot(runtime.config, refresh=False)
+        versions_payload = memory_version_snapshot(runtime.config)
         quality_payload: dict[str, Any] = {}
         quality_state_snapshot = getattr(runtime.engine.memory, "quality_state_snapshot", None)
         if callable(quality_state_snapshot):
@@ -4443,6 +4450,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "analysis": analysis_payload,
             "profile": profile_payload,
             "suggestions": suggest_payload,
+            "versions": versions_payload,
             "quality": quality_payload,
         }
 
@@ -4959,6 +4967,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         summary = memory_snapshot_create(runtime.config, tag=str(payload.tag or ""))
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
+    async def _memory_snapshot_rollback_handler(request: Request, payload: MemorySnapshotRollbackRequest) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        if not bool(payload.confirm):
+            raise HTTPException(status_code=400, detail="confirmation_required")
+        summary = memory_snapshot_rollback(runtime.config, version_id=str(payload.version_id or ""))
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
     @app.post("/v1/control/channels/replay")
     async def channels_replay(request: Request, payload: ChannelReplayRequest | None = None) -> dict[str, Any]:
         return await _channels_replay_handler(request, payload or ChannelReplayRequest())
@@ -5106,6 +5121,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: MemorySnapshotCreateRequest | None = None
     ) -> dict[str, Any]:
         return await _memory_snapshot_create_handler(request, payload or MemorySnapshotCreateRequest())
+
+    @app.post("/v1/control/memory/snapshot/rollback")
+    async def memory_snapshot_rollback_route(
+        request: Request, payload: MemorySnapshotRollbackRequest | None = None
+    ) -> dict[str, Any]:
+        return await _memory_snapshot_rollback_handler(request, payload or MemorySnapshotRollbackRequest())
+
+    @app.post("/api/memory/snapshot/rollback")
+    async def api_memory_snapshot_rollback(
+        request: Request, payload: MemorySnapshotRollbackRequest | None = None
+    ) -> dict[str, Any]:
+        return await _memory_snapshot_rollback_handler(request, payload or MemorySnapshotRollbackRequest())
 
     @app.post("/v1/control/supervisor/recover")
     async def supervisor_recover(request: Request, payload: SupervisorRecoverRequest | None = None) -> dict[str, Any]:

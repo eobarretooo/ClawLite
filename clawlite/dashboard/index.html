@@ -373,9 +373,14 @@
                   <div class="button-row">
                     <button class="ghost-button" id="refresh-memory-suggestions" type="button">Refresh suggestions</button>
                     <button class="ghost-button" id="create-memory-snapshot" type="button">Create memory snapshot</button>
+                    <button class="ghost-button" id="rollback-memory-snapshot" type="button">Rollback memory snapshot</button>
                     <span class="badge" id="memory-status">pending</span>
                   </div>
                 </div>
+                <label class="field field--compact" for="memory-rollback-version-id">
+                  <span>Rollback snapshot version</span>
+                  <input id="memory-rollback-version-id" type="text" autocomplete="off" placeholder="Enter memory snapshot version_id" />
+                </label>
                 <div class="summary-grid summary-grid--wide" id="memory-grid"></div>
                 <pre class="code-block" id="memory-preview">Waiting for memory telemetry...</pre>
               </article>

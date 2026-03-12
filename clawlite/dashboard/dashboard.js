@@ -965,6 +965,7 @@ function renderMemoryBoard() {
   const memory = ((state.dashboardState || {}).memory) || {};
   const profile = memory.profile || {};
   const suggest = memory.suggestions || {};
+  const versions = memory.versions || {};
   const quality = memory.quality || {};
   const profilePayload = profile.profile || {};
   const qualityScores = quality.scores || {};
@@ -983,6 +984,11 @@ function renderMemoryBoard() {
     title: "Quality",
     body: `${Number(qualityScores.overall || 0).toFixed(3)} overall`,
     detail: `${Number(qualityScores.retrieval || 0).toFixed(3)} retrieval | ${Number(qualityScores.semantic || 0).toFixed(3)} semantic`,
+  });
+  appendSummaryCard(grid, {
+    title: "Snapshots",
+    body: `${numeric(versions.count, 0)} versions`,
+    detail: Array.isArray(versions.versions) && versions.versions.length ? versions.versions.slice(0, 2).join(", ") : "No snapshots created yet.",
   });
   appendSummaryCard(grid, {
     title: "Identity context",
@@ -1657,6 +1663,51 @@ async function triggerMemorySnapshotCreate() {
   }
 }
 
+async function triggerMemorySnapshotRollback() {
+  const input = byId("memory-rollback-version-id");
+  const button = byId("rollback-memory-snapshot");
+  const versionId = String(input?.value || "").trim();
+  if (!versionId) {
+    recordEvent("warn", "Memory snapshot rollback skipped", "Enter a snapshot version_id first.", "memory");
+    return;
+  }
+  const confirmed = typeof window.confirm === "function"
+    ? window.confirm(`Rollback memory to snapshot ${versionId}? Use this only for deliberate recovery.`)
+    : true;
+  if (!confirmed) {
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.memory_snapshot_rollback || "/v1/control/memory/snapshot/rollback", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ version_id: versionId, confirm: true }),
+    });
+    const summary = payload.summary || {};
+    recordEvent(
+      summary.ok === false ? "warn" : "ok",
+      "Memory snapshot rollback finished",
+      summary.ok === false ? String(summary.error || "unknown_error") : `${versionId} restored`,
+      "memory",
+    );
+    if (input) {
+      input.value = "";
+    }
+    await refreshAll("memory-snapshot-rollback");
+  } catch (error) {
+    recordEvent("danger", "Memory snapshot rollback failed", error.message, "memory");
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerTelegramRefresh() {
   const button = byId("refresh-telegram-transport");
   if (button) {
@@ -1987,6 +2038,9 @@ function bindEvents() {
   });
   byId("create-memory-snapshot").addEventListener("click", () => {
     void triggerMemorySnapshotCreate();
+  });
+  byId("rollback-memory-snapshot").addEventListener("click", () => {
+    void triggerMemorySnapshotRollback();
   });
   byId("recover-provider").addEventListener("click", () => {
     void triggerProviderRecovery();

@@ -85,6 +85,7 @@ Recent progress:
 - Supervisor recovery can now also be triggered from the CLI instead of only the dashboard/control-plane UI
 - Operators can now trigger manual autonomy wakes from the dashboard/control plane/CLI instead of waiting only for the scheduled loop
 - Memory profile, pending suggestions, and quality state now surface in dashboard state, and operators can refresh suggestions or create snapshots from the control plane
+- Memory snapshot rollback is now available from the control plane/dashboard with explicit confirmation
 
 Exit criteria:
 
