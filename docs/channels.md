@@ -17,7 +17,7 @@ Quickstart note: `clawlite configure --flow quickstart` only offers Telegram. Di
 | Channel | Inbound | Outbound | Status | Notes |
 | --- | --- | --- | --- | --- |
 | Telegram | Yes | Yes | Most complete | Polling and webhook, pairing, reactions, topics, typing keepalive, voice/audio transcription |
-| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, attachments become text placeholders |
+| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), embeds, thread creation, attachment download |
 | Email | Yes | Yes | Usable | IMAP polling inbound plus SMTP replies |
 | WhatsApp | Yes | Yes | Usable | Inbound webhook plus outbound bridge `/send` |
 | Slack | No | Yes | Send-only | Outbound `chat.postMessage`; no inbound event loop yet |
@@ -209,7 +209,10 @@ Notes:
 
 - `allow_from` can contain user IDs or usernames.
 - Bot/self messages are ignored.
-- Attachments are surfaced as placeholders in the forwarded text; ClawLite does not download them.
+- Attachments are downloaded concurrently from the Discord CDN; raw bytes are available in the `attachment_data` metadata key. Each entry mirrors the `attachments` row with an added `data` field (bytes or `None` on failure).
+- **Reactions**: `add_reaction(channel_id, message_id, emoji)` sends a reaction. Incoming `MESSAGE_REACTION_ADD` events are emitted as metadata-only events with `event_type: "reaction_add"` and `emoji`.
+- **Embeds**: pass a list of embed dicts under `metadata["discord_embeds"]` (or `"embeds"`) in `send()`. Discord accepts up to 10 embeds per message.
+- **Thread creation**: use `await channel.create_thread(channel_id=..., name=..., message_id=...)`. Omit `message_id` for a standalone (forum-style) thread. Returns the new thread ID or empty string on failure. `auto_archive_duration` defaults to 1440 minutes.
 - Discord-specific send retry knobs exist in code but are not part of the typed schema.
 - For proactive sends, prefer typed targets: `channel:<discord_channel_id>` for guild channels/threads and `user:<discord_user_id>` for DMs.
 - Bare numeric Discord targets are ambiguous. ClawLite now tries them as channel IDs first and only falls back to DM creation if Discord returns `404`.
