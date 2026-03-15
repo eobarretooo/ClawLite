@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -7,6 +8,10 @@ from typing import Any
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _new_correlation_id() -> str:
+    return str(uuid.uuid4())
 
 
 @dataclass(slots=True)
@@ -17,6 +22,8 @@ class InboundEvent:
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=_utc_now)
+    envelope_version: int = 1
+    correlation_id: str = field(default_factory=_new_correlation_id)
 
 
 @dataclass(slots=True)
@@ -33,3 +40,5 @@ class OutboundEvent:
     dead_letter_reason: str = ""
     last_error: str = ""
     created_at: str = field(default_factory=_utc_now)
+    envelope_version: int = 1
+    correlation_id: str = field(default_factory=_new_correlation_id)

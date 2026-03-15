@@ -1372,6 +1372,16 @@ _DEFAULT_STATE = str(Path.home() / ".clawlite" / "state")
 _DEFAULT_MODEL = "gemini/gemini-2.5-flash"
 
 
+class BusConfig(Base):
+    journal_enabled: bool = False
+    journal_path: str = ""
+
+    @field_validator("journal_path", mode="before")
+    @classmethod
+    def _journal_path_default(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+
 class AppConfig(Base):
     workspace_path: str = _DEFAULT_WORKSPACE
     state_path: str = _DEFAULT_STATE
@@ -1383,6 +1393,7 @@ class AppConfig(Base):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    bus: BusConfig = Field(default_factory=BusConfig)
 
     @field_validator("workspace_path", mode="before")
     @classmethod

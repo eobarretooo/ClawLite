@@ -11,9 +11,14 @@ from typing import AsyncIterator
 
 from clawlite.bus.events import InboundEvent, OutboundEvent
 
+_WILDCARD = "*"
 
 DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE = 256
 DEFAULT_STOP_EVENT_TTL_S = 6 * 60 * 60
+
+
+class BusFullError(Exception):
+    """Raised when the bus queue is at capacity and ``nowait=True`` is set."""
 
 
 class MessageQueue:
@@ -24,12 +29,15 @@ class MessageQueue:
         maxsize: int = 1000,
         subscriber_queue_maxsize: int = DEFAULT_SUBSCRIBER_QUEUE_MAXSIZE,
         stop_event_ttl_s: float = DEFAULT_STOP_EVENT_TTL_S,
+        journal=None,
     ) -> None:
         self._inbound: asyncio.Queue[InboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._outbound: asyncio.Queue[OutboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._dead_letter: asyncio.Queue[OutboundEvent] = asyncio.Queue(maxsize=maxsize)
         self._topics: dict[str, list[asyncio.Queue[InboundEvent]]] = defaultdict(list)
         self._subscriber_queue_maxsize = max(1, int(subscriber_queue_maxsize or 1))
+        self._journal = journal  # optional BusJournal instance
+        self._inbound_journal_ids: dict[str, int] = {}  # correlation_id -> row_id
         self._outbound_created_at: deque[str] = deque()
         self._dead_letter_events: deque[OutboundEvent] = deque()
         self._stop_event_ttl_s = max(0.01, float(stop_event_ttl_s or 0.01))
@@ -109,10 +117,26 @@ class MessageQueue:
             )
         return recent
 
-    async def publish_inbound(self, event: InboundEvent) -> None:
-        await self._inbound.put(event)
+    async def publish_inbound(self, event: InboundEvent, *, nowait: bool = False) -> None:
+        if nowait:
+            try:
+                self._inbound.put_nowait(event)
+            except asyncio.QueueFull as exc:
+                raise BusFullError("inbound queue is full") from exc
+        else:
+            await self._inbound.put(event)
         self._inbound_published += 1
+
+        # Journal append (best-effort)
+        if self._journal is not None:
+            row_id = self._journal.append_inbound(event)
+            if row_id is not None:
+                self._inbound_journal_ids[event.correlation_id] = row_id
+
+        # Topic subscriptions (channel-specific + wildcard)
         for queue in tuple(self._topics.get(event.channel, ())):
+            await queue.put(event)
+        for queue in tuple(self._topics.get(_WILDCARD, ())):
             await queue.put(event)
 
     async def publish_outbound(self, event: OutboundEvent) -> None:
@@ -124,7 +148,12 @@ class MessageQueue:
             self._outbound_dropped += 1
 
     async def next_inbound(self) -> InboundEvent:
-        return await self._inbound.get()
+        event = await self._inbound.get()
+        if self._journal is not None:
+            row_id = self._inbound_journal_ids.pop(event.correlation_id, None)
+            if row_id is not None:
+                self._journal.ack_inbound(row_id)
+        return event
 
     async def next_outbound(self) -> OutboundEvent:
         event = await self._outbound.get()

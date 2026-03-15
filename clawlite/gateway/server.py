@@ -4339,6 +4339,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "queue": runtime.bus.stats(),
         }
 
+    @app.get("/health/config")
+    async def health_config(request: Request) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        from clawlite.config.health import config_health
+        return config_health(cfg)
+
     async def _status_handler(request: Request) -> ControlPlaneResponse:
         auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
         return _control_plane_payload()
