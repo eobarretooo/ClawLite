@@ -5083,7 +5083,6 @@ class MemoryStore:
 
     def _fetch_record_by_id(self, record_id: str) -> "MemoryRecord | None":
         """Fetch a single MemoryRecord from the backend by its ID."""
-        rows = self.backend.fetch_layer_records(layer=MemoryLayer.ITEM.value, limit=1)
         # Fetch all item rows and find by id (simple scan — resource lookups are small)
         all_rows = self.backend.fetch_layer_records(layer=MemoryLayer.ITEM.value, limit=50000)
         for row in all_rows:

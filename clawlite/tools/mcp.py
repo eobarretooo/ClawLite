@@ -171,7 +171,7 @@ class MCPTool(Tool):
                 results.append(f"{name}:{'ok' if ok else 'http_' + str(status)}:{latency_ms}ms")
                 if not ok:
                     all_ok = False
-            except Exception as exc:
+            except Exception:
                 latency_ms = round((time.monotonic() - t0) * 1000, 1)
                 results.append(f"{name}:error:{latency_ms}ms")
                 all_ok = False
