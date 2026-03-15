@@ -221,37 +221,19 @@ Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
 
 ## 🏛️ Architecture
 
-```
-  Channels          FastAPI Gateway :8787         Agent Engine
-  ─────────         ─────────────────────         ────────────────────
-  Telegram   ──┐                              ┌──▶ LiteLLM (20+ provs)
-  Discord    ──┤   HTTP · WebSocket       ────┤
-  Email      ──┼──▶ Dashboard UI      ────    ├──▶ Tool Registry (22+)
-  WhatsApp   ──┤   Channel Dispatch   ────    │
-  Slack      ──┤                              └──▶ Skills Loader (25+)
-  CLI        ──┘
-                                              Memory Backend
-                                              ──────────────────────
-                                              BM25 · Vector · FTS5
-                                              Temporal decay · SQLite/pgvector
+ClawLite has four main layers:
 
-  Supervisor Loops (always running)
-  ──────────────────────────────────────────────────────────────────
-  heartbeat · cron · autonomy wake · dead-letter replay · job queue
-```
+**1. Channels** — inbound/outbound adapters for Telegram, Discord, Email, WhatsApp, Slack, and the CLI. All normalize to the same internal message format before hitting the gateway.
 
-**Request flow:**
+**2. FastAPI Gateway** (`:8787`) — HTTP + WebSocket server, operator dashboard, auth, and channel dispatch. Single entry point for all traffic.
 
-```
-  User input  →  Channel  →  Gateway  →  Engine
-                                            ├── retrieves memory
-                                            ├── calls tools mid-turn
-                                            └── streams from LiteLLM
-                                         ↓
-                              Response streamed to channel
-                                         ↓
-                              Memory updated (salience + decay)
-```
+**3. Agent Engine** — the core loop. On each turn it builds a prompt from memory + identity + workspace files, calls tools as needed, and streams tokens from LiteLLM (20+ providers). Loop detection, context window budgeting, and subagent orchestration all live here.
+
+**4. Supporting layers** always running in the background:
+- **Memory** — hybrid BM25 + vector search, FTS5, temporal decay, SQLite or pgvector
+- **Supervisor** — heartbeat, cron, autonomy wake, dead-letter replay, background job queue
+
+**Request flow:** user message → channel adapter → gateway → engine (memory retrieval + tool calls + LLM stream) → response streamed back → memory updated.
 
 ---
 
