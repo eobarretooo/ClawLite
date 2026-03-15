@@ -222,68 +222,35 @@ Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
 ## 🏛️ Architecture
 
 ```
-  ┌──────────────────────────────────────────────────────────────────┐
-  │                        ClawLite Runtime                          │
-  │                                                                  │
-  │  ┌─────────────────────────────────────────────────────────┐    │
-  │  │                    Inbound Sources                       │    │
-  │  │  Telegram · Discord · Email · WhatsApp · Slack · CLI    │    │
-  │  └────────────────────────┬────────────────────────────────┘    │
-  │                           │                                      │
-  │                           ▼                                      │
-  │  ┌────────────────────────────────────────────────────────┐     │
-  │  │              FastAPI Gateway  :8787                    │     │
-  │  │    HTTP · WebSocket · Dashboard UI · Channel Dispatch  │     │
-  │  └────────────────────────┬───────────────────────────────┘     │
-  │                           │                                      │
-  │                           ▼                                      │
-  │  ┌────────────────────────────────────────────────────────┐     │
-  │  │                   Agent Engine                         │     │
-  │  │   Prompt Builder · Session Store · Identity Enforcer   │     │
-  │  │   stream_run() · ProviderChunk · Provider Failover     │     │
-  │  └──────┬─────────────────┬──────────────────┬───────────┘     │
-  │         │                 │                  │                   │
-  │         ▼                 ▼                  ▼                   │
-  │   ┌──────────┐    ┌──────────────┐   ┌─────────────┐           │
-  │   │ LiteLLM  │    │Tool Registry │   │Skills Loader│           │
-  │   │ 20+ provs│    │ 21+ tools    │   │ 25+ skills  │           │
-  │   └──────────┘    └──────────────┘   └─────────────┘           │
-  │                                                                  │
-  │  ┌─────────────────────────────────────────────────────────┐    │
-  │  │                  Memory Backend                          │    │
-  │  │  BM25 · Vector · FTS5 · Temporal Decay · pgvector/SQLite│    │
-  │  └─────────────────────────────────────────────────────────┘    │
-  │                                                                  │
-  │  ┌─────────────────────────────────────────────────────────┐    │
-  │  │                  Supervisor Loops                        │    │
-  │  │  heartbeat · cron · autonomy · dead-letter · self-evol  │    │
-  │  └─────────────────────────────────────────────────────────┘    │
-  └──────────────────────────────────────────────────────────────────┘
+  Channels          FastAPI Gateway :8787         Agent Engine
+  ─────────         ─────────────────────         ────────────────────
+  Telegram   ──┐                              ┌──▶ LiteLLM (20+ provs)
+  Discord    ──┤   HTTP · WebSocket       ────┤
+  Email      ──┼──▶ Dashboard UI      ────    ├──▶ Tool Registry (22+)
+  WhatsApp   ──┤   Channel Dispatch   ────    │
+  Slack      ──┤                              └──▶ Skills Loader (25+)
+  CLI        ──┘
+                                              Memory Backend
+                                              ──────────────────────
+                                              BM25 · Vector · FTS5
+                                              Temporal decay · SQLite/pgvector
+
+  Supervisor Loops (always running)
+  ──────────────────────────────────────────────────────────────────
+  heartbeat · cron · autonomy wake · dead-letter replay · job queue
 ```
 
-**Request lifecycle:**
+**Request flow:**
 
 ```
-User message (CLI / Telegram / Discord)
-    │
-    ▼
-Channel Dispatcher
-    │  normalizes to internal Message format
-    ▼
-FastAPI Gateway  ─── authenticates, rate-limits
-    │
-    ▼
-Agent Engine
-    │  builds prompt (memory + identity + tools)
-    ├──▶ Memory Backend   (retrieve relevant context)
-    ├──▶ Tool Registry    (execute tools mid-turn)
-    └──▶ LiteLLM          (stream tokens from provider)
-    │
-    ▼
-Response  ─── streamed back to originating channel
-    │
-    ▼
-Memory Backend   (store turn, update salience)
+  User input  →  Channel  →  Gateway  →  Engine
+                                            ├── retrieves memory
+                                            ├── calls tools mid-turn
+                                            └── streams from LiteLLM
+                                         ↓
+                              Response streamed to channel
+                                         ↓
+                              Memory updated (salience + decay)
 ```
 
 ---
