@@ -4,14 +4,27 @@ Last updated: 2026-03-15
 
 ## Summary
 
-ClawLite is a **complete, production-grade local-first autonomous agent runtime**. All originally planned features for the current milestone are implemented and the full test suite passes (1178 tests, 0 failures).
+ClawLite is a **local-first autonomous agent runtime** in active hardening. The Robustness Milestone is in progress (phases 1–4 of 7 complete). Core runtime, memory, channels, and providers are production-grade. Phases 5–7 are hardening skills, identity, and docs.
+
+> **🤖 AI-built · Solo dev** — Every commit is written by Claude (AI), with the author supervising direction. No team.
 
 ## Current Baseline
 
 - Latest tag: `v0.5.0-beta.2`
-- `main` is well ahead of that tag — contains all features described below
-- Suite: `python -m pytest` → **1178 passed, 0 failed**
+- `main` is ahead of that tag — Robustness phases 1–4 landed since the tag
+- Suite: `python -m pytest tests/core tests/tools tests/jobs` → **510 passed, 0 failed**
+- Full suite (all tests): ~1200+ passed (run `python -m pytest tests/ -q --tb=short`)
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, smoke imports, autonomy contracts
+
+## Robustness Milestone Progress
+
+| Phase | Commit | What landed |
+|-------|--------|-------------|
+| 1 — Config + Bus | `8dd97a9` | `ConfigWatcher` hot-reload, `BusJournal` SQLite, typed envelopes (`InboundEvent`/`OutboundEvent`) |
+| 2 — Memory | `bf671ab` | Memory hierarchy, `ProactiveContextLoader`, LLM consolidation, TTL, file ingest |
+| 3 — Providers + Tools | `8455a59` | `TelemetryRegistry`, streaming recovery, tool timeout middleware, `ToolResultCache`, health checks |
+| 4 — Core + Jobs | `d91a585` | `ContextWindowManager`, `JobQueue` + `JobJournal`, `JobsTool`, `JobsConfig`, loop-detection bus events, subagent `parent_session_id` |
+| 5–7 | pending | Skills validation/versioning, identity write-back, full docs refresh |
 
 ## What Is Complete
 
@@ -43,10 +56,10 @@ ClawLite is a **complete, production-grade local-first autonomous agent runtime*
 | **WhatsApp** | 🟡 Usable — webhook inbound + outbound bridge |
 | **Slack** | 📤 Send-only |
 
-### Tools (17+)
+### Tools (18+)
 `files` · `exec` · `spawn` · `process` · `web` · `browser` (Playwright)
 `pdf` · `tts` · `mcp` · `sessions` · `cron` · `memory` · `skill`
-`message` · `agents` · `discord_admin` · `apply_patch`
+`message` · `agents` · `discord_admin` · `apply_patch` · `jobs`
 
 ### Skills (25+)
 `web-search` · `cron` · `memory` · `coding-agent` · `summarize`

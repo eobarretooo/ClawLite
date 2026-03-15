@@ -14,7 +14,11 @@
 
 </div>
 
-> **🤖 AI-built project** — ClawLite is being developed entirely by AI (Claude), with the author supervising, reviewing, and guiding. Every commit, test, and feature was written by an AI agent. This is an experiment in AI-driven software development.
+> ### 🤖 Built by AI · Maintained by one person
+>
+> ClawLite is a **solo-dev project built entirely by AI (Claude)**. Every line of code, every test, every commit was written by an AI agent — the human author supervises, reviews goals, and guides direction. No team. No agency. Just one person and an AI building production software together.
+>
+> This is an ongoing experiment in AI-driven software development at the solo-dev scale.
 
 ---
 
@@ -140,7 +144,10 @@ clawlite run "every morning at 9am send me a briefing on HN top stories"
 - Cron engine (persistent, replay-safe)
 - Autonomy wake coordinator
 - Dead-letter queue + inbound journal replay
-- Subagent maintenance loop
+- Subagent lifecycle with parent/child context propagation
+- Background job queue (`JobQueue`) with priority, retry, and SQLite persistence
+- Context window budget management (auto-trims history to fit model limits)
+- Loop detection with bus observability
 - Self-evolution runner
 
 </td>
@@ -148,10 +155,10 @@ clawlite run "every morning at 9am send me a briefing on HN top stories"
 <tr>
 <td>
 
-### 🧰 Tools (21+)
+### 🧰 Tools (22+)
 `files` · `exec` · `spawn` · `process` · `web` · `browser` (Playwright)
 `pdf` · `tts` · `mcp` · `sessions` · `cron` · `memory` · `skills`
-`message` · `agents` · `discord_admin` · `apply_patch` · `exec_files`
+`message` · `agents` · `discord_admin` · `apply_patch` · `jobs`
 
 </td>
 <td>

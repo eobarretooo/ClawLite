@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Robustness Milestone — Phases 1–4 (2026-03-15)
+
+#### Phase 4 — Core engine hardening + background jobs (`d91a585`)
+- `ContextWindowManager` — trims message history to model token budget; preserves system message and last user turn; `budget_chars` or `budget_tokens` constructor
+- `TurnBudget.max_tool_calls` + `token_budget` fields — per-turn hard caps enforced in engine loop
+- Engine loop-detection now emits `InboundEvent(channel="_system", text="loop_detected")` on the message bus for all three detectors (provider-plan, tool-repeat, ping-pong)
+- `JobQueue` — priority async job queue with submit/status/cancel/list, concurrency control, and retry; fixed worker loop to drain pre-start submissions
+- `JobJournal` — SQLite persistence for jobs (restart recovery via `restore_from_journal()`)
+- `JobsTool` — agent-facing tool for submit/status/cancel/list background jobs
+- `JobsConfig` — `AppConfig.jobs` sub-schema (`persist_enabled`, `persist_path`, `worker_concurrency`)
+- Gateway: `JobsTool` registered, `JobQueue` wired with optional journal, `engine._bus` set for loop observability
+- CLI: `clawlite jobs list|status|cancel` commands
+- `SubagentManager.spawn(parent_session_id=...)` — child session prefixed `"{parent}:sub:{run_id[:8]}"`, stored in `run.metadata`
+
+#### Phase 3 — Provider telemetry + tool resilience (`8455a59`)
+- `TelemetryRegistry` + `ProviderTelemetry`: ring buffer 1000 calls/model, p50/p95 latency
+- `ProviderChunk.degraded`: mid-stream recovery without exception propagation
+- `LiteLLMProvider.warmup()`: connectivity probe before serving traffic
+- `ToolError` + `ToolTimeoutError`: structured tool exceptions
+- `ToolHealthResult` + `health_check()`: ExecTool, BrowserTool, MCPTool, PdfReadTool
+- `ToolResultCache`: LRU 256 entries, 5min TTL; web_fetch + pdf_read cacheable
+- `ToolRegistry` centralised timeout middleware
+- `GET /metrics/providers`, `/health/providers`, `/health/tools`
+
+#### Phase 2 — Memory hierarchy + proactive loader (`bf671ab`)
+- `ResourceContext` dataclass + `resources`/`record_resources` SQLite tables
+- `MemoryRecord` extended with `resource_id` + `consolidated` fields
+- `ProactiveContextLoader`: background topic extraction + threaded recall with 30s cache TTL
+- `LLMConsolidator`: LLM-driven consolidation with deterministic fallback
+- `MemoryStore.ingest_file()`: .txt / .md / .pdf
+- Memory TTL: `set_record_ttl` / `get_record_ttl` / `purge_expired_records` + `memory_ttl` table
+
+#### Phase 1 — Config hot-reload + bus journal (`8dd97a9`)
+- `ConfigWatcher`: watchfiles-based hot-reload with 500ms debounce and error-resilient reload
+- `config_health()` + `GET /health/config`
+- `ConfigAudit` ring buffer (last 5 configs)
+- `BusConfig` in `AppConfig` (`journal_enabled`, `journal_path`)
+- `BusJournal`: SQLite append/ack journal; survives restart; replay unacked messages
+- `subscribe("*")` wildcard + `BusFullError` on `nowait=True` overflow
+- `InboundEvent` / `OutboundEvent` typed envelopes with `envelope_version` + `correlation_id`
+
 ### Added
 - Config schema fully migrated to Pydantic v2 (`clawlite/config/schema.py`) — all fields modelled with `Field`, validators, `model_validate`, and camelCase alias support (`1c60256`).
 - `Base.from_dict()` classmethod on all Pydantic config models as a v1→v2 compatibility shim (`d3f8ee4`).
