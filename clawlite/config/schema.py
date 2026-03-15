@@ -14,6 +14,10 @@ class Base(BaseModel):
         extra="ignore",
     )
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Base":
+        return cls.model_validate(data)
+
 
 # ---------------------------------------------------------------------------
 # Gateway sub-configs
