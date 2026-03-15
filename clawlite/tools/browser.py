@@ -1,7 +1,7 @@
 from __future__ import annotations
 import base64, time
 from typing import Any
-from clawlite.tools.base import Tool, ToolContext
+from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
 
 class BrowserTool(Tool):
     name = "browser"
@@ -85,3 +85,19 @@ class BrowserTool(Tool):
             return f"error: unknown action '{action}'"
         except Exception as exc:
             return f"browser_error: {exc}"
+
+    async def health_check(self) -> ToolHealthResult:
+        t0 = time.monotonic()
+        try:
+            from playwright.async_api import async_playwright
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto("about:blank")
+                await browser.close()
+            latency_ms = (time.monotonic() - t0) * 1000
+            if latency_ms > 5000:
+                return ToolHealthResult(ok=False, latency_ms=latency_ms, detail="browser_too_slow")
+            return ToolHealthResult(ok=True, latency_ms=latency_ms, detail="chromium_ok")
+        except Exception as exc:
+            return ToolHealthResult(ok=False, latency_ms=(time.monotonic() - t0) * 1000, detail=str(exc))

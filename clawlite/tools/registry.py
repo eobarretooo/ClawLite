@@ -1,15 +1,84 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import time
 from typing import Any
 
 from clawlite.config.schema import ToolSafetyPolicyConfig
-from clawlite.tools.base import Tool, ToolContext
+from clawlite.tools.base import Tool, ToolContext, ToolError, ToolTimeoutError
+
+
+# ---------------------------------------------------------------------------
+# LRU result cache
+# ---------------------------------------------------------------------------
+
+class _CacheEntry:
+    __slots__ = ("value", "expires_at")
+
+    def __init__(self, value: str, ttl_s: float) -> None:
+        self.value = value
+        self.expires_at = time.monotonic() + ttl_s
+
+
+class ToolResultCache:
+    """In-process LRU cache for cacheable tools. Max 256 entries, 5 min TTL."""
+
+    MAX_ENTRIES = 256
+    TTL_S = 300.0
+
+    def __init__(self) -> None:
+        self._store: dict[str, _CacheEntry] = {}
+        self._order: list[str] = []
+
+    @staticmethod
+    def _key(tool_name: str, arguments: dict[str, Any]) -> str:
+        try:
+            raw = tool_name + json.dumps(arguments, sort_keys=True, default=str)
+        except Exception:
+            raw = tool_name + str(arguments)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def get(self, tool_name: str, arguments: dict[str, Any]) -> str | None:
+        key = self._key(tool_name, arguments)
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        if time.monotonic() > entry.expires_at:
+            self._store.pop(key, None)
+            try:
+                self._order.remove(key)
+            except ValueError:
+                pass
+            return None
+        return entry.value
+
+    def set(self, tool_name: str, arguments: dict[str, Any], value: str) -> None:
+        key = self._key(tool_name, arguments)
+        if key in self._store:
+            try:
+                self._order.remove(key)
+            except ValueError:
+                pass
+        elif len(self._store) >= self.MAX_ENTRIES:
+            evict = self._order.pop(0)
+            self._store.pop(evict, None)
+        self._store[key] = _CacheEntry(value, self.TTL_S)
+        self._order.append(key)
 
 
 class ToolRegistry:
-    def __init__(self, *, safety: ToolSafetyPolicyConfig | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        safety: ToolSafetyPolicyConfig | None = None,
+        default_timeout_s: float = 20.0,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
         self._safety = safety or ToolSafetyPolicyConfig()
+        self._default_timeout_s = max(0.1, float(default_timeout_s))
+        self._cache = ToolResultCache()
 
     @staticmethod
     def _apply_layer(
@@ -312,10 +381,26 @@ class ToolRegistry:
 
         return dict(arguments)
 
+    def _resolve_timeout(self, tool: Tool, arguments: dict[str, Any]) -> float:
+        # 1. tool-level argument override
+        raw = arguments.get("timeout") or arguments.get("timeout_s")
+        if raw is not None:
+            try:
+                v = float(raw)
+                if v > 0:
+                    return v
+            except (TypeError, ValueError):
+                pass
+        # 2. tool class default
+        if tool.default_timeout_s is not None and tool.default_timeout_s > 0:
+            return tool.default_timeout_s
+        # 3. global default
+        return self._default_timeout_s
+
     async def execute(self, name: str, arguments: dict[str, Any], *, session_id: str, channel: str = "", user_id: str = "") -> str:
         tool = self.get(name)
         if tool is None:
-            raise KeyError(f"unknown tool: {name}")
+            raise ToolError(name, "not_found", recoverable=False)
         validated_arguments = self._validate_arguments(tool, arguments)
 
         resolved_channel, risky_tools, blocked_channels, allowed_channels = self._resolve_effective_safety(
@@ -335,4 +420,33 @@ class ToolRegistry:
             allowed_channels=allowed_channels,
         ):
             raise RuntimeError(f"tool_blocked_by_safety_policy:{name}:{resolved_channel}")
-        return await tool.run(validated_arguments, ToolContext(session_id=session_id, channel=resolved_channel, user_id=user_id))
+
+        ctx = ToolContext(session_id=session_id, channel=resolved_channel, user_id=user_id)
+
+        # Cache lookup (only for cacheable tools)
+        if getattr(tool, "cacheable", False):
+            cached = self._cache.get(name, validated_arguments)
+            if cached is not None:
+                return cached
+
+        # Execute with centralized timeout middleware
+        timeout_s = self._resolve_timeout(tool, validated_arguments)
+        try:
+            result = await asyncio.wait_for(tool.run(validated_arguments, ctx), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            raise ToolTimeoutError(name, timeout_s)
+        except (ToolError, ToolTimeoutError):
+            raise
+        except RuntimeError as exc:
+            raise ToolError(name, "execution_failed", recoverable=False, cause=exc) from exc
+        except Exception as exc:
+            raise ToolError(name, "execution_failed", recoverable=False, cause=exc) from exc
+
+        # Store in cache if applicable
+        if getattr(tool, "cacheable", False):
+            try:
+                self._cache.set(name, validated_arguments, result)
+            except Exception:
+                pass  # cache errors never propagate
+
+        return result

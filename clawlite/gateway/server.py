@@ -4345,6 +4345,36 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         from clawlite.config.health import config_health
         return config_health(cfg)
 
+    @app.get("/health/tools")
+    async def health_tools(request: Request) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        results: list[dict[str, Any]] = []
+        for name in sorted(runtime.tools._tools.keys()):
+            tool = runtime.tools._tools[name]
+            try:
+                hr = await tool.health_check()
+                results.append({"tool": name, "ok": hr.ok, "latency_ms": hr.latency_ms, "detail": hr.detail})
+            except Exception as exc:
+                results.append({"tool": name, "ok": False, "latency_ms": 0.0, "detail": str(exc)})
+        return {"ok": all(r["ok"] for r in results), "tools": results}
+
+    @app.get("/health/providers")
+    async def health_providers(request: Request) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        provider = runtime.engine.provider
+        warmup_fn = getattr(provider, "warmup", None)
+        if callable(warmup_fn):
+            result = await warmup_fn()
+        else:
+            result = {"ok": True, "detail": "warmup_not_supported"}
+        return {"ok": result.get("ok", False), "provider": result}
+
+    @app.get("/metrics/providers")
+    async def metrics_providers(request: Request) -> dict[str, Any]:
+        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
+        from clawlite.providers.telemetry import get_telemetry_registry
+        return {"metrics": get_telemetry_registry().snapshot_all()}
+
     async def _status_handler(request: Request) -> ControlPlaneResponse:
         auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
         return _control_plane_payload()

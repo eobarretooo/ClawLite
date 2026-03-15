@@ -11,6 +11,7 @@ from json_repair import loads as json_repair_loads
 
 from clawlite.providers.base import LLMProvider, LLMResult, ToolCall
 from clawlite.providers.reliability import QUOTA_429_SIGNALS, ReliabilitySettings, classify_provider_error, parse_retry_after_seconds
+from clawlite.providers.telemetry import get_telemetry_registry
 
 
 class LiteLLMProvider(LLMProvider):
@@ -535,6 +536,7 @@ class LiteLLMProvider(LLMProvider):
             payload["tool_choice"] = "auto"
 
         attempts = self.reliability.retry_max_attempts
+        _t0 = time.monotonic()
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(1, attempts + 1):
@@ -556,6 +558,14 @@ class LiteLLMProvider(LLMProvider):
                     text = self._extract_text(message.get("content", ""))
                     tool_calls = self._parse_tool_calls(message)
                     self._record_success()
+                    usage = data.get("usage") or {}
+                    _tel = get_telemetry_registry()
+                    _tel.record(
+                        self.model,
+                        latency_ms=(time.monotonic() - _t0) * 1000,
+                        tokens_in=int(usage.get("prompt_tokens") or 0),
+                        tokens_out=int(usage.get("completion_tokens") or 0),
+                    )
                     return LLMResult(text=text, model=self.model, tool_calls=tool_calls, metadata={"provider": "litellm"})
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code if exc.response is not None else None
@@ -657,52 +667,86 @@ class LiteLLMProvider(LLMProvider):
 
         accumulated = ""
         self._diagnostics["requests"] = int(self._diagnostics["requests"]) + 1
+        _t0 = time.monotonic()
+        _tel = get_telemetry_registry()
+        _degraded_recovered = False
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:
                     response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        raw = line[len("data:"):].strip()
-                        if raw == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(raw)
-                        except Exception:
-                            continue
-                        choices = data.get("choices")
-                        if not isinstance(choices, list) or not choices:
-                            continue
-                        delta = choices[0].get("delta") or {}
-                        text = str(delta.get("content") or "")
-                        finish_reason = choices[0].get("finish_reason")
-                        accumulated += text
-                        done = finish_reason is not None
-                        yield ProviderChunk(text=text, accumulated=accumulated, done=done)
-                        if done:
-                            break
+                    try:
+                        async for line in response.aiter_lines():
+                            line = line.strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            raw = line[len("data:"):].strip()
+                            if raw == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(raw)
+                            except Exception:
+                                continue
+                            choices = data.get("choices")
+                            if not isinstance(choices, list) or not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            text = str(delta.get("content") or "")
+                            finish_reason = choices[0].get("finish_reason")
+                            accumulated += text
+                            done = finish_reason is not None
+                            yield ProviderChunk(text=text, accumulated=accumulated, done=done)
+                            if done:
+                                break
+                    except Exception as mid_exc:
+                        # Stream failed mid-way — recover with accumulated text if non-empty
+                        if accumulated:
+                            _degraded_recovered = True
+                            error = f"provider_stream_degraded:{mid_exc}"
+                            self._record_failure(error=error)
+                            _tel.record(self.model, latency_ms=(time.monotonic() - _t0) * 1000, error=True)
+                            yield ProviderChunk(text="", accumulated=accumulated, done=True, degraded=True)
+                        else:
+                            raise
 
-            # Emit final done-chunk if stream ended without finish_reason
-            if not accumulated:
-                yield ProviderChunk(text="", accumulated="", done=True)
-            elif accumulated and not accumulated.endswith("\x00"):  # sentinel to avoid double-done
-                yield ProviderChunk(text="", accumulated=accumulated, done=True)
+            # Emit final done-chunk if stream ended without finish_reason (skip if already degraded-recovered)
+            if not _degraded_recovered:
+                if not accumulated:
+                    yield ProviderChunk(text="", accumulated="", done=True)
+                elif accumulated and not accumulated.endswith("\x00"):  # sentinel to avoid double-done
+                    yield ProviderChunk(text="", accumulated=accumulated, done=True)
 
-            self._record_success()
+            if not _degraded_recovered:
+                self._record_success()
+                _tel.record(self.model, latency_ms=(time.monotonic() - _t0) * 1000)
 
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code if exc.response is not None else None
             detail = self._error_detail(exc.response)
             error = f"provider_http_error:{status}:{detail}"
             self._record_failure(error=error, status_code=status)
+            _tel.record(self.model, latency_ms=(time.monotonic() - _t0) * 1000, error=True)
             yield ProviderChunk(text="", accumulated=accumulated, done=True, error=error)
         except Exception as exc:
             error = f"provider_stream_error:{exc}"
             self._record_failure(error=error)
+            _tel.record(self.model, latency_ms=(time.monotonic() - _t0) * 1000, error=True)
             yield ProviderChunk(text="", accumulated=accumulated, done=True, error=error)
 
     def get_default_model(self) -> str:
         return self.model
+
+    async def warmup(self) -> dict[str, Any]:
+        """Send a minimal probe request to verify credentials and connectivity.
+
+        Returns ``{"ok": True/False, "model": ..., "detail": ...}``.
+        Never raises — failures are returned as ``ok=False``.
+        """
+        try:
+            result = await self.complete(
+                messages=[{"role": "user", "content": "say ok"}],
+                max_tokens=4,
+            )
+            return {"ok": True, "model": self.model, "detail": result.text[:64]}
+        except Exception as exc:
+            return {"ok": False, "model": self.model, "detail": str(exc)[:200]}

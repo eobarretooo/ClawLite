@@ -20,6 +20,7 @@ setup_logging()
 class WebFetchTool(Tool):
     name = "web_fetch"
     description = "Fetch text content from URL."
+    cacheable = True
 
     def __init__(
         self,

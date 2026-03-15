@@ -68,6 +68,7 @@ class ProviderChunk:
     accumulated: str    # full text so far
     done: bool          # True on last chunk
     error: str | None = None
+    degraded: bool = False  # True when stream failed mid-way and was recovered
 
 
 @dataclass(slots=True)

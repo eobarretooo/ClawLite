@@ -1356,6 +1356,7 @@ class ToolSafetyPolicyConfig(Base):
 
 class ToolsConfig(Base):
     restrict_to_workspace: bool = False
+    default_timeout_s: float = 20.0
     web: WebToolConfig = Field(default_factory=WebToolConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     mcp: MCPToolConfig = Field(default_factory=MCPToolConfig)

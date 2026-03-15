@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 from clawlite.config.schema import MCPServerConfig, MCPToolConfig, MCPTransportPolicyConfig
 
-from clawlite.tools.base import Tool, ToolContext
+import time
+from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
 from clawlite.utils.logging import bind_event
 
 
@@ -147,6 +148,37 @@ class MCPTool(Tool):
             if server_name and nested_tool and server_name in self.servers:
                 return server_name, nested_tool
         return None
+
+    async def health_check(self) -> ToolHealthResult:
+        """Ping each configured MCP server with tools/list."""
+        if not self.servers:
+            return ToolHealthResult(ok=True, latency_ms=0.0, detail="no_servers_configured")
+        results: list[str] = []
+        all_ok = True
+        for name, server in self.servers.items():
+            if not server.url:
+                results.append(f"{name}:no_url")
+                all_ok = False
+                continue
+            t0 = time.monotonic()
+            try:
+                payload = {"jsonrpc": "2.0", "id": "health", "method": "tools/list", "params": {}}
+                async with httpx.AsyncClient(timeout=5.0, headers=server.headers or None) as client:
+                    resp = await client.post(server.url, json=payload)
+                status = resp.status_code
+                ok = status < 400
+                latency_ms = round((time.monotonic() - t0) * 1000, 1)
+                results.append(f"{name}:{'ok' if ok else 'http_' + str(status)}:{latency_ms}ms")
+                if not ok:
+                    all_ok = False
+            except Exception as exc:
+                latency_ms = round((time.monotonic() - t0) * 1000, 1)
+                results.append(f"{name}:error:{latency_ms}ms")
+                all_ok = False
+        total_ms = sum(
+            float(r.split(":")[-1].rstrip("ms") or 0) for r in results if "ms" in r
+        )
+        return ToolHealthResult(ok=all_ok, latency_ms=total_ms, detail="; ".join(results))
 
     def _strip_server_prefix(self, *, server_name: str, tool: str) -> str:
         normalized = tool.strip()

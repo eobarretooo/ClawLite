@@ -7,7 +7,8 @@ import shlex
 import shutil
 from pathlib import Path
 
-from clawlite.tools.base import Tool, ToolContext
+import time
+from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
 from clawlite.utils.logging import bind_event, setup_logging
 
 setup_logging()
@@ -401,3 +402,17 @@ class ExecTool(Tool):
         if stderr_truncated:
             response += f"\nstderr_truncated=true\nstderr_original_chars={stderr_original_len}"
         return response
+
+    async def health_check(self) -> ToolHealthResult:
+        t0 = time.monotonic()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "echo", "ok",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            ok = proc.returncode == 0 and b"ok" in out
+            return ToolHealthResult(ok=ok, latency_ms=(time.monotonic() - t0) * 1000, detail="exec_ok" if ok else "unexpected_output")
+        except Exception as exc:
+            return ToolHealthResult(ok=False, latency_ms=(time.monotonic() - t0) * 1000, detail=str(exc))

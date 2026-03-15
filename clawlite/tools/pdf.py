@@ -1,11 +1,13 @@
 from __future__ import annotations
 import io
+import time
 from pathlib import Path
-from clawlite.tools.base import Tool, ToolContext
+from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
 
 class PdfReadTool(Tool):
     name = "pdf_read"
     description = "Extract text from a PDF file (local path or HTTPS URL). Supports page ranges like '1-5'."
+    cacheable = True
 
     def __init__(self, *, max_chars: int = 20_000, timeout_s: float = 15.0) -> None:
         self.max_chars = max(256, int(max_chars or 20_000))
@@ -56,6 +58,21 @@ class PdfReadTool(Tool):
         if len(result) > max_chars:
             result = result[:max_chars] + f"\n\n[truncated — {len(result)} chars total]"
         return f"pdf: {total} page(s), showing {len(indices)}.\n\n{result}"
+
+    async def health_check(self) -> ToolHealthResult:
+        t0 = time.monotonic()
+        try:
+            from pypdf import PdfReader, PdfWriter
+            writer = PdfWriter()
+            writer.add_blank_page(width=72, height=72)
+            buf = io.BytesIO()
+            writer.write(buf)
+            buf.seek(0)
+            reader = PdfReader(buf)
+            _ = len(reader.pages)
+            return ToolHealthResult(ok=True, latency_ms=(time.monotonic() - t0) * 1000, detail="pypdf_ok")
+        except Exception as exc:
+            return ToolHealthResult(ok=False, latency_ms=(time.monotonic() - t0) * 1000, detail=str(exc))
 
     def _parse_pages(self, pages_arg: str, total: int) -> list:
         if not pages_arg: return list(range(total))
