@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/demo.gif" alt="ClawLite demo" width="720" />
-
 # 🦊 ClawLite
 
 **A local-first Python autonomous agent — persistent memory, 20+ LLM providers,<br>real chat channels, and a 24/7 self-healing runtime. No cloud required.**
@@ -12,11 +10,11 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
-[Quickstart](#-quickstart) · [Features](#-features) · [Channels](#-channels) · [Providers](#-providers) · [Docs](#-docs-map) · [Contributing](#-contributing)
-
-⭐ **Star this repo if you find it useful** — it helps others discover the project.
+[Quickstart](#-quickstart) · [Features](#-features) · [Channels](#-channels) · [Providers](#-providers) · [Architecture](#-architecture) · [Docs](#-docs-map) · [Contributing](#-contributing)
 
 </div>
+
+> **🤖 AI-built project** — ClawLite is being developed entirely by AI (Claude), with the author supervising, reviewing, and guiding. Every commit, test, and feature was written by an AI agent. This is an experiment in AI-driven software development.
 
 ---
 
@@ -49,6 +47,43 @@ Open **http://127.0.0.1:8787** → live dashboard with chat, automation, memory,
 ```bash
 # Or talk to the agent straight from the terminal
 clawlite run "hello — what can you do?"
+```
+
+---
+
+## 💡 Examples
+
+**One-shot question:**
+```bash
+clawlite run "summarize the last 3 files I worked on"
+```
+
+**Persistent memory across sessions:**
+```bash
+clawlite run "remember that my project deadline is March 30"
+# later...
+clawlite run "what's my deadline?"
+# → "Your project deadline is March 30."
+```
+
+**Trigger a Telegram message:**
+```bash
+clawlite run "send me a Telegram when the deploy finishes"
+```
+
+**Search the web and summarize:**
+```bash
+clawlite run "what's new in Python 3.13?"
+```
+
+**Read a PDF and answer questions:**
+```bash
+clawlite run "summarize docs/architecture.pdf"
+```
+
+**Schedule a recurring task:**
+```bash
+clawlite run "every morning at 9am send me a briefing on HN top stories"
 ```
 
 ---
@@ -176,28 +211,68 @@ Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
 ## 🏛️ Architecture
 
 ```
-                        ┌─────────────────────────────────────┐
-  Telegram │ Discord    │           ClawLite Runtime           │
-  Email    │ WhatsApp ──▶  Channel Dispatcher                  │
-  Slack    │ Web        │       │                              │
-           │            │       ▼                              │
-  CLI ─────┤            │  FastAPI Gateway  ◀── Dashboard UI  │
-  HTTP ────┤            │  (127.0.0.1:8787)                   │
-  WS ──────┘            │       │                              │
-                        │       ▼                              │
-                        │  Agent Engine  ◀── Session Store    │
-                        │       │                              │
-              ┌─────────┴───────┼──────────────────────┐      │
-              │                 │                       │      │
-              ▼                 ▼                       ▼      │
-         LiteLLM           Tool Registry          Skills Loader│
-         (20+ providers)   (21+ tools)            (24+ skills) │
-              │                                               │
-              ▼                                               │
-         Memory Backend (BM25 + vector + FTS5 + SQLite/pgvector)
-                        └─────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────────┐
+  │                        ClawLite Runtime                          │
+  │                                                                  │
+  │  ┌─────────────────────────────────────────────────────────┐    │
+  │  │                    Inbound Sources                       │    │
+  │  │  Telegram · Discord · Email · WhatsApp · Slack · CLI    │    │
+  │  └────────────────────────┬────────────────────────────────┘    │
+  │                           │                                      │
+  │                           ▼                                      │
+  │  ┌────────────────────────────────────────────────────────┐     │
+  │  │              FastAPI Gateway  :8787                    │     │
+  │  │    HTTP · WebSocket · Dashboard UI · Channel Dispatch  │     │
+  │  └────────────────────────┬───────────────────────────────┘     │
+  │                           │                                      │
+  │                           ▼                                      │
+  │  ┌────────────────────────────────────────────────────────┐     │
+  │  │                   Agent Engine                         │     │
+  │  │   Prompt Builder · Session Store · Identity Enforcer   │     │
+  │  │   stream_run() · ProviderChunk · Provider Failover     │     │
+  │  └──────┬─────────────────┬──────────────────┬───────────┘     │
+  │         │                 │                  │                   │
+  │         ▼                 ▼                  ▼                   │
+  │   ┌──────────┐    ┌──────────────┐   ┌─────────────┐           │
+  │   │ LiteLLM  │    │Tool Registry │   │Skills Loader│           │
+  │   │ 20+ provs│    │ 21+ tools    │   │ 24+ skills  │           │
+  │   └──────────┘    └──────────────┘   └─────────────┘           │
+  │                                                                  │
+  │  ┌─────────────────────────────────────────────────────────┐    │
+  │  │                  Memory Backend                          │    │
+  │  │  BM25 · Vector · FTS5 · Temporal Decay · pgvector/SQLite│    │
+  │  └─────────────────────────────────────────────────────────┘    │
+  │                                                                  │
+  │  ┌─────────────────────────────────────────────────────────┐    │
+  │  │                  Supervisor Loops                        │    │
+  │  │  heartbeat · cron · autonomy · dead-letter · self-evol  │    │
+  │  └─────────────────────────────────────────────────────────┘    │
+  └──────────────────────────────────────────────────────────────────┘
+```
 
-  Supervisor Loops: heartbeat · cron · autonomy · dead-letter · self-evolution
+**Request lifecycle:**
+
+```
+User message (CLI / Telegram / Discord)
+    │
+    ▼
+Channel Dispatcher
+    │  normalizes to internal Message format
+    ▼
+FastAPI Gateway  ─── authenticates, rate-limits
+    │
+    ▼
+Agent Engine
+    │  builds prompt (memory + identity + tools)
+    ├──▶ Memory Backend   (retrieve relevant context)
+    ├──▶ Tool Registry    (execute tools mid-turn)
+    └──▶ LiteLLM          (stream tokens from provider)
+    │
+    ▼
+Response  ─── streamed back to originating channel
+    │
+    ▼
+Memory Backend   (store turn, update salience)
 ```
 
 ---
@@ -222,7 +297,7 @@ Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
 ## 🛠️ Development
 
 ```bash
-# Install dev dependencies + run tests
+# Install and run tests
 pip install -e .
 python -m pytest tests/ -q --tb=short -k "not slow"
 
@@ -233,6 +308,9 @@ python -m ruff check --select=E,F,W .
 python -m pytest tests/channels/test_discord.py -v
 python -m pytest tests/channels/test_telegram.py -v
 python -m pytest tests/core/test_engine.py -v
+
+# Regenerate demo GIF
+python3 scripts/make_demo_gif.py
 
 # Release preflight
 bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787
@@ -279,6 +357,17 @@ clawlite supervisor recover --component heartbeat
 | [`docs/workspace.md`](docs/workspace.md) | Workspace runtime files and lifecycle |
 | [`docs/STATUS.md`](docs/STATUS.md) | Live engineering snapshot |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release history |
+
+---
+
+## 🧬 Inspired By
+
+ClawLite draws ideas from two open-source agent runtimes:
+
+- **[openclaw](https://github.com/eobarretooo/openclaw)** — TypeScript agent runtime with the richest feature set; primary reference for channel adapters, tool interfaces, and operator dashboard design
+- **[nanobot](https://github.com/eobarretooo/nanobot)** — minimal Python agent; reference for clean core architecture and skill packaging
+
+ClawLite is a Python-first reimplementation with a focus on local deployment, persistent memory, and production-grade channel support.
 
 ---
 
