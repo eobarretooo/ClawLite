@@ -1,58 +1,45 @@
 # Contributing to ClawLite
 
-Thanks for contributing.
+Thank you for your interest in contributing! Here's how to get started.
 
-## Local setup
+## Setup
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
+git clone https://github.com/eobarretooo/ClawLite.git
+cd ClawLite
+python -m venv .venv && source .venv/bin/activate
 pip install -e .
-pytest -q
 ```
 
-If `dev` extras are available in `pyproject.toml`, prefer:
+## Before You Code
+
+- **Check open issues** — someone may already be working on it
+- **Open an issue first** for large features — alignment before implementation
+- **Write tests first** — ClawLite uses TDD throughout
+
+## Code Style
+
+- Python 3.10+, typed annotations
+- `ruff check --select=E,F,W .` must pass
+- New features need tests in `tests/`
+- Keep functions focused; prefer small, testable units
+
+## Running Tests
 
 ```bash
-pip install -e ".[dev]"
+python -m pytest tests/ -q --tb=short        # full suite
+python -m pytest tests/channels/ -v          # channel tests
+python -m pytest tests/core/test_engine.py   # engine tests
 ```
 
-## Project principles
+## Pull Request Guidelines
 
-- Simple and auditable architecture
-- Predictable runtime behavior
-- Documentation aligned with real code
-- Secure-by-default behavior for personal use
+1. Branch from `main`: `git checkout -b feat/your-feature`
+2. Commit with clear messages (`feat:`, `fix:`, `docs:`, `refactor:`)
+3. All tests must pass; CI runs Python 3.10 + 3.12
+4. Reference the issue number in your PR description
+5. Keep PRs focused — one feature or fix per PR
 
-## Recommended flow
+## Questions?
 
-1. Open an issue (bug/proposal) before large changes.
-2. Create a focused branch (`feat/...`, `fix/...`, `docs/...`).
-3. Make small changes per module.
-4. Update tests when behavior changes.
-5. Run local validation:
-   - `pytest -q`
-   - smoke tests for changed commands (`clawlite --help`, `clawlite start`, `clawlite run`)
-6. Open a PR with context, risk, and test evidence.
-
-## Good first issues
-
-- Start with issues labeled `good first issue` or `help wanted`.
-- Prefer small, isolated scopes: docs clarity, tests for existing behavior, small CLI UX fixes, or non-breaking refactors.
-- Keep one logical change per PR to make review and rollback straightforward.
-- If the issue is unclear, add a short implementation plan in the issue/PR before coding.
-
-## Quality standards
-
-- Do not break core commands: `start`, `run`, `onboard`, `cron`, `skills`.
-- Do not introduce API regressions in `/v1/chat` and `/v1/cron/*` without a documented migration.
-- Never commit secrets/tokens/private keys.
-- Always update docs if CLI/API/operational flow changes.
-
-## PR checklist
-
-- [ ] Scope and goal are clear
-- [ ] Tests were run and reported
-- [ ] Docs updated
-- [ ] No credentials in the diff
+Open a [GitHub Issue](https://github.com/eobarretooo/ClawLite/issues) — we're happy to help.

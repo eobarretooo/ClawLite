@@ -1,393 +1,310 @@
-# 🦊 ClawLite
-
 <div align="center">
 
-**A local-first Python autonomous assistant with gateway control plane, persistent memory, scheduled autonomy, and chat-channel integrations.**
+<img src="docs/demo.gif" alt="ClawLite demo" width="720" />
+
+# 🦊 ClawLite
+
+**A local-first Python autonomous agent — persistent memory, 20+ LLM providers,<br>real chat channels, and a 24/7 self-healing runtime. No cloud required.**
 
 [![CI](https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)
-![WebSocket](https://img.shields.io/badge/WebSocket-live%20control-6C63FF)
-![License](https://img.shields.io/badge/license-MIT-2ea44f)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![LiteLLM](https://img.shields.io/badge/LiteLLM-20%2B%20providers-blueviolet)](https://litellm.ai)
+[![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
+
+[Quickstart](#-quickstart) · [Features](#-features) · [Channels](#-channels) · [Providers](#-providers) · [Docs](#-docs-map) · [Contributing](#-contributing)
+
+⭐ **Star this repo if you find it useful** — it helps others discover the project.
 
 </div>
 
-ClawLite is for developers who want an assistant that runs **on their own machine first**, speaks through a **real gateway**, remembers context over time, and can grow into a **24/7 autonomous runtime**.
+---
 
-It already ships with:
+## ⚡ Why ClawLite?
 
-- 🖥️ a FastAPI gateway with HTTP + WebSocket control surfaces
-- 🧠 persistent memory, workspace bootstrap files, and heartbeat/bootstrap cycles
-- 🔁 supervised runtime loops for autonomy, channels, cron, subagents, and self-evolution
-- 🧰 built-in tools for files, exec, web, MCP, sessions, cron, memory, skills, and patching
-- 💬 channel integrations for Telegram, Discord, Email, WhatsApp, and Slack-style outbound delivery
+- **Truly local-first** — runs entirely on your machine; no vendor lock-in, no cloud accounts required
+- **Production channels out of the box** — Telegram, Discord (slash commands, voice, polls), Email, WhatsApp, Slack
+- **Persistent, searchable memory** — hybrid BM25 + vector search, temporal decay, consolidation loop
+- **Self-healing runtime** — heartbeat supervisor, dead-letter replay, automatic provider failover
+- **Batteries included** — 24+ skills, 21+ tools, streaming responses, operator dashboard
 
-> [!IMPORTANT]
-> `main` is the living branch and may be ahead of the latest tag.
-> Current focus: making ClawLite **robust and operationally autonomous** using `ref/openclaw` and `ref/nanobot` as behavior references, adapted to ClawLite's Python architecture.
-
-## ✨ What ClawLite feels like today
-
-### 🚀 Gateway-first control plane
-
-- local dashboard at `http://127.0.0.1:8787`
-- `GET /api/status`, `GET /api/diagnostics`, `POST /api/message`, `GET /api/token`, `WS /ws`
-- packaged dashboard with:
-  - live chat
-  - sessions view
-  - automation view
-  - tool catalog
-  - workspace / bootstrap / memory / skills health
-  - autorefresh and manual heartbeat trigger
-
-### 🧠 Memory + workspace
-
-- JSONL session history under `~/.clawlite/state/sessions`
-- persistent memory under `~/.clawlite/memory`
-- workspace runtime files like:
-  - `IDENTITY.md`
-  - `SOUL.md`
-  - `USER.md`
-  - `AGENTS.md`
-  - `TOOLS.md`
-  - `HEARTBEAT.md`
-  - `BOOTSTRAP.md`
-  - `memory/MEMORY.md`
-
-### 🔁 Always-on runtime pieces
-
-- heartbeat loop
-- cron engine
-- autonomy wake coordinator
-- channel dispatcher + recovery supervisor
-- subagent maintenance
-- self-evolution runner
-- runtime supervisor with recovery telemetry
+---
 
 ## 🏁 Quickstart
 
-### 1. Install
-
 ```bash
-git clone https://github.com/eobarretooo/ClawLite.git
-cd ClawLite
-
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
+# 1. Clone and install
+git clone https://github.com/eobarretooo/ClawLite.git && cd ClawLite
 pip install -e .
-```
 
-Windows PowerShell:
-
-```powershell
-./.venv/Scripts/Activate.ps1
-```
-
-### 2. Run the setup wizard
-
-```bash
+# 2. Configure (interactive wizard — sets provider, gateway, optional Telegram)
 clawlite configure --flow quickstart
-```
 
-Quickstart currently:
-
-- ✅ validates the provider live
-- 🔒 keeps the gateway local on `127.0.0.1:8787`
-- 🪪 enables token auth on the gateway
-- 📦 bootstraps the workspace files
-- 📲 offers Telegram setup
-
-Want the manual path?
-
-```bash
-clawlite configure --flow advanced
-```
-
-### 3. Start the gateway
-
-```bash
+# 3. Start the gateway
 clawlite gateway
 ```
 
-Then open:
-
-```text
-http://127.0.0.1:8787
-```
-
-The onboarding summary also prints a tokenized dashboard URL like:
-
-```text
-http://127.0.0.1:8787#token=...
-```
-
-The dashboard consumes that fragment once, stores the token locally for the browser session, and removes it from the address bar.
-
-You can also print or reopen the handoff later with:
+Open **http://127.0.0.1:8787** → live dashboard with chat, automation, memory, and tools.
 
 ```bash
-clawlite dashboard --no-open
+# Or talk to the agent straight from the terminal
+clawlite run "hello — what can you do?"
 ```
 
-That command also returns the current bootstrap state plus backup, web-search, and security guidance for the workspace.
+---
 
-If onboarding is still pending, the dashboard also exposes a `Hatch agent` action that sends:
+## ✨ Features
 
-```text
-Wake up, my friend!
+<table>
+<tr>
+<td width="50%">
+
+### 🧠 Memory
+- Hybrid BM25 + vector similarity search
+- SQLite (local) or pgvector (Postgres)
+- FTS5 full-text indexing
+- Temporal decay + salience scoring
+- Consolidation loop (episodic → knowledge)
+- Snapshot / rollback controls
+
+</td>
+<td width="50%">
+
+### 🔁 Always-On Runtime
+- Heartbeat supervisor with recovery telemetry
+- Cron engine (persistent, replay-safe)
+- Autonomy wake coordinator
+- Dead-letter queue + inbound journal replay
+- Subagent maintenance loop
+- Self-evolution runner
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🧰 Tools (21+)
+`files` · `exec` · `spawn` · `process` · `web` · `browser` (Playwright)
+`pdf` · `tts` · `mcp` · `sessions` · `cron` · `memory` · `skills`
+`message` · `agents` · `discord_admin` · `apply_patch` · `spawn`
+
+</td>
+<td>
+
+### 🎯 Skills (24+)
+`web-search` · `cron` · `memory` · `coding-agent` · `summarize`
+`github-issues` · `notion` · `obsidian` · `spotify` · `docker`
+`jira` · `linear` · `trello` · `1password` · `apple-notes`
+`weather` · `tmux` · `model-usage` · `session-logs` · `skill-creator`
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🌊 Streaming
+- `ProviderChunk` dataclass (delta + accumulated + done)
+- `engine.stream_run()` async generator
+- `send_streaming()` on Discord and Telegram
+- Edit-in-place draft updates as the agent types
+
+</td>
+<td>
+
+### 🖥️ Operator Dashboard
+- Live chat + WebSocket frame preview
+- Sessions view with one-click handoff
+- Automation: cron, channel controls, recovery
+- Knowledge: workspace files, skills, memory health
+- Tools catalog + group/alias browser
+
+</td>
+</tr>
+</table>
+
+---
+
+## 💬 Channels
+
+| Channel | Inbound | Outbound | Status | Highlights |
+|---------|---------|---------|--------|------------|
+| **Telegram** | ✅ | ✅ | ✅ Complete | Polling + webhook, reactions, topics, reply keyboards, streaming |
+| **Discord** | ✅ | ✅ | ✅ Complete | Gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming |
+| **Email** | ✅ | ✅ | 🟡 Usable | IMAP inbound + SMTP outbound |
+| **WhatsApp** | ✅ | ✅ | 🟡 Usable | Webhook inbound + outbound bridge |
+| **Slack** | ❌ | ✅ | 📤 Send-only | Outbound delivery |
+| Signal / Matrix / IRC / iMessage / DingTalk / Feishu | ❌ | ❌ | 🚧 Planned | Registered surfaces |
+
+---
+
+## 🤖 Providers
+
+ClawLite uses **LiteLLM** under the hood — swap models without changing your app code.
+
+<details>
+<summary><strong>OpenAI-compatible (15+)</strong></summary>
+
+OpenAI · Gemini · Groq · DeepSeek · OpenRouter · Together · Hugging Face · xAI · Mistral · Moonshot · NVIDIA · BytePlus / Doubao · Volcengine · KiloCode · `custom/<model>`
+
+</details>
+
+<details>
+<summary><strong>Anthropic-compatible (4)</strong></summary>
+
+Anthropic · MiniMax · Xiaomi · Kimi Coding
+
+</details>
+
+<details>
+<summary><strong>Local runtimes</strong></summary>
+
+Ollama · vLLM
+
+</details>
+
+<details>
+<summary><strong>Special</strong></summary>
+
+OpenAI Codex (OAuth)
+
+</details>
+
+Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
+
+---
+
+## 🏛️ Architecture
+
+```
+                        ┌─────────────────────────────────────┐
+  Telegram │ Discord    │           ClawLite Runtime           │
+  Email    │ WhatsApp ──▶  Channel Dispatcher                  │
+  Slack    │ Web        │       │                              │
+           │            │       ▼                              │
+  CLI ─────┤            │  FastAPI Gateway  ◀── Dashboard UI  │
+  HTTP ────┤            │  (127.0.0.1:8787)                   │
+  WS ──────┘            │       │                              │
+                        │       ▼                              │
+                        │  Agent Engine  ◀── Session Store    │
+                        │       │                              │
+              ┌─────────┴───────┼──────────────────────┐      │
+              │                 │                       │      │
+              ▼                 ▼                       ▼      │
+         LiteLLM           Tool Registry          Skills Loader│
+         (20+ providers)   (21+ tools)            (24+ skills) │
+              │                                               │
+              ▼                                               │
+         Memory Backend (BM25 + vector + FTS5 + SQLite/pgvector)
+                        └─────────────────────────────────────┘
+
+  Supervisor Loops: heartbeat · cron · autonomy · dead-letter · self-evolution
 ```
 
-through the dedicated `hatch:operator` session so the first bootstrap turn can complete cleanly.
+---
 
-If you prefer to hatch from the terminal, you can also run:
+## ⚖️ How ClawLite Compares
 
-```bash
-clawlite hatch
-```
+| Feature | **ClawLite** | LangChain | AutoGPT | OpenAI Assistants |
+|---------|:-----------:|:---------:|:-------:|:-----------------:|
+| Local-first (no cloud) | ✅ | ⚠️ partial | ⚠️ partial | ❌ |
+| 20+ LLM providers | ✅ | ✅ | ⚠️ limited | ❌ (OpenAI only) |
+| Persistent hybrid memory | ✅ | ⚠️ plugin | ⚠️ basic | ✅ (cloud) |
+| Real chat channels | ✅ 5 channels | ❌ | ⚠️ limited | ❌ |
+| 24/7 self-healing runtime | ✅ | ❌ | ⚠️ experimental | ✅ (cloud) |
+| Streaming responses | ✅ | ✅ | ⚠️ | ✅ |
+| Operator dashboard | ✅ | ❌ | ⚠️ basic | ✅ (cloud) |
+| Python SDK / CLI | ✅ | ✅ | ✅ | ❌ |
+| Runs offline | ✅ (Ollama/vLLM) | ⚠️ | ❌ | ❌ |
+| Privacy (your data, your machine) | ✅ | ⚠️ | ⚠️ | ❌ |
 
-Telegram operator controls are also available from the terminal:
-
-```bash
-clawlite telegram status
-clawlite telegram refresh
-clawlite telegram offset-commit 144
-clawlite telegram offset-sync 145
-clawlite telegram offset-reset --yes
-clawlite discord status
-clawlite discord refresh
-clawlite provider recover
-clawlite supervisor recover --component heartbeat
-clawlite autonomy wake --kind proactive
-```
-
-`clawlite telegram status` now includes offset/pairing/webhook hints so operators can see the safest next action faster.
-
-### 4. Talk to the agent
-
-```bash
-clawlite run "hello, introduce yourself and confirm the active model"
-```
-
-## 🧪 Useful examples
-
-### CLI status + diagnostics
-
-```bash
-clawlite status
-clawlite diagnostics --gateway-url http://127.0.0.1:8787
-clawlite validate config
-clawlite validate preflight --gateway-url http://127.0.0.1:8787
-```
-
-### HTTP chat request
-
-```bash
-python - <<'PY'
-import json
-import pathlib
-import urllib.request
-
-cfg = json.loads((pathlib.Path.home() / ".clawlite" / "config.json").read_text())
-token = cfg["gateway"]["auth"]["token"]
-
-req = urllib.request.Request(
-    "http://127.0.0.1:8787/api/message",
-    data=b'{"session_id":"readme:http","text":"summarize the runtime status"}',
-    headers={
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-    },
-)
-
-print(urllib.request.urlopen(req).read().decode())
-PY
-```
-
-### Inspect the control plane
-
-```bash
-curl -sS http://127.0.0.1:8787/api/status | python -m json.tool
-curl -sS http://127.0.0.1:8787/api/dashboard/state | python -m json.tool
-curl -sS http://127.0.0.1:8787/api/diagnostics | python -m json.tool
-```
-
-### Trigger a heartbeat cycle manually
-
-```bash
-curl -X POST http://127.0.0.1:8787/v1/control/heartbeat/trigger \
-  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN"
-```
-
-## 🧭 Current project state
-
-| Area | Status | Notes |
-| --- | --- | --- |
-| Gateway | ✅ Strong | Compatibility endpoints, diagnostics, WebSocket, packaged dashboard |
-| Dashboard | ✅ Active | Sessions, automation, knowledge, tools, live chat, event feed |
-| Providers | ✅ Strong | Hosted providers + Ollama/vLLM + Codex OAuth |
-| Heartbeat | ✅ Good | Loop, persisted state, manual trigger, parity work ongoing |
-| Bootstrap | ✅ Good | Workspace bootstrap lifecycle present, more parity work ongoing |
-| Telegram | ⚠️ In progress | One of the strongest channels, but durability parity still ongoing |
-| Self-evolution | ⚠️ Experimental | Present and observable; still being hardened |
-| 24/7 autonomy | 🚧 Active mission | Recovery, failover, memory quality, and ops polish are current focus |
-
-For the live engineering snapshot:
-
-- `docs/STATUS.md`
-- `docs/AUTONOMY_PLAN.md`
-- `CHANGELOG.md`
-
-## 🧩 Providers available today
-
-### OpenAI-compatible
-
-- OpenAI
-- Gemini
-- Groq
-- DeepSeek
-- OpenRouter
-- Together
-- Hugging Face
-- xAI
-- Mistral
-- Moonshot
-- Qianfan
-- Z.AI
-- NVIDIA
-- BytePlus
-- Doubao
-- Volcengine
-- KiloCode
-- `custom/<model>` backends
-
-### Anthropic-compatible
-
-- Anthropic
-- MiniMax
-- Xiaomi
-- Kimi Coding
-
-### Local runtimes
-
-- Ollama
-- vLLM
-
-### Special case
-
-- OpenAI Codex OAuth
-
-Default model today:
-
-```text
-gemini/gemini-2.5-flash
-```
-
-More details: `docs/providers.md`
-
-## 💬 Channels available today
-
-| Channel | Inbound | Outbound | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Telegram | Yes | Yes | Complete | Polling + webhook, pairing, reactions, topics, media support, reply keyboards, streaming send |
-| Discord | Yes | Yes | Complete | Gateway WS inbound, REST outbound, reactions, embeds, threads, attachments, slash commands, button components, voice messages (OGG/waveform), webhooks, polls, streaming send |
-| Email | Yes | Yes | Usable | IMAP inbound + SMTP outbound |
-| WhatsApp | Yes | Yes | Usable | Webhook inbound + outbound bridge |
-| Slack | No | Yes | Send-only | Outbound supported, inbound loop not implemented |
-| Signal / Google Chat / Matrix / IRC / iMessage / DingTalk / Feishu / Mochat / QQ | No | No | Placeholder | Registered surfaces, not production-ready yet |
-
-More details: `docs/channels.md`
-
-## 🖥️ Dashboard at a glance
-
-The local dashboard is no longer a static landing page. It is a real operator shell.
-
-Current tabs:
-
-- 🧭 `Overview` — control plane, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
-- 🧭 `Overview` — control plane, next-step cards, event feed, heartbeat trigger, diagnostics snapshot, and one-click hatch action when bootstrap is pending
-- 💬 `Chat` — live WS/HTTP chat and raw WebSocket frame preview
-- 🗂️ `Sessions` — recent sessions with one-click handoff into chat
-- 🤖 `Automation` — cron, inbound journal replay, dead-letter replay, operator channel recovery, Discord/Telegram transport refresh, Telegram pairing and offset controls, provider suppression recovery, operator-triggered supervisor recovery, manual autonomy wake control, and memory snapshot/suggestion/rollback controls
-- 🧠 `Knowledge` — workspace runtime files, bootstrap status, skills, memory profile/suggestions/quality, and memory snapshot controls
-- 🧰 `Tools` — tool catalog, groups, aliases
-
-## 🧠 Workspace and memory
-
-ClawLite uses a workspace to shape identity, behavior, and long-term context.
-
-Default workspace root:
-
-```text
-~/.clawlite/workspace
-```
-
-State + memory roots:
-
-```text
-~/.clawlite/state
-~/.clawlite/memory
-```
-
-Useful docs:
-
-- `docs/workspace.md`
-- `docs/memory.md`
-- `docs/API.md`
+---
 
 ## 🛠️ Development
 
-### Local loop
-
 ```bash
+# Install dev dependencies + run tests
 pip install -e .
-python -m pytest tests -q --tb=short
+python -m pytest tests/ -q --tb=short
+
+# Lint
 python -m ruff check --select=E,F,W .
+
+# Focused test suites
+python -m pytest tests/channels/test_discord.py -v
+python -m pytest tests/channels/test_telegram.py -v
+python -m pytest tests/core/test_engine.py -v
+
+# Release preflight
+bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787
 ```
 
-### Focused validation
+**CI runs on Python 3.10 and 3.12.**
+
+---
+
+## 🖥️ CLI Reference
 
 ```bash
-python -m pytest tests/gateway/test_server.py -q --tb=short
-python -m pytest tests/runtime/test_autonomy_actions.py -q --tb=short
-bash scripts/smoke_test.sh
+clawlite configure --flow quickstart   # interactive setup wizard
+clawlite gateway                       # start the HTTP/WS gateway
+clawlite run "your message here"       # one-shot agent call
+clawlite status                        # runtime health summary
+clawlite diagnostics                   # full diagnostic snapshot
+clawlite hatch                         # trigger first bootstrap turn
+
+# Channel controls
+clawlite telegram status / refresh / offset-commit <n>
+clawlite discord status / refresh
+
+# Operator controls
+clawlite provider recover
+clawlite autonomy wake --kind proactive
+clawlite supervisor recover --component heartbeat
 ```
 
-### Release preflight
+---
 
-```bash
-bash scripts/release_preflight.sh \
-  --config ~/.clawlite/config.json \
-  --gateway-url http://127.0.0.1:8787
-```
+## 📚 Docs Map
 
-## 📚 Docs map
+| Doc | Contents |
+|-----|----------|
+| [`docs/QUICKSTART.md`](docs/QUICKSTART.md) | Detailed setup walkthrough |
+| [`docs/API.md`](docs/API.md) | Gateway HTTP + WebSocket API reference |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Operational commands and diagnostics |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Operator validation and incident flow |
+| [`docs/providers.md`](docs/providers.md) | Provider catalog and auth |
+| [`docs/channels.md`](docs/channels.md) | Channel behavior and caveats |
+| [`docs/tools.md`](docs/tools.md) | Tool catalog and aliases |
+| [`docs/memory.md`](docs/memory.md) | Memory backends, privacy, quality |
+| [`docs/workspace.md`](docs/workspace.md) | Workspace runtime files and lifecycle |
+| [`docs/STATUS.md`](docs/STATUS.md) | Live engineering snapshot |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history |
 
-- `docs/README.md` — docs index
-- `docs/STATUS.md` — current state and active milestone
-- `docs/AUTONOMY_PLAN.md` — phased robustness/autonomy plan
-- `docs/QUICKSTART.md` — setup walkthrough
-- `docs/API.md` — gateway HTTP + WS surfaces
-- `docs/OPERATIONS.md` — operational commands and diagnostics
-- `docs/RUNBOOK.md` — operator validation and incident flow
-- `docs/RELEASING.md` — tag/release workflow
-- `docs/providers.md` — provider catalog and auth
-- `docs/channels.md` — channel behavior and caveats
-- `docs/tools.md` — tool catalog and aliases
-- `docs/workspace.md` — workspace runtime files and lifecycle
-- `docs/memory.md` — memory backends, privacy, quality, snapshots
+---
 
-## 🔭 Project direction
+## 🤝 Contributing
 
-ClawLite is actively being hardened toward a more durable, autonomous runtime.
+Contributions are welcome! To get started:
 
-Current reference repos used for adaptation work:
+1. Fork the repo and create a feature branch
+2. Follow the existing code style (ruff, typed Python 3.10+)
+3. Add tests for new functionality — we use TDD
+4. Open a PR with a clear description of what changed and why
 
-- `ref/openclaw` — dashboard, onboarding, bootstrap, heartbeat, gateway behavior
-- `ref/nanobot` — reliability patterns, lightweight runtime ideas, channel/provider hardening
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full guidelines.
 
-The goal is **behavior parity where it matters**, not codebase cloning.
+---
 
 ## 📄 License
 
-MIT — see `LICENSE`.
+MIT — see [`LICENSE`](LICENSE).
+
+---
+
+<div align="center">
+
+Built with ❤️ for developers who want their AI assistant to run on their own terms.
+
+**[⭐ Star on GitHub](https://github.com/eobarretooo/ClawLite)** · **[🐛 Report a Bug](https://github.com/eobarretooo/ClawLite/issues)** · **[💡 Request a Feature](https://github.com/eobarretooo/ClawLite/issues)**
+
+</div>
