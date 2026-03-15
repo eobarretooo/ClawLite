@@ -1007,6 +1007,39 @@ class SkillsLoader:
             return None
         return self._refresh_runtime_status(row)
 
+    def build_skills_summary(self) -> str:
+        """Return XML summary of all available skills (name + description only).
+
+        Use this to inject into agent context without bloating the prompt with full skill content.
+        Call load_skill_full(name) to get the complete SKILL.md on demand.
+        """
+        skills = self.discover(include_unavailable=True)
+        if not skills:
+            return "<skills></skills>"
+        lines = ["<skills>"]
+        for skill in skills:
+            name = str(skill.name or "").strip()
+            desc = str(skill.description or "").strip()
+            available = str(skill.available).lower()
+            desc_safe = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(f'  <skill name="{name}" available="{available}">{desc_safe}</skill>')
+        lines.append("</skills>")
+        return "\n".join(lines)
+
+    def load_skill_full(self, name: str) -> str:
+        """Load complete SKILL.md content for a specific skill (on-demand full load).
+
+        Returns empty string if skill not found.
+        """
+        normalized = str(name or "").strip().lower().replace(" ", "-")
+        for root in self.roots:
+            if not root.is_dir():
+                continue
+            skill_md = root / normalized / "SKILL.md"
+            if skill_md.is_file():
+                return skill_md.read_text(encoding="utf-8", errors="replace")
+        return ""
+
     def load_skill_content(self, name: str) -> str | None:
         spec = self.get(name)
         if spec is None:

@@ -83,3 +83,9 @@ Flow:
 </skill>
 </available_skills>
 ```
+
+## Progressive Loading
+
+`SkillsLoader.build_skills_summary()` returns a compact XML summary of all skills (name + description only) for injection into the agent context. This avoids bloating the prompt with full skill content.
+
+Use `load_skill_full(name)` to fetch the complete `SKILL.md` content on demand when the agent needs to execute a specific skill.

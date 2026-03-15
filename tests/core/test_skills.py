@@ -304,6 +304,38 @@ def test_skills_loader_duplicate_policy_prefers_workspace_over_builtin(tmp_path:
     assert row.description == "from workspace"
 
 
+def test_build_skills_summary_returns_xml(tmp_path: Path) -> None:
+    """Summary only includes name + description, not full content."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: Does something useful\n---\n\n# My Skill\n\nFull content here.",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    summary = loader.build_skills_summary()
+    assert "<skill" in summary
+    assert "my-skill" in summary
+    assert "Does something useful" in summary
+    # Full body content should NOT be in summary
+    assert "Full content here" not in summary
+
+
+def test_load_skill_full_returns_complete_content(tmp_path: Path) -> None:
+    """Full load returns complete SKILL.md content."""
+    skill_dir = tmp_path / "my-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: Does something useful\n---\n\n# My Skill\n\nFull content here.",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    full = loader.load_skill_full("my-skill")
+    assert "Full content here" in full
+
+
 def test_skills_loader_parses_multiline_metadata_json(tmp_path: Path) -> None:
     skill_dir = tmp_path / "meta"
     skill_dir.mkdir(parents=True, exist_ok=True)
