@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 
 from clawlite.channels.discord import DiscordChannel
 
@@ -432,3 +433,102 @@ def test_discord_operator_refresh_transport_resets_gateway_state() -> None:
         assert channel._bot_user_id == ""
 
     asyncio.run(_scenario())
+
+
+# --- New tests for reaction intents, add_reaction(), and REACTION_ADD handler ---
+
+
+def _make_channel():
+    return DiscordChannel(config={"token": "test-token"})
+
+
+def test_discord_gateway_intents_include_reactions():
+    from clawlite.channels.discord import DISCORD_DEFAULT_GATEWAY_INTENTS
+    assert DISCORD_DEFAULT_GATEWAY_INTENTS & 1024, "Missing GUILD_MESSAGE_REACTIONS"
+    assert DISCORD_DEFAULT_GATEWAY_INTENTS & 8192, "Missing DIRECT_MESSAGE_REACTIONS"
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_success():
+    ch = _make_channel()
+    ch._running = True
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+    mock_client = AsyncMock()
+    mock_client.put = AsyncMock(return_value=mock_resp)
+    ch._client = mock_client
+
+    result = await ch.add_reaction("111", "222", "👍")
+    assert result is True
+    mock_client.put.assert_called_once()
+    call_url = mock_client.put.call_args[0][0]
+    assert "/channels/111/messages/222/reactions/" in call_url
+    assert "/@me" in call_url
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_not_running_returns_false():
+    ch = _make_channel()
+    ch._running = False
+    result = await ch.add_reaction("111", "222", "👍")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_add_reaction_empty_emoji_returns_false():
+    ch = _make_channel()
+    ch._running = True
+    ch._client = AsyncMock()
+    result = await ch.add_reaction("111", "222", "")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_gateway_handles_reaction_add_event():
+    received = []
+    async def on_msg(session_id, user_id, text, metadata):
+        received.append((session_id, user_id, text, metadata))
+
+    ch = _make_channel()
+    ch.on_message = on_msg
+    ch._bot_user_id = "bot-999"
+
+    reaction_payload = {
+        "op": 0, "t": "MESSAGE_REACTION_ADD", "s": 1,
+        "d": {
+            "user_id": "user-1",
+            "channel_id": "chan-1",
+            "message_id": "msg-1",
+            "guild_id": "guild-1",
+            "emoji": {"name": "👍", "id": None},
+        }
+    }
+    result = await ch._handle_gateway_payload(reaction_payload)
+    assert result is True
+    assert len(received) == 1
+    session_id, user_id, text, metadata = received[0]
+    assert session_id == "discord:chan-1"
+    assert user_id == "user-1"
+    assert text == "[reaction: 👍]"
+    assert metadata["event_type"] == "reaction_add"
+    assert metadata["emoji"] == "👍"
+
+
+@pytest.mark.asyncio
+async def test_reaction_add_bot_user_ignored():
+    """Reactions from the bot itself should be ignored."""
+    received = []
+    async def on_msg(session_id, user_id, text, metadata):
+        received.append((session_id, user_id, text, metadata))
+
+    ch = _make_channel()
+    ch.on_message = on_msg
+    ch._bot_user_id = "bot-999"
+
+    await ch._handle_message_reaction_add({
+        "user_id": "bot-999",
+        "channel_id": "chan-1",
+        "message_id": "msg-1",
+        "emoji": {"name": "👍", "id": None},
+    })
+    assert received == []

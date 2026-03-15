@@ -13,7 +13,10 @@ from clawlite.channels.base import BaseChannel, cancel_task
 
 DISCORD_DEFAULT_API_BASE = "https://discord.com/api/v10"
 DISCORD_DEFAULT_GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
-DISCORD_DEFAULT_GATEWAY_INTENTS = 37377
+# 37377 base (GUILDS|GUILD_MESSAGES|DIRECT_MESSAGES|MESSAGE_CONTENT)
+# + 1024  GUILD_MESSAGE_REACTIONS
+# + 8192  DIRECT_MESSAGE_REACTIONS
+DISCORD_DEFAULT_GATEWAY_INTENTS = 46593
 DISCORD_TYPING_INTERVAL_S = 8.0
 
 
@@ -403,6 +406,45 @@ class DiscordChannel(BaseChannel):
             if channel_id:
                 await self._stop_typing(channel_id)
 
+    async def add_reaction(self, channel_id: str, message_id: str, emoji: str) -> bool:
+        """Add a reaction emoji to a message.
+
+        emoji: Unicode emoji (e.g. "👍") or custom emoji name:id (e.g. "name:123456").
+        Returns True on success (HTTP 204), False on any error.
+        """
+        if not self._running:
+            return False
+        client = self._client
+        if client is None:
+            return False
+        import urllib.parse
+        encoded_emoji = urllib.parse.quote(str(emoji or "").strip(), safe="")
+        if not encoded_emoji:
+            return False
+        channel_id = str(channel_id or "").strip()
+        message_id = str(message_id or "").strip()
+        if not channel_id or not message_id:
+            return False
+        url = f"{self.api_base}/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me"
+        for attempt in range(1, self.send_retry_attempts + 1):
+            try:
+                response = await client.put(url)
+            except Exception as exc:
+                self._last_error = str(exc)
+                return False
+            if response.status_code == 204:
+                return True
+            if response.status_code == 429:
+                self._last_error = "http:429"
+                if attempt >= self.send_retry_attempts:
+                    return False
+                retry_after = self._extract_retry_after(response)
+                await asyncio.sleep(retry_after)
+                continue
+            self._last_error = f"http:{response.status_code}"
+            return False
+        return False
+
     async def _gateway_runner(self) -> None:
         backoff_s = self.gateway_backoff_base_s
         while self._running:
@@ -504,6 +546,13 @@ class DiscordChannel(BaseChannel):
         if event_type == "MESSAGE_CREATE":
             await self._handle_message_create(payload)
             return True
+
+        if event_type == "MESSAGE_REACTION_ADD":
+            await self._handle_message_reaction_add(payload)
+            return True
+
+        if event_type == "MESSAGE_REACTION_REMOVE":
+            return True  # Silently acknowledged
 
         return True
 
@@ -627,6 +676,37 @@ class DiscordChannel(BaseChannel):
             )
         finally:
             await self._stop_typing(channel_id)
+
+    async def _handle_message_reaction_add(self, payload: dict[str, Any]) -> None:
+        """Handle incoming reaction — emits as metadata-only event for agent awareness."""
+        user_id = str(payload.get("user_id", "") or "").strip()
+        if not user_id or user_id == self._bot_user_id:
+            return
+        channel_id = str(payload.get("channel_id", "") or "").strip()
+        if not channel_id:
+            return
+        if not self._is_allowed_sender(user_id=user_id):
+            return
+        emoji_data = payload.get("emoji") or {}
+        emoji_name = str(emoji_data.get("name", "") or "").strip()
+        emoji_id = str(emoji_data.get("id", "") or "").strip()
+        emoji_str = f"{emoji_name}:{emoji_id}" if emoji_id else emoji_name
+        if not emoji_str:
+            return
+        metadata = {
+            "channel": "discord",
+            "channel_id": channel_id,
+            "guild_id": str(payload.get("guild_id", "") or "").strip(),
+            "message_id": str(payload.get("message_id", "") or "").strip(),
+            "event_type": "reaction_add",
+            "emoji": emoji_str,
+        }
+        await self.emit(
+            session_id=f"discord:{channel_id}",
+            user_id=user_id,
+            text=f"[reaction: {emoji_str}]",
+            metadata=metadata,
+        )
 
     async def _typing_loop(self, channel_id: str) -> None:
         client = self._client
