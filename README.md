@@ -289,8 +289,8 @@ More details: `docs/providers.md`
 
 | Channel | Inbound | Outbound | Status | Notes |
 | --- | --- | --- | --- | --- |
-| Telegram | Yes | Yes | Most complete | Polling + webhook, pairing, reactions, topics, media support |
-| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), rich embeds, thread creation, attachment download |
+| Telegram | Yes | Yes | Complete | Polling + webhook, pairing, reactions, topics, media support, reply keyboards, streaming send |
+| Discord | Yes | Yes | Complete | Gateway WS inbound, REST outbound, reactions, embeds, threads, attachments, slash commands, button components, voice messages (OGG/waveform), webhooks, polls, streaming send |
 | Email | Yes | Yes | Usable | IMAP inbound + SMTP outbound |
 | WhatsApp | Yes | Yes | Usable | Webhook inbound + outbound bridge |
 | Slack | No | Yes | Send-only | Outbound supported, inbound loop not implemented |

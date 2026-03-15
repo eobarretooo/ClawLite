@@ -89,6 +89,13 @@ Recent progress:
 - Discord gateway session/reconnect state now has dedicated dashboard/operator visibility plus a live refresh action
 - Discord transport refresh is now also accessible from the CLI
 - Telegram reply keyboards (ReplyKeyboardMarkup/ReplyKeyboardRemove) are now supported via `telegram_reply_keyboard` metadata key
+- Discord slash commands (INTERACTION_CREATE type=2) and button clicks (type=3) are now handled; `register_slash_command()`, `list_slash_commands()`, `reply_interaction()` available
+- Discord message components (buttons/action rows) are now supported via `discord_components` metadata key in `send()`
+- Discord voice messages (OGG/Opus, IS_VOICE_MESSAGE flag) via `send_voice_message()` with automatic waveform generation
+- Discord webhooks: `create_webhook()` and `execute_webhook()` available
+- Discord polls: `discord_poll` metadata key in `send()` and standalone `create_poll()` method
+- Discord and Telegram `send_streaming()`: edit-in-place draft streaming with `ProviderChunk` async generators
+- Engine `stream_run()` async generator: yields `ProviderChunk` objects; falls back to blocking `run()` for non-streaming providers
 
 Exit criteria:
 
