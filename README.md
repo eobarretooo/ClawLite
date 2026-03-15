@@ -86,7 +86,7 @@ clawlite run "hello — what can you do?"
 ### 🧰 Tools (21+)
 `files` · `exec` · `spawn` · `process` · `web` · `browser` (Playwright)
 `pdf` · `tts` · `mcp` · `sessions` · `cron` · `memory` · `skills`
-`message` · `agents` · `discord_admin` · `apply_patch` · `spawn`
+`message` · `agents` · `discord_admin` · `apply_patch` · `exec_files`
 
 </td>
 <td>
@@ -224,7 +224,7 @@ Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
 ```bash
 # Install dev dependencies + run tests
 pip install -e .
-python -m pytest tests/ -q --tb=short
+python -m pytest tests/ -q --tb=short -k "not slow"
 
 # Lint
 python -m ruff check --select=E,F,W .
