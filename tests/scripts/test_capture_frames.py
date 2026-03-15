@@ -1,7 +1,19 @@
 from __future__ import annotations
+import shutil
 import pytest
-pytest.importorskip("playwright", reason="playwright not installed — skip capture_frames tests")
 from scripts.terminal_template import TermLine
+
+# Skip entire module if playwright chromium binary is not installed
+def _chromium_available() -> bool:
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            path = pw.chromium.executable_path
+            return shutil.which(path) is not None or __import__("pathlib").Path(path).exists()
+    except Exception:
+        return False
+
+pytestmark = pytest.mark.skipif(not _chromium_available(), reason="playwright chromium binary not installed")
 
 
 def test_capture_returns_bytes_list():
