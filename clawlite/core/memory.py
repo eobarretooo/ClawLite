@@ -7206,6 +7206,136 @@ class MemoryStore:
             },
         }
 
+    # ── Consolidation Loop ─────────────────────────────────────────────────
+
+    consolidation_threshold: int = 10  # min episodic records per category to trigger
+
+    async def start_consolidation_loop(self, interval_s: float = 21600.0) -> None:
+        """Start background consolidation task (idempotent, default every 6h)."""
+        existing = getattr(self, "_consolidation_task", None)
+        if existing and not existing.done():
+            return
+        self._consolidation_interval_s: float = max(60.0, float(interval_s or 21600.0))
+        self._consolidation_task: asyncio.Task = asyncio.create_task(self._consolidation_loop())
+
+    async def stop_consolidation_loop(self) -> None:
+        """Cancel background consolidation task cleanly."""
+        task = getattr(self, "_consolidation_task", None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._consolidation_task = None
+
+    async def _consolidation_loop(self) -> None:
+        interval = getattr(self, "_consolidation_interval_s", 21600.0)
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self.consolidate_categories()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._diagnostics["last_error"] = f"consolidation_loop: {exc}"
+
+    async def consolidate_categories(self) -> dict[str, int]:
+        """Group episodic records by category and store a summary as a knowledge record.
+
+        For each category with >= consolidation_threshold unconsolidated event-type
+        records, builds a plain-text summary and stores it as a 'knowledge' record.
+        Marks source records as consolidated via metadata flag.
+
+        Returns {category: consolidated_count}.
+        """
+        results: dict[str, int] = {}
+        threshold = int(getattr(self, "consolidation_threshold", 10))
+
+        backend = getattr(self, "backend", None)
+        fetch = getattr(backend, "fetch_layer_records", None)
+        if not callable(fetch):
+            return results
+
+        try:
+            all_rows: list[dict] = await asyncio.to_thread(fetch, layer="item", limit=4000)
+        except Exception as exc:
+            self._diagnostics["last_error"] = f"consolidation_fetch: {exc}"
+            return results
+
+        # Group unconsolidated event records by category
+        by_category: dict[str, list[dict]] = {}
+        for row in all_rows:
+            payload = row.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            meta = payload.get("metadata") or {}
+            if bool(meta.get("consolidated", False)):
+                continue
+            mem_type = str(payload.get("memory_type", "") or "").strip()
+            if mem_type not in ("event", ""):
+                continue
+            category = str(row.get("category", "") or "context").strip()
+            by_category.setdefault(category, []).append(row)
+
+        for category, rows in by_category.items():
+            if len(rows) < threshold:
+                continue
+
+            # Build summary text from record texts
+            lines = []
+            for row in rows:
+                payload = row.get("payload", {})
+                text = str(payload.get("text", "") or "").strip()
+                if text:
+                    lines.append(text)
+
+            if not lines:
+                continue
+
+            summary = f"[{category}] {len(lines)} events: " + " | ".join(lines[:20])
+            now = datetime.now(timezone.utc).isoformat()
+
+            try:
+                await asyncio.to_thread(
+                    self.add,
+                    summary,
+                    source="consolidation",
+                    memory_type="knowledge",
+                    metadata={"consolidated_from": category, "consolidated_count": len(lines)},
+                )
+            except Exception as exc:
+                self._diagnostics["last_error"] = f"consolidation_add: {exc}"
+                continue
+
+            # Mark source records as consolidated
+            upsert = getattr(backend, "upsert_layer_record", None)
+            if callable(upsert):
+                for row in rows:
+                    payload = row.get("payload", {})
+                    if not isinstance(payload, dict):
+                        continue
+                    meta = dict(payload.get("metadata") or {})
+                    meta["consolidated"] = True
+                    meta["consolidated_at"] = now
+                    updated_payload = {**payload, "metadata": meta}
+                    try:
+                        await asyncio.to_thread(
+                            upsert,
+                            layer=row.get("layer", "item"),
+                            record_id=row["record_id"],
+                            payload=updated_payload,
+                            category=row.get("category", "context"),
+                            created_at=row.get("created_at", now),
+                            updated_at=now,
+                        )
+                    except Exception:
+                        pass
+
+            results[category] = len(lines)
+
+        return results
+
 
 # Backward-compatible API expected by legacy CLI.
 def add_note(text: str) -> None:

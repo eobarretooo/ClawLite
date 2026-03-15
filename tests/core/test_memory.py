@@ -2715,3 +2715,70 @@ def test_memory_integration_policies_snapshot_returns_expected_shape(tmp_path: P
         assert "allow_skill_exec" in payload
         assert "allow_subagent_spawn" in payload
         assert "recommended_search_limit" in payload
+
+
+# ── Consolidation Loop ─────────────────────────────────────────────────────
+
+
+def test_consolidate_categories_is_callable() -> None:
+    from clawlite.core.memory import MemoryStore
+    assert hasattr(MemoryStore, "consolidate_categories")
+    assert callable(MemoryStore.consolidate_categories)
+
+
+def test_consolidation_loop_lifecycle(tmp_path: Path) -> None:
+    """start/stop lifecycle completes without errors."""
+    import asyncio
+
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.start_consolidation_loop(interval_s=0.1)
+        await asyncio.sleep(0.05)
+        await store.stop_consolidation_loop()
+
+    asyncio.run(_scenario())
+
+
+def test_consolidation_loop_is_idempotent(tmp_path: Path) -> None:
+    """Calling start twice does not create duplicate tasks."""
+    import asyncio
+
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.start_consolidation_loop(interval_s=60.0)
+        await store.start_consolidation_loop(interval_s=60.0)  # second call ignored
+        task_a = store._consolidation_task
+        await store.start_consolidation_loop(interval_s=60.0)  # third call ignored
+        task_b = store._consolidation_task
+        assert task_a is task_b
+        await store.stop_consolidation_loop()
+
+    asyncio.run(_scenario())
+
+
+def test_consolidate_categories_returns_dict(tmp_path: Path) -> None:
+    """consolidate_categories() returns {category: count} dict."""
+    import asyncio
+
+    async def _scenario() -> dict:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        return await store.consolidate_categories()
+
+    result = asyncio.run(_scenario())
+    assert isinstance(result, dict)
+
+
+def test_consolidate_categories_skips_when_below_threshold(tmp_path: Path) -> None:
+    """With fewer records than threshold, no knowledge records are created."""
+    import asyncio
+
+    async def _scenario() -> dict:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        # Add 2 records — below default threshold of 10
+        store.add("user prefers dark mode", source="session:test")
+        store.add("user timezone is UTC-3", source="session:test")
+        return await store.consolidate_categories()
+
+    result = asyncio.run(_scenario())
+    # Should return empty dict (nothing consolidated)
+    assert result == {}
