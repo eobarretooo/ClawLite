@@ -9,7 +9,7 @@ import time
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from clawlite.core.memory import MemoryRecord, MemoryStore
 from clawlite.core.prompt import PromptBuilder
@@ -59,6 +59,15 @@ class LoopDetectionSettings:
     history_size: int = 20
     repeat_threshold: int = 3
     critical_threshold: int = 6
+
+
+@dataclass(slots=True)
+class ProviderChunk:
+    """A streaming chunk from a provider response."""
+    text: str           # delta text in this chunk
+    accumulated: str    # full text so far
+    done: bool          # True on last chunk
+    error: str | None = None
 
 
 @dataclass(slots=True)
@@ -2179,6 +2188,54 @@ class AgentEngine:
                 progress_hook=progress_hook,
                 stop_event=stop_event,
             )
+
+    async def stream_run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> AsyncGenerator[ProviderChunk, None]:
+        """Stream agent response as ProviderChunk objects.
+
+        If the provider implements ``stream()``, delegates to it after building
+        the message list.  Otherwise falls back to the blocking ``run()`` and
+        yields a single done-chunk with the complete result.
+
+        Usage::
+
+            async for chunk in await engine.stream_run(session_id=sid, user_text="hi"):
+                print(chunk.text, end="", flush=True)
+        """
+        async def _gen() -> AsyncGenerator[ProviderChunk, None]:
+            stream_fn = getattr(self.provider, "stream", None)
+            if not callable(stream_fn):
+                # Provider doesn't support streaming — fall back to blocking run()
+                result = await self.run(
+                    session_id=session_id,
+                    user_text=user_text,
+                    channel=channel,
+                    chat_id=chat_id,
+                )
+                yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
+                return
+
+            # Provider supports streaming: build history and delegate
+            history = self.sessions.read(session_id, limit=self.memory_window)
+            messages: list[dict[str, Any]] = [*history, {"role": "user", "content": user_text}]
+            accumulated = ""
+            async for chunk in stream_fn(messages=messages):
+                accumulated = chunk.accumulated or (accumulated + chunk.text)
+                yield chunk
+                if chunk.done:
+                    break
+            # Persist assistant reply to session history
+            if accumulated:
+                self.sessions.append(session_id, "user", user_text)
+                self.sessions.append(session_id, "assistant", accumulated)
+
+        return _gen()
 
     async def _run_serialized(
         self,
