@@ -839,6 +839,7 @@ class RuntimeContainer:
     supervisor: RuntimeSupervisor | None = None
     self_evolution: Any | None = None
     autonomy: AutonomyService | None = None
+    job_queue: JobQueue | None = None
 
 
 @dataclass(slots=True)
@@ -864,6 +865,7 @@ class GatewayLifecycleState:
                 "self_evolution": {"enabled": False, "running": False, "last_error": ""},
                 "autonomy_wake": {"enabled": True, "running": False, "last_error": ""},
                 "subagent_maintenance": {"enabled": True, "running": False, "last_error": ""},
+                "job_workers": {"enabled": True, "running": False, "last_error": ""},
                 "wake_pressure": {
                     "enabled": True,
                     "running": False,
@@ -1345,6 +1347,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         skills_loader=skills,
         memory_monitor=memory_monitor,
         self_evolution=self_evolution,
+        job_queue=job_queue,
     )
 
 
@@ -1893,6 +1896,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     tuning_running = False
     tuning_stop_event = asyncio.Event()
     supervisor_incident_notice_until: dict[str, float] = {}
+    job_workers_started = False
     wake_pressure_notice_until: dict[str, float] = {}
     wake_pressure_state: dict[str, Any] = {
         "enabled": True,
@@ -3495,6 +3499,67 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         subagent_maintenance_task = None
         bind_event("subagents.lifecycle").info("subagent maintenance loop stopped")
 
+    async def _run_job_dispatch(job: Any) -> str:
+        """Worker function dispatched for each job by kind."""
+        kind = str(getattr(job, "kind", "") or "").strip()
+        payload = dict(getattr(job, "payload", {}) or {})
+        session_id = str(getattr(job, "session_id", "") or "").strip() or "jobs:system"
+        if kind == "agent_run":
+            task_text = str(payload.get("task", "") or "").strip()
+            if not task_text:
+                raise ValueError("agent_run job missing 'task' in payload")
+            timeout_s = float(payload.get("timeout_s", 120.0) or 120.0)
+            result = await _run_engine_with_timeout(
+                engine=runtime.engine,
+                session_id=session_id,
+                user_text=task_text,
+                timeout_s=timeout_s,
+            )
+            return str(getattr(result, "text", "") or "").strip() or "ok"
+        if kind == "skill_exec":
+            skill_name = str(payload.get("skill", "") or "").strip()
+            if not skill_name:
+                raise ValueError("skill_exec job missing 'skill' in payload")
+            skill_content = runtime.skills_loader.load_skill_content(skill_name)
+            if skill_content is None:
+                raise ValueError(f"skill not found: {skill_name}")
+            task_text = str(payload.get("task", "") or "").strip() or f"Execute skill: {skill_name}"
+            timeout_s = float(payload.get("timeout_s", 120.0) or 120.0)
+            combined_text = f"Skill context:\n{skill_content}\n\nTask: {task_text}"
+            result = await _run_engine_with_timeout(
+                engine=runtime.engine,
+                session_id=session_id,
+                user_text=combined_text,
+                timeout_s=timeout_s,
+            )
+            return str(getattr(result, "text", "") or "").strip() or "ok"
+        raise ValueError(f"unsupported job kind: {kind!r} — use agent_run, skill_exec, or custom")
+
+    async def _start_job_workers() -> None:
+        nonlocal job_workers_started
+        if runtime.job_queue is None:
+            return
+        if job_workers_started:
+            status = runtime.job_queue.worker_status()
+            if status.get("running", False):
+                return
+        runtime.job_queue.start(_run_job_dispatch)
+        job_workers_started = True
+        lifecycle.mark_component("job_workers", running=True)
+        bind_event("jobs.lifecycle").info(
+            "job workers started concurrency={}",
+            runtime.job_queue._concurrency,
+        )
+
+    async def _stop_job_workers() -> None:
+        nonlocal job_workers_started
+        if runtime.job_queue is None:
+            return
+        job_workers_started = False
+        await runtime.job_queue.stop()
+        lifecycle.mark_component("job_workers", running=False)
+        bind_event("jobs.lifecycle").info("job workers stopped")
+
     runtime.autonomy = AutonomyService(
         enabled=bool(cfg.gateway.autonomy.enabled),
         interval_s=float(cfg.gateway.autonomy.interval_s or 900),
@@ -3588,6 +3653,35 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             if tuning_state != "running":
                 incidents.append(
                     SupervisorIncident(component="memory_quality_tuning", reason=f"memory_quality_tuning_{tuning_state}")
+                )
+
+        if runtime.job_queue is not None:
+            job_status = runtime.job_queue.worker_status()
+            if not job_status.get("running", False):
+                workers_alive = int(job_status.get("workers_alive", 0) or 0)
+                workers_total = int(job_status.get("workers_total", 0) or 0)
+                reason = f"job_workers_dead:{workers_alive}/{workers_total}"
+                incidents.append(SupervisorIncident(component="job_workers", reason=reason))
+
+        if cfg.gateway.autonomy.enabled and runtime.autonomy is not None:
+            autonomy_status = runtime.autonomy.status()
+            consecutive_errors = int(autonomy_status.get("consecutive_error_count", 0) or 0)
+            no_progress_streak = int(autonomy_status.get("no_progress_streak", 0) or 0)
+            if consecutive_errors >= 5:
+                incidents.append(
+                    SupervisorIncident(
+                        component="autonomy_stuck",
+                        reason=f"autonomy_consecutive_errors:{consecutive_errors}",
+                        recoverable=False,
+                    )
+                )
+            elif no_progress_streak >= 3:
+                incidents.append(
+                    SupervisorIncident(
+                        component="autonomy_stuck",
+                        reason=f"autonomy_no_progress_streak:{no_progress_streak}",
+                        recoverable=False,
+                    )
                 )
 
         provider_telemetry = _provider_telemetry_snapshot(runtime.engine.provider)
@@ -3709,6 +3803,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 last_error=str(tuning_runner_state.get("last_error", "") or ""),
             )
             recovered = tuning_state == "running"
+        elif component == "job_workers":
+            if runtime.job_queue is not None:
+                await _start_job_workers()
+                _refresh_runtime_components()
+                recovered = bool(runtime.job_queue.worker_status().get("running", False))
         _record_autonomy_event(
             "supervisor",
             "component_recovery",
@@ -3747,6 +3846,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         "subagent_maintenance": SupervisorComponentPolicy(max_recoveries=8, budget_window_s=3600.0),
         "proactive_monitor": SupervisorComponentPolicy(max_recoveries=6, budget_window_s=3600.0),
         "memory_quality_tuning": SupervisorComponentPolicy(max_recoveries=4, budget_window_s=3600.0),
+        "job_workers": SupervisorComponentPolicy(max_recoveries=8, budget_window_s=3600.0),
     }
 
     runtime.supervisor = RuntimeSupervisor(
@@ -3878,6 +3978,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             ("autonomy_wake", runtime.autonomy_wake.start, runtime.autonomy_wake.stop, True),
             ("cron", runtime.cron.start, runtime.cron.stop, True),
             ("subagent_maintenance", _start_subagent_maintenance, _stop_subagent_maintenance, True),
+            ("job_workers", _start_job_workers, _stop_job_workers, bool(runtime.job_queue is not None)),
             ("heartbeat", runtime.heartbeat.start, runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
             ("autonomy", runtime.autonomy.start, runtime.autonomy.stop, bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
             ("proactive_monitor", _start_proactive_monitor, _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
@@ -4020,6 +4121,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 elif name == "self_evolution":
                     await start_fn()
                 elif name == "supervisor":
+                    await start_fn()
+                elif name == "job_workers":
                     await start_fn()
                 else:
                     await start_fn(_submit_heartbeat_wake)

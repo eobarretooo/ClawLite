@@ -208,6 +208,20 @@ class JobQueue:
             raise RuntimeError("no worker_fn set — call start() first")
         return self._worker_fn
 
+    def worker_status(self) -> dict:
+        """Return live health of the worker pool for supervisor monitoring."""
+        alive = sum(1 for t in self._workers if not t.done() and not t.cancelled())
+        pending_count = len([j for j in self._jobs.values() if j.status == "queued"])
+        running_count = len([j for j in self._jobs.values() if j.status == "running"])
+        return {
+            "running": self._running and alive > 0,
+            "concurrency": self._concurrency,
+            "workers_alive": alive,
+            "workers_total": len(self._workers),
+            "pending_jobs": pending_count,
+            "running_jobs": running_count,
+        }
+
     def restore_from_journal(self) -> int:
         """Reload queued jobs from journal. Returns count restored."""
         if self._journal is None:
