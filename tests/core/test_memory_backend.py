@@ -502,3 +502,100 @@ def test_sqlite_fts5_search_text_empty_query(tmp_path):
     backend.initialize(tmp_path)
     results = backend.search_text("", limit=5)
     assert results == []
+
+
+# ── PgvectorMemoryBackend.search_text ─────────────────────────────────────────
+# PgvectorMemoryBackend uses @dataclass(slots=True), so instance attributes
+# are read-only. We patch at the class level and restore in teardown.
+
+def test_pgvector_search_text_returns_empty_on_blank_query(monkeypatch) -> None:
+    """search_text with blank query never opens a connection."""
+    from clawlite.core.memory_backend import PgvectorMemoryBackend
+
+    opened = []
+
+    def _no_conn(self):  # noqa: ANN001
+        opened.append(1)
+        return None
+
+    monkeypatch.setattr(PgvectorMemoryBackend, "_open_connection", _no_conn)
+    backend = PgvectorMemoryBackend(pgvector_url="postgresql://fake/db")
+
+    result = backend.search_text("", limit=5)
+    assert result == []
+    assert not opened, "must not open connection for blank query"
+
+
+def test_pgvector_search_text_returns_empty_when_connection_unavailable(monkeypatch) -> None:
+    """search_text returns [] gracefully when _open_connection returns None."""
+    from clawlite.core.memory_backend import PgvectorMemoryBackend
+
+    monkeypatch.setattr(PgvectorMemoryBackend, "_open_connection", lambda self: None)
+    backend = PgvectorMemoryBackend(pgvector_url="postgresql://fake/db")
+
+    result = backend.search_text("python language", limit=5)
+    assert result == []
+
+
+def test_pgvector_search_text_executes_fts_query_and_returns_hits(monkeypatch) -> None:
+    """search_text executes plainto_tsquery SQL and maps rows to {record_id, score}."""
+    from unittest.mock import MagicMock
+    from clawlite.core.memory_backend import PgvectorMemoryBackend
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchall.return_value = [("rec_abc", 0.75), ("rec_xyz", 0.42)]
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value = fake_cursor
+
+    monkeypatch.setattr(PgvectorMemoryBackend, "_open_connection", lambda self: fake_conn)
+    backend = PgvectorMemoryBackend(pgvector_url="postgresql://fake/db")
+
+    results = backend.search_text("hello world", limit=10)
+
+    assert len(results) == 2
+    assert results[0] == {"record_id": "rec_abc", "score": 0.75}
+    assert results[1] == {"record_id": "rec_xyz", "score": 0.42}
+
+    executed_sql = fake_cursor.execute.call_args[0][0]
+    assert "plainto_tsquery" in executed_sql
+    assert "to_tsvector" in executed_sql
+    assert "ts_rank" in executed_sql
+
+
+def test_pgvector_search_text_with_layer_filter(monkeypatch) -> None:
+    """search_text passes layer filter to SQL when layer is specified."""
+    from unittest.mock import MagicMock
+    from clawlite.core.memory_backend import PgvectorMemoryBackend
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchall.return_value = [("r1", 0.9)]
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value = fake_cursor
+
+    monkeypatch.setattr(PgvectorMemoryBackend, "_open_connection", lambda self: fake_conn)
+    backend = PgvectorMemoryBackend(pgvector_url="postgresql://fake/db")
+
+    results = backend.search_text("knowledge", layer="item", limit=5)
+
+    assert len(results) == 1
+    assert results[0]["record_id"] == "r1"
+
+    executed_sql = fake_cursor.execute.call_args[0][0]
+    assert "layer" in executed_sql.lower()
+
+
+def test_pgvector_search_text_returns_empty_on_sql_error(monkeypatch) -> None:
+    """search_text catches SQL errors and returns [] without propagating."""
+    from unittest.mock import MagicMock
+    from clawlite.core.memory_backend import PgvectorMemoryBackend
+
+    fake_cursor = MagicMock()
+    fake_cursor.execute.side_effect = RuntimeError("syntax error near 'plainto'")
+    fake_conn = MagicMock()
+    fake_conn.cursor.return_value = fake_cursor
+
+    monkeypatch.setattr(PgvectorMemoryBackend, "_open_connection", lambda self: fake_conn)
+    backend = PgvectorMemoryBackend(pgvector_url="postgresql://fake/db")
+
+    result = backend.search_text("query", limit=5)
+    assert result == []

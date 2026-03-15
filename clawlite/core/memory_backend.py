@@ -1049,7 +1049,67 @@ class PgvectorMemoryBackend:
         return scored[:bounded_limit]
 
     def search_text(self, query: str, layer: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
-        return []
+        """Full-text search via PostgreSQL plainto_tsquery on payload->>'text'.
+
+        Returns list of {record_id, score} sorted best-match first (score in [0,1]).
+        Falls back gracefully to [] when the connection is unavailable.
+        """
+        query = str(query or "").strip()
+        if not query:
+            return []
+        limit = max(1, min(int(limit or 10), 200))
+
+        conn = self._open_connection()
+        if conn is None:
+            return []
+
+        with self._lock:
+            cursor = None
+            try:
+                cursor = conn.cursor()
+                text_col = "COALESCE(payload::json->>'text', '')"
+                tsv = f"to_tsvector('english', {text_col})"
+                tsq = "plainto_tsquery('english', %s)"
+                if layer:
+                    cursor.execute(
+                        f"""
+                        SELECT record_id,
+                               ts_rank({tsv}, {tsq}) AS score
+                        FROM layer_records
+                        WHERE layer = %s
+                          AND {tsv} @@ {tsq}
+                        ORDER BY score DESC
+                        LIMIT %s
+                        """,
+                        (query, str(layer), query, limit),
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        SELECT record_id,
+                               ts_rank({tsv}, {tsq}) AS score
+                        FROM layer_records
+                        WHERE {tsv} @@ {tsq}
+                        ORDER BY score DESC
+                        LIMIT %s
+                        """,
+                        (query, query, limit),
+                    )
+                rows = cursor.fetchall()
+                return [{"record_id": str(r[0] or ""), "score": float(r[1])} for r in rows]
+            except Exception as exc:
+                self._set_status(last_error=str(exc))
+                return []
+            finally:
+                if cursor is not None:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def resolve_memory_backend(backend_name: str, pgvector_url: str = "") -> MemoryBackend:

@@ -2782,3 +2782,94 @@ def test_consolidate_categories_skips_when_below_threshold(tmp_path: Path) -> No
     result = asyncio.run(_scenario())
     # Should return empty dict (nothing consolidated)
     assert result == {}
+
+
+# ── Decay GC Loop ─────────────────────────────────────────────────────────────
+
+def test_decay_loop_lifecycle(tmp_path: Path) -> None:
+    """start/stop decay loop completes without errors."""
+    import asyncio
+    from clawlite.core.memory import MemoryStore
+
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.start_decay_loop(interval_s=0.1)
+        await asyncio.sleep(0.05)
+        await store.stop_decay_loop()
+
+    asyncio.run(_scenario())
+
+
+def test_decay_loop_is_idempotent(tmp_path: Path) -> None:
+    """Calling start_decay_loop twice does not create duplicate tasks."""
+    import asyncio
+    from clawlite.core.memory import MemoryStore
+
+    async def _scenario() -> None:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        await store.start_decay_loop(interval_s=60.0)
+        task_a = store._decay_task
+        await store.start_decay_loop(interval_s=60.0)  # ignored
+        task_b = store._decay_task
+        assert task_a is task_b
+        await store.stop_decay_loop()
+
+    asyncio.run(_scenario())
+
+
+def test_purge_decayed_records_returns_dict(tmp_path: Path) -> None:
+    """purge_decayed_records() returns a dict with 'purged' key."""
+    import asyncio
+    from clawlite.core.memory import MemoryStore
+
+    async def _scenario() -> dict:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        return await store.purge_decayed_records()
+
+    result = asyncio.run(_scenario())
+    assert isinstance(result, dict)
+    assert "purged" in result
+
+
+def test_purge_decayed_records_removes_fully_decayed(tmp_path: Path) -> None:
+    """Records with decay_rate > 0 that are old enough get purged."""
+    import asyncio
+    from clawlite.core.memory import MemoryStore, MemoryRecord
+
+    ancient_ts = "2020-01-01T00:00:00+00:00"
+
+    async def _scenario() -> dict:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+
+        # Inject a pre-built MemoryRecord with high decay_rate and ancient timestamp
+        # directly into the read path so we bypass normalization.
+        stale = MemoryRecord(
+            id="stale-001",
+            text="ephemeral note from long ago",
+            source="session:test",
+            created_at=ancient_ts,
+            updated_at=ancient_ts,
+            decay_rate=99.0,
+            memory_type="event",
+        )
+
+        store._read_history_records = lambda: [stale]  # type: ignore[method-assign]
+        return await store.purge_decayed_records()
+
+    result = asyncio.run(_scenario())
+    assert isinstance(result, dict)
+    assert result["purged"] >= 1
+
+
+def test_purge_decayed_records_skips_zero_decay_rate(tmp_path: Path) -> None:
+    """Records with decay_rate=0 are never purged regardless of age."""
+    import asyncio
+    from clawlite.core.memory import MemoryStore
+
+    async def _scenario() -> dict:
+        store = MemoryStore(tmp_path / "memory.jsonl")
+        store.add("permanent knowledge", source="session:test", memory_type="knowledge")
+        return await store.purge_decayed_records()
+
+    result = asyncio.run(_scenario())
+    assert result["purged"] == 0

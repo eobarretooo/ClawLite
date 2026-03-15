@@ -7240,6 +7240,81 @@ class MemoryStore:
             except Exception as exc:
                 self._diagnostics["last_error"] = f"consolidation_loop: {exc}"
 
+    # ── Decay GC Loop ─────────────────────────────────────────────────────────
+
+    _DECAY_GC_THRESHOLD = 0.95  # fraction of _DECAY_MAX_PENALTY that triggers deletion
+
+    async def start_decay_loop(self, interval_s: float = 3600.0) -> None:
+        """Start background decay GC task (idempotent, default every 1h).
+
+        Periodically scans records whose decay_rate > 0 and deletes those whose
+        accumulated decay_penalty has reached _DECAY_GC_THRESHOLD × _DECAY_MAX_PENALTY,
+        preventing unbounded growth of stale ephemeral records.
+        """
+        existing = getattr(self, "_decay_task", None)
+        if existing and not existing.done():
+            return
+        self._decay_interval_s: float = max(60.0, float(interval_s or 3600.0))
+        self._decay_task: asyncio.Task = asyncio.create_task(self._decay_loop())
+
+    async def stop_decay_loop(self) -> None:
+        """Cancel background decay GC task cleanly."""
+        task = getattr(self, "_decay_task", None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._decay_task = None
+
+    async def _decay_loop(self) -> None:
+        interval = getattr(self, "_decay_interval_s", 3600.0)
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self.purge_decayed_records()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._diagnostics["last_error"] = f"decay_loop: {exc}"
+
+    async def purge_decayed_records(self) -> dict[str, int]:
+        """Delete records whose decay penalty has reached the GC threshold.
+
+        Only targets records with decay_rate > 0. Returns {purged: N}.
+        """
+        threshold = self._DECAY_MAX_PENALTY * self._DECAY_GC_THRESHOLD
+        expired_ids: set[str] = set()
+
+        try:
+            history = await asyncio.to_thread(self._read_history_records)
+        except Exception:
+            history = []
+
+        for row in history:
+            if float(getattr(row, "decay_rate", 0.0) or 0.0) <= 0.0:
+                continue
+            if self._decay_penalty(row) >= threshold:
+                row_id = str(getattr(row, "id", "") or "").strip()
+                if row_id:
+                    expired_ids.add(row_id)
+
+        if not expired_ids:
+            return {"purged": 0}
+
+        try:
+            deleted = await asyncio.to_thread(self._delete_records_by_ids, expired_ids)
+            purged = int(deleted.get("deleted_count", 0) or 0)
+        except Exception as exc:
+            self._diagnostics["last_error"] = f"decay_purge: {exc}"
+            purged = 0
+
+        if purged > 0:
+            self._diagnostics["decay_gc_purged"] = int(self._diagnostics.get("decay_gc_purged", 0)) + purged
+
+        return {"purged": purged}
+
     async def consolidate_categories(self) -> dict[str, int]:
         """Group episodic records by category and store a summary as a knowledge record.
 
