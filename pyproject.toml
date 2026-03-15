@@ -46,3 +46,9 @@ clawlite = [
   "skills/*/SKILL.md",
   "dashboard/*",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "slow: testes de integração lentos (pule com -m 'not slow')",
+]
