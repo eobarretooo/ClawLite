@@ -355,6 +355,13 @@ class DiscordChannel(BaseChannel):
             }
             payload["allowed_mentions"] = {"replied_user": False}
 
+        # Rich embeds — pass as metadata key "discord_embeds" or "embeds"
+        raw_embeds = metadata_payload.get("discord_embeds") or metadata_payload.get("embeds")
+        if isinstance(raw_embeds, list) and raw_embeds:
+            payload["embeds"] = [
+                e for e in raw_embeds if isinstance(e, dict)
+            ][:10]  # Discord max 10 embeds per message
+
         channel_id = ""
         try:
             if resolved_target.kind == "user":
@@ -444,6 +451,45 @@ class DiscordChannel(BaseChannel):
             self._last_error = f"http:{response.status_code}"
             return False
         return False
+
+    async def create_thread(
+        self,
+        *,
+        channel_id: str,
+        name: str,
+        message_id: str | None = None,
+        auto_archive_duration: int = 1440,
+    ) -> str:
+        """Create a Discord thread.
+
+        If message_id is given, creates a thread anchored to that message.
+        Otherwise creates a standalone channel thread.
+        Returns the new thread_id or empty string on failure.
+        auto_archive_duration: minutes before auto-archive (60, 1440, 4320, 10080).
+        """
+        channel_id = str(channel_id or "").strip()
+        name = str(name or "").strip()[:100]  # Discord limit
+        if not channel_id or not name:
+            return ""
+        if message_id:
+            url = f"{self.api_base}/channels/{channel_id}/messages/{message_id}/threads"
+        else:
+            url = f"{self.api_base}/channels/{channel_id}/threads"
+        payload: dict[str, Any] = {
+            "name": name,
+            "auto_archive_duration": auto_archive_duration,
+        }
+        try:
+            response = await self._post_json(
+                url=url,
+                payload=payload,
+                error_prefix="discord_thread",
+            )
+            data = response.json() if response.content else {}
+            return str(data.get("id", "") or "").strip()
+        except Exception as exc:
+            self._last_error = str(exc)
+            return ""
 
     async def _gateway_runner(self) -> None:
         backoff_s = self.gateway_backoff_base_s
@@ -624,6 +670,20 @@ class DiscordChannel(BaseChannel):
             )
         return attachments
 
+    async def _download_attachment(self, url: str, filename: str = "") -> bytes | None:
+        """Download an attachment from Discord CDN. Returns raw bytes or None on failure."""
+        url = str(url or "").strip()
+        if not url or not url.startswith("https://"):
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_s * 3) as cdn_client:
+                response = await cdn_client.get(url)
+                if response.status_code == 200:
+                    return bytes(response.content)
+        except Exception as exc:
+            self._last_error = str(exc)
+        return None
+
     async def _handle_message_create(self, payload: dict[str, Any]) -> None:
         author = payload.get("author")
         if not isinstance(author, dict):
@@ -646,14 +706,32 @@ class DiscordChannel(BaseChannel):
 
         attachments = self._normalize_attachment_rows(payload.get("attachments"))
         content = str(payload.get("content", "") or "").strip()
-        attachment_lines = [
-            f"[discord attachment: {row['filename'] or row['id'] or 'file'}]"
+
+        # Download attachment bytes concurrently
+        attachment_data: list[dict[str, Any]] = []
+        if attachments:
+            download_tasks = [
+                self._download_attachment(row["url"], row["filename"])
+                for row in attachments
+            ]
+            results = await asyncio.gather(*download_tasks, return_exceptions=True)
+            for row, data in zip(attachments, results):
+                entry = dict(row)
+                entry["data"] = data if isinstance(data, bytes) else None
+                attachment_data.append(entry)
+
+        # Build text
+        attachment_desc = " ".join(
+            row["filename"] or row["id"] or "file"
             for row in attachments
-        ]
-        parts = [part for part in (content, "\n".join(attachment_lines)) if part]
-        text = "\n\n".join(parts).strip()
-        if not text:
-            return
+            if row.get("filename") or row.get("id")
+        )
+        if content:
+            text = content
+        elif attachment_desc:
+            text = f"[attachments: {attachment_desc}]"
+        else:
+            text = "[attachment]"
 
         metadata = {
             "channel": "discord",
@@ -663,6 +741,7 @@ class DiscordChannel(BaseChannel):
             "author_username": username,
             "author_global_name": str(author.get("global_name", "") or "").strip(),
             "attachments": attachments,
+            "attachment_data": attachment_data,
             "is_dm": not bool(payload.get("guild_id")),
         }
 

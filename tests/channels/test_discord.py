@@ -385,7 +385,7 @@ def test_discord_message_create_filters_self_and_acl() -> None:
                 )
 
         assert len(emitted) == 1
-        assert emitted[0][2] == "[discord attachment: image.png]"
+        assert emitted[0][2] == "[attachments: image.png]"
         assert emitted[0][3]["attachments"][0]["filename"] == "image.png"
 
     asyncio.run(_scenario())
@@ -532,3 +532,83 @@ async def test_reaction_add_bot_user_ignored():
         "emoji": {"name": "👍", "id": None},
     })
     assert received == []
+
+
+@pytest.mark.asyncio
+async def test_send_with_embeds():
+    from clawlite.channels.discord import DiscordChannel
+    ch = DiscordChannel(config={"token": "test-token"})
+    ch._running = True
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"id": "msg-abc"}'
+    mock_resp.json = lambda: {"id": "msg-abc"}
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    ch._client = mock_client
+    ch._typing_tasks = {}
+
+    embed = {"title": "Hello", "description": "World", "color": 0x00FF00}
+    result = await ch.send(
+        target="channel:123",
+        text="Check this embed",
+        metadata={"discord_embeds": [embed]},
+    )
+    assert result.startswith("discord:sent:")
+    posted = mock_client.post.call_args[1]["json"] if mock_client.post.call_args[1] else mock_client.post.call_args[0][1]
+    assert "embeds" in posted
+    assert posted["embeds"][0]["title"] == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_create_thread_from_message():
+    from clawlite.channels.discord import DiscordChannel
+    ch = DiscordChannel(config={"token": "test-token"})
+    ch._running = True
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"id": "thread-999"}'
+    mock_resp.json = lambda: {"id": "thread-999"}
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    ch._client = mock_client
+
+    thread_id = await ch.create_thread(
+        channel_id="chan-1",
+        name="My Thread",
+        message_id="msg-1",
+    )
+    assert thread_id == "thread-999"
+    call_url = mock_client.post.call_args[0][0]
+    assert "/messages/msg-1/threads" in call_url
+
+
+@pytest.mark.asyncio
+async def test_create_thread_standalone():
+    from clawlite.channels.discord import DiscordChannel
+    ch = DiscordChannel(config={"token": "test-token"})
+    ch._running = True
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"id": "thread-888"}'
+    mock_resp.json = lambda: {"id": "thread-888"}
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    ch._client = mock_client
+
+    thread_id = await ch.create_thread(channel_id="chan-1", name="Standalone Thread")
+    assert thread_id == "thread-888"
+    call_url = mock_client.post.call_args[0][0]
+    assert "/channels/chan-1/threads" in call_url
+    assert "messages" not in call_url
+
+
+@pytest.mark.asyncio
+async def test_download_attachment_returns_none_for_non_https():
+    from clawlite.channels.discord import DiscordChannel
+    ch = DiscordChannel(config={"token": "test-token"})
+    result = await ch._download_attachment("http://example.com/file.txt")
+    assert result is None
+
+    result2 = await ch._download_attachment("")
+    assert result2 is None
