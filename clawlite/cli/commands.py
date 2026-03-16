@@ -54,6 +54,7 @@ from clawlite.cli.ops import provider_use_model
 from clawlite.cli.ops import telegram_live_probe
 from clawlite.cli.onboarding import build_dashboard_handoff
 from clawlite.cli.onboarding import run_onboarding_wizard
+from clawlite.cli.onboarding import _run_configure_flow as run_configure_flow
 from clawlite.config.loader import load_config
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import save_config
@@ -294,17 +295,19 @@ def cmd_hatch(args: argparse.Namespace) -> int:
 
 
 def cmd_configure(args: argparse.Namespace) -> int:
-    """Interactive setup wizard — alias for 'clawlite onboard --wizard'."""
+    """Two-level interactive configuration wizard (Basic / Advanced)."""
+    from rich.console import Console
     cfg = _ensure_config_materialized(args.config)
-    payload = run_onboarding_wizard(
+    section = str(getattr(args, "section", None) or "").strip() or None
+    payload = run_configure_flow(
+        Console(),
         cfg,
         config_path=args.config,
-        overwrite=bool(getattr(args, "overwrite", False)),
-        variables={},
-        flow=getattr(args, "flow", None),
+        section=section,
     )
     _print_json(payload)
     return 0 if bool(payload.get("ok", False)) else 2
+
 
 
 def cmd_onboard(args: argparse.Namespace) -> int:
@@ -1260,9 +1263,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_dashboard.add_argument("--no-open", action="store_true", help="Print dashboard URLs without opening a browser")
     p_dashboard.set_defaults(handler=cmd_dashboard)
 
-    p_configure = sub.add_parser("configure", help="Interactive setup wizard (quickstart/advanced provider, Telegram, gateway)")
-    p_configure.add_argument("--overwrite", action="store_true", help="Overwrite existing workspace files")
-    p_configure.add_argument("--flow", choices=["quickstart", "advanced"], help="Choose wizard flow explicitly")
+    p_configure = sub.add_parser("configure", help="Interactive configuration wizard (Basic / Advanced settings)")
+    p_configure.add_argument(
+        "--section", default=None,
+        help="Jump to a specific section: provider, gateway, channels, workspace, memory, context_budget, jobs, bus, tool_safety, autonomy"
+    )
     p_configure.set_defaults(handler=cmd_configure)
 
     p_onboard = sub.add_parser("onboard", help="Generate workspace identity templates")

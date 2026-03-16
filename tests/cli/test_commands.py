@@ -128,38 +128,31 @@ def test_cli_configure_routes_flow_override_to_wizard(
         encoding="utf-8",
     )
 
-    called: dict[str, object] = {"flow": None}
+    called: dict[str, object] = {"section": None}
 
-    def _fake_wizard(config, *, config_path, overwrite, variables, flow=None):
-        called["flow"] = flow
-        assert overwrite is False
-        assert variables == {}
-        assert str(config.agents.defaults.model).startswith("openai/")
+    def _fake_flow(console, config, *, config_path, section=None):
+        called["section"] = section
         return {
             "ok": True,
-            "mode": "wizard",
-            "flow": flow,
-            "final": {
-                "gateway_url": "http://127.0.0.1:8787",
-                "gateway_token": "tok-test-123",
-            },
+            "visited_sections": [section] if section else [],
+            "saved_path": str(config_path),
         }
 
-    monkeypatch.setattr("clawlite.cli.commands.run_onboarding_wizard", _fake_wizard)
+    monkeypatch.setattr("clawlite.cli.commands.run_configure_flow", _fake_flow)
     rc = main(
         [
             "--config",
             str(config_path),
             "configure",
-            "--flow",
-            "advanced",
+            "--section",
+            "memory",
         ]
     )
 
     assert rc == 0
-    assert called["flow"] == "advanced"
+    assert called["section"] == "memory"
     payload = json.loads(capsys.readouterr().out)
-    assert payload["flow"] == "advanced"
+    assert payload["ok"] is True
 
 
 def test_cli_skills_list_and_show(capsys) -> None:
