@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 import pytest
 from clawlite.config.schema import AppConfig
-from clawlite.cli.onboarding import _configure_memory, _configure_context_budget
+from clawlite.cli.onboarding import (
+    _configure_memory,
+    _configure_context_budget,
+    _configure_jobs,
+    _configure_bus,
+)
 from rich.console import Console
 
 
@@ -50,5 +55,33 @@ def test_configure_context_budget_keeps_defaults_on_empty(monkeypatch) -> None:
     monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: kw.get("default", ""))
     _configure_context_budget(_console(), config)
     assert config.agents.defaults.max_tokens == original_tokens
+
+
+def test_configure_jobs_sets_workers_and_persist(monkeypatch) -> None:
+    config = AppConfig.from_dict({})
+    prompt_answers = iter(["4", "/tmp/jobs.db"])
+    confirm_answers = iter([True])
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: next(prompt_answers))
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: next(confirm_answers))
+    _configure_jobs(_console(), config)
+    assert config.jobs.worker_concurrency == 4
+    assert config.jobs.persist_enabled is True
+
+
+def test_configure_bus_enables_journal(monkeypatch) -> None:
+    config = AppConfig.from_dict({})
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: "/tmp/bus.db")
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: True)
+    _configure_bus(_console(), config)
+    assert config.bus.journal_enabled is True
+    assert config.bus.journal_path == "/tmp/bus.db"
+
+
+def test_configure_bus_disable_journal(monkeypatch) -> None:
+    config = AppConfig.from_dict({"bus": {"journal_enabled": True, "journal_path": "/old/path"}})
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: kw.get("default", ""))
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: False)
+    _configure_bus(_console(), config)
+    assert config.bus.journal_enabled is False
 
 

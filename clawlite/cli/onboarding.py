@@ -1250,6 +1250,40 @@ def _configure_context_budget(console: Console, config: AppConfig) -> None:
     console.print("  [green]✓[/] Context budget updated.\n")
 
 
+def _configure_jobs(console: Console, config: AppConfig) -> None:
+    """Interactive jobs configuration."""
+    console.print("\n  [bold cyan]Job Workers[/]\n")
+
+    workers = Prompt.ask("  Worker concurrency", default=str(config.jobs.worker_concurrency))
+    try:
+        config.jobs.worker_concurrency = max(1, int(workers))
+    except (ValueError, TypeError):
+        pass
+
+    persist = Confirm.ask("  Persist jobs to disk (survive restart)", default=config.jobs.persist_enabled)
+    config.jobs.persist_enabled = persist
+
+    if persist:
+        path = Prompt.ask("  Jobs persist path (blank = default)", default=config.jobs.persist_path or "")
+        config.jobs.persist_path = path.strip()
+
+    console.print("  [green]✓[/] Job settings updated.\n")
+
+
+def _configure_bus(console: Console, config: AppConfig) -> None:
+    """Interactive bus/journal configuration."""
+    console.print("\n  [bold cyan]Event Bus[/]\n")
+
+    enabled = Confirm.ask("  Enable bus journal (persist events to SQLite)", default=config.bus.journal_enabled)
+    config.bus.journal_enabled = enabled
+
+    if enabled:
+        path = Prompt.ask("  Journal path (blank = default)", default=config.bus.journal_path or "")
+        config.bus.journal_path = path.strip()
+
+    console.print("  [green]✓[/] Bus settings updated.\n")
+
+
 def run_onboarding_wizard(
     config: AppConfig,
     *,
