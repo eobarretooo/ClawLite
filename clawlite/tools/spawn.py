@@ -73,7 +73,12 @@ class SpawnTool(Tool):
         if not allowed:
             raise ValueError(f"subagent_spawn_blocked_by_memory_policy:{reason}")
         try:
-            run = await self.manager.spawn(session_id=ctx.session_id, task=task, runner=self.runner)
+            run = await self.manager.spawn(
+                session_id=ctx.session_id,
+                task=task,
+                runner=self.runner,
+                parent_session_id=ctx.session_id,
+            )
         except SubagentLimitError as exc:
             raise ValueError(str(exc)) from exc
         return run.run_id

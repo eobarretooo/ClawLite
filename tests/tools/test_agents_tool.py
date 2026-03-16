@@ -179,3 +179,33 @@ def test_agents_list_filters_session_and_active_only(tmp_path) -> None:
         assert delegated["active_sessions"] == ["cli:a"]
 
     asyncio.run(_scenario())
+
+
+def test_spawn_tool_passes_parent_session_id(tmp_path) -> None:
+    """SpawnTool must propagate parent_session_id so children are traceable."""
+    from clawlite.tools.spawn import SpawnTool
+
+    async def _scenario() -> None:
+        manager = SubagentManager(state_path=tmp_path / "subagents")
+        runner_calls: list[tuple[str, str]] = []
+
+        async def runner(session_id: str, task: str) -> str:
+            runner_calls.append((session_id, task))
+            return "ok"
+
+        tool = SpawnTool(manager=manager, runner=runner)
+        ctx = ToolContext(session_id="parent_session_abc")
+        run_id = await tool.run({"task": "do something"}, ctx)
+
+        await asyncio.sleep(0.2)
+        run = manager.get_run(run_id)
+        assert run is not None
+        assert run.status == "done"
+        # Child session_id must encode parent context
+        assert run.session_id.startswith("parent_session_abc:sub:")
+        # orchestration_depth must be set to 1
+        assert run.metadata.get("orchestration_depth") == 1
+        # parent_session_id must be stored in metadata
+        assert run.metadata.get("parent_session_id") == "parent_session_abc"
+
+    asyncio.run(_scenario())

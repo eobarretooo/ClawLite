@@ -596,3 +596,108 @@ def test_subagent_manager_status_reports_maintenance_and_heartbeat(tmp_path: Pat
         assert str(final.metadata.get("heartbeat_at", "") or "") >= after_heartbeat
 
     asyncio.run(_scenario())
+
+
+def test_orchestration_depth_increments_on_child_spawn() -> None:
+    async def _scenario() -> None:
+        mgr = SubagentManager(max_orchestration_depth=5)
+
+        async def runner(sid: str, task: str) -> str:
+            return "ok"
+
+        run = await mgr.spawn(
+            session_id="child",
+            task="task",
+            runner=runner,
+            parent_session_id="parent",
+        )
+        await asyncio.sleep(0.1)
+        assert run.metadata.get("orchestration_depth") == 1
+        assert run.session_id.startswith("parent:sub:")
+
+    asyncio.run(_scenario())
+
+
+def test_orchestration_depth_blocks_at_max() -> None:
+    async def _scenario() -> None:
+        mgr = SubagentManager(max_orchestration_depth=2)
+
+        async def runner(sid: str, task: str) -> str:
+            return "ok"
+
+        # Depth 1: parent -> child
+        run1 = await mgr.spawn(
+            session_id="c1",
+            task="t",
+            runner=runner,
+            parent_session_id="parent",
+        )
+        await asyncio.sleep(0.1)
+        assert run1.metadata.get("orchestration_depth") == 1
+
+        # Depth 2: parent:sub:XX -> grandchild
+        run2 = await mgr.spawn(
+            session_id="c2",
+            task="t",
+            runner=runner,
+            parent_session_id=run1.session_id,
+        )
+        await asyncio.sleep(0.1)
+        assert run2.metadata.get("orchestration_depth") == 2
+
+        # Depth 3: should be blocked
+        try:
+            await mgr.spawn(
+                session_id="c3",
+                task="t",
+                runner=runner,
+                parent_session_id=run2.session_id,
+            )
+            raise AssertionError("Should have raised SubagentLimitError")
+        except SubagentLimitError as exc:
+            assert "orchestration depth limit" in str(exc)
+
+    asyncio.run(_scenario())
+
+
+def test_orchestration_depth_zero_means_no_parent() -> None:
+    async def _scenario() -> None:
+        mgr = SubagentManager()
+
+        async def runner(sid: str, task: str) -> str:
+            return "ok"
+
+        run = await mgr.spawn(session_id="s1", task="t", runner=runner)
+        await asyncio.sleep(0.1)
+        assert run.metadata.get("orchestration_depth") == 0
+
+    asyncio.run(_scenario())
+
+
+def test_orchestration_depth_unlimited_when_zero() -> None:
+    """max_orchestration_depth=0 disables the guard."""
+    async def _scenario() -> None:
+        mgr = SubagentManager(max_orchestration_depth=0)
+
+        async def runner(sid: str, task: str) -> str:
+            return "ok"
+
+        # Build a deep chain without hitting a limit
+        parent_id = "root"
+        for _ in range(10):
+            run = await mgr.spawn(
+                session_id="child",
+                task="t",
+                runner=runner,
+                parent_session_id=parent_id,
+            )
+            await asyncio.sleep(0.05)
+            parent_id = run.session_id
+        # Should complete without error
+
+    asyncio.run(_scenario())
+
+
+def test_status_exposes_max_orchestration_depth() -> None:
+    mgr = SubagentManager(max_orchestration_depth=3)
+    assert mgr.status()["max_orchestration_depth"] == 3

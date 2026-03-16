@@ -571,3 +571,118 @@ def test_skills_loader_diagnostics_report_marks_doc_only_as_not_runnable(tmp_pat
     assert by_name["docs-only"]["runtime_requirements"] == []
     assert by_name["summarize"]["runnable"] is True
     assert by_name["summarize"]["runtime_requirements"] == ["provider", "tool:web_fetch|read|read_file"]
+
+
+def test_fallback_hint_parsed_from_frontmatter(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "gh-cli"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: gh-cli\n"
+        "description: GitHub CLI skill\n"
+        "always: false\n"
+        "command: __nonexistent_binary_xyz__\n"
+        "fallback_hint: Install gh via https://cli.github.com\n"
+        "metadata: {\"clawlite\":{\"requires\":{\"bins\":[\"__nonexistent_binary_xyz__\"]}}}\n"
+        "---\nUse gh CLI.\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    specs = loader.discover(include_unavailable=True)
+    spec = next((s for s in specs if s.name == "gh-cli"), None)
+    assert spec is not None
+    assert spec.available is False
+    assert spec.fallback_hint == "Install gh via https://cli.github.com"
+
+    report = loader.diagnostics_report()
+    by_name = {str(row["name"]): row for row in report["skills"]}
+    assert by_name["gh-cli"].get("fallback_hint") == "Install gh via https://cli.github.com"
+
+
+def test_fallback_hint_not_shown_for_available_skill(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "always-available"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: always-available\n"
+        "description: Always available skill\n"
+        "always: false\n"
+        "fallback_hint: Should not appear\n"
+        "---\nDocs only.\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    specs = loader.discover()
+    spec = next((s for s in specs if s.name == "always-available"), None)
+    assert spec is not None
+    assert spec.available is True
+    assert spec.fallback_hint == "Should not appear"  # parsed but...
+
+    report = loader.diagnostics_report()
+    by_name = {str(row["name"]): row for row in report["skills"]}
+    # fallback_hint should NOT appear in diagnostics for available skills
+    assert "fallback_hint" not in by_name["always-available"]
+
+
+def test_version_pin_persisted_and_reflected(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "mypkg"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: mypkg\ndescription: pkg skill\nalways: false\n---\nBody.\n",
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.json"
+    loader = SkillsLoader(builtin_root=tmp_path, state_path=state_path)
+
+    spec = loader.get("mypkg")
+    assert spec is not None
+    assert spec.version_pin == ""
+
+    updated = loader.set_version_pin("mypkg", "1.2.3")
+    assert updated is not None
+    assert updated.version_pin == "1.2.3"
+
+    # Reload to verify persistence
+    loader2 = SkillsLoader(builtin_root=tmp_path, state_path=state_path)
+    spec2 = loader2.get("mypkg")
+    assert spec2 is not None
+    assert spec2.version_pin == "1.2.3"
+
+
+def test_clear_version_pin(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "mypkg"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: mypkg\ndescription: pkg\nalways: false\n---\n",
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.json"
+    loader = SkillsLoader(builtin_root=tmp_path, state_path=state_path)
+
+    loader.set_version_pin("mypkg", "2.0.0")
+    cleared = loader.clear_version_pin("mypkg")
+    assert cleared is not None
+    assert cleared.version_pin == ""
+
+
+def test_version_pin_returns_none_for_unknown_skill(tmp_path: Path) -> None:
+    loader = SkillsLoader(builtin_root=tmp_path)
+    result = loader.set_version_pin("does-not-exist", "1.0")
+    assert result is None
+
+
+def test_version_pin_shown_in_diagnostics_report(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "mypkg"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: mypkg\ndescription: pkg\nalways: false\n---\n",
+        encoding="utf-8",
+    )
+    loader = SkillsLoader(builtin_root=tmp_path)
+    loader.set_version_pin("mypkg", "3.1.4")
+
+    report = loader.diagnostics_report()
+    by_name = {str(row["name"]): row for row in report["skills"]}
+    assert by_name["mypkg"]["version_pin"] == "3.1.4"

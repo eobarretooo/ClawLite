@@ -434,6 +434,8 @@ class SkillSpec:
     execution_target: str
     execution_argv: list[str]
     contract_issues: list[str]
+    fallback_hint: str = ""
+    version_pin: str = ""
 
 
 class SkillsLoader:
@@ -577,14 +579,16 @@ class SkillsLoader:
         entry_state = self._entry_state(spec.name)
         enabled = bool(entry_state.get("enabled", True))
         pinned = bool(entry_state.get("pinned", False))
+        version_pin = str(entry_state.get("version_pin", "") or "").strip()
         if (
             spec.missing == missing
             and spec.available == available
             and spec.enabled == enabled
             and spec.pinned == pinned
+            and spec.version_pin == version_pin
         ):
             return spec
-        return replace(spec, missing=missing, available=available, enabled=enabled, pinned=pinned)
+        return replace(spec, missing=missing, available=available, enabled=enabled, pinned=pinned, version_pin=version_pin)
 
     def _rebuild_discovery_cache(self, *, signature: tuple[tuple[str, bool, int], ...]) -> None:
         found: dict[str, SkillSpec] = {}
@@ -750,6 +754,7 @@ class SkillsLoader:
         command = str(meta.get("command", "")).strip()
         script = str(meta.get("script", "")).strip()
         homepage = str(meta.get("homepage", "")).strip()
+        fallback_hint = str(meta.get("fallback_hint", "")).strip()
 
         if not name:
             return None
@@ -782,6 +787,7 @@ class SkillsLoader:
             execution_target=execution_target,
             execution_argv=execution_argv,
             contract_issues=[*req_issues, *contract_issues],
+            fallback_hint=fallback_hint,
         )
 
     @staticmethod
@@ -852,6 +858,34 @@ class SkillsLoader:
         entries[key] = row
         self._atomic_write_state(payload)
         return self.get(spec.name)
+
+    def set_version_pin(self, name: str, version: str) -> SkillSpec | None:
+        """Pin a skill to a specific version string. Pass empty string to clear."""
+        spec = self.get(name)
+        if spec is None:
+            return None
+        clean_version = str(version or "").strip()
+        payload = self._load_state_payload()
+        entries = payload.setdefault("entries", {})
+        if not isinstance(entries, dict):
+            entries = {}
+            payload["entries"] = entries
+        key = spec.name.strip().lower()
+        row = dict(entries.get(key) or {}) if isinstance(entries.get(key), dict) else {}
+        row.setdefault("enabled", True)
+        row.setdefault("pinned", False)
+        row["name"] = spec.name
+        if clean_version:
+            row["version_pin"] = clean_version
+        else:
+            row.pop("version_pin", None)
+        entries[key] = row
+        self._atomic_write_state(payload)
+        return self.get(spec.name)
+
+    def clear_version_pin(self, name: str) -> SkillSpec | None:
+        """Remove the version pin for a skill."""
+        return self.set_version_pin(name, "")
 
     def diagnostics_report(self) -> dict[str, object]:
         rows = self.discover(include_unavailable=True)
@@ -939,21 +973,23 @@ class SkillsLoader:
                 contract_total += 1
                 contract_issue_counts[issue] = contract_issue_counts.get(issue, 0) + 1
 
-            skill_rows.append(
-                {
-                    "name": row.name,
-                    "available": row.available,
-                    "enabled": row.enabled,
-                    "pinned": row.pinned,
-                    "version": row.version,
-                    "runnable": runnable,
-                    "source": row.source,
-                    "execution_kind": row.execution_kind,
-                    "runtime_requirements": runtime_requirements,
-                    "missing": sorted(row.missing),
-                    "contract_issues": sorted(row.contract_issues),
-                }
-            )
+            skill_row: dict[str, object] = {
+                "name": row.name,
+                "available": row.available,
+                "enabled": row.enabled,
+                "pinned": row.pinned,
+                "version": row.version,
+                "version_pin": row.version_pin,
+                "runnable": runnable,
+                "source": row.source,
+                "execution_kind": row.execution_kind,
+                "runtime_requirements": runtime_requirements,
+                "missing": sorted(row.missing),
+                "contract_issues": sorted(row.contract_issues),
+            }
+            if not row.available and row.fallback_hint:
+                skill_row["fallback_hint"] = row.fallback_hint
+            skill_rows.append(skill_row)
 
         for prefix in ("bin", "env", "os", "other"):
             missing_groups[prefix]["items"] = sorted(str(item) for item in missing_groups[prefix]["items"])

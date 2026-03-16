@@ -51,6 +51,14 @@ Runner = Callable[[str, str], Awaitable[str]]
 _T = TypeVar("_T")
 
 
+def _orchestration_depth(session_id: str) -> int:
+    """Return the orchestration depth encoded in a session_id by counting ':sub:' segments."""
+    clean = str(session_id or "").strip()
+    if not clean:
+        return 0
+    return clean.count(":sub:")
+
+
 class SubagentManager:
     """Executes delegated prompts in background asyncio tasks."""
 
@@ -64,6 +72,7 @@ class SubagentManager:
         max_resume_attempts: int = 2,
         run_ttl_seconds: float | None = 900.0,
         zombie_grace_seconds: float = 5.0,
+        max_orchestration_depth: int = 5,
     ) -> None:
         if max_concurrent_runs < 1:
             raise ValueError("max_concurrent_runs must be >= 1")
@@ -77,6 +86,8 @@ class SubagentManager:
             raise ValueError("run_ttl_seconds must be > 0 when provided")
         if float(zombie_grace_seconds) < 0:
             raise ValueError("zombie_grace_seconds must be >= 0")
+        if int(max_orchestration_depth) < 0:
+            raise ValueError("max_orchestration_depth must be >= 0")
 
         base = Path(state_path) if state_path else (Path.home() / ".clawlite" / "state" / "subagents")
         self._state_file = (base / "runs.json") if base.suffix == "" else base
@@ -87,6 +98,7 @@ class SubagentManager:
         self.max_resume_attempts = int(max_resume_attempts)
         self.run_ttl_seconds = None if run_ttl_seconds is None else float(run_ttl_seconds)
         self.zombie_grace_seconds = float(zombie_grace_seconds)
+        self.max_orchestration_depth = int(max_orchestration_depth)
         self._runs: dict[str, SubagentRun] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._queue: deque[str] = deque()
@@ -711,8 +723,17 @@ class SubagentManager:
             run_id = uuid.uuid4().hex
             if parent_session_id:
                 clean_parent = str(parent_session_id).strip()
+                child_depth = _orchestration_depth(clean_parent) + 1
+                if self.max_orchestration_depth > 0 and child_depth > self.max_orchestration_depth:
+                    raise SubagentLimitError(
+                        f"orchestration depth limit reached ({self.max_orchestration_depth}); "
+                        f"cannot spawn child at depth {child_depth}"
+                    )
                 clean_session_id = f"{clean_parent}:sub:{run_id[:8]}"
                 normalized_metadata["parent_session_id"] = clean_parent
+                normalized_metadata["orchestration_depth"] = child_depth
+            else:
+                normalized_metadata.setdefault("orchestration_depth", 0)
 
             self._ensure_limits(clean_session_id)
             now_dt = datetime.now(timezone.utc)
@@ -776,6 +797,7 @@ class SubagentManager:
             "max_resume_attempts": self.max_resume_attempts,
             "run_ttl_seconds": self.run_ttl_seconds,
             "zombie_grace_seconds": self.zombie_grace_seconds,
+            "max_orchestration_depth": self.max_orchestration_depth,
             "maintenance_interval_s": round(self.maintenance_interval_seconds(), 3),
             "run_count": len(rows),
             "running_count": sum(1 for run in rows if run.status == "running"),
