@@ -146,7 +146,7 @@ clawlite run "every morning at 9am send me a briefing on HN top stories"
 Hybrid BM25 + vector search · FTS5 full-text · temporal decay + salience scoring · episodic→knowledge consolidation · SQLite or pgvector · snapshot/rollback
 
 **🔁 Always-On Runtime**
-Heartbeat supervisor · persistent cron engine · autonomy wake coordinator · dead-letter queue + replay · background job queue (priority, retry, SQLite) · context window budget trimming · loop detection with bus events · self-evolution runner
+Heartbeat supervisor · persistent cron engine · autonomy wake coordinator · dead-letter queue + replay · background job queue (priority, retry, SQLite) · context window budget trimming · loop detection with bus events · bounded subagent orchestration (depth guard, retry budgets, zombie cleanup)
 
 **🌊 Streaming**
 `engine.stream_run()` async generator · `ProviderChunk` (delta/accumulated/done) · edit-in-place streaming on Telegram and Discord
@@ -167,6 +167,8 @@ Live chat · sessions view · automation controls (cron, recovery, channels) · 
 **🎯 Skills (25+)**
 
 `web-search` · `memory` · `coding-agent` · `summarize` · `github` · `notion` · `obsidian` · `spotify` · `docker` · `jira` · `linear` · `trello` · `1password` · `apple-notes` · `weather` · `tmux` · `model-usage` · `healthcheck` · `skill-creator` · and more
+
+Skill lifecycle: `enable` / `disable` · `pin` / `unpin` · `pin-version` / `clear-version` · `fallback_hint` for unavailable skills
 
 ---
 
@@ -289,6 +291,15 @@ clawlite run "your message here"       # one-shot agent call
 clawlite status                        # runtime health summary
 clawlite diagnostics                   # full diagnostic snapshot
 clawlite hatch                         # trigger first bootstrap turn
+
+# Skills lifecycle
+clawlite skills list [--all]           # list skills
+clawlite skills show <name>            # show skill detail
+clawlite skills check                  # diagnostics (missing deps, fallback hints)
+clawlite skills enable/disable <name>  # toggle skill
+clawlite skills pin/unpin <name>       # always-include / unpin
+clawlite skills pin-version <name> <version>  # lock to specific version
+clawlite skills clear-version <name>   # remove version pin
 
 # Channel controls
 clawlite telegram status / refresh / offset-commit <n>
