@@ -9,6 +9,8 @@ from clawlite.cli.onboarding import (
     _configure_context_budget,
     _configure_jobs,
     _configure_bus,
+    _configure_tool_safety,
+    _configure_autonomy,
 )
 from rich.console import Console
 
@@ -85,3 +87,36 @@ def test_configure_bus_disable_journal(monkeypatch) -> None:
     assert config.bus.journal_enabled is False
 
 
+def test_configure_tool_safety_enables_safety_policy(monkeypatch) -> None:
+    config = AppConfig.from_dict({})
+    confirm_seq = iter([True, False, True])  # safety=True, restrict=False, loop=True
+    answers = iter(["20", "3", "6", "60"])  # history, repeat, critical, exec_timeout
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: next(confirm_seq))
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: next(answers))
+    _configure_tool_safety(_console(), config)
+    assert config.tools.safety.enabled is True
+    assert config.tools.loop_detection.enabled is True
+    assert config.tools.loop_detection.history_size == 20
+
+
+def test_configure_tool_safety_loop_detection_off_skips_thresholds(monkeypatch) -> None:
+    config = AppConfig.from_dict({})
+    original_history = config.tools.loop_detection.history_size
+    confirm_seq = iter([False, False, False])  # safety, restrict, loop all off
+    answers = iter(["60"])  # only exec timeout
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: next(confirm_seq))
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: next(answers))
+    _configure_tool_safety(_console(), config)
+    assert config.tools.loop_detection.enabled is False
+    assert config.tools.loop_detection.history_size == original_history
+
+
+def test_configure_autonomy_sets_thresholds(monkeypatch) -> None:
+    config = AppConfig.from_dict({})
+    confirm_seq = iter([True])
+    answers = iter(["900", "300", "5"])
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: next(confirm_seq))
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: next(answers))
+    _configure_autonomy(_console(), config)
+    assert config.gateway.autonomy.enabled is True
+    assert config.gateway.autonomy.interval_s == 900

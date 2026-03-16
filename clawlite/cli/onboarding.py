@@ -1284,6 +1284,64 @@ def _configure_bus(console: Console, config: AppConfig) -> None:
     console.print("  [green]✓[/] Bus settings updated.\n")
 
 
+def _configure_tool_safety(console: Console, config: AppConfig) -> None:
+    """Interactive tool safety configuration.
+
+    Note: ExecToolConfig and WebToolConfig have no 'enabled' flag.
+    Covers: safety policy, workspace restriction, loop detection, exec timeout.
+    """
+    console.print("\n  [bold cyan]Tool Safety[/]\n")
+
+    config.tools.safety.enabled = Confirm.ask(
+        "  Enable tool safety policy", default=config.tools.safety.enabled)
+    config.tools.restrict_to_workspace = Confirm.ask(
+        "  Restrict file access to workspace directory", default=config.tools.restrict_to_workspace)
+
+    loop = Confirm.ask("  Enable tool loop detection", default=config.tools.loop_detection.enabled)
+    config.tools.loop_detection.enabled = loop
+    if loop:
+        for field, label in [
+            ("history_size",       "Loop detection history size"),
+            ("repeat_threshold",   "Repeat threshold (warn)"),
+            ("critical_threshold", "Critical threshold (block)"),
+        ]:
+            raw = Prompt.ask(f"  {label}", default=str(getattr(config.tools.loop_detection, field)))
+            try:
+                setattr(config.tools.loop_detection, field, int(raw))
+            except (ValueError, TypeError):
+                pass
+
+    exec_timeout = Prompt.ask("  Exec tool timeout (seconds)", default=str(config.tools.exec.timeout))
+    try:
+        config.tools.exec.timeout = max(1, int(exec_timeout))
+    except (ValueError, TypeError):
+        pass
+
+    console.print("  [green]✓[/] Tool safety settings updated.\n")
+
+
+def _configure_autonomy(console: Console, config: AppConfig) -> None:
+    """Interactive autonomy configuration."""
+    console.print("\n  [bold cyan]Autonomy Controls[/]\n")
+
+    aut = config.gateway.autonomy
+    aut.enabled = Confirm.ask("  Enable autonomy loop", default=aut.enabled)
+    if aut.enabled:
+        for field, label, cast in [
+            ("interval_s",          "Autonomy check interval (seconds)", int),
+            ("cooldown_s",          "Cooldown between actions (seconds)", int),
+            ("max_actions_per_run", "Max actions per run",                int),
+        ]:
+            raw = Prompt.ask(f"  {label}", default=str(getattr(aut, field)))
+            try:
+                setattr(aut, field, cast(raw))
+            except (ValueError, TypeError):
+                pass
+
+    console.print("  [green]✓[/] Autonomy settings updated.\n")
+
+
+
 def run_onboarding_wizard(
     config: AppConfig,
     *,
