@@ -1526,3 +1526,149 @@ def run_onboarding_wizard(
             "flow": "cancelled",
             "error": "cancelled",
         }
+
+
+_CONFIGURE_BASIC_SECTIONS = [
+    ("1", "provider",   "Provider / Model / API Key"),
+    ("2", "gateway",    "Gateway (host, port, auth token)"),
+    ("3", "channels",   "Primary channel (Telegram)"),
+    ("4", "workspace",  "Workspace"),
+    ("5", "back",       "Back"),
+]
+
+_CONFIGURE_ADVANCED_SECTIONS = [
+    ("1", "memory",         "Memory"),
+    ("2", "context_budget", "Context budget"),
+    ("3", "jobs",           "Jobs"),
+    ("4", "bus",            "Event bus"),
+    ("5", "channels_extra", "Extra channels (Discord, Slack, WhatsApp)"),
+    ("6", "tool_safety",    "Tool safety"),
+    ("7", "autonomy",       "Autonomy"),
+    ("8", "back",           "Back"),
+]
+
+
+def _show_configure_menu(console: Console, items: list[tuple[str, str, str]], title: str) -> str:
+    console.print(f"\n  [bold]{title}[/]\n")
+    for num, _, label in items:
+        console.print(f"    [{num}] {label}")
+    console.print()
+    choices = [num for num, _, _ in items]
+    return Prompt.ask("  Select", choices=choices)
+
+
+def _dispatch_section(
+    console: Console,
+    config: AppConfig,
+    key: str,
+    visited: set[str],
+    *,
+    overwrite: bool,
+    variables: dict[str, Any],
+) -> None:
+    """Call the right section helper by key and track visited."""
+    if key == "provider":
+        prov, api_key, base_url, sel_model, _, oauth = _configure_model(console, config, allow_continue_on_probe_failure=True)
+        apply_provider_selection(
+            config, provider=prov, api_key=api_key, base_url=base_url, model=sel_model,
+            oauth_access_token=str(oauth.get("access_token", "")),
+            oauth_account_id=str(oauth.get("account_id", "")),
+            oauth_source=str(oauth.get("source", "")),
+        )
+    elif key == "gateway":
+        _configure_gateway_quickstart(console, config)
+    elif key == "channels":
+        _configure_channels(console, config, allow_continue_on_probe_failure=True)
+    elif key == "workspace":
+        _configure_workspace(console, config, overwrite=overwrite, variables=variables)
+    elif key == "memory":
+        _configure_memory(console, config)
+    elif key == "context_budget":
+        _configure_context_budget(console, config)
+    elif key == "jobs":
+        _configure_jobs(console, config)
+    elif key == "bus":
+        _configure_bus(console, config)
+    elif key == "channels_extra":
+        console.print("  [dim]Extra channels (Discord, Slack, WhatsApp) — configure via config file.[/]\n")
+    elif key == "tool_safety":
+        _configure_tool_safety(console, config)
+    elif key == "autonomy":
+        _configure_autonomy(console, config)
+    visited.add(key)
+
+
+def _run_configure_flow(
+    console: Console,
+    config: AppConfig,
+    *,
+    config_path: str | Path | None = None,
+    section: str | None = None,
+) -> dict[str, Any]:
+    """Two-level configure wizard: Basic / Advanced."""
+    import sys
+
+    _print_banner(console)
+    effective_path = str(config_path) if config_path else str(DEFAULT_CONFIG_PATH)
+    visited: set[str] = set()
+
+    # Existing config detection (interactive sessions only)
+    if Path(effective_path).exists() and sys.stdin.isatty():
+        proceed = Confirm.ask(
+            f"  Existing config found at {effective_path}. Modify it?",
+            default=True,
+        )
+        if not proceed:
+            console.print("  [yellow]Configure cancelled. No changes made.[/]")
+            return {"ok": False, "visited_sections": [], "saved_path": effective_path}
+
+    # Section shortcut
+    if section:
+        _dispatch_section(console, config, section, visited, overwrite=False, variables={})
+        save_config(config, path=effective_path)
+        return {"ok": True, "visited_sections": sorted(visited), "saved_path": effective_path}
+
+    _MAIN_MENU = [
+        ("1", "basic",    "Basic Setup"),
+        ("2", "advanced", "Advanced Settings"),
+        ("3", "exit",     "Save & Exit"),
+    ]
+
+    while True:
+        choice_num = _show_configure_menu(console, _MAIN_MENU, "Configure ClawLite")
+        choice = _MAIN_MENU[int(choice_num) - 1][1]
+
+        if choice == "exit":
+            break
+
+        if choice == "basic":
+            while True:
+                sub = _show_configure_menu(console, _CONFIGURE_BASIC_SECTIONS, "Basic Setup")
+                _, key, _ = _CONFIGURE_BASIC_SECTIONS[int(sub) - 1]
+                if key == "back":
+                    break
+                _dispatch_section(console, config, key, visited, overwrite=False, variables={})
+                save_config(config, path=effective_path)
+
+        elif choice == "advanced":
+            while True:
+                sub = _show_configure_menu(console, _CONFIGURE_ADVANCED_SECTIONS, "Advanced Settings")
+                _, key, _ = _CONFIGURE_ADVANCED_SECTIONS[int(sub) - 1]
+                if key == "back":
+                    break
+                _dispatch_section(console, config, key, visited, overwrite=False, variables={})
+                save_config(config, path=effective_path)
+
+    save_config(config, path=effective_path)
+    console.print(
+        Panel(
+            f"  [bold green]Configuration saved![/]\n\n"
+            f"  [bold]Config path:[/]    {effective_path}\n"
+            f"  [bold]Sections visited:[/] {', '.join(sorted(visited)) or 'none'}\n\n"
+            f"  [dim]Start the agent:[/]  [bold cyan]clawlite start[/]",
+            title="[green]Done[/]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
+    return {"ok": True, "visited_sections": sorted(visited), "saved_path": effective_path}

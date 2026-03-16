@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import pytest
 from clawlite.config.schema import AppConfig
+from clawlite.cli.commands import main as cli_main
 from clawlite.cli.onboarding import (
     _configure_memory,
     _configure_context_budget,
@@ -11,6 +12,7 @@ from clawlite.cli.onboarding import (
     _configure_bus,
     _configure_tool_safety,
     _configure_autonomy,
+    _run_configure_flow,
 )
 from rich.console import Console
 
@@ -120,3 +122,73 @@ def test_configure_autonomy_sets_thresholds(monkeypatch) -> None:
     _configure_autonomy(_console(), config)
     assert config.gateway.autonomy.enabled is True
     assert config.gateway.autonomy.interval_s == 900
+
+
+def test_configure_flow_basic_exits_immediately(monkeypatch, tmp_path) -> None:
+    """Navigate: main menu -> Save & Exit without visiting any section."""
+    config = AppConfig.from_dict({"workspace_path": str(tmp_path / "ws")})
+    saved: list[str] = []
+    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(str(path)) or path)
+    # All Prompt.ask calls see "  Select" — "3" = Save & Exit
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: "3")
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: kw.get("default", False))
+    result = _run_configure_flow(_console(), config, config_path=str(tmp_path / "config.json"))
+    assert result["ok"] is True
+    assert len(saved) >= 1
+    assert result["visited_sections"] == []
+
+
+def test_configure_flow_section_shortcut(monkeypatch, tmp_path) -> None:
+    """--section memory jumps directly to memory section and exits."""
+    config = AppConfig.from_dict({})
+    saved: list[str] = []
+    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(path) or path)
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: kw.get("default", ""))
+    # config file doesn't exist yet -> existing-config gate skipped (Path.exists() is False)
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: True)
+    result = _run_configure_flow(_console(), config, config_path=str(tmp_path / "config.json"), section="memory")
+    assert result["ok"] is True
+    assert "memory" in result.get("visited_sections", [])
+
+
+def test_configure_flow_advanced_jobs_section(monkeypatch, tmp_path) -> None:
+    """Navigate to Advanced -> Jobs -> Back -> Save & Exit."""
+    config = AppConfig.from_dict({})
+    saved: list[str] = []
+    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(path) or path)
+    all_prompts = iter(["2", "3", "2", "8", "3"])
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: next(all_prompts, kw.get("default", "")))
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: kw.get("default", False))
+    result = _run_configure_flow(_console(), config, config_path=str(tmp_path / "config.json"))
+    assert result["ok"] is True
+    assert "jobs" in result.get("visited_sections", [])
+
+
+def test_cmd_configure_calls_run_configure_flow(monkeypatch, tmp_path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"workspace_path": str(tmp_path / "ws")}))
+    called: dict = {}
+
+    def _fake_flow(console, config, *, config_path, section=None):
+        called["section"] = section
+        return {"ok": True, "visited_sections": [], "saved_path": str(config_path)}
+
+    monkeypatch.setattr("clawlite.cli.commands.run_configure_flow", _fake_flow)
+    rc = cli_main(["--config", str(config_path), "configure", "--section", "memory"])
+    assert rc == 0
+    assert called["section"] == "memory"
+
+
+def test_cmd_configure_no_section_flag(monkeypatch, tmp_path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"workspace_path": str(tmp_path / "ws")}))
+    called: dict = {}
+
+    def _fake_flow(console, config, *, config_path, section=None):
+        called["section"] = section
+        return {"ok": True, "visited_sections": [], "saved_path": str(config_path)}
+
+    monkeypatch.setattr("clawlite.cli.commands.run_configure_flow", _fake_flow)
+    rc = cli_main(["--config", str(config_path), "configure"])
+    assert rc == 0
+    assert called["section"] is None
