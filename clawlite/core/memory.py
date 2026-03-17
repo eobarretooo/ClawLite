@@ -115,6 +115,27 @@ from clawlite.core.memory_versions import (
     rollback_memory_version as _rollback_memory_version,
     write_snapshot_payload as _write_snapshot_payload_helper,
 )
+from clawlite.core.memory_working_set import (
+    default_working_memory_share_scope as _default_working_memory_share_scope_helper,
+    default_working_memory_state as _default_working_memory_state_helper,
+    episodic_digest_label as _episodic_digest_label_helper,
+    episodic_session_boost as _episodic_session_boost_helper,
+    is_working_episode_record as _is_working_episode_record_helper,
+    normalize_session_id as _normalize_session_id_helper,
+    normalize_user_id as _normalize_user_id_helper,
+    normalize_working_memory_entry as _normalize_working_memory_entry_helper,
+    normalize_working_memory_promotion_state as _normalize_working_memory_promotion_state_helper,
+    normalize_working_memory_session as _normalize_working_memory_session_helper,
+    normalize_working_memory_share_scope as _normalize_working_memory_share_scope_helper,
+    normalize_working_memory_state_payload as _normalize_working_memory_state_payload_helper,
+    parent_session_id as _parent_session_id_helper,
+    working_episode_context as _working_episode_context_helper,
+    working_episode_visible_in_session as _working_episode_visible_in_session_helper,
+    working_memory_episode_summary as _working_memory_episode_summary_helper,
+    working_memory_recent_direct_messages as _working_memory_recent_direct_messages_helper,
+    working_memory_related_sessions as _working_memory_related_sessions_helper,
+    working_memory_share_group as _working_memory_share_group_helper,
+)
 
 WORD_RE = re.compile(r"[a-zA-Z0-9_]+")
 TRIVIAL_RE = re.compile(
@@ -1463,72 +1484,51 @@ class MemoryStore:
 
     @staticmethod
     def _normalize_user_id(user_id: str) -> str:
-        clean = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(user_id or "default").strip())
-        return clean or "default"
+        return _normalize_user_id_helper(user_id)
 
     @staticmethod
     def _normalize_session_id(session_id: str) -> str:
-        return str(session_id or "").strip()
+        return _normalize_session_id_helper(session_id)
 
     @classmethod
     def _parent_session_id(cls, session_id: str) -> str:
-        clean = cls._normalize_session_id(session_id)
-        if not clean:
-            return ""
-        marker = ":subagent"
-        if clean.endswith(marker):
-            return clean[: -len(marker)].rstrip(":")
-        if marker in clean:
-            head, _, _ = clean.rpartition(marker)
-            return head.rstrip(":")
-        return ""
+        return _parent_session_id_helper(
+            session_id,
+            normalize_session_id_fn=cls._normalize_session_id,
+        )
 
     @classmethod
     def _working_memory_share_group(cls, session_id: str) -> str:
-        clean = cls._normalize_session_id(session_id)
-        if not clean:
-            return ""
-        parent = cls._parent_session_id(clean)
-        return parent or clean
+        return _working_memory_share_group_helper(
+            session_id,
+            normalize_session_id_fn=cls._normalize_session_id,
+            parent_session_id_fn=cls._parent_session_id,
+        )
 
     @classmethod
     def _default_working_memory_share_scope(cls, session_id: str) -> str:
-        return "parent" if cls._parent_session_id(session_id) else "family"
+        return _default_working_memory_share_scope_helper(
+            session_id,
+            parent_session_id_fn=cls._parent_session_id,
+        )
 
     @classmethod
     def _normalize_working_memory_share_scope(cls, value: Any, *, session_id: str) -> str:
-        clean = str(value or "").strip().lower()
-        if clean in cls._WORKING_MEMORY_SHARE_SCOPE_SET:
-            return clean
-        return cls._default_working_memory_share_scope(session_id)
+        return _normalize_working_memory_share_scope_helper(
+            value,
+            session_id=session_id,
+            allowed_scopes=cls._WORKING_MEMORY_SHARE_SCOPE_SET,
+            default_scope_fn=cls._default_working_memory_share_scope,
+        )
 
     @classmethod
     def _normalize_working_memory_promotion_state(cls, value: Any) -> dict[str, Any]:
-        payload = value if isinstance(value, dict) else {}
-        try:
-            message_count = int(payload.get("last_promoted_message_count", payload.get("lastPromotedMessageCount", 0)) or 0)
-        except Exception:
-            message_count = 0
-        try:
-            total = int(payload.get("total_promotions", payload.get("totalPromotions", 0)) or 0)
-        except Exception:
-            total = 0
-        return {
-            "last_promoted_signature": str(
-                payload.get("last_promoted_signature", payload.get("lastPromotedSignature", "")) or ""
-            ).strip(),
-            "last_promoted_at": str(payload.get("last_promoted_at", payload.get("lastPromotedAt", "")) or "").strip(),
-            "last_promoted_message_count": max(0, message_count),
-            "total_promotions": max(0, total),
-        }
+        return _normalize_working_memory_promotion_state_helper(value)
 
     @classmethod
     def _default_working_memory_state(cls) -> dict[str, Any]:
-        return {
-            "version": 1,
-            "updated_at": "",
-            "sessions": {},
-        }
+        del cls
+        return _default_working_memory_state_helper()
 
     @classmethod
     def _normalize_working_memory_entry(
@@ -1538,38 +1538,20 @@ class MemoryStore:
         session_id: str,
         fallback_user_id: str = "default",
     ) -> dict[str, Any] | None:
-        if not isinstance(payload, dict):
-            return None
-        clean_session_id = cls._normalize_session_id(payload.get("session_id", session_id))
-        if not clean_session_id:
-            clean_session_id = cls._normalize_session_id(session_id)
-        role = str(payload.get("role", "") or "").strip().lower() or "user"
-        content = " ".join(str(payload.get("content", payload.get("text", "")) or "").split())
-        if not content:
-            return None
-        created_at = str(payload.get("created_at", payload.get("createdAt", "")) or "").strip() or cls._utcnow_iso()
-        parent_session_id = cls._normalize_session_id(payload.get("parent_session_id", payload.get("parentSessionId", "")))
-        if not parent_session_id:
-            parent_session_id = cls._parent_session_id(clean_session_id)
-        share_group = cls._normalize_session_id(payload.get("share_group", payload.get("shareGroup", "")))
-        if not share_group:
-            share_group = parent_session_id or clean_session_id
-        share_scope = cls._normalize_working_memory_share_scope(
-            payload.get("share_scope", payload.get("shareScope", "")),
-            session_id=clean_session_id,
+        return _normalize_working_memory_entry_helper(
+            payload,
+            session_id=session_id,
+            fallback_user_id=fallback_user_id,
+            normalize_session_id_fn=cls._normalize_session_id,
+            normalize_user_id_fn=cls._normalize_user_id,
+            parent_session_id_fn=cls._parent_session_id,
+            normalize_working_memory_share_scope_fn=lambda value, clean_session_id: cls._normalize_working_memory_share_scope(
+                value,
+                session_id=clean_session_id,
+            ),
+            normalize_memory_metadata_fn=cls._normalize_memory_metadata,
+            utcnow_iso=cls._utcnow_iso,
         )
-        metadata = cls._normalize_memory_metadata(payload.get("metadata", {}))
-        return {
-            "session_id": clean_session_id,
-            "role": role,
-            "content": content,
-            "created_at": created_at,
-            "user_id": cls._normalize_user_id(str(payload.get("user_id", payload.get("userId", fallback_user_id)) or fallback_user_id)),
-            "share_group": share_group,
-            "share_scope": share_scope,
-            "parent_session_id": parent_session_id,
-            "metadata": metadata,
-        }
 
     @classmethod
     def _normalize_working_memory_session(
@@ -1577,76 +1559,32 @@ class MemoryStore:
         session_id: str,
         payload: Any,
     ) -> dict[str, Any] | None:
-        clean_session_id = cls._normalize_session_id(session_id)
-        if not clean_session_id:
-            return None
-        raw = payload if isinstance(payload, dict) else {}
-        parent_session_id = cls._normalize_session_id(raw.get("parent_session_id", raw.get("parentSessionId", "")))
-        if not parent_session_id:
-            parent_session_id = cls._parent_session_id(clean_session_id)
-        share_group = cls._normalize_session_id(raw.get("share_group", raw.get("shareGroup", "")))
-        if not share_group:
-            share_group = parent_session_id or clean_session_id
-        share_scope = cls._normalize_working_memory_share_scope(
-            raw.get("share_scope", raw.get("shareScope", "")),
-            session_id=clean_session_id,
+        return _normalize_working_memory_session_helper(
+            session_id,
+            payload,
+            normalize_session_id_fn=cls._normalize_session_id,
+            normalize_user_id_fn=cls._normalize_user_id,
+            parent_session_id_fn=cls._parent_session_id,
+            normalize_working_memory_share_scope_fn=lambda value, clean_session_id: cls._normalize_working_memory_share_scope(
+                value,
+                session_id=clean_session_id,
+            ),
+            normalize_working_memory_promotion_state_fn=cls._normalize_working_memory_promotion_state,
+            normalize_working_memory_entry_fn=lambda item, clean_session_id, user_id: cls._normalize_working_memory_entry(
+                item,
+                session_id=clean_session_id,
+                fallback_user_id=user_id,
+            ),
+            max_messages_per_session=cls._WORKING_MEMORY_MAX_MESSAGES_PER_SESSION,
         )
-        updated_at = str(raw.get("updated_at", raw.get("updatedAt", "")) or "").strip()
-        user_id = cls._normalize_user_id(str(raw.get("user_id", raw.get("userId", "default")) or "default"))
-        promotion = cls._normalize_working_memory_promotion_state(raw.get("promotion", {}))
-        messages_raw = raw.get("messages", [])
-        messages: list[dict[str, Any]] = []
-        if isinstance(messages_raw, list):
-            for item in messages_raw:
-                normalized = cls._normalize_working_memory_entry(
-                    item,
-                    session_id=clean_session_id,
-                    fallback_user_id=user_id,
-                )
-                if normalized is not None:
-                    messages.append(normalized)
-        if messages:
-            messages = sorted(messages, key=lambda item: str(item.get("created_at", "") or ""))[
-                -cls._WORKING_MEMORY_MAX_MESSAGES_PER_SESSION :
-            ]
-            if not updated_at:
-                updated_at = str(messages[-1].get("created_at", "") or "")
-            user_id = str(messages[-1].get("user_id", user_id) or user_id)
-        return {
-            "session_id": clean_session_id,
-            "user_id": user_id,
-            "share_group": share_group,
-            "share_scope": share_scope,
-            "parent_session_id": parent_session_id,
-            "promotion": promotion,
-            "updated_at": updated_at,
-            "messages": messages,
-        }
 
     @classmethod
     def _normalize_working_memory_state_payload(cls, payload: Any) -> dict[str, Any]:
-        raw = payload if isinstance(payload, dict) else {}
-        sessions_raw = raw.get("sessions", {})
-        sessions: dict[str, dict[str, Any]] = {}
-        if isinstance(sessions_raw, dict):
-            for key, value in sessions_raw.items():
-                normalized = cls._normalize_working_memory_session(str(key or ""), value)
-                if normalized is not None:
-                    sessions[normalized["session_id"]] = normalized
-        if len(sessions) > cls._WORKING_MEMORY_MAX_SESSIONS:
-            ordered = sorted(
-                sessions.values(),
-                key=lambda item: str(item.get("updated_at", "") or ""),
-            )
-            sessions = {item["session_id"]: item for item in ordered[-cls._WORKING_MEMORY_MAX_SESSIONS :]}
-        updated_at = str(raw.get("updated_at", raw.get("updatedAt", "")) or "").strip()
-        if not updated_at and sessions:
-            updated_at = max(str(item.get("updated_at", "") or "") for item in sessions.values())
-        return {
-            "version": 1,
-            "updated_at": updated_at,
-            "sessions": sessions,
-        }
+        return _normalize_working_memory_state_payload_helper(
+            payload,
+            normalize_working_memory_session_fn=cls._normalize_working_memory_session,
+            max_sessions=cls._WORKING_MEMORY_MAX_SESSIONS,
+        )
 
     def _load_working_memory_state(self) -> dict[str, Any]:
         with self._locked_file(self.working_memory_path, "a+", exclusive=False) as fh:
@@ -1713,161 +1651,84 @@ class MemoryStore:
         *,
         include_shared_subagents: bool,
     ) -> list[dict[str, Any]]:
-        if not include_shared_subagents:
-            return [primary]
-        primary_session_id = str(primary.get("session_id", "") or "")
-        share_group = str(primary.get("share_group", "") or "")
-        parent_session_id = str(primary.get("parent_session_id", "") or "")
-        share_scope = cls._normalize_working_memory_share_scope(primary.get("share_scope", ""), session_id=primary_session_id)
-        related = [primary]
-        if share_scope == "private" or not share_group:
-            return related
-
-        for other_session_id, payload in sessions.items():
-            if str(other_session_id or "") == primary_session_id:
-                continue
-            normalized = cls._normalize_working_memory_session(str(other_session_id or ""), payload)
-            if normalized is None:
-                continue
-            if str(normalized.get("share_group", "") or "") != share_group:
-                continue
-            other_id = str(normalized.get("session_id", "") or "")
-            other_scope = cls._normalize_working_memory_share_scope(normalized.get("share_scope", ""), session_id=other_id)
-            is_parent = bool(parent_session_id and other_id == parent_session_id)
-            is_child = bool(primary_session_id and str(normalized.get("parent_session_id", "") or "") == primary_session_id)
-            is_sibling = bool(parent_session_id and str(normalized.get("parent_session_id", "") or "") == parent_session_id)
-
-            if is_parent:
-                related.append(normalized)
-                continue
-            if is_child and share_scope == "family" and other_scope in {"parent", "family"}:
-                related.append(normalized)
-                continue
-            if is_sibling and share_scope == "family" and other_scope == "family":
-                related.append(normalized)
-        return related
+        return _working_memory_related_sessions_helper(
+            sessions,
+            primary,
+            include_shared_subagents=include_shared_subagents,
+            normalize_working_memory_session_fn=cls._normalize_working_memory_session,
+            normalize_working_memory_share_scope_fn=lambda value, clean_session_id: cls._normalize_working_memory_share_scope(
+                value,
+                session_id=clean_session_id,
+            ),
+        )
 
     @classmethod
     def _working_memory_recent_direct_messages(cls, entry: dict[str, Any]) -> list[dict[str, Any]]:
-        messages_raw = entry.get("messages", [])
-        if not isinstance(messages_raw, list):
-            return []
-        out: list[dict[str, Any]] = []
-        for item in messages_raw:
-            normalized = cls._normalize_working_memory_entry(
+        return _working_memory_recent_direct_messages_helper(
+            entry,
+            normalize_working_memory_entry_fn=lambda item, clean_session_id, user_id: cls._normalize_working_memory_entry(
                 item,
-                session_id=str(entry.get("session_id", "") or ""),
-                fallback_user_id=str(entry.get("user_id", "default") or "default"),
-            )
-            if normalized is None:
-                continue
-            out.append(normalized)
-        return out
+                session_id=clean_session_id,
+                fallback_user_id=user_id,
+            ),
+        )
 
     @classmethod
     def _is_working_episode_record(cls, row: MemoryRecord) -> bool:
-        metadata = cls._normalize_memory_metadata(getattr(row, "metadata", {}))
-        if bool(metadata.get("working_memory_promoted", False)):
-            return True
-        return str(getattr(row, "source", "") or "").startswith("working-session:")
+        return _is_working_episode_record_helper(
+            row,
+            normalize_memory_metadata_fn=cls._normalize_memory_metadata,
+        )
 
     @classmethod
     def _working_episode_context(cls, row: MemoryRecord) -> dict[str, str]:
-        metadata = cls._normalize_memory_metadata(getattr(row, "metadata", {}))
-        session_id = cls._normalize_session_id(
-            metadata.get("working_memory_session_id", metadata.get("session_id", ""))
+        return _working_episode_context_helper(
+            row,
+            normalize_memory_metadata_fn=cls._normalize_memory_metadata,
+            normalize_session_id_fn=cls._normalize_session_id,
+            parent_session_id_fn=cls._parent_session_id,
+            working_memory_share_group_fn=cls._working_memory_share_group,
+            normalize_working_memory_share_scope_fn=lambda value, clean_session_id: cls._normalize_working_memory_share_scope(
+                value,
+                session_id=clean_session_id,
+            ),
         )
-        if not session_id and str(getattr(row, "source", "") or "").startswith("working-session:"):
-            session_id = cls._normalize_session_id(str(getattr(row, "source", "") or "")[len("working-session:") :])
-        parent_session_id = cls._normalize_session_id(
-            metadata.get("working_memory_parent_session_id", metadata.get("parent_session_id", ""))
-        )
-        if not parent_session_id:
-            parent_session_id = cls._parent_session_id(session_id)
-        share_group = cls._normalize_session_id(
-            metadata.get("working_memory_share_group", metadata.get("share_group", ""))
-        )
-        if not share_group:
-            share_group = cls._working_memory_share_group(session_id)
-        share_scope = cls._normalize_working_memory_share_scope(
-            metadata.get("working_memory_share_scope", metadata.get("share_scope", "")),
-            session_id=session_id,
-        )
-        return {
-            "session_id": session_id,
-            "parent_session_id": parent_session_id,
-            "share_group": share_group,
-            "share_scope": share_scope,
-        }
 
     @classmethod
     def _working_episode_visible_in_session(cls, row: MemoryRecord, *, session_id: str) -> bool:
-        clean_session_id = cls._normalize_session_id(session_id)
-        if not cls._is_working_episode_record(row) or not clean_session_id:
-            return True
-        row_ctx = cls._working_episode_context(row)
-        row_session_id = str(row_ctx.get("session_id", "") or "")
-        row_parent_session_id = str(row_ctx.get("parent_session_id", "") or "")
-        row_share_group = str(row_ctx.get("share_group", "") or "")
-        row_share_scope = str(row_ctx.get("share_scope", "") or "")
-        if not row_session_id:
-            return True
-        if row_session_id == clean_session_id:
-            return True
-        current_parent = cls._parent_session_id(clean_session_id)
-        current_group = cls._working_memory_share_group(clean_session_id)
-        if not row_share_group or row_share_group != current_group:
-            return False
-        if row_share_scope == "private":
-            return False
-        if clean_session_id == row_parent_session_id:
-            return row_share_scope in {"parent", "family"}
-        if current_parent and row_session_id == current_parent:
-            return row_share_scope == "family"
-        if row_parent_session_id == clean_session_id:
-            return row_share_scope == "family"
-        if current_parent and row_parent_session_id == current_parent:
-            return row_share_scope == "family"
-        return False
+        return _working_episode_visible_in_session_helper(
+            row,
+            session_id=session_id,
+            normalize_session_id_fn=cls._normalize_session_id,
+            is_working_episode_record_fn=cls._is_working_episode_record,
+            working_episode_context_fn=cls._working_episode_context,
+            parent_session_id_fn=cls._parent_session_id,
+            working_memory_share_group_fn=cls._working_memory_share_group,
+        )
 
     @classmethod
     def _episodic_session_boost(cls, row: MemoryRecord, *, session_id: str) -> float:
-        clean_session_id = cls._normalize_session_id(session_id)
-        if not clean_session_id or not cls._is_working_episode_record(row):
-            return 0.0
-        row_ctx = cls._working_episode_context(row)
-        row_session_id = str(row_ctx.get("session_id", "") or "")
-        row_parent_session_id = str(row_ctx.get("parent_session_id", "") or "")
-        row_share_scope = str(row_ctx.get("share_scope", "") or "")
-        if row_session_id == clean_session_id:
-            return 0.6
-        if not cls._working_episode_visible_in_session(row, session_id=clean_session_id):
-            return 0.0
-        current_parent = cls._parent_session_id(clean_session_id)
-        if clean_session_id == row_parent_session_id:
-            return 0.38 if row_share_scope == "parent" else 0.46
-        if row_parent_session_id == clean_session_id:
-            return 0.34 if row_share_scope == "family" else 0.0
-        if current_parent and row_parent_session_id == current_parent and row_share_scope == "family":
-            return 0.28
-        return 0.14
+        return _episodic_session_boost_helper(
+            row,
+            session_id=session_id,
+            normalize_session_id_fn=cls._normalize_session_id,
+            is_working_episode_record_fn=cls._is_working_episode_record,
+            working_episode_context_fn=cls._working_episode_context,
+            working_episode_visible_in_session_fn=lambda current_row, clean_session_id: cls._working_episode_visible_in_session(
+                current_row,
+                session_id=clean_session_id,
+            ),
+            parent_session_id_fn=cls._parent_session_id,
+        )
 
     @classmethod
     def _episodic_digest_label(cls, *, active_session_id: str, target_session_id: str) -> str:
-        clean_active = cls._normalize_session_id(active_session_id)
-        clean_target = cls._normalize_session_id(target_session_id)
-        if not clean_target:
-            return "unknown"
-        if clean_target == clean_active:
-            return "current"
-        parent = cls._parent_session_id(clean_active)
-        if clean_target == parent:
-            return "parent"
-        if cls._parent_session_id(clean_target) == clean_active:
-            return "child"
-        if parent and cls._parent_session_id(clean_target) == parent:
-            return "sibling"
-        return "related"
+        return _episodic_digest_label_helper(
+            active_session_id=active_session_id,
+            target_session_id=target_session_id,
+            normalize_session_id_fn=cls._normalize_session_id,
+            parent_session_id_fn=cls._parent_session_id,
+        )
 
     def _synthesize_visible_episode_digest(
         self,
@@ -1939,25 +1800,14 @@ class MemoryStore:
 
     @classmethod
     def _working_memory_episode_summary(cls, session_id: str, messages: list[dict[str, Any]]) -> str:
-        clean_session_id = cls._normalize_session_id(session_id) or "unknown"
-        recent = messages[-cls._WORKING_MEMORY_PROMOTION_WINDOW :]
-        user_rows = [str(item.get("content", "") or "") for item in recent if str(item.get("role", "") or "") == "user"]
-        assistant_rows = [str(item.get("content", "") or "") for item in recent if str(item.get("role", "") or "") == "assistant"]
-        topics: list[str] = []
-        for item in recent:
-            for topic in cls._extract_topics(str(item.get("content", "") or "")):
-                if topic not in topics:
-                    topics.append(topic)
-        details = [
-            f"Session episode for {clean_session_id} captured {len(recent)} recent messages."
-        ]
-        if topics:
-            details.append(f"Topics: {', '.join(topics[:6])}.")
-        if user_rows:
-            details.append(f"Latest user intent: {cls._compact_whitespace(user_rows[-1])[:180]}.")
-        if assistant_rows:
-            details.append(f"Latest assistant outcome: {cls._compact_whitespace(assistant_rows[-1])[:180]}.")
-        return " ".join(detail for detail in details if detail).strip()
+        return _working_memory_episode_summary_helper(
+            session_id,
+            messages,
+            promotion_window=cls._WORKING_MEMORY_PROMOTION_WINDOW,
+            normalize_session_id_fn=cls._normalize_session_id,
+            extract_topics_fn=cls._extract_topics,
+            compact_whitespace_fn=cls._compact_whitespace,
+        )
 
     def _promote_working_memory_locked(
         self,
