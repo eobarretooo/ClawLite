@@ -3,13 +3,10 @@ from __future__ import annotations
 import json
 import gzip
 import hashlib
-import base64
-import hmac
 import math
 import os
 import re
 import asyncio
-import secrets
 import threading
 import unicodedata
 import uuid
@@ -47,6 +44,26 @@ from clawlite.core.memory_policy import (
     integration_hint as _integration_hint,
     integration_policies_snapshot as _integration_policies_snapshot,
     integration_policy as _integration_policy,
+)
+from clawlite.core.memory_privacy import (
+    append_privacy_audit_event as _append_privacy_audit_event_helper,
+    decrypt_text_for_category as _decrypt_text_for_category_helper,
+    encrypted_prefix as _encrypted_prefix_helper,
+    encrypt_text_for_category as _encrypt_text_for_category_helper,
+    is_encrypted_category as _is_encrypted_category_helper,
+    legacy_encrypted_prefix as _legacy_encrypted_prefix_helper,
+    load_or_create_privacy_key as _load_or_create_privacy_key_helper,
+    privacy_block_reason as _privacy_block_reason_helper,
+    privacy_settings as _privacy_settings_helper,
+    xor_with_keystream as _xor_with_keystream_helper,
+)
+from clawlite.core.memory_profile import (
+    extract_timezone as _extract_timezone_helper,
+    extract_topics as _extract_topics_helper,
+    profile_prompt_hint as _profile_prompt_hint_helper,
+    update_profile_from_record as _update_profile_from_record_helper,
+    update_profile_from_text as _update_profile_from_text_helper,
+    update_profile_upcoming_events as _update_profile_upcoming_events_helper,
 )
 from clawlite.core.memory_retrieval import (
     build_progressive_retrieval_payload as _build_progressive_retrieval_payload_helper,
@@ -1338,63 +1355,11 @@ class MemoryStore:
         return _integration_hint(self.integration_policy(actor, session_id=session_id))
 
     def profile_prompt_hint(self) -> str:
-        profile = self._load_json_dict(self.profile_path, self._default_profile())
-        if not isinstance(profile, dict):
-            return ""
-
-        defaults = self._default_profile()
-        lines: list[str] = []
-
-        response_length = str(profile.get("response_length_preference", defaults.get("response_length_preference", "normal")) or "").strip()
-        if response_length and response_length != str(defaults.get("response_length_preference", "normal")):
-            lines.append(f"- Preferred response length: {response_length}")
-
-        timezone_value = str(profile.get("timezone", defaults.get("timezone", "UTC")) or "").strip()
-        if timezone_value and timezone_value != str(defaults.get("timezone", "UTC")):
-            lines.append(f"- Timezone: {timezone_value}")
-
-        language = str(profile.get("language", defaults.get("language", "pt-BR")) or "").strip()
-        if language and language != str(defaults.get("language", "pt-BR")):
-            lines.append(f"- Preferred language: {language}")
-
-        emotional_baseline = str(profile.get("emotional_baseline", defaults.get("emotional_baseline", "neutral")) or "").strip()
-        if emotional_baseline and emotional_baseline != str(defaults.get("emotional_baseline", "neutral")):
-            lines.append(f"- Emotional baseline: {emotional_baseline}")
-
-        interests_raw = profile.get("interests", [])
-        interests = [str(item).strip() for item in interests_raw if str(item).strip()] if isinstance(interests_raw, list) else []
-        if interests:
-            lines.append(f"- Recurring interests: {', '.join(interests[:5])}")
-
-        upcoming_raw = profile.get("upcoming_events", [])
-        if isinstance(upcoming_raw, list):
-            formatted: list[str] = []
-            now = datetime.now(timezone.utc)
-            for item in upcoming_raw[:3]:
-                if not isinstance(item, dict):
-                    continue
-                title = str(item.get("title", "") or "").strip()
-                happened_at = str(item.get("happened_at", "") or "").strip()
-                stamp = self._parse_iso_timestamp(happened_at)
-                if not title or stamp.year <= 1:
-                    continue
-                if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=timezone.utc)
-                if stamp < now - timedelta(days=1):
-                    continue
-                formatted.append(f"{stamp.date().isoformat()} {title[:80]}")
-            if formatted:
-                lines.append(f"- Upcoming events: {'; '.join(formatted)}")
-
-        if not lines:
-            return ""
-
-        return "\n".join(
-            [
-                "[User Profile]",
-                *lines,
-                "- Apply these preferences when relevant, without repeating them unless useful.",
-            ]
+        return _profile_prompt_hint_helper(
+            load_json_dict=self._load_json_dict,
+            profile_path=self.profile_path,
+            default_profile=self._default_profile,
+            parse_iso_timestamp=self._parse_iso_timestamp,
         )
 
     def _normalize_quality_tuning_state(self, raw: Any) -> dict[str, Any]:
@@ -2392,10 +2357,11 @@ class MemoryStore:
         return str(row.get("head", "") or "")
 
     def _privacy_settings(self) -> dict[str, Any]:
-        payload = self._load_json_dict(self.privacy_path, self._default_privacy())
-        merged = self._default_privacy()
-        merged.update(payload)
-        return merged
+        return _privacy_settings_helper(
+            load_json_dict=self._load_json_dict,
+            privacy_path=self.privacy_path,
+            default_privacy=self._default_privacy,
+        )
 
     def _append_privacy_audit_event(
         self,
@@ -2407,169 +2373,71 @@ class MemoryStore:
         record_id: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        settings = self._privacy_settings()
-        if not bool(settings.get("audit_log", True)):
-            self._diagnostics["privacy_audit_skipped"] = int(self._diagnostics["privacy_audit_skipped"]) + 1
-            return
-        payload: dict[str, Any] = {
-            "timestamp": self._utcnow_iso(),
-            "action": str(action or "unknown"),
-            "reason": str(reason or ""),
-        }
-        if source:
-            payload["source"] = str(source)
-        if category:
-            payload["category"] = str(category)
-        if record_id:
-            payload["id"] = str(record_id)
-        if isinstance(metadata, dict) and metadata:
-            payload["metadata"] = metadata
-        try:
-            with self._locked_file(self.privacy_audit_path, "a", exclusive=True) as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                self._flush_and_fsync(fh)
-            self._diagnostics["privacy_audit_writes"] = int(self._diagnostics["privacy_audit_writes"]) + 1
-        except Exception as exc:
-            self._diagnostics["privacy_audit_errors"] = int(self._diagnostics["privacy_audit_errors"]) + 1
-            self._diagnostics["last_error"] = str(exc)
+        _append_privacy_audit_event_helper(
+            action=action,
+            reason=reason,
+            source=source,
+            category=category,
+            record_id=record_id,
+            metadata=metadata,
+            diagnostics=self._diagnostics,
+            privacy_settings_loader=self._privacy_settings,
+            utcnow_iso=self._utcnow_iso,
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+            privacy_audit_path=self.privacy_audit_path,
+        )
 
     @staticmethod
     def _encrypted_prefix() -> str:
-        return "enc:v2:"
+        return _encrypted_prefix_helper()
 
     @staticmethod
     def _legacy_encrypted_prefix() -> str:
-        return "enc:v1:"
+        return _legacy_encrypted_prefix_helper()
 
     @staticmethod
     def _xor_with_keystream(data: bytes, *, key: bytes, nonce: bytes) -> bytes:
-        output = bytearray(len(data))
-        counter = 0
-        cursor = 0
-        while cursor < len(data):
-            block = hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
-            take = min(len(block), len(data) - cursor)
-            for idx in range(take):
-                output[cursor + idx] = data[cursor + idx] ^ block[idx]
-            cursor += take
-            counter += 1
-        return bytes(output)
+        return _xor_with_keystream_helper(data, key=key, nonce=nonce)
 
     def _load_or_create_privacy_key(self) -> bytes | None:
-        cached = self._privacy_key
-        if isinstance(cached, (bytes, bytearray)) and len(cached) == 32:
-            return bytes(cached)
-
-        try:
-            if self.privacy_key_path.exists():
-                raw = self.privacy_key_path.read_bytes()
-                if len(raw) == 32:
-                    self._privacy_key = raw
-                    self._diagnostics["privacy_key_load_events"] = int(self._diagnostics["privacy_key_load_events"]) + 1
-                    return raw
-                stripped = raw.strip()
-                try:
-                    decoded = base64.urlsafe_b64decode(stripped)
-                except Exception:
-                    decoded = b""
-                if len(decoded) == 32:
-                    self._privacy_key = decoded
-                    self._diagnostics["privacy_key_load_events"] = int(self._diagnostics["privacy_key_load_events"]) + 1
-                    return decoded
-        except Exception as exc:
-            self._diagnostics["privacy_key_errors"] = int(self._diagnostics["privacy_key_errors"]) + 1
-            self._diagnostics["last_error"] = str(exc)
-
-        key = secrets.token_bytes(32)
-        try:
-            fd = os.open(str(self.privacy_key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                with os.fdopen(fd, "wb") as fh:
-                    fh.write(key)
-                    fh.flush()
-                    try:
-                        os.fsync(fh.fileno())
-                    except Exception:
-                        pass
-            finally:
-                try:
-                    os.chmod(self.privacy_key_path, 0o600)
-                except Exception:
-                    pass
-            self._privacy_key = key
-            self._diagnostics["privacy_key_create_events"] = int(self._diagnostics["privacy_key_create_events"]) + 1
-            return key
-        except Exception as exc:
-            self._diagnostics["privacy_key_errors"] = int(self._diagnostics["privacy_key_errors"]) + 1
-            self._diagnostics["last_error"] = str(exc)
-            return None
+        key = _load_or_create_privacy_key_helper(
+            cached_key=self._privacy_key,
+            privacy_key_path=self.privacy_key_path,
+            diagnostics=self._diagnostics,
+        )
+        if isinstance(key, (bytes, bytearray)) and len(key) == 32:
+            self._privacy_key = bytes(key)
+            return bytes(key)
+        return None
 
     def _is_encrypted_category(self, category: str, *, settings: dict[str, Any] | None = None) -> bool:
-        payload = settings if isinstance(settings, dict) else self._privacy_settings()
-        raw_categories = payload.get("encrypted_categories", [])
-        if not isinstance(raw_categories, list):
-            return False
-        categories = {str(item or "").strip().lower() for item in raw_categories if str(item or "").strip()}
-        return str(category or "").strip().lower() in categories
+        return _is_encrypted_category_helper(
+            category,
+            settings=settings,
+            privacy_settings_loader=self._privacy_settings,
+        )
 
     def _encrypt_text_for_category(self, text: str, category: str, *, settings: dict[str, Any] | None = None) -> str:
-        clean = str(text or "")
-        if not clean:
-            return clean
-        if not self._is_encrypted_category(category, settings=settings):
-            return clean
-        try:
-            key = self._load_or_create_privacy_key()
-            if key is None:
-                return clean
-            nonce = secrets.token_bytes(16)
-            ciphertext = self._xor_with_keystream(clean.encode("utf-8"), key=key, nonce=nonce)
-            tag = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
-            encoded = base64.urlsafe_b64encode(nonce + ciphertext + tag).decode("ascii")
-            self._diagnostics["privacy_encrypt_events"] = int(self._diagnostics["privacy_encrypt_events"]) + 1
-            return f"{self._encrypted_prefix()}{encoded}"
-        except Exception as exc:
-            self._diagnostics["privacy_encrypt_errors"] = int(self._diagnostics["privacy_encrypt_errors"]) + 1
-            self._diagnostics["last_error"] = str(exc)
-            return clean
+        return _encrypt_text_for_category_helper(
+            text,
+            category,
+            settings=settings,
+            privacy_settings_loader=self._privacy_settings,
+            load_or_create_privacy_key_fn=self._load_or_create_privacy_key,
+            xor_with_keystream_fn=self._xor_with_keystream,
+            diagnostics=self._diagnostics,
+        )
 
     def _decrypt_text_for_category(self, text: str, category: str, *, settings: dict[str, Any] | None = None) -> str:
-        clean = str(text or "")
-        if not clean:
-            return clean
-        prefix_v2 = self._encrypted_prefix()
-        prefix_v1 = self._legacy_encrypted_prefix()
-        if not clean.startswith(prefix_v2) and not clean.startswith(prefix_v1):
-            return clean
-        # Decrypt whenever marker is present to preserve backward compatibility
-        # when privacy.encrypted_categories changes over time.
-        _ = category
-        _ = settings
-        try:
-            if clean.startswith(prefix_v2):
-                encoded = clean[len(prefix_v2) :]
-                payload = base64.urlsafe_b64decode(encoded.encode("ascii"))
-                if len(payload) < 16 + 32:
-                    raise ValueError("invalid_enc_v2_payload")
-                nonce = payload[:16]
-                ciphertext = payload[16:-32]
-                tag = payload[-32:]
-                key = self._load_or_create_privacy_key()
-                if key is None:
-                    return clean
-                expected_tag = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
-                if not hmac.compare_digest(tag, expected_tag):
-                    raise ValueError("invalid_enc_v2_tag")
-                decoded = self._xor_with_keystream(ciphertext, key=key, nonce=nonce).decode("utf-8")
-            else:
-                encoded = clean[len(prefix_v1) :]
-                decoded = base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8")
-            self._diagnostics["privacy_decrypt_events"] = int(self._diagnostics["privacy_decrypt_events"]) + 1
-            return decoded
-        except Exception as exc:
-            self._diagnostics["privacy_decrypt_errors"] = int(self._diagnostics["privacy_decrypt_errors"]) + 1
-            self._diagnostics["last_error"] = str(exc)
-            return clean
+        return _decrypt_text_for_category_helper(
+            text,
+            category,
+            settings=settings,
+            load_or_create_privacy_key_fn=self._load_or_create_privacy_key,
+            xor_with_keystream_fn=self._xor_with_keystream,
+            diagnostics=self._diagnostics,
+        )
 
     @contextmanager
     def _locked_file(self, path: Path, mode: str, *, exclusive: bool):
@@ -3363,160 +3231,59 @@ class MemoryStore:
 
     @staticmethod
     def _extract_timezone(text: str) -> str | None:
-        clean = str(text or "").lower()
-        if not clean:
-            return None
-        offset_match = re.search(r"\butc\s*([+-]\d{1,2})\b", clean)
-        if offset_match:
-            return f"UTC{offset_match.group(1)}"
-        if "sao paulo" in clean or "são paulo" in clean or re.search(r"\bsp\b", clean):
-            return "America/Sao_Paulo"
-        return None
+        return _extract_timezone_helper(text)
 
     @classmethod
     def _extract_topics(cls, text: str) -> list[str]:
-        topics: list[str] = []
-        for token in cls._tokens(text):
-            if len(token) < 4:
-                continue
-            if token in PROFILE_TOPIC_STOPWORDS:
-                continue
-            if token.isdigit():
-                continue
-            if token not in topics:
-                topics.append(token)
-        return topics[:8]
+        return _extract_topics_helper(
+            text,
+            tokens=cls._tokens,
+            profile_topic_stopwords=PROFILE_TOPIC_STOPWORDS,
+        )
 
     def _privacy_block_reason(self, text: str) -> str | None:
-        privacy = self._privacy_settings()
-        patterns = privacy.get("never_memorize_patterns", [])
-        if not isinstance(patterns, list):
-            patterns = []
-        lowered = str(text or "").lower()
-        for item in patterns:
-            pattern = str(item or "").strip().lower()
-            if pattern and pattern in lowered:
-                return f"pattern:{pattern}"
-        return None
+        return _privacy_block_reason_helper(
+            text,
+            privacy_settings_loader=self._privacy_settings,
+        )
 
     def _privacy_allows_memorize(self, text: str) -> bool:
         return self._privacy_block_reason(text) is None
 
     def _update_profile_from_text(self, text: str) -> None:
-        clean = str(text or "").strip()
-        if not clean:
-            return
-        profile = self._load_json_dict(self.profile_path, self._default_profile())
-        changed = False
-        lowered = clean.lower()
-
-        if "prefiro respostas curtas" in lowered:
-            if profile.get("response_length_preference") != "curto":
-                profile["response_length_preference"] = "curto"
-                changed = True
-
-        timezone_value = self._extract_timezone(clean)
-        if timezone_value and profile.get("timezone") != timezone_value:
-            profile["timezone"] = timezone_value
-            changed = True
-
-        topics = self._extract_topics(clean)
-        recurring_patterns = dict(profile.get("recurring_patterns", {}))
-        if not isinstance(recurring_patterns, dict):
-            recurring_patterns = {}
-        interests = list(profile.get("interests", []))
-        if not isinstance(interests, list):
-            interests = []
-
-        for topic in topics:
-            topic_data = recurring_patterns.get(topic, {})
-            if not isinstance(topic_data, dict):
-                topic_data = {}
-            previous_count = int(topic_data.get("count", 0) or 0)
-            topic_data["count"] = previous_count + 1
-            topic_data["last_seen"] = self._utcnow_iso()
-            recurring_patterns[topic] = topic_data
-            if topic_data["count"] >= 2 and topic not in interests:
-                interests.append(topic)
-                changed = True
-
-        if recurring_patterns != profile.get("recurring_patterns"):
-            profile["recurring_patterns"] = recurring_patterns
-            changed = True
-        if interests != profile.get("interests"):
-            profile["interests"] = interests
-            changed = True
-
-        baseline = self._detect_emotional_tone(clean)
-        if baseline != "neutral" and profile.get("emotional_baseline") != baseline:
-            profile["emotional_baseline"] = baseline
-            changed = True
-
-        if changed:
-            if not str(profile.get("learned_at", "")).strip():
-                profile["learned_at"] = self._utcnow_iso()
-            profile["updated_at"] = self._utcnow_iso()
-            self._write_json_dict(self.profile_path, profile)
+        _update_profile_from_text_helper(
+            text,
+            load_json_dict=self._load_json_dict,
+            write_json_dict=self._write_json_dict,
+            profile_path=self.profile_path,
+            default_profile=self._default_profile,
+            extract_timezone_fn=self._extract_timezone,
+            extract_topics_fn=self._extract_topics,
+            detect_emotional_tone=self._detect_emotional_tone,
+            utcnow_iso=self._utcnow_iso,
+        )
 
     def _update_profile_upcoming_events(self, record: MemoryRecord) -> None:
-        if self._normalize_memory_type(getattr(record, "memory_type", "knowledge")) != "event":
-            return
-        happened_at = self._parse_iso_timestamp(str(getattr(record, "happened_at", "") or ""))
-        if happened_at.year <= 1:
-            return
-        if happened_at.tzinfo is None:
-            happened_at = happened_at.replace(tzinfo=timezone.utc)
-        if happened_at < datetime.now(timezone.utc) - timedelta(days=1):
-            return
-
-        profile = self._load_json_dict(self.profile_path, self._default_profile())
-        upcoming_raw = profile.get("upcoming_events", [])
-        upcoming_events = list(upcoming_raw) if isinstance(upcoming_raw, list) else []
-        event_id = self._metadata_content_hash(getattr(record, "metadata", {})) or str(record.id or uuid.uuid4().hex)
-        title = self._compact_whitespace(str(record.text or ""))[:160]
-        if not title:
-            return
-
-        filtered: list[dict[str, Any]] = []
-        for item in upcoming_events:
-            if not isinstance(item, dict):
-                continue
-            existing_id = str(item.get("id", "") or "").strip()
-            existing_stamp = self._parse_iso_timestamp(str(item.get("happened_at", "") or ""))
-            if existing_stamp.year > 1 and existing_stamp.tzinfo is None:
-                existing_stamp = existing_stamp.replace(tzinfo=timezone.utc)
-            if existing_stamp.year > 1 and existing_stamp < datetime.now(timezone.utc) - timedelta(days=1):
-                continue
-            if existing_id == event_id:
-                continue
-            filtered.append(item)
-
-        filtered.append(
-            {
-                "id": event_id,
-                "memory_id": str(record.id or ""),
-                "title": title,
-                "happened_at": happened_at.isoformat(),
-                "source": str(record.source or ""),
-                "category": str(record.category or "events"),
-            }
+        _update_profile_upcoming_events_helper(
+            record,
+            normalize_memory_type=self._normalize_memory_type,
+            parse_iso_timestamp=self._parse_iso_timestamp,
+            load_json_dict=self._load_json_dict,
+            write_json_dict=self._write_json_dict,
+            profile_path=self.profile_path,
+            default_profile=self._default_profile,
+            metadata_content_hash=self._metadata_content_hash,
+            compact_whitespace=self._compact_whitespace,
+            utcnow_iso=self._utcnow_iso,
         )
-        filtered.sort(key=lambda item: str(item.get("happened_at", "") or ""))
-        filtered = filtered[:12]
-
-        if filtered != upcoming_events:
-            profile["upcoming_events"] = filtered
-            profile["updated_at"] = self._utcnow_iso()
-            if not str(profile.get("learned_at", "")).strip():
-                profile["learned_at"] = self._utcnow_iso()
-            self._write_json_dict(self.profile_path, profile)
 
     def _update_profile_from_record(self, record: MemoryRecord) -> None:
-        metadata = self._normalize_memory_metadata(getattr(record, "metadata", {}))
-        skip_profile_sync = bool(metadata.get("skip_profile_sync", False))
-        if not skip_profile_sync:
-            self._update_profile_from_text(str(getattr(record, "text", "") or ""))
-        self._update_profile_upcoming_events(record)
+        _update_profile_from_record_helper(
+            record,
+            normalize_memory_metadata=self._normalize_memory_metadata,
+            update_profile_from_text_fn=self._update_profile_from_text,
+            update_profile_upcoming_events_fn=self._update_profile_upcoming_events,
+        )
 
     def _curated_rank(self, row: dict[str, object]) -> tuple[float, int, int, datetime, datetime, str, str]:
         importance = float(row.get("importance", 0.0))

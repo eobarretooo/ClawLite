@@ -231,6 +231,8 @@ Acceptance:
 - memory ingest and multimodal extraction helpers now live in `clawlite/core/memory_ingest.py`
 - memory progressive retrieval helpers now live in `clawlite/core/memory_retrieval.py`
 - memory search and ranking helpers now live in `clawlite/core/memory_search.py`
+- memory privacy helpers now live in `clawlite/core/memory_privacy.py`
+- memory profile helpers now live in `clawlite/core/memory_profile.py`
 - memory maintenance loops and purge/consolidation helpers now live in `clawlite/core/memory_maintenance.py`
 - Telegram dedupe now lives in `clawlite/channels/telegram_dedupe.py`
 - Telegram offset runtime now lives in `clawlite/channels/telegram_offset_runtime.py`
