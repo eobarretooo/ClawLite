@@ -19,6 +19,19 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from clawlite.core.memory_backend import MemoryBackend, resolve_memory_backend
+from clawlite.core.memory_classification import (
+    categorize_memory as _categorize_memory_helper,
+    classify_category_with_llm as _classify_category_with_llm_helper,
+    entity_match_score as _entity_match_score_helper,
+    extract_entities as _extract_entities_helper,
+    heuristic_category as _heuristic_category_helper,
+    infer_happened_at as _infer_happened_at_helper,
+    infer_memory_type as _infer_memory_type_helper,
+    memory_content_hash as _memory_content_hash_helper,
+    normalize_category_label as _normalize_category_label_helper,
+    normalize_entity_value as _normalize_entity_value_helper,
+    prepare_memory_metadata as _prepare_memory_metadata_helper,
+)
 from clawlite.core.memory_curation import (
     candidate_importance as _candidate_importance_helper,
     consolidate_messages as _consolidate_messages_helper,
@@ -2878,89 +2891,29 @@ class MemoryStore:
         }
 
     def _classify_category_with_llm(self, text: str) -> str | None:
-        prompt = (
-            "Classifique a memoria em UMA categoria desta lista: "
-            "preferences, relationships, knowledge, context, decisions, skills, events, facts. "
-            "Retorne apenas o nome da categoria.\n\n"
-            f"MEMORIA:\n{text.strip()}"
+        return _classify_category_with_llm_helper(
+            text,
+            run_coro_sync=self._run_coro_sync,
+            normalize_category_label=self._normalize_category_label,
         )
-        try:
-            import litellm  # type: ignore
-
-            response = self._run_coro_sync(
-                litellm.acompletion(
-                    model="gemini/gemini-2.5-flash",
-                    temperature=0,
-                    max_tokens=12,
-                    messages=[
-                        {"role": "system", "content": "Voce responde somente com uma categoria valida."},
-                        {"role": "user", "content": prompt},
-                    ],
-                )
-            )
-            content = ""
-            choices = getattr(response, "choices", None)
-            if choices is None and isinstance(response, dict):
-                choices = response.get("choices")
-            if isinstance(choices, list) and choices:
-                first = choices[0]
-                message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
-                if isinstance(message, dict):
-                    content = str(message.get("content", "") or "")
-                else:
-                    content = str(getattr(message, "content", "") or "")
-            return self._normalize_category_label(content)
-        except Exception:
-            return None
 
     @classmethod
     def _normalize_category_label(cls, raw_label: str) -> str | None:
-        normalized = re.sub(r"[^a-z_\s]", " ", str(raw_label or "").strip().lower())
-        normalized = " ".join(normalized.split())
-        if not normalized:
-            return None
-        if normalized in cls._MEMORY_CATEGORIES:
-            return normalized
-
-        synonym_map: dict[str, tuple[str, ...]] = {
-            "preferences": ("preference", "likes", "dislikes", "style", "habit"),
-            "relationships": ("relationship", "contact", "family", "friend", "coworker", "team"),
-            "knowledge": ("know", "knowledge", "information", "reference", "learned", "learning"),
-            "context": ("context", "note", "background"),
-            "decisions": ("decision", "chosen", "resolved", "resolution", "plan"),
-            "skills": ("skill", "ability", "capability", "how to", "expertise"),
-            "events": ("event", "schedule", "deadline", "meeting", "travel", "trip", "birthday"),
-            "facts": ("fact", "factual"),
-        }
-        for category, aliases in synonym_map.items():
-            if normalized == category:
-                return category
-            if any(alias in normalized for alias in aliases):
-                return category
-        return None
+        return _normalize_category_label_helper(raw_label, memory_categories=cls._MEMORY_CATEGORIES)
 
     @classmethod
     def _extract_entities(cls, text: str) -> dict[str, list[str]]:
-        raw = str(text or "")
-        entities = {
-            "urls": cls._ENTITY_URL_RE.findall(raw),
-            "emails": cls._ENTITY_EMAIL_RE.findall(raw),
-            "dates": cls._ENTITY_DATE_RE.findall(raw),
-            "times": cls._ENTITY_TIME_RE.findall(raw),
-        }
-        out: dict[str, list[str]] = {}
-        for key, values in entities.items():
-            unique: list[str] = []
-            for value in values:
-                clean = str(value or "").strip()
-                if clean and clean not in unique:
-                    unique.append(clean)
-            out[key] = unique
-        return out
+        return _extract_entities_helper(
+            text,
+            entity_url_re=cls._ENTITY_URL_RE,
+            entity_email_re=cls._ENTITY_EMAIL_RE,
+            entity_date_re=cls._ENTITY_DATE_RE,
+            entity_time_re=cls._ENTITY_TIME_RE,
+        )
 
     @staticmethod
     def _normalize_entity_value(value: str) -> str:
-        return " ".join(str(value or "").strip().lower().split())
+        return _normalize_entity_value_helper(value)
 
     @classmethod
     def _entity_match_score(
@@ -2968,143 +2921,49 @@ class MemoryStore:
         query_entities: dict[str, list[str]],
         memory_entities: dict[str, list[str]],
     ) -> float:
-        score = 0.0
-        for entity_type, weight in cls._ENTITY_MATCH_WEIGHTS.items():
-            query_values_raw = query_entities.get(entity_type, []) if isinstance(query_entities, dict) else []
-            memory_values_raw = memory_entities.get(entity_type, []) if isinstance(memory_entities, dict) else []
-            query_values = {
-                cls._normalize_entity_value(item)
-                for item in query_values_raw
-                if cls._normalize_entity_value(item)
-            }
-            memory_values = {
-                cls._normalize_entity_value(item)
-                for item in memory_values_raw
-                if cls._normalize_entity_value(item)
-            }
-            if not query_values or not memory_values:
-                continue
-            overlap = len(query_values.intersection(memory_values))
-            if overlap <= 0:
-                continue
-            score += min(float(weight), float(weight) * float(overlap))
-        return max(0.0, min(cls._ENTITY_MATCH_MAX_BOOST, round(score, 6)))
+        return _entity_match_score_helper(
+            query_entities,
+            memory_entities,
+            entity_match_weights=cls._ENTITY_MATCH_WEIGHTS,
+            entity_match_max_boost=cls._ENTITY_MATCH_MAX_BOOST,
+            normalize_entity_value_fn=cls._normalize_entity_value,
+        )
 
     def _heuristic_category(self, text: str, source: str) -> str:
-        normalized = str(text or "").lower()
-        source_norm = str(source or "").lower()
-        entities = self._extract_entities(text)
-        has_date_time = bool(entities["dates"] or entities["times"])
-        has_knowledge_entities = bool(entities["urls"] or entities["emails"])
-        if any(token in normalized for token in ("prefer", "preference", "always", "never", "gosto", "prefiro")):
-            return "preferences"
-        if any(token in normalized for token in ("decide", "decision", "we will", "vamos", "escolhemos", "resolved")):
-            return "decisions"
-        if any(token in normalized for token in ("can ", "how to", "skill", "know how", "sei ", "consigo")):
-            return "skills"
-        if any(token in normalized for token in ("name is", "works at", "friend", "wife", "husband", "team", "cliente", "parceiro")):
-            return "relationships"
-        if has_date_time or any(
-            token in normalized
-            for token in (
-                "deadline",
-                "meeting",
-                "appointment",
-                "schedule",
-                "trip",
-                "travel",
-                "birthday",
-                "tomorrow",
-                "next week",
-                "flight",
-            )
-        ):
-            return "events"
-        if has_knowledge_entities or any(
-            token in normalized
-            for token in (
-                "learn",
-                "learned",
-                "know",
-                "knowledge",
-                "documentation",
-                "docs",
-                "guide",
-                "tutorial",
-                "reference",
-            )
-        ):
-            return "knowledge"
-        if source_norm.startswith("curated:") or "fact" in normalized or "timezone" in normalized:
-            return "facts"
-        return "context"
+        return _heuristic_category_helper(
+            text,
+            source,
+            extract_entities_fn=self._extract_entities,
+        )
 
     def _categorize_memory(self, text: str, source: str) -> str:
-        if not self.memory_auto_categorize:
-            return "context"
-        by_llm = self._classify_category_with_llm(text)
-        if by_llm in self._MEMORY_CATEGORIES:
-            return by_llm
-        return self._heuristic_category(text, source)
+        return _categorize_memory_helper(
+            text,
+            source,
+            memory_auto_categorize=self.memory_auto_categorize,
+            memory_categories=self._MEMORY_CATEGORIES,
+            classify_category_with_llm_fn=self._classify_category_with_llm,
+            heuristic_category_fn=self._heuristic_category,
+        )
 
     @staticmethod
     def _memory_content_hash(text: str, memory_type: str) -> str:
-        normalized = " ".join(str(text or "").strip().lower().split())
-        content = f"{memory_type}:{normalized}"
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        return _memory_content_hash_helper(text, memory_type)
 
     def _infer_memory_type(self, text: str, source: str, *, category: str = "") -> str:
-        normalized = str(text or "").strip().lower()
-        source_norm = str(source or "").strip().lower()
-        category_norm = str(category or "").strip().lower()
-        happened_at = self._infer_happened_at(text)
-
-        if source_norm.startswith("tool:") or source_norm.startswith("process:") or " tool " in f" {normalized} ":
-            return "tool"
-        if category_norm in {"preferences", "relationships"}:
-            return "profile"
-        if category_norm == "skills":
-            return "skill"
-        if category_norm == "events":
-            return "event"
-        if any(token in normalized for token in ("prefer", "preference", "timezone", "language", "my name", "sou ", "i am ")):
-            return "profile"
-        if any(token in normalized for token in ("every ", "usually", "often", "habit", "always", "normalmente", "costumo")):
-            return "behavior"
-        if happened_at or any(
-            token in normalized
-            for token in ("meeting", "deadline", "trip", "travel", "launch", "release", "weekend", "tomorrow", "today", "yesterday")
-        ):
-            return "event"
-        if any(token in normalized for token in ("how to", "workflow", "runbook", "guide", "tutorial", "playbook", "can use", "sei fazer")):
-            return "skill"
-        return "knowledge"
+        return _infer_memory_type_helper(
+            text,
+            source,
+            category=category,
+            infer_happened_at_fn=self._infer_happened_at,
+        )
 
     @classmethod
     def _infer_happened_at(cls, text: str) -> str:
-        raw = str(text or "").strip()
-        if not raw:
-            return ""
-
-        exact_dt = re.search(r"\b(\d{4}-\d{2}-\d{2})[tT ](\d{1,2}:\d{2})(?::\d{2})?\b", raw)
-        if exact_dt:
-            date_part = exact_dt.group(1)
-            time_part = exact_dt.group(2)
-            return f"{date_part}T{time_part}:00+00:00"
-
-        exact_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", raw)
-        if exact_date:
-            return f"{exact_date.group(1)}T00:00:00+00:00"
-
-        lowered = raw.lower()
-        today = datetime.now(timezone.utc).date()
-        if "tomorrow" in lowered:
-            return datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).isoformat()
-        if "yesterday" in lowered:
-            return datetime.combine(today - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).isoformat()
-        if "today" in lowered:
-            return datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc).isoformat()
-        return ""
+        return _infer_happened_at_helper(
+            text,
+            now_utc=lambda: datetime.now(timezone.utc),
+        )
 
     def _prepare_memory_metadata(
         self,
@@ -3115,18 +2974,17 @@ class MemoryStore:
         memory_type: str,
         happened_at: str,
     ) -> dict[str, Any]:
-        prepared = self._normalize_memory_metadata(metadata)
-        entities = self._extract_entities(text)
-        non_empty_entities = {key: value for key, value in entities.items() if value}
-        if non_empty_entities and "entities" not in prepared:
-            prepared["entities"] = non_empty_entities
-        if happened_at and "happened_at_hint" not in prepared:
-            prepared["happened_at_hint"] = happened_at
-        source_session = self._source_session_key(source)
-        if source_session and "source_session" not in prepared:
-            prepared["source_session"] = source_session
-        prepared.setdefault("content_hash", self._memory_content_hash(text, memory_type))
-        return prepared
+        return _prepare_memory_metadata_helper(
+            text=text,
+            source=source,
+            metadata=metadata,
+            memory_type=memory_type,
+            happened_at=happened_at,
+            normalize_memory_metadata=self._normalize_memory_metadata,
+            extract_entities_fn=self._extract_entities,
+            source_session_key_fn=self._source_session_key,
+            memory_content_hash_fn=self._memory_content_hash,
+        )
 
     @classmethod
     def _record_temporal_anchor(cls, row: MemoryRecord) -> str:

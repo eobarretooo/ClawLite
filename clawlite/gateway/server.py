@@ -37,6 +37,14 @@ from clawlite.runtime import (
     SupervisorIncident,
 )
 from clawlite.gateway.control_handlers import GatewayControlHandlers
+from clawlite.gateway.control_plane import (
+    build_control_plane_payload as _build_control_plane_payload,
+    control_plane_auth_payload as _control_plane_auth_payload,
+    parse_iso_timestamp as _parse_iso_timestamp,
+    reasoning_layer_metrics_from_payload as _reasoning_layer_metrics_from_payload_helper,
+    semantic_metrics_from_payload as _semantic_metrics_from_payload_helper,
+    utc_now_iso as _utc_now_iso_helper,
+)
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary as _dashboard_channels_summary_payload,
@@ -2219,72 +2227,32 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             _refresh_bootstrap_component()
 
     def _utc_now_iso() -> str:
-        return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        return _utc_now_iso_helper()
 
     def _control_plane_payload(server_time: str | None = None) -> ControlPlaneResponse:
         now = server_time or _utc_now_iso()
         _refresh_runtime_components()
         _refresh_bootstrap_component()
         return ControlPlaneResponse(
-            ready=bool(lifecycle.ready),
-            phase=str(lifecycle.phase),
-            contract_version=GATEWAY_CONTRACT_VERSION,
-            server_time=now,
-            components=dict(lifecycle.components),
-            auth={
-                "posture": auth_guard.posture(),
-                "mode": auth_guard.mode,
-                "allow_loopback_without_auth": auth_guard.allow_loopback_without_auth,
-                "protect_health": auth_guard.protect_health,
-                "token_configured": bool(auth_guard.token),
-                "header_name": auth_guard.header_name,
-                "query_param": auth_guard.query_param,
-            },
-            memory_proactive_enabled=bool(runtime.memory_monitor is not None),
+            **_build_control_plane_payload(
+                ready=bool(lifecycle.ready),
+                phase=str(lifecycle.phase),
+                contract_version=GATEWAY_CONTRACT_VERSION,
+                server_time=now,
+                components=dict(lifecycle.components),
+                auth_payload=_control_plane_auth_payload(auth_guard=auth_guard),
+                memory_proactive_enabled=bool(runtime.memory_monitor is not None),
+            )
         )
 
     def _parse_iso(value: str) -> dt.datetime | None:
-        raw = str(value or "").strip()
-        if not raw:
-            return None
-        try:
-            parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except Exception:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return parsed.astimezone(dt.timezone.utc)
+        return _parse_iso_timestamp(value)
 
     def _semantic_metrics_from_payload(payload: Any) -> dict[str, Any]:
-        semantic_raw = payload.get("semantic", {}) if isinstance(payload, dict) else {}
-        if not isinstance(semantic_raw, dict):
-            semantic_raw = {}
-        return {
-            "enabled": bool(semantic_raw.get("enabled", False)),
-            "coverage_ratio": float(semantic_raw.get("coverage_ratio", 0.0) or 0.0),
-            "missing_records": int(semantic_raw.get("missing_records", 0) or 0),
-            "total_records": int(semantic_raw.get("total_records", 0) or 0),
-        }
+        return _semantic_metrics_from_payload_helper(payload)
 
     def _reasoning_layer_metrics_from_payload(payload: Any) -> dict[str, Any]:
-        if not isinstance(payload, dict):
-            return {}
-
-        reasoning_raw = payload.get("reasoning_layers")
-        if reasoning_raw is None:
-            reasoning_raw = payload.get("reasoningLayers")
-        if reasoning_raw is None:
-            reasoning_raw = payload.get("layers")
-
-        reasoning_payload: dict[str, Any] = {}
-        if isinstance(reasoning_raw, dict) and reasoning_raw:
-            reasoning_payload["reasoning_layers"] = dict(reasoning_raw)
-
-        confidence_raw = payload.get("confidence")
-        if isinstance(confidence_raw, dict) and confidence_raw:
-            reasoning_payload["confidence"] = dict(confidence_raw)
-
-        return reasoning_payload
+        return _reasoning_layer_metrics_from_payload_helper(payload)
 
     async def _collect_memory_analysis_metrics() -> tuple[dict[str, Any], dict[str, Any]]:
         semantic_metrics = {
