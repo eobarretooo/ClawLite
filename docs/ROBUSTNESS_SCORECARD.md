@@ -217,6 +217,7 @@ Acceptance:
 - public behavior is preserved behind existing interfaces
 - each extraction lands with focused regression tests
 - first slices extracted provider/dashboard payload helpers into `clawlite/gateway/payloads.py`
+- runtime bootstrap now lives in `clawlite/gateway/runtime_builder.py`
 - dashboard state summary builders now live in `clawlite/gateway/dashboard_state.py`
 - dashboard memory summary now lives in `clawlite/gateway/memory_dashboard.py`
 - engine diagnostics payload builders now live in `clawlite/gateway/engine_diagnostics.py`

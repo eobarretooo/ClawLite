@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 
+import clawlite.gateway.runtime_builder as gateway_runtime_builder
 import clawlite.gateway.server as gateway_server
 from clawlite.bus.events import OutboundEvent
 from clawlite.channels.base import BaseChannel, ChannelCapabilities
@@ -928,7 +929,7 @@ def test_gateway_runtime_rejects_pgvector_backend_with_probe_details(tmp_path: P
         agents={"defaults": {"memory": {"backend": "pgvector", "pgvector_url": "postgresql://memory-db"}}},
         channels={},
     )
-    monkeypatch.setattr("clawlite.gateway.server.resolve_memory_backend", lambda **kwargs: _Backend())
+    monkeypatch.setattr("clawlite.gateway.runtime_builder.resolve_memory_backend", lambda **kwargs: _Backend())
 
     with pytest.raises(RuntimeError, match="vector' is unavailable"):
         build_runtime(cfg)
@@ -944,7 +945,7 @@ def test_gateway_runtime_rejects_local_provider_when_startup_probe_fails(tmp_pat
         channels={},
     )
     monkeypatch.setattr(
-        "clawlite.gateway.server.probe_local_provider_runtime",
+        "clawlite.gateway.runtime_builder.probe_local_provider_runtime",
         lambda *, model, base_url, timeout_s=2.0: {
             "checked": True,
             "ok": False,
@@ -1034,9 +1035,9 @@ def test_gateway_runtime_allows_remote_fallback_when_local_primary_probe_fails(t
     failover_provider = _FailoverProvider()
     probe_calls: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(gateway_server, "build_provider", lambda config: failover_provider)
+    monkeypatch.setattr(gateway_runtime_builder, "build_provider", lambda config: failover_provider)
     monkeypatch.setattr(
-        gateway_server,
+        gateway_runtime_builder,
         "probe_local_provider_runtime",
         lambda *, model, base_url, timeout_s=2.0: (
             probe_calls.append((model, base_url))
@@ -1183,9 +1184,9 @@ def test_gateway_startup_replays_resumable_subagents_after_restart(tmp_path: Pat
         channels={},
     )
     provider = ReplayProvider()
-    with patch.object(gateway_server, "build_provider", return_value=provider):
+    with patch.object(gateway_runtime_builder, "build_provider", return_value=provider):
         with patch.object(
-            gateway_server,
+            gateway_runtime_builder,
             "probe_local_provider_runtime",
             return_value={"checked": False, "ok": True},
         ):
@@ -1290,9 +1291,9 @@ def test_gateway_startup_replays_parallel_subagent_group_after_restart(tmp_path:
         channels={},
     )
     provider = ReplayProvider()
-    with patch.object(gateway_server, "build_provider", return_value=provider):
+    with patch.object(gateway_runtime_builder, "build_provider", return_value=provider):
         with patch.object(
-            gateway_server,
+            gateway_runtime_builder,
             "probe_local_provider_runtime",
             return_value={"checked": False, "ok": True},
         ):
@@ -1349,9 +1350,9 @@ def test_gateway_startup_replays_orphaned_resumable_subagent_after_restart(tmp_p
         channels={},
     )
     provider = ReplayProvider()
-    with patch.object(gateway_server, "build_provider", return_value=provider):
+    with patch.object(gateway_runtime_builder, "build_provider", return_value=provider):
         with patch.object(
-            gateway_server,
+            gateway_runtime_builder,
             "probe_local_provider_runtime",
             return_value={"checked": False, "ok": True},
         ):
