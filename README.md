@@ -86,10 +86,11 @@ clawlite run "hello — what can you do?"
 
 ## 📈 Current Status
 
-- `main` is in active hardening; robustness phases 1-6 are already landed and phase 7 is still open.
-- Local-provider startup, cron/jobs boundaries, browser lifecycle, skill networking policy, and Telegram runtime internals were hardened on `main`.
+- `main` now has robustness phases 1-6 plus the main maintainability plan landed; phase 7 is still open.
+- Local-provider startup, cron/jobs boundaries, browser lifecycle, skill networking policy, and Telegram runtime internals are hardened on `main`.
+- The biggest runtime monoliths were split by responsibility: `clawlite/gateway/server.py` is down to about `3.3k` lines and `clawlite/core/memory.py` to about `4.4k`.
 - Packaging is now split into extras: base install stays leaner, while `.[browser]`, `.[telegram]`, and `.[media]` enable optional runtimes.
-- Latest validation on `main`: `python -m pytest tests -q --tb=short --ignore=tests/scripts/test_assemble_gif.py` → `1400 passed, 1 skipped`.
+- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1488 passed, 1 skipped`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
 - Tracking docs: [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROBUSTNESS_SCORECARD.md`](docs/ROBUSTNESS_SCORECARD.md).
 
 ---

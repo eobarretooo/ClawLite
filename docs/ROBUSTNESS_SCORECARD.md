@@ -20,12 +20,12 @@ Benchmark references:
 | Tools and safety policy | 7.0/10 | Shared network policy and aggregated validation landed; sandboxing/capabilities are still less explicit than OpenClaw |
 | Skills | 7.5/10 | YAML frontmatter, watcher improvements, and safer runtime dispatch raised the floor considerably |
 | Cron and jobs | 7.5/10 | Ownership, real cancellation, concurrency, and retention landed; isolated-run model can still improve |
-| Memory | 7.5/10 | Reporting, versioning, quality, and maintenance were split out, but the core surface is still large |
+| Memory | 8.0/10 | Reporting, versioning, retrieval, workflows, and API helpers are split out; the core file is still large but much thinner |
 | Config, wizard, docs | 8.5/10 | Quickstart, extras, and runtime docs are in good shape; keep status docs synced with fast-moving code |
 | Tests and regression safety | 8.0/10 | Large suite plus explicit smoke slices now cover core public runtime surfaces |
-| Architecture and maintainability | 7.0/10 | Gateway, memory, and Telegram are materially better, but `server.py` and `memory.py` still need more extraction |
+| Architecture and maintainability | 7.8/10 | Gateway and memory now route most major responsibilities through dedicated modules; remaining size is mostly orchestration and constants |
 
-Overall score: `7.7/10`
+Overall score: `8.0/10`
 
 ## P0 - Boundary and Runtime Safety
 
@@ -151,7 +151,7 @@ Acceptance:
 
 ### 4. Replace polling-heavy skill watching with event-first watching
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed locally on 2026-03-17.
 
 Files:
 
@@ -203,7 +203,7 @@ Acceptance:
 
 ### 2. Break up the largest modules
 
-Status: in progress on `main` as of 2026-03-17.
+Status: completed locally on 2026-03-17.
 
 Priority modules:
 
@@ -220,12 +220,25 @@ Acceptance:
 - control-plane payload and diagnostics metric parsing now live in `clawlite/gateway/control_plane.py`
 - tuning playbook, notify variants and layer-specific limits now live in `clawlite/gateway/tuning_policy.py`
 - tuning runner state/update helpers now live in `clawlite/gateway/tuning_runtime.py`
+- tuning drift/action planning now lives in `clawlite/gateway/tuning_decisions.py`
+- diagnostics response assembly now lives in `clawlite/gateway/diagnostics_payload.py`
+- dashboard runtime wiring now lives in `clawlite/gateway/dashboard_runtime.py`
+- proactive and self-evolution background loops now live in `clawlite/gateway/background_runners.py`
+- supervisor incident collection now lives in `clawlite/gateway/supervisor_runtime.py`
+- supervisor incident/recovery notice helpers now live in `clawlite/gateway/supervisor_recovery.py`
+- subagent replay and maintenance runtime helpers now live in `clawlite/gateway/subagents_runtime.py`
+- gateway startup/shutdown lifecycle orchestration now lives in `clawlite/gateway/lifecycle_runtime.py`
 - runtime bootstrap now lives in `clawlite/gateway/runtime_builder.py`
+- health, status, dashboard-state, diagnostics, and token endpoints now live in `clawlite/gateway/status_handlers.py`
+- websocket request/response handling now lives in `clawlite/gateway/websocket_handlers.py`
+- chat, tools catalog, cron, and root dashboard request handlers now live in `clawlite/gateway/request_handlers.py`
+- gateway runner/cache state builders now live in `clawlite/gateway/runtime_state.py`
 - dashboard state summary builders now live in `clawlite/gateway/dashboard_state.py`
 - dashboard memory summary now lives in `clawlite/gateway/memory_dashboard.py`
 - engine diagnostics payload builders now live in `clawlite/gateway/engine_diagnostics.py`
 - control-plane admin handlers now live in `clawlite/gateway/control_handlers.py`
 - channel webhook handlers now live in `clawlite/gateway/webhooks.py`
+- memory-quality tuning tick execution now lives in `clawlite/gateway/tuning_loop.py`
 - memory diagnostics/analysis helpers now live in `clawlite/core/memory_reporting.py`
 - memory versioning helpers now live in `clawlite/core/memory_versions.py`
 - memory quality-state helpers now live in `clawlite/core/memory_quality.py`
@@ -238,8 +251,17 @@ Acceptance:
 - memory privacy helpers now live in `clawlite/core/memory_privacy.py`
 - memory profile helpers now live in `clawlite/core/memory_profile.py`
 - working-memory session/share/visibility helpers now live in `clawlite/core/memory_working_set.py`
+- working-memory runtime helpers now live in `clawlite/core/memory_working_set.py`
 - memory item/category layer helpers now live in `clawlite/core/memory_layers.py`
+- memory resource/item/category artifact persistence now lives in `clawlite/core/memory_artifacts.py`
+- memory history read/repair/upsert/reinforcement helpers now live in `clawlite/core/memory_history.py`
+- memory delete/prune and TTL cleanup helpers now live in `clawlite/core/memory_prune.py`
+- memory resource and TTL helpers now live in `clawlite/core/memory_resources.py`
+- memory ingest/memorize/consolidate workflow helpers now live in `clawlite/core/memory_workflows.py`
+- memory add/reinforcement lifecycle helpers now live in `clawlite/core/memory_add.py`
+- memory retrieval candidate/session-recovery helpers now live in `clawlite/core/memory_retrieval.py`
 - memory maintenance loops and purge/consolidation helpers now live in `clawlite/core/memory_maintenance.py`
+- memory retrieve/delete/export/import/analysis API helpers now live in `clawlite/core/memory_api.py`
 - Telegram dedupe now lives in `clawlite/channels/telegram_dedupe.py`
 - Telegram offset runtime now lives in `clawlite/channels/telegram_offset_runtime.py`
 - Telegram status payload builders now live in `clawlite/channels/telegram_status.py`
@@ -271,7 +293,7 @@ Acceptance:
 
 ## Remaining Execution Order
 
-1. Continue extracting `clawlite/gateway/server.py` and `clawlite/core/memory.py` by responsibility, not by line count
+1. Start phase 7 work: advanced memory behaviors and self-improvement loops
 2. Add heavier operational smokes when CI can host them safely, especially container-backed local-provider and browser-runtime checks
 3. Keep `docs/STATUS.md`, this scorecard, and README status lines synced with each green slice
 

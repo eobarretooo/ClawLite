@@ -4,7 +4,7 @@ Last updated: 2026-03-17
 
 ## Summary
 
-ClawLite is a **local-first autonomous agent runtime** in active hardening. Robustness phases 1–6 are already landed on `main`; the remaining work is the last large-module extractions, broader operational smokes, and phase 7 (`advanced memory + self-improvement`).
+ClawLite is a **local-first autonomous agent runtime** in active hardening. Robustness phases 1–6 and the main maintainability plan are complete in the current working tree; remaining work is phase 7 (`advanced memory + self-improvement`), release polish, and heavier operational smoke coverage.
 
 > **🤖 AI-built · Solo dev** — Every commit is written by Claude (AI), with the author supervising direction. No team.
 
@@ -12,7 +12,7 @@ ClawLite is a **local-first autonomous agent runtime** in active hardening. Robu
 
 - Latest tag: `v0.5.0-beta.2`
 - `main` is ahead of that tag — hardening, packaging extras, CI stabilization, and large module extractions landed after the tag
-- Full suite: `python -m pytest tests/ -q --tb=short --ignore=tests/scripts/test_assemble_gif.py` → **1400 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **1488 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py` → **165 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, and browser bootstrap hints
 
@@ -48,6 +48,7 @@ ClawLite is a **local-first autonomous agent runtime** in active hardening. Robu
 - Consolidation loop (episodic → knowledge)
 - Snapshot / rollback with control-plane confirmation
 - Memory suggestions refresh from dashboard
+- Main responsibilities split across dedicated modules (`memory_search`, `memory_retrieval`, `memory_workflows`, `memory_api`, `memory_policy`, `memory_reporting`, `memory_versions`, `memory_quality`)
 
 ### Channels
 | Channel | Status |
@@ -75,15 +76,21 @@ ClawLite is a **local-first autonomous agent runtime** in active hardening. Robu
 - Interactive wizard: `clawlite configure --flow quickstart`
 - Full field reference: [`docs/CONFIGURATION.md`](CONFIGURATION.md)
 
+### Maintainability
+- Gateway request/status/websocket/control surfaces are split across dedicated modules instead of one monolith
+- `clawlite/gateway/server.py` is down to roughly 3.3k lines, and `clawlite/core/memory.py` to roughly 4.4k lines
+- Telegram remains large but already routes transport, delivery, inbound, status, dedupe, and offset logic through dedicated modules
+
 ### Workspace Templates
 `AGENTS.md` · `IDENTITY.md` · `SOUL.md` · `HEARTBEAT.md` · `USER.md`
 
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short --ignore=tests/scripts/test_assemble_gif.py  # 1400 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 1488 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py  # 165 passed
-python -m ruff check --select=E,F,W .  # clean
+bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
+python -m ruff check --select=E,F,W .  # when ruff is installed
 clawlite validate config
 ```
 

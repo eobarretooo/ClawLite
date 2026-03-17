@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from clawlite.core.memory_working_set import (
+    collect_visible_working_set,
     episodic_session_boost,
     normalize_session_id,
     normalize_user_id,
@@ -12,6 +13,7 @@ from clawlite.core.memory_working_set import (
     normalize_working_memory_share_scope,
     normalize_working_memory_state_payload,
     parent_session_id,
+    synthesize_visible_episode_digest,
     working_episode_context,
     working_episode_visible_in_session,
     working_memory_episode_summary,
@@ -205,3 +207,85 @@ def test_working_memory_episode_summary_mentions_topics_and_latest_turns() -> No
     assert "Topics: deployment, release." in summary
     assert "Latest user intent: Need deployment checklist for release." in summary
     assert "Latest assistant outcome: Deployment checklist is ready." in summary
+
+
+def test_collect_visible_working_set_deduplicates_and_orders_messages() -> None:
+    rows = collect_visible_working_set(
+        "cli:owner",
+        limit=4,
+        include_shared_subagents=True,
+        load_working_memory_state_fn=lambda: {
+            "sessions": {
+                "cli:owner": {
+                    "session_id": "cli:owner",
+                    "user_id": "42",
+                    "messages": [
+                        {"role": "assistant", "content": "owner note", "created_at": "2026-03-17T00:00:01+00:00"},
+                    ],
+                },
+                "cli:owner:subagent": {
+                    "session_id": "cli:owner:subagent",
+                    "user_id": "42",
+                    "messages": [
+                        {"role": "assistant", "content": "subagent note", "created_at": "2026-03-17T00:00:02+00:00"},
+                        {"role": "assistant", "content": "subagent note", "created_at": "2026-03-17T00:00:02+00:00"},
+                    ],
+                },
+            }
+        },
+        normalize_session_id_fn=normalize_session_id,
+        normalize_working_memory_session_fn=lambda session_id, payload: dict(payload) if payload else None,
+        working_memory_related_sessions_fn=lambda sessions, primary, include_shared_subagents=True: [primary, sessions["cli:owner:subagent"]],
+        normalize_working_memory_entry_fn=lambda payload, session_id, fallback_user_id: {
+            "session_id": session_id,
+            "role": payload["role"],
+            "content": payload["content"],
+            "created_at": payload["created_at"],
+            "user_id": fallback_user_id,
+        },
+    )
+
+    assert [row["content"] for row in rows] == ["subagent note", "owner note"]
+
+
+def test_synthesize_visible_episode_digest_groups_ranked_sessions() -> None:
+    rows = [
+        SimpleNamespace(
+            id="mem-1",
+            text="parent deploy summary",
+            source="working-session:cli:owner",
+            created_at="2026-03-17T00:00:01+00:00",
+            metadata={"working_memory_promoted": True, "working_memory_session_id": "cli:owner", "share_scope": "family"},
+        ),
+        SimpleNamespace(
+            id="mem-2",
+            text="child checklist details",
+            source="working-session:cli:owner:subagent",
+            created_at="2026-03-17T00:00:02+00:00",
+            metadata={"working_memory_promoted": True, "working_memory_session_id": "cli:owner:subagent", "share_scope": "family"},
+        ),
+    ]
+
+    digest = synthesize_visible_episode_digest(
+        query="deploy checklist",
+        session_id="cli:owner",
+        records=rows,
+        curated_importance={},
+        curated_mentions={},
+        semantic_enabled=False,
+        limit=4,
+        normalize_session_id_fn=normalize_session_id,
+        is_working_episode_record_fn=lambda row: True,
+        rank_records_fn=lambda query, records, **kwargs: list(records)[::-1],
+        working_episode_context_fn=lambda row: {
+            "session_id": row.metadata["working_memory_session_id"],
+            "share_scope": row.metadata["share_scope"],
+        },
+        episodic_digest_label_fn=lambda active_session_id, target_session_id: "current" if active_session_id == target_session_id else "child",
+        compact_whitespace_fn=lambda text: " ".join(str(text or "").split()),
+    )
+
+    assert digest is not None
+    assert digest["count"] == 2
+    assert digest["sessions"][0]["session_id"] == "cli:owner:subagent"
+    assert "child:cli:owner:subagent" in digest["summary"]

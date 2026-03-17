@@ -5,7 +5,6 @@ import datetime as dt
 import hmac
 import json
 import time
-import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -14,9 +13,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from loguru import logger
 from pydantic import BaseModel, Field
 
 from clawlite.bus.queue import MessageQueue
@@ -37,6 +35,12 @@ from clawlite.runtime import (
     SupervisorIncident,
 )
 from clawlite.gateway.control_handlers import GatewayControlHandlers
+from clawlite.gateway.status_handlers import GatewayStatusHandlers
+from clawlite.gateway.request_handlers import GatewayRequestHandlers
+from clawlite.gateway.background_runners import (
+    run_proactive_monitor_loop as _run_proactive_monitor_loop_helper,
+    run_self_evolution_loop as _run_self_evolution_loop_helper,
+)
 from clawlite.gateway.control_plane import (
     build_control_plane_payload as _build_control_plane_payload,
     control_plane_auth_payload as _control_plane_auth_payload,
@@ -54,27 +58,61 @@ from clawlite.gateway.tuning_policy import (
     resolve_tuning_snapshot_tag as _resolve_tuning_snapshot_tag_helper,
     select_tuning_action_playbook as _select_tuning_action_playbook_helper,
 )
+from clawlite.gateway.tuning_decisions import (
+    plan_tuning_action as _plan_tuning_action_helper,
+)
 from clawlite.gateway.tuning_runtime import (
     build_tuning_action_entry as _build_tuning_action_entry_helper,
     build_tuning_patch as _build_tuning_patch_helper,
-    count_recent_tuning_actions as _count_recent_tuning_actions_helper,
     record_tuning_runner_action as _record_tuning_runner_action_helper,
+)
+from clawlite.gateway.runtime_state import (
+    build_cron_wake_state as _build_cron_wake_state,
+    build_memory_quality_cache as _build_memory_quality_cache,
+    build_proactive_runner_state as _build_proactive_runner_state,
+    build_self_evolution_runner_state as _build_self_evolution_runner_state,
+    build_subagent_maintenance_state as _build_subagent_maintenance_state,
+    build_tuning_runner_state as _build_tuning_runner_state,
+    build_wake_pressure_state as _build_wake_pressure_state,
+)
+from clawlite.gateway.supervisor_runtime import (
+    collect_supervisor_incidents as _collect_supervisor_incidents_helper,
+)
+from clawlite.gateway.supervisor_recovery import (
+    handle_supervisor_incident as _handle_supervisor_incident_helper,
+    recover_supervised_component as _recover_supervised_component_helper,
+)
+from clawlite.gateway.subagents_runtime import (
+    resume_recoverable_subagents as _resume_recoverable_subagents_helper,
+    run_subagent_maintenance_loop as _run_subagent_maintenance_loop_helper,
+)
+from clawlite.gateway.tuning_loop import (
+    run_memory_quality_tuning_tick as _run_memory_quality_tuning_tick_helper,
 )
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary as _dashboard_channels_summary_payload,
     dashboard_cron_summary as _dashboard_cron_summary_payload,
-    dashboard_preview as _dashboard_preview_text,
     dashboard_state_payload as _dashboard_state_payload_builder,
     dashboard_self_evolution_summary as _dashboard_self_evolution_summary_payload,
     operator_channel_summary as _operator_channel_summary,
     recent_dashboard_sessions as _recent_dashboard_sessions_payload,
+)
+from clawlite.gateway.dashboard_runtime import (
+    dashboard_state_payload as _dashboard_state_payload_runtime,
+)
+from clawlite.gateway.diagnostics_payload import (
+    diagnostics_payload as _diagnostics_payload_builder,
 )
 from clawlite.gateway.engine_diagnostics import (
     engine_memory_integration_payload as _engine_memory_integration_payload,
     engine_memory_payloads as _engine_memory_payloads,
     engine_memory_quality_payload as _engine_memory_quality_payload,
     memory_monitor_payload as _memory_monitor_payload,
+)
+from clawlite.gateway.lifecycle_runtime import (
+    start_subsystems as _start_subsystems_helper,
+    stop_subsystems as _stop_subsystems_helper,
 )
 from clawlite.gateway.memory_dashboard import (
     dashboard_memory_summary as _dashboard_memory_summary_payload,
@@ -90,6 +128,7 @@ from clawlite.gateway.payloads import (
 )
 from clawlite.gateway.runtime_builder import RuntimeContainer, _provider_config, build_runtime
 from clawlite.gateway.webhooks import GatewayWebhookHandlers
+from clawlite.gateway.websocket_handlers import GatewayWebSocketHandlers
 from clawlite.cli.onboarding import build_dashboard_handoff
 from clawlite.cli.ops import memory_profile_snapshot, memory_snapshot_create, memory_snapshot_rollback, memory_suggest_snapshot, memory_version_snapshot
 from clawlite.utils.logging import bind_event, setup_logging
@@ -1123,32 +1162,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     proactive_task: asyncio.Task[Any] | None = None
     proactive_running = False
     proactive_stop_event = asyncio.Event()
-    proactive_runner_state: dict[str, Any] = {
-        "enabled": bool(runtime.memory_monitor is not None),
-        "running": False,
-        "interval_seconds": proactive_interval_seconds,
-        "ticks": 0,
-        "success_count": 0,
-        "error_count": 0,
-        "backpressure_count": 0,
-        "backpressure_by_reason": {},
-        "delivered_count": 0,
-        "replayed_count": 0,
-        "last_trigger": "",
-        "last_backpressure_reason": "",
-        "last_result": "",
-        "last_error": "",
-        "last_run_iso": "",
-        "policy_event_count": 0,
-        "delayed_count": 0,
-        "discarded_count": 0,
-        "policy_by_action": {},
-        "policy_by_reason": {},
-        "last_policy_action": "",
-        "last_policy_reason": "",
-        "last_policy_at": "",
-        "recent_policy_events": [],
-    }
+    proactive_runner_state = _build_proactive_runner_state(
+        enabled=bool(runtime.memory_monitor is not None),
+        interval_seconds=proactive_interval_seconds,
+    )
     tuning_loop_interval_seconds = max(1, int(cfg.gateway.autonomy.tuning_loop_interval_s or 1800))
     tuning_loop_timeout_seconds = max(1.0, float(cfg.gateway.autonomy.tuning_loop_timeout_s or 45.0))
     tuning_loop_cooldown_seconds = max(0, int(cfg.gateway.autonomy.tuning_loop_cooldown_s or 300))
@@ -1162,88 +1179,29 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     supervisor_incident_notice_until: dict[str, float] = {}
     job_workers_started = False
     wake_pressure_notice_until: dict[str, float] = {}
-    wake_pressure_state: dict[str, Any] = {
-        "enabled": True,
-        "event_count": 0,
-        "notice_count": 0,
-        "events_by_kind": {},
-        "events_by_reason": {},
-        "streaks": {},
-        "last_seen_monotonic": {},
-        "last_kind": "",
-        "last_reason": "",
-        "last_summary": "",
-        "last_event_at": "",
-        "last_notice_at": "",
-    }
-    cron_wake_state: dict[str, Any] = {
-        "enabled": True,
-        "policy_event_count": 0,
-        "delayed_count": 0,
-        "discarded_count": 0,
-        "policy_by_action": {},
-        "policy_by_reason": {},
-        "last_policy_action": "",
-        "last_policy_reason": "",
-        "last_policy_at": "",
-        "last_result": "",
-        "recent_policy_events": [],
-    }
-    tuning_runner_state: dict[str, Any] = {
-        "enabled": bool(cfg.gateway.autonomy.tuning_loop_enabled),
-        "running": False,
-        "interval_seconds": tuning_loop_interval_seconds,
-        "timeout_seconds": tuning_loop_timeout_seconds,
-        "cooldown_seconds": tuning_loop_cooldown_seconds,
-        "actions_per_hour_cap": tuning_actions_per_hour_cap,
-        "ticks": 0,
-        "success_count": 0,
-        "error_count": 0,
-        "action_count": 0,
-        "last_result": "",
-        "last_error": "",
-        "last_run_iso": "",
-        "next_run_iso": "",
-        "last_action": "",
-        "last_action_status": "",
-        "last_action_reason": "",
-        "actions_by_layer": {},
-        "actions_by_playbook": {},
-        "actions_by_action": {},
-        "action_status_by_layer": {},
-        "last_action_metadata": {},
-    }
+    wake_pressure_state = _build_wake_pressure_state()
+    cron_wake_state = _build_cron_wake_state()
+    tuning_runner_state = _build_tuning_runner_state(
+        enabled=bool(cfg.gateway.autonomy.tuning_loop_enabled),
+        interval_seconds=tuning_loop_interval_seconds,
+        timeout_seconds=tuning_loop_timeout_seconds,
+        cooldown_seconds=tuning_loop_cooldown_seconds,
+        actions_per_hour_cap=tuning_actions_per_hour_cap,
+    )
     self_evolution_task: asyncio.Task[Any] | None = None
     self_evolution_running = False
     self_evolution_stop_event = asyncio.Event()
-    self_evolution_runner_state: dict[str, Any] = {
-        "enabled": bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None),
-        "running": False,
-        "cooldown_seconds": (
-            float(getattr(runtime.self_evolution, "cooldown_s", 3600.0)) if runtime.self_evolution is not None else 0.0
-        ),
-        "ticks": 0,
-        "success_count": 0,
-        "error_count": 0,
-        "last_result": "",
-        "last_error": "",
-        "last_run_iso": "",
-    }
+    self_evolution_runner_state = _build_self_evolution_runner_state(
+        enabled=bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None),
+        cooldown_seconds=float(getattr(runtime.self_evolution, "cooldown_s", 3600.0)) if runtime.self_evolution is not None else 0.0,
+    )
     subagent_maintenance_interval_seconds = max(1.0, float(runtime.engine.subagents.maintenance_interval_seconds()))
     subagent_maintenance_task: asyncio.Task[Any] | None = None
     subagent_maintenance_running = False
     subagent_maintenance_stop_event = asyncio.Event()
-    subagent_maintenance_state: dict[str, Any] = {
-        "enabled": True,
-        "running": False,
-        "interval_seconds": subagent_maintenance_interval_seconds,
-        "ticks": 0,
-        "success_count": 0,
-        "error_count": 0,
-        "last_result": {},
-        "last_error": "",
-        "last_run_iso": "",
-    }
+    subagent_maintenance_state = _build_subagent_maintenance_state(
+        interval_seconds=subagent_maintenance_interval_seconds,
+    )
 
     def _record_autonomy_event(
         source: str,
@@ -1626,10 +1584,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             event_at=event_at,
         )
         return True
-    memory_quality_cache: dict[str, Any] = {
-        "fingerprint": "",
-        "payload": None,
-    }
+    memory_quality_cache = _build_memory_quality_cache()
 
     def _bootstrap_status_snapshot() -> dict[str, Any]:
         fallback = {
@@ -2188,273 +2143,31 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         tuning_runner_state["running"] = True
 
         async def _tick() -> None:
-            now = dt.datetime.now(dt.timezone.utc)
-            now_iso = now.isoformat(timespec="seconds")
-            memory_store = getattr(runtime.engine, "memory", None)
-            update_quality_fn = getattr(memory_store, "update_quality_state", None)
-            snapshot_fn = getattr(memory_store, "quality_state_snapshot", None)
-            update_tuning_fn = getattr(memory_store, "update_quality_tuning_state", None)
-
-            if not callable(update_quality_fn) or not callable(snapshot_fn):
-                tuning_runner_state["last_result"] = "unsupported"
-                tuning_runner_state["last_error"] = "memory_quality_methods_unavailable"
-                tuning_runner_state["last_run_iso"] = now_iso
-                tuning_runner_state["next_run_iso"] = (now + dt.timedelta(seconds=tuning_loop_interval_seconds)).isoformat(timespec="seconds")
-                return
-
-            action = ""
-            action_status = "noop"
-            action_reason = ""
-            action_metadata: dict[str, Any] = {}
-            tick_error = ""
-            next_wait_seconds = tuning_loop_interval_seconds
-
-            try:
-                retrieval_metrics, turn_metrics, semantic_metrics, reasoning_layer_metrics = await _collect_memory_quality_inputs()
-
-                def _call_quality_update_tuning() -> Any:
-                    kwargs = {
-                        "retrieval_metrics": retrieval_metrics,
-                        "turn_stability_metrics": turn_metrics,
-                        "semantic_metrics": {
-                            "enabled": bool(semantic_metrics.get("enabled", False)),
-                            "coverage_ratio": float(semantic_metrics.get("coverage_ratio", 0.0) or 0.0),
-                        },
-                        "sampled_at": now_iso,
-                    }
-                    if reasoning_layer_metrics:
-                        try:
-                            return update_quality_fn(
-                                **kwargs,
-                                reasoning_layer_metrics=reasoning_layer_metrics,
-                            )
-                        except TypeError:
-                            return update_quality_fn(**kwargs)
-                    return update_quality_fn(**kwargs)
-
-                report = await asyncio.wait_for(
-                    asyncio.to_thread(_call_quality_update_tuning),
-                    timeout=tuning_loop_timeout_seconds,
-                )
-                snapshot = await asyncio.wait_for(asyncio.to_thread(snapshot_fn), timeout=tuning_loop_timeout_seconds)
-                tuning_state = snapshot.get("tuning", {}) if isinstance(snapshot, dict) else {}
-
-                drift = str((report.get("drift", {}) if isinstance(report, dict) else {}).get("assessment", "") or "")
-                score = int((report.get("score", 0) if isinstance(report, dict) else 0) or 0)
-                reasoning_report = report.get("reasoning_layers", {}) if isinstance(report, dict) else {}
-                weakest_layer = ""
-                if isinstance(reasoning_report, dict):
-                    weakest_layer = _normalize_reasoning_layer(str(reasoning_report.get("weakest_layer", "") or ""))
-                degrading_streak = int(tuning_state.get("degrading_streak", 0) or 0)
-                if drift == "degrading":
-                    degrading_streak += 1
-                else:
-                    degrading_streak = 0
-
-                if drift == "degrading":
-                    severity = ""
-                    playbook_id = ""
-                    if degrading_streak >= (tuning_degrading_streak_threshold + 2) or score <= 40:
-                        severity = "high"
-                    elif degrading_streak >= tuning_degrading_streak_threshold:
-                        severity = "medium"
-                    else:
-                        severity = "low"
-
-                    action, playbook_id = _select_tuning_action_playbook(
-                        severity=severity,
-                        weakest_layer=weakest_layer,
-                    )
-                    action_reason = f"quality_drift_{severity}:playbook_id={playbook_id}:severity={severity}"
-                    if weakest_layer:
-                        action_reason = f"{action_reason}:weakest_layer={weakest_layer}"
-
-                    action_metadata = {
-                        "severity": severity,
-                        "playbook_id": playbook_id,
-                    }
-                    if weakest_layer:
-                        action_metadata["weakest_layer"] = weakest_layer
-                    action_metadata["action_variant"] = f"{playbook_id}:{action}:v2"
-
-                    last_action_at = _parse_iso(str(tuning_state.get("last_action_at", "") or ""))
-                    in_cooldown = (
-                        last_action_at is not None
-                        and tuning_loop_cooldown_seconds > 0
-                        and (now - last_action_at).total_seconds() < float(tuning_loop_cooldown_seconds)
-                    )
-
-                    recent_actions_raw = tuning_state.get("recent_actions", [])
-                    recent_actions = list(recent_actions_raw) if isinstance(recent_actions_raw, list) else []
-                    recent_actions = recent_actions[-tuning_recent_actions_limit:]
-                    action_events_last_hour = _count_recent_tuning_actions_helper(
-                        recent_actions,
-                        now=now,
-                        parse_iso=_parse_iso,
-                        ignored_statuses=frozenset({"cooldown_skipped", "rate_limited", "noop"}),
-                    )
-
-                    if in_cooldown:
-                        action_status = "cooldown_skipped"
-                    elif action_events_last_hour >= tuning_actions_per_hour_cap:
-                        action_status = "rate_limited"
-                    else:
-                        if action == "notify_operator":
-                            layer_suffix = f" layer={weakest_layer}." if weakest_layer else ""
-                            template_id, text_marker = _resolve_tuning_notify_variant(
-                                layer=weakest_layer,
-                                severity=severity,
-                            )
-                            action_metadata["template_id"] = template_id
-                            await _send_autonomy_notice(
-                                "memory_quality_tuning",
-                                action,
-                                "ok",
-                                text=(
-                                    f"Memory quality drift detected ({severity}). "
-                                    f"score={score} streak={degrading_streak}.{layer_suffix} "
-                                    f"variant={text_marker} Monitoring in progress."
-                                ),
-                                metadata={
-                                    "source": "memory_quality_tuning",
-                                    "trigger": "quality_loop",
-                                    "drift": drift,
-                                    **action_metadata,
-                                },
-                                summary=f"notice sent for {action}",
-                                event_at=now_iso,
-                            )
-                            action_status = "ok"
-                        elif action == "semantic_backfill":
-                            missing_records = int(semantic_metrics.get("missing_records", 0) or 0)
-                            backfill_limit = _resolve_tuning_backfill_limit(
-                                layer=weakest_layer,
-                                severity=severity,
-                                missing_records=missing_records,
-                            )
-                            action_metadata["backfill_limit"] = backfill_limit
-                            backfill_fn = getattr(memory_store, "backfill_embeddings", None)
-                            if callable(backfill_fn):
-                                await asyncio.wait_for(
-                                    asyncio.to_thread(backfill_fn, limit=backfill_limit),
-                                    timeout=tuning_loop_timeout_seconds,
-                                )
-                                action_status = "ok"
-                            else:
-                                action_status = "unsupported"
-                        elif action == "memory_snapshot":
-                            snapshot_memory_fn = getattr(memory_store, "snapshot", None)
-                            snapshot_tag = _resolve_tuning_snapshot_tag(layer=weakest_layer, severity=severity)
-                            action_metadata["snapshot_tag"] = snapshot_tag
-                            if callable(snapshot_memory_fn):
-                                await asyncio.wait_for(
-                                    asyncio.to_thread(snapshot_memory_fn, snapshot_tag),
-                                    timeout=tuning_loop_timeout_seconds,
-                                )
-                                action_status = "ok"
-                            else:
-                                action_status = "unsupported"
-
-                action_entry = _build_tuning_action_entry_helper(
-                    action=action,
-                    status=action_status,
-                    reason=action_reason,
-                    at=now_iso,
-                    metadata=action_metadata,
-                )
-
-                if action_status == "ok":
-                    tuning_runner_state["action_count"] = int(tuning_runner_state.get("action_count", 0) or 0) + 1
-
-                if action:
-                    _record_tuning_runner_action_helper(
-                        tuning_runner_state,
-                        weakest_layer=weakest_layer,
-                        action=action,
-                        playbook_id=playbook_id,
-                        action_status=action_status,
-                        action_metadata=action_metadata,
-                        resolve_tuning_layer=_resolve_tuning_layer,
-                    )
-
-                if callable(update_tuning_fn):
-                    tuning_patch = _build_tuning_patch_helper(
-                        degrading_streak=degrading_streak,
-                        now_iso=now_iso,
-                        interval_seconds=tuning_loop_interval_seconds,
-                        action_entry=action_entry,
-                    )
-                    await asyncio.wait_for(asyncio.to_thread(update_tuning_fn, tuning_patch), timeout=tuning_loop_timeout_seconds)
-
-                tuning_runner_state["success_count"] = int(tuning_runner_state.get("success_count", 0) or 0) + 1
-                tuning_runner_state["last_result"] = "ok"
-                tuning_runner_state["last_error"] = ""
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                tick_error = str(exc)
-                next_wait_seconds = tuning_error_backoff_seconds
-                tuning_runner_state["error_count"] = int(tuning_runner_state.get("error_count", 0) or 0) + 1
-                tuning_runner_state["last_result"] = "error"
-                tuning_runner_state["last_error"] = tick_error
-                bind_event("memory.quality.tuning").warning("tuning tick failed error={}", exc)
-                if callable(update_tuning_fn):
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.to_thread(
-                                update_tuning_fn,
-                                {
-                                    "last_run_at": now_iso,
-                                    "next_run_at": (now + dt.timedelta(seconds=tuning_error_backoff_seconds)).isoformat(timespec="seconds"),
-                                    "last_error": tick_error,
-                                },
-                            ),
-                            timeout=tuning_loop_timeout_seconds,
-                        )
-                    except Exception:
-                        pass
-            finally:
-                tuning_runner_state["last_run_iso"] = now_iso
-                tuning_runner_state["next_run_iso"] = (now + dt.timedelta(seconds=next_wait_seconds)).isoformat(timespec="seconds")
-                tuning_runner_state["last_action"] = str(action or "")
-                tuning_runner_state["last_action_status"] = str(action_status or "")
-                tuning_runner_state["last_action_reason"] = str(action_reason or "")
-                if tick_error and not tuning_runner_state.get("last_error"):
-                    tuning_runner_state["last_error"] = tick_error
-                if tick_error:
-                    _record_autonomy_event(
-                        "memory_quality_tuning",
-                        "tuning_tick",
-                        "failed",
-                        summary=f"memory quality tuning failed: {tick_error}",
-                        metadata={
-                            "error": tick_error,
-                            "last_action": action,
-                            "last_action_status": action_status,
-                        },
-                        event_at=now_iso,
-                    )
-                elif action:
-                    _record_autonomy_event(
-                        "memory_quality_tuning",
-                        action,
-                        action_status or "ok",
-                        summary=f"{action} -> {action_status or 'ok'}",
-                        metadata={
-                            "reason": action_reason,
-                            **dict(action_metadata),
-                        },
-                        event_at=now_iso,
-                    )
-                elif str(tuning_runner_state.get("last_result", "") or "") == "unsupported":
-                    _record_autonomy_event(
-                        "memory_quality_tuning",
-                        "tuning_tick",
-                        "unsupported",
-                        summary="memory quality methods unavailable",
-                        metadata={"error": str(tuning_runner_state.get("last_error", "") or "")},
-                        event_at=now_iso,
-                    )
+            await _run_memory_quality_tuning_tick_helper(
+                runtime=runtime,
+                now=dt.datetime.now(dt.timezone.utc),
+                tuning_runner_state=tuning_runner_state,
+                collect_memory_quality_inputs=_collect_memory_quality_inputs,
+                parse_iso=_parse_iso,
+                plan_tuning_action=_plan_tuning_action_helper,
+                resolve_notify_variant=_resolve_tuning_notify_variant,
+                resolve_backfill_limit=_resolve_tuning_backfill_limit,
+                resolve_snapshot_tag=_resolve_tuning_snapshot_tag,
+                build_tuning_action_entry=_build_tuning_action_entry_helper,
+                record_tuning_runner_action=_record_tuning_runner_action_helper,
+                build_tuning_patch=_build_tuning_patch_helper,
+                resolve_tuning_layer=_resolve_tuning_layer,
+                send_autonomy_notice=_send_autonomy_notice,
+                record_autonomy_event=_record_autonomy_event,
+                tuning_loop_interval_seconds=tuning_loop_interval_seconds,
+                tuning_loop_timeout_seconds=tuning_loop_timeout_seconds,
+                tuning_degrading_streak_threshold=tuning_degrading_streak_threshold,
+                tuning_recent_actions_limit=tuning_recent_actions_limit,
+                tuning_loop_cooldown_seconds=tuning_loop_cooldown_seconds,
+                tuning_actions_per_hour_cap=tuning_actions_per_hour_cap,
+                tuning_error_backoff_seconds=tuning_error_backoff_seconds,
+                log_warning=lambda exc: bind_event("memory.quality.tuning").warning("tuning tick failed error={}", exc),
+            )
 
         async def _loop() -> None:
             first_tick = True
@@ -2510,50 +2223,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         proactive_running = True
         proactive_runner_state["running"] = True
 
-        async def _loop() -> None:
-            first_tick = True
-            while proactive_running:
-                if not first_tick:
-                    try:
-                        await asyncio.wait_for(proactive_stop_event.wait(), timeout=proactive_interval_seconds)
-                    except (asyncio.TimeoutError, TimeoutError):
-                        pass
-                    if proactive_stop_event.is_set() or not proactive_running:
-                        break
-                first_tick = False
-
-                proactive_runner_state["ticks"] = int(proactive_runner_state.get("ticks", 0) or 0) + 1
-                proactive_runner_state["last_trigger"] = "startup" if proactive_runner_state["ticks"] == 1 else "interval"
-                proactive_runner_state["last_run_iso"] = _utc_now_iso()
-                try:
-                    scan_result = await _submit_proactive_wake()
-                    status = str(scan_result.get("status", "") or "").strip().lower()
-                    if status.endswith("backpressure"):
-                        proactive_runner_state["backpressure_count"] = int(proactive_runner_state.get("backpressure_count", 0) or 0) + 1
-                        pressure_reason = str(scan_result.get("pressure_class", "") or status.removeprefix("wake_")).strip() or "backpressure"
-                        backpressure_by_reason = proactive_runner_state.get("backpressure_by_reason")
-                        if not isinstance(backpressure_by_reason, dict):
-                            backpressure_by_reason = {}
-                            proactive_runner_state["backpressure_by_reason"] = backpressure_by_reason
-                        backpressure_by_reason[pressure_reason] = int(backpressure_by_reason.get(pressure_reason, 0) or 0) + 1
-                        proactive_runner_state["last_backpressure_reason"] = pressure_reason
-                    elif status in {"ok", "disabled"}:
-                        proactive_runner_state["success_count"] = int(proactive_runner_state.get("success_count", 0) or 0) + 1
-                    else:
-                        proactive_runner_state["error_count"] = int(proactive_runner_state.get("error_count", 0) or 0) + 1
-                    proactive_runner_state["delivered_count"] = int(proactive_runner_state.get("delivered_count", 0) or 0) + int(scan_result.get("delivered", 0) or 0)
-                    proactive_runner_state["replayed_count"] = int(proactive_runner_state.get("replayed_count", 0) or 0) + int(scan_result.get("replayed", 0) or 0)
-                    proactive_runner_state["last_result"] = status or "unknown"
-                    proactive_runner_state["last_error"] = str(scan_result.get("error", "") or "")
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    proactive_runner_state["error_count"] = int(proactive_runner_state.get("error_count", 0) or 0) + 1
-                    proactive_runner_state["last_result"] = "error"
-                    proactive_runner_state["last_error"] = str(exc)
-                    bind_event("proactive.lifecycle").error("proactive loop tick failed error={}", exc)
-
-        proactive_task = asyncio.create_task(_loop())
+        proactive_task = asyncio.create_task(
+            _run_proactive_monitor_loop_helper(
+                state=proactive_runner_state,
+                stop_event=proactive_stop_event,
+                interval_seconds=proactive_interval_seconds,
+                is_running=lambda: proactive_running,
+                submit_proactive_wake=_submit_proactive_wake,
+                utc_now_iso=_utc_now_iso,
+                log_error=lambda exc: bind_event("proactive.lifecycle").error("proactive loop tick failed error={}", exc),
+            )
+        )
         bind_event("proactive.lifecycle").info("proactive monitor started interval_seconds={}", proactive_interval_seconds)
 
     async def _stop_proactive_monitor() -> None:
@@ -2597,32 +2277,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         bind_event("self_evolution.lifecycle").info("self_evolution loop starting")
 
         async def _evo_loop() -> None:
-            cooldown = float(getattr(runtime.self_evolution, "cooldown_s", 3600.0))
-            while True:
-                try:
-                    self_evolution_runner_state["ticks"] = int(self_evolution_runner_state.get("ticks", 0) or 0) + 1
-                    result = await runtime.self_evolution.run_once()
-                    self_evolution_runner_state["success_count"] = int(
-                        self_evolution_runner_state.get("success_count", 0) or 0
-                    ) + 1
-                    self_evolution_runner_state["last_result"] = str((result or {}).get("last_outcome", "") or "")
-                    self_evolution_runner_state["last_error"] = ""
-                    self_evolution_runner_state["last_run_iso"] = _utc_now_iso()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    self_evolution_runner_state["error_count"] = int(
-                        self_evolution_runner_state.get("error_count", 0) or 0
-                    ) + 1
-                    self_evolution_runner_state["last_result"] = "error"
-                    self_evolution_runner_state["last_error"] = str(exc)
-                    self_evolution_runner_state["last_run_iso"] = _utc_now_iso()
-                    bind_event("self_evolution.lifecycle").error("self_evolution tick failed error={}", exc)
-                try:
-                    await asyncio.wait_for(self_evolution_stop_event.wait(), timeout=cooldown)
-                    return
-                except asyncio.TimeoutError:
-                    continue
+            await _run_self_evolution_loop_helper(
+                self_evolution=runtime.self_evolution,
+                state=self_evolution_runner_state,
+                stop_event=self_evolution_stop_event,
+                utc_now_iso=_utc_now_iso,
+                log_error=lambda exc: bind_event("self_evolution.lifecycle").error("self_evolution tick failed error={}", exc),
+            )
 
         self_evolution_task = asyncio.create_task(_evo_loop())
         lifecycle.mark_component("self_evolution", running=True)
@@ -2669,32 +2330,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         )
 
         async def _maintenance_loop() -> None:
-            while True:
-                try:
-                    swept = await runtime.engine.subagents.sweep_async()
-                    subagent_maintenance_state["ticks"] = int(subagent_maintenance_state.get("ticks", 0) or 0) + 1
-                    subagent_maintenance_state["success_count"] = (
-                        int(subagent_maintenance_state.get("success_count", 0) or 0) + 1
-                    )
-                    subagent_maintenance_state["last_result"] = dict(swept or {})
-                    subagent_maintenance_state["last_error"] = ""
-                    subagent_maintenance_state["last_run_iso"] = _utc_now_iso()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    subagent_maintenance_state["ticks"] = int(subagent_maintenance_state.get("ticks", 0) or 0) + 1
-                    subagent_maintenance_state["error_count"] = int(subagent_maintenance_state.get("error_count", 0) or 0) + 1
-                    subagent_maintenance_state["last_error"] = str(exc)
-                    subagent_maintenance_state["last_run_iso"] = _utc_now_iso()
-                    bind_event("subagents.lifecycle").warning("subagent maintenance tick failed error={}", exc)
-                try:
-                    await asyncio.wait_for(
-                        subagent_maintenance_stop_event.wait(),
-                        timeout=subagent_maintenance_interval_seconds,
-                    )
-                    return
-                except asyncio.TimeoutError:
-                    continue
+            await _run_subagent_maintenance_loop_helper(
+                engine=runtime.engine,
+                state=subagent_maintenance_state,
+                stop_event=subagent_maintenance_stop_event,
+                interval_seconds=subagent_maintenance_interval_seconds,
+                utc_now_iso=_utc_now_iso,
+                log_warning=lambda exc: bind_event("subagents.lifecycle").warning("subagent maintenance tick failed error={}", exc),
+            )
 
         subagent_maintenance_task = asyncio.create_task(_maintenance_loop())
         lifecycle.mark_component("subagent_maintenance", running=True)
@@ -2791,173 +2434,39 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     )
 
     async def _supervisor_incident_checks() -> list[SupervisorIncident]:
-        incidents: list[SupervisorIncident] = []
-
-        if self_evolution_runner_state.get("enabled", False):
-            self_evolution_state, _self_evolution_error = _background_task_snapshot(
-                self_evolution_task,
-                running=self_evolution_running,
-                last_error=str(self_evolution_runner_state.get("last_error", "") or ""),
-            )
-            if self_evolution_state != "running":
-                incidents.append(
-                    SupervisorIncident(component="self_evolution", reason=f"self_evolution_{self_evolution_state}")
-                )
-
-        channels_dispatcher_status = runtime.channels.dispatcher_diagnostics()
-        if channels_dispatcher_status.get("enabled", True) and not channels_dispatcher_status.get("running", False):
-            worker_state = str(channels_dispatcher_status.get("task_state", "stopped") or "stopped")
-            incidents.append(SupervisorIncident(component="channels_dispatcher", reason=f"channels_dispatcher_{worker_state}"))
-
-        channels_recovery_status = runtime.channels.recovery_diagnostics()
-        if channels_recovery_status.get("enabled", True) and not channels_recovery_status.get("running", False):
-            worker_state = str(channels_recovery_status.get("task_state", "stopped") or "stopped")
-            incidents.append(SupervisorIncident(component="channels_recovery", reason=f"channels_recovery_{worker_state}"))
-
-        if cfg.gateway.heartbeat.enabled:
-            heartbeat_status = runtime.heartbeat.status()
-            if not heartbeat_status.get("running", False):
-                worker_state = str(heartbeat_status.get("worker_state", "stopped") or "stopped")
-                incidents.append(SupervisorIncident(component="heartbeat", reason=f"heartbeat_{worker_state}"))
-
-        cron_status = runtime.cron.status()
-        if not cron_status.get("running", False):
-            worker_state = str(cron_status.get("worker_state", "stopped") or "stopped")
-            incidents.append(SupervisorIncident(component="cron", reason=f"cron_{worker_state}"))
-
-        autonomy_wake_status = runtime.autonomy_wake.status()
-        if not autonomy_wake_status.get("running", False):
-            worker_state = str(autonomy_wake_status.get("worker_state", "stopped") or "stopped")
-            incidents.append(SupervisorIncident(component="autonomy_wake", reason=f"autonomy_wake_{worker_state}"))
-
-        if cfg.gateway.autonomy.enabled and runtime.autonomy is not None:
-            autonomy_status = runtime.autonomy.status()
-            if not autonomy_status.get("running", False):
-                worker_state = str(autonomy_status.get("worker_state", "stopped") or "stopped")
-                incidents.append(SupervisorIncident(component="autonomy", reason=f"autonomy_{worker_state}"))
-
-        subagent_maintenance_state_name, _subagent_maintenance_error = _background_task_snapshot(
-            subagent_maintenance_task,
-            running=subagent_maintenance_running,
-            last_error=str(subagent_maintenance_state.get("last_error", "") or ""),
+        return await _collect_supervisor_incidents_helper(
+            incident_cls=SupervisorIncident,
+            cfg=cfg,
+            runtime=runtime,
+            self_evolution_task=self_evolution_task,
+            self_evolution_running=self_evolution_running,
+            self_evolution_runner_state=self_evolution_runner_state,
+            subagent_maintenance_task=subagent_maintenance_task,
+            subagent_maintenance_running=subagent_maintenance_running,
+            subagent_maintenance_state=subagent_maintenance_state,
+            proactive_task=proactive_task,
+            proactive_running=proactive_running,
+            proactive_runner_state=proactive_runner_state,
+            tuning_task=tuning_task,
+            tuning_running=tuning_running,
+            tuning_runner_state=tuning_runner_state,
+            background_task_snapshot=_background_task_snapshot,
+            provider_telemetry_snapshot=_provider_telemetry_snapshot,
         )
-        if subagent_maintenance_state_name != "running":
-            incidents.append(
-                SupervisorIncident(
-                    component="subagent_maintenance",
-                    reason=f"subagent_maintenance_{subagent_maintenance_state_name}",
-                )
-            )
-
-        skills_watcher_status = runtime.skills_loader.watcher_status()
-        if not skills_watcher_status.get("running", False):
-            watcher_state = str(skills_watcher_status.get("task_state", "stopped") or "stopped")
-            incidents.append(SupervisorIncident(component="skills_watcher", reason=f"skills_watcher_{watcher_state}"))
-
-        if runtime.memory_monitor is not None:
-            proactive_state, _proactive_error = _background_task_snapshot(
-                proactive_task,
-                running=proactive_running,
-                last_error=str(proactive_runner_state.get("last_error", "") or ""),
-            )
-            if proactive_state != "running":
-                incidents.append(SupervisorIncident(component="proactive_monitor", reason=f"proactive_monitor_{proactive_state}"))
-
-        if cfg.gateway.autonomy.tuning_loop_enabled:
-            tuning_state, _tuning_error = _background_task_snapshot(
-                tuning_task,
-                running=tuning_running,
-                last_error=str(tuning_runner_state.get("last_error", "") or ""),
-            )
-            if tuning_state != "running":
-                incidents.append(
-                    SupervisorIncident(component="memory_quality_tuning", reason=f"memory_quality_tuning_{tuning_state}")
-                )
-
-        if runtime.job_queue is not None:
-            job_status = runtime.job_queue.worker_status()
-            if not job_status.get("running", False):
-                workers_alive = int(job_status.get("workers_alive", 0) or 0)
-                workers_total = int(job_status.get("workers_total", 0) or 0)
-                reason = f"job_workers_dead:{workers_alive}/{workers_total}"
-                incidents.append(SupervisorIncident(component="job_workers", reason=reason))
-
-        if cfg.gateway.autonomy.enabled and runtime.autonomy is not None:
-            autonomy_status = runtime.autonomy.status()
-            consecutive_errors = int(autonomy_status.get("consecutive_error_count", 0) or 0)
-            no_progress_streak = int(autonomy_status.get("no_progress_streak", 0) or 0)
-            if consecutive_errors >= 5:
-                incidents.append(
-                    SupervisorIncident(
-                        component="autonomy_stuck",
-                        reason=f"autonomy_consecutive_errors:{consecutive_errors}",
-                        recoverable=False,
-                    )
-                )
-            elif no_progress_streak >= 3:
-                incidents.append(
-                    SupervisorIncident(
-                        component="autonomy_stuck",
-                        reason=f"autonomy_no_progress_streak:{no_progress_streak}",
-                        recoverable=False,
-                    )
-                )
-
-        provider_telemetry = _provider_telemetry_snapshot(runtime.engine.provider)
-        provider_summary = provider_telemetry.get("summary", {}) if isinstance(provider_telemetry, dict) else {}
-        provider_state = str(provider_summary.get("state", "") or "").strip().lower()
-        provider_name = str(provider_telemetry.get("provider", "") or "provider").strip().lower() or "provider"
-        if provider_state in {"circuit_open", "cooldown"}:
-            incidents.append(
-                SupervisorIncident(
-                    component="provider",
-                    reason=f"provider_{provider_state}:{provider_name}",
-                    recoverable=False,
-                )
-            )
-
-        return incidents
 
     async def _handle_supervisor_incident(incident: SupervisorIncident) -> None:
-        if incident.recoverable:
-            return
-        key = f"{incident.component}:{incident.reason}"
-        now = time.monotonic()
-        cooldown_s = max(30.0, float(cfg.gateway.supervisor.cooldown_s or 0.0))
-        if now < float(supervisor_incident_notice_until.get(key, 0.0) or 0.0):
-            return
-        supervisor_incident_notice_until[key] = now + cooldown_s
-        _record_autonomy_event(
-            "supervisor",
-            "component_incident",
-            "observed",
-            summary=f"{incident.component} incident -> {incident.reason}",
-            metadata={
-                "component": incident.component,
-                "incident_reason": incident.reason,
-                "recoverable": incident.recoverable,
-            },
-        )
-        text = f"Autonomy notice: supervisor detected component={incident.component} issue."
-        if incident.reason:
-            text += f" reason={incident.reason}."
-        await _send_autonomy_notice(
-            "supervisor",
-            "component_incident",
-            "observed",
-            text=text,
-            metadata={
-                "source": "supervisor",
-                "component": incident.component,
-                "incident_reason": incident.reason,
-                "recoverable": incident.recoverable,
-            },
+        await _handle_supervisor_incident_helper(
+            incident=incident,
+            notice_until=supervisor_incident_notice_until,
+            cooldown_s=max(30.0, float(cfg.gateway.supervisor.cooldown_s or 0.0)),
+            now_monotonic=time.monotonic,
+            record_autonomy_event=_record_autonomy_event,
+            send_autonomy_notice=_send_autonomy_notice,
         )
 
     async def _recover_supervised_component(component: str, reason: str) -> bool:
         bind_event("supervisor.recover").warning("runtime recover component={} reason={}", component, reason)
-        recovered = False
-        if component == "self_evolution":
+        async def _recover_self_evolution() -> bool:
             await _start_self_evolution()
             _refresh_runtime_components()
             self_evolution_state, _self_evolution_error = _background_task_snapshot(
@@ -2965,37 +2474,46 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 running=self_evolution_running,
                 last_error=str(self_evolution_runner_state.get("last_error", "") or ""),
             )
-            recovered = bool(self_evolution_runner_state.get("enabled", False) and self_evolution_state == "running")
-        elif component == "channels_dispatcher":
+            return bool(self_evolution_runner_state.get("enabled", False) and self_evolution_state == "running")
+
+        async def _recover_channels_dispatcher() -> bool:
             await runtime.channels.start_dispatcher_loop()
             _refresh_runtime_components()
-            recovered = bool(runtime.channels.dispatcher_diagnostics().get("running", False))
-        elif component == "channels_recovery":
+            return bool(runtime.channels.dispatcher_diagnostics().get("running", False))
+
+        async def _recover_channels_recovery() -> bool:
             await runtime.channels.start_recovery_supervisor()
             _refresh_runtime_components()
-            recovered = bool(runtime.channels.recovery_diagnostics().get("running", False))
-        elif component == "heartbeat":
+            return bool(runtime.channels.recovery_diagnostics().get("running", False))
+
+        async def _recover_heartbeat() -> bool:
             await runtime.heartbeat.start(_submit_heartbeat_wake)
             _refresh_runtime_components()
-            recovered = bool(runtime.heartbeat.status().get("running", False))
-        elif component == "cron":
+            return bool(runtime.heartbeat.status().get("running", False))
+
+        async def _recover_cron() -> bool:
             await runtime.cron.start(_submit_cron_wake)
             _refresh_runtime_components()
-            recovered = bool(runtime.cron.status().get("running", False))
-        elif component == "autonomy_wake":
+            return bool(runtime.cron.status().get("running", False))
+
+        async def _recover_autonomy_wake() -> bool:
             await runtime.autonomy_wake.start(_dispatch_autonomy_wake)
             _refresh_runtime_components()
-            recovered = bool(runtime.autonomy_wake.status().get("running", False))
-        elif component == "autonomy":
+            return bool(runtime.autonomy_wake.status().get("running", False))
+
+        async def _recover_autonomy() -> bool:
             if runtime.autonomy is not None:
                 await runtime.autonomy.start()
                 _refresh_runtime_components()
-                recovered = bool(runtime.autonomy.status().get("running", False))
-        elif component == "skills_watcher":
+                return bool(runtime.autonomy.status().get("running", False))
+            return False
+
+        async def _recover_skills_watcher() -> bool:
             await runtime.skills_loader.start_watcher()
             _refresh_runtime_components()
-            recovered = bool(runtime.skills_loader.watcher_status().get("running", False))
-        elif component == "subagent_maintenance":
+            return bool(runtime.skills_loader.watcher_status().get("running", False))
+
+        async def _recover_subagent_maintenance() -> bool:
             await _start_subagent_maintenance()
             _refresh_runtime_components()
             maintenance_state, _maintenance_error = _background_task_snapshot(
@@ -3003,8 +2521,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 running=subagent_maintenance_running,
                 last_error=str(subagent_maintenance_state.get("last_error", "") or ""),
             )
-            recovered = maintenance_state == "running"
-        elif component == "proactive_monitor":
+            return maintenance_state == "running"
+
+        async def _recover_proactive_monitor() -> bool:
             await _start_proactive_monitor()
             _refresh_runtime_components()
             proactive_state, _proactive_error = _background_task_snapshot(
@@ -3012,8 +2531,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 running=proactive_running,
                 last_error=str(proactive_runner_state.get("last_error", "") or ""),
             )
-            recovered = proactive_state == "running"
-        elif component == "memory_quality_tuning":
+            return proactive_state == "running"
+
+        async def _recover_memory_quality_tuning() -> bool:
             await _start_memory_quality_tuning()
             _refresh_runtime_components()
             tuning_state, _tuning_error = _background_task_snapshot(
@@ -3021,37 +2541,35 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 running=tuning_running,
                 last_error=str(tuning_runner_state.get("last_error", "") or ""),
             )
-            recovered = tuning_state == "running"
-        elif component == "job_workers":
+            return tuning_state == "running"
+
+        async def _recover_job_workers() -> bool:
             if runtime.job_queue is not None:
                 await _start_job_workers()
                 _refresh_runtime_components()
-                recovered = bool(runtime.job_queue.worker_status().get("running", False))
-        _record_autonomy_event(
-            "supervisor",
-            "component_recovery",
-            "recovered" if recovered else "failed",
-            summary=f"{component} recovery -> {'recovered' if recovered else 'failed'}",
-            metadata={"component": component, "reason": reason},
-        )
-        text = (
-            f"Autonomy notice: supervisor {'recovered' if recovered else 'failed'} "
-            f"component={component}."
-        )
-        if reason:
-            text += f" reason={reason}."
-        await _send_autonomy_notice(
-            "supervisor",
-            "component_recovery",
-            "recovered" if recovered else "failed",
-            text=text,
-            metadata={
-                "source": "supervisor",
-                "component": component,
-                "recovery_reason": reason,
+                return bool(runtime.job_queue.worker_status().get("running", False))
+            return False
+
+        return await _recover_supervised_component_helper(
+            component=component,
+            reason=reason,
+            recoverers={
+                "self_evolution": _recover_self_evolution,
+                "channels_dispatcher": _recover_channels_dispatcher,
+                "channels_recovery": _recover_channels_recovery,
+                "heartbeat": _recover_heartbeat,
+                "cron": _recover_cron,
+                "autonomy_wake": _recover_autonomy_wake,
+                "autonomy": _recover_autonomy,
+                "skills_watcher": _recover_skills_watcher,
+                "subagent_maintenance": _recover_subagent_maintenance,
+                "proactive_monitor": _recover_proactive_monitor,
+                "memory_quality_tuning": _recover_memory_quality_tuning,
+                "job_workers": _recover_job_workers,
             },
+            record_autonomy_event=_record_autonomy_event,
+            send_autonomy_notice=_send_autonomy_notice,
         )
-        return recovered
 
     supervisor_component_policies = {
         "self_evolution": SupervisorComponentPolicy(max_recoveries=4, budget_window_s=3600.0),
@@ -3092,339 +2610,50 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "last_run_iso": "",
             },
         )
-        component["enabled"] = True
-        component["running"] = True
-        component["last_error"] = ""
-        resume_factory = getattr(runtime.engine, "_subagent_resume_runner_factory", None)
-        if not callable(resume_factory):
-            component["running"] = False
-            component["last_error"] = "resume_runner_factory_missing"
-            return {"replayed": 0, "replayed_groups": 0, "failed": 0, "failed_groups": 0}
-        auto_replay_reasons = {"manager_restart", "orphaned_task", "orphaned_queue_entry"}
-        rows = [
-            run
-            for run in runtime.engine.subagents.list_resumable_runs(limit=128)
-            if str(dict(getattr(run, "metadata", {}) or {}).get("last_status_reason", "") or "").strip()
-            in auto_replay_reasons
-        ][:64]
-        replayed = 0
-        failed: list[dict[str, str]] = []
-        grouped_run_ids: dict[str, set[str]] = {}
-        failed_group_ids: set[str] = set()
-        for run in rows:
-            metadata = dict(getattr(run, "metadata", {}) or {})
-            group_id = str(metadata.get("parallel_group_id", "") or "").strip()
-            group_key = group_id or str(getattr(run, "run_id", "") or "").strip()
-            try:
-                await runtime.engine.subagents.resume(
-                    run_id=str(getattr(run, "run_id", "") or ""),
-                    runner=resume_factory(run),
-                )
-            except Exception as exc:
-                failed.append(
-                    {
-                        "run_id": str(getattr(run, "run_id", "") or "").strip(),
-                        "group_id": group_id,
-                        "error": str(exc),
-                    }
-                )
-                failed_group_ids.add(group_key)
-                continue
-            replayed += 1
-            grouped_run_ids.setdefault(group_key, set()).add(str(getattr(run, "run_id", "") or "").strip())
-        await asyncio.sleep(0)
-        component["running"] = False
-        component["replayed"] = replayed
-        component["replayed_groups"] = len(grouped_run_ids)
-        component["failed"] = len(failed)
-        component["failed_groups"] = len(failed_group_ids)
-        component["last_group_ids"] = sorted(grouped_run_ids.keys())[-8:]
-        component["last_failed_runs"] = failed[-8:]
-        component["last_run_iso"] = dt.datetime.now(dt.timezone.utc).isoformat()
-        if failed:
-            component["last_error"] = failed[-1]["error"]
-            bind_event("gateway.subagents").warning(
-                "subagent replay completed replayed={} failed={} last_error={}",
-                replayed,
-                len(failed),
-                component["last_error"],
-            )
-        elif replayed:
-            bind_event("gateway.subagents").info("subagent replay completed replayed={}", replayed)
-        _record_autonomy_event(
-            "subagents",
-            "startup_replay",
-            "ok" if not failed else "partial",
-            summary=f"startup replay replayed={replayed} failed={len(failed)}",
-            metadata={
-                "replayed": replayed,
-                "replayed_groups": len(grouped_run_ids),
-                "failed": len(failed),
-                "failed_groups": len(failed_group_ids),
-                "group_ids": sorted(grouped_run_ids.keys())[-8:],
-            },
-            event_at=str(component.get("last_run_iso", "") or ""),
+        return await _resume_recoverable_subagents_helper(
+            component=component,
+            engine=runtime.engine,
+            record_autonomy_event=_record_autonomy_event,
+            send_autonomy_notice=_send_autonomy_notice,
+            log_warning=lambda *args: bind_event("gateway.subagents").warning(*args),
+            log_info=lambda *args: bind_event("gateway.subagents").info(*args),
+            now_iso=lambda: dt.datetime.now(dt.timezone.utc).isoformat(),
         )
-        if replayed or failed:
-            await _send_autonomy_notice(
-                "subagents",
-                "startup_replay",
-                "ok" if not failed else "partial",
-                text=(
-                    "Autonomy notice: startup subagent replay "
-                    f"replayed={replayed} failed={len(failed)} groups={len(grouped_run_ids)}."
-                ),
-                metadata={
-                    "source": "subagents",
-                    "replayed": replayed,
-                    "replayed_groups": len(grouped_run_ids),
-                    "failed": len(failed),
-                    "failed_groups": len(failed_group_ids),
-                    "group_ids": sorted(grouped_run_ids.keys())[-8:],
-                },
-                event_at=str(component.get("last_run_iso", "") or ""),
-            )
-        return {
-            "replayed": replayed,
-            "failed": len(failed),
-        }
 
     async def _start_subsystems() -> None:
-        started: list[tuple[str, Any]] = []
-        steps: list[tuple[str, Any, Any, bool]] = [
-            ("skills_watcher", runtime.skills_loader.start_watcher, runtime.skills_loader.stop_watcher, True),
-            ("channels", runtime.channels.start, runtime.channels.stop, True),
-            ("autonomy_wake", runtime.autonomy_wake.start, runtime.autonomy_wake.stop, True),
-            ("cron", runtime.cron.start, runtime.cron.stop, True),
-            ("subagent_maintenance", _start_subagent_maintenance, _stop_subagent_maintenance, True),
-            ("job_workers", _start_job_workers, _stop_job_workers, bool(runtime.job_queue is not None)),
-            ("heartbeat", runtime.heartbeat.start, runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
-            ("autonomy", runtime.autonomy.start, runtime.autonomy.stop, bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
-            ("proactive_monitor", _start_proactive_monitor, _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
-            ("memory_quality_tuning", _start_memory_quality_tuning, _stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
-            ("self_evolution", _start_self_evolution, _stop_self_evolution, bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None)),
-            ("supervisor", runtime.supervisor.start, runtime.supervisor.stop, bool(cfg.gateway.supervisor.enabled)),
-        ]
-
-        for name, start_fn, stop_fn, enabled in steps:
-            lifecycle.components.setdefault(name, {"enabled": enabled, "running": False, "last_error": ""})
-            lifecycle.components[name]["enabled"] = enabled
-            if not enabled:
-                lifecycle.mark_component(name, running=False, error="disabled")
-                continue
-            try:
-                if name == "channels":
-                    await start_fn(cfg.to_dict())
-                    replay_component = lifecycle.components.setdefault(
-                        "delivery_replay",
-                        {"enabled": True, "running": False, "last_error": "", "replayed": 0, "failed": 0, "skipped": 0},
-                    )
-                    replay_summary = runtime.channels.startup_replay_status()
-                    replay_component["enabled"] = bool(replay_summary.get("enabled", True))
-                    replay_component["running"] = bool(replay_summary.get("running", False))
-                    replay_component["last_error"] = str(replay_summary.get("last_error", "") or "")
-                    replay_component["replayed"] = int(replay_summary.get("replayed", 0) or 0)
-                    replay_component["failed"] = int(replay_summary.get("failed", 0) or 0)
-                    replay_component["skipped"] = int(replay_summary.get("skipped", 0) or 0)
-                    _record_autonomy_event(
-                        "channels",
-                        "startup_delivery_replay",
-                        "ok" if not replay_component["last_error"] else "failed",
-                        summary=(
-                            f"startup delivery replay replayed={replay_component['replayed']} "
-                            f"failed={replay_component['failed']} skipped={replay_component['skipped']}"
-                        ),
-                        metadata=dict(replay_summary),
-                    )
-                    if (
-                        replay_component["replayed"] > 0
-                        or replay_component["failed"] > 0
-                        or bool(replay_component["last_error"])
-                    ):
-                        await _send_autonomy_notice(
-                            "channels",
-                            "startup_delivery_replay",
-                            "ok" if not replay_component["last_error"] else "failed",
-                            text=(
-                                "Autonomy notice: startup delivery replay "
-                                f"replayed={replay_component['replayed']} failed={replay_component['failed']} "
-                                f"skipped={replay_component['skipped']}."
-                            ),
-                            metadata={
-                                "source": "delivery_replay",
-                                **dict(replay_summary),
-                            },
-                        )
-                    inbound_component = lifecycle.components.setdefault(
-                        "inbound_replay",
-                        {"enabled": True, "running": False, "last_error": "", "replayed": 0, "remaining": 0},
-                    )
-                    inbound_summary = runtime.channels.startup_inbound_replay_status()
-                    inbound_component["enabled"] = bool(inbound_summary.get("enabled", True))
-                    inbound_component["running"] = bool(inbound_summary.get("running", False))
-                    inbound_component["last_error"] = str(inbound_summary.get("last_error", "") or "")
-                    inbound_component["replayed"] = int(inbound_summary.get("replayed", 0) or 0)
-                    inbound_component["remaining"] = int(inbound_summary.get("remaining", 0) or 0)
-                    _record_autonomy_event(
-                        "channels",
-                        "startup_inbound_replay",
-                        "ok" if not inbound_component["last_error"] else "failed",
-                        summary=(
-                            f"startup inbound replay replayed={inbound_component['replayed']} "
-                            f"remaining={inbound_component['remaining']}"
-                        ),
-                        metadata=dict(inbound_summary),
-                    )
-                    if inbound_component["replayed"] > 0 or bool(inbound_component["last_error"]):
-                        await _send_autonomy_notice(
-                            "channels",
-                            "startup_inbound_replay",
-                            "ok" if not inbound_component["last_error"] else "failed",
-                            text=(
-                                "Autonomy notice: startup inbound replay "
-                                f"replayed={inbound_component['replayed']} remaining={inbound_component['remaining']}."
-                            ),
-                            metadata={
-                                "source": "inbound_replay",
-                                **dict(inbound_summary),
-                            },
-                        )
-                elif name == "autonomy_wake":
-                    await start_fn(_dispatch_autonomy_wake)
-                    wake_component = lifecycle.components.setdefault(
-                        "wake_replay",
-                        {"enabled": True, "running": False, "last_error": "", "restored": 0, "pending": 0},
-                    )
-                    wake_summary = runtime.autonomy_wake.status()
-                    wake_component["enabled"] = True
-                    wake_component["running"] = False
-                    wake_component["last_error"] = str(wake_summary.get("last_journal_error", "") or "")
-                    wake_component["restored"] = int(wake_summary.get("restored", 0) or 0)
-                    wake_component["pending"] = int(wake_summary.get("journal_entries", 0) or 0)
-                    _record_autonomy_event(
-                        "autonomy",
-                        "startup_wake_replay",
-                        "ok" if not wake_component["last_error"] else "failed",
-                        summary=(
-                            f"startup wake replay restored={wake_component['restored']} "
-                            f"pending={wake_component['pending']}"
-                        ),
-                        metadata=dict(wake_summary),
-                    )
-                    if wake_component["restored"] > 0 or bool(wake_component["last_error"]):
-                        await _send_autonomy_notice(
-                            "autonomy",
-                            "startup_wake_replay",
-                            "ok" if not wake_component["last_error"] else "failed",
-                            text=(
-                                "Autonomy notice: startup wake replay "
-                                f"restored={wake_component['restored']} pending={wake_component['pending']}."
-                            ),
-                            metadata={
-                                "source": "wake_replay",
-                                **dict(wake_summary),
-                            },
-                        )
-                elif name == "cron":
-                    await start_fn(_submit_cron_wake)
-                elif name == "skills_watcher":
-                    await start_fn()
-                elif name == "subagent_maintenance":
-                    await start_fn()
-                elif name == "autonomy":
-                    await start_fn()
-                elif name == "proactive_monitor":
-                    await start_fn()
-                elif name == "memory_quality_tuning":
-                    await start_fn()
-                elif name == "self_evolution":
-                    await start_fn()
-                elif name == "supervisor":
-                    await start_fn()
-                elif name == "job_workers":
-                    await start_fn()
-                else:
-                    await start_fn(_submit_heartbeat_wake)
-                lifecycle.mark_component(name, running=True)
-                started.append((name, stop_fn))
-                bind_event("gateway.lifecycle").info("subsystem started name={}", name)
-            except Exception as exc:
-                lifecycle.mark_component(name, running=False, error=str(exc))
-                lifecycle.startup_error = str(exc)
-                bind_event("gateway.lifecycle").error("subsystem failed to start name={} error={}", name, exc)
-                for stop_name, stop in reversed(started):
-                    try:
-                        await stop()
-                        lifecycle.mark_component(stop_name, running=False)
-                        bind_event("gateway.lifecycle").info("subsystem rollback stopped name={}", stop_name)
-                    except Exception as stop_exc:
-                        lifecycle.mark_component(stop_name, running=False, error=str(stop_exc))
-                        bind_event("gateway.lifecycle").error("subsystem rollback failed name={} error={}", stop_name, stop_exc)
-                raise RuntimeError(f"gateway_startup_failed:{name}") from exc
-
-        try:
-            replay_result = await _resume_recoverable_subagents()
-            bind_event("gateway.lifecycle").info(
-                "subagent replay startup replayed={} failed={}",
-                int(replay_result.get("replayed", 0) or 0),
-                int(replay_result.get("failed", 0) or 0),
-            )
-        except Exception as exc:
-            row = lifecycle.components.setdefault(
-                "subagent_replay",
-                {"enabled": True, "running": False, "last_error": "", "replayed": 0, "failed": 0},
-            )
-            row["running"] = False
-            row["last_error"] = str(exc)
-            _record_autonomy_event(
-                "subagents",
-                "startup_replay",
-                "failed",
-                summary="startup replay failed",
-                metadata={"error": str(exc)},
-            )
-            bind_event("gateway.lifecycle").warning("subagent replay startup failed error={}", exc)
-
-        try:
-            bootstrap_result = await _run_startup_bootstrap_cycle()
-            if bool(bootstrap_result.get("attempted", False)):
-                bind_event("gateway.lifecycle").info(
-                    "bootstrap startup cycle status={} reason={}",
-                    str(bootstrap_result.get("status", "") or "unknown"),
-                    str(bootstrap_result.get("reason", "") or ""),
-                )
-        except Exception as exc:
-            lifecycle.components.setdefault(
-                "bootstrap",
-                {"enabled": True, "running": False, "pending": False, "last_status": "", "last_error": ""},
-            )["last_error"] = str(exc)
-            bind_event("gateway.lifecycle").warning("bootstrap startup cycle failed error={}", exc)
+        await _start_subsystems_helper(
+            cfg=cfg,
+            runtime=runtime,
+            lifecycle=lifecycle,
+            dispatch_autonomy_wake=_dispatch_autonomy_wake,
+            submit_cron_wake=_submit_cron_wake,
+            submit_heartbeat_wake=_submit_heartbeat_wake,
+            start_subagent_maintenance=_start_subagent_maintenance,
+            stop_subagent_maintenance=_stop_subagent_maintenance,
+            start_job_workers=_start_job_workers,
+            stop_job_workers=_stop_job_workers,
+            start_proactive_monitor=_start_proactive_monitor,
+            stop_proactive_monitor=_stop_proactive_monitor,
+            start_memory_quality_tuning=_start_memory_quality_tuning,
+            stop_memory_quality_tuning=_stop_memory_quality_tuning,
+            start_self_evolution=_start_self_evolution,
+            stop_self_evolution=_stop_self_evolution,
+            resume_recoverable_subagents=_resume_recoverable_subagents,
+            run_startup_bootstrap_cycle=_run_startup_bootstrap_cycle,
+            record_autonomy_event=_record_autonomy_event,
+            send_autonomy_notice=_send_autonomy_notice,
+        )
 
     async def _stop_subsystems() -> None:
-        steps: list[tuple[str, Any, bool]] = [
-            ("supervisor", runtime.supervisor.stop, bool(cfg.gateway.supervisor.enabled)),
-            ("autonomy", runtime.autonomy.stop, bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
-            ("heartbeat", runtime.heartbeat.stop, bool(cfg.gateway.heartbeat.enabled)),
-            ("subagent_maintenance", _stop_subagent_maintenance, True),
-            ("proactive_monitor", _stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
-            ("memory_quality_tuning", _stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
-            ("self_evolution", _stop_self_evolution, bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None)),
-            ("cron", runtime.cron.stop, True),
-            ("autonomy_wake", runtime.autonomy_wake.stop, True),
-            ("channels", runtime.channels.stop, True),
-            ("skills_watcher", runtime.skills_loader.stop_watcher, True),
-        ]
-        for name, stop_fn, enabled in steps:
-            if not enabled:
-                lifecycle.mark_component(name, running=False, error="disabled")
-                continue
-            try:
-                await stop_fn()
-                lifecycle.mark_component(name, running=False)
-                bind_event("gateway.lifecycle").info("subsystem stopped name={}", name)
-            except Exception as exc:
-                lifecycle.mark_component(name, running=False, error=str(exc))
-                bind_event("gateway.lifecycle").error("subsystem stop failed name={} error={}", name, exc)
+        await _stop_subsystems_helper(
+            cfg=cfg,
+            runtime=runtime,
+            lifecycle=lifecycle,
+            stop_subagent_maintenance=_stop_subagent_maintenance,
+            stop_proactive_monitor=_stop_proactive_monitor,
+            stop_memory_quality_tuning=_stop_memory_quality_tuning,
+            stop_self_evolution=_stop_self_evolution,
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -3669,229 +2898,159 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        return {
-            "ok": True,
-            "ready": lifecycle.ready,
-            "phase": lifecycle.phase,
-            "channels": runtime.channels.status(),
-            "queue": runtime.bus.stats(),
-        }
+        return await status_handlers.health(request)
 
     @app.get("/health/config")
     async def health_config(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        from clawlite.config.health import config_health
-        return config_health(cfg)
+        return await status_handlers.health_config(request)
 
     @app.get("/health/tools")
     async def health_tools(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        results: list[dict[str, Any]] = []
-        for name in sorted(runtime.tools._tools.keys()):
-            tool = runtime.tools._tools[name]
-            try:
-                hr = await tool.health_check()
-                results.append({"tool": name, "ok": hr.ok, "latency_ms": hr.latency_ms, "detail": hr.detail})
-            except Exception as exc:
-                results.append({"tool": name, "ok": False, "latency_ms": 0.0, "detail": str(exc)})
-        return {"ok": all(r["ok"] for r in results), "tools": results}
+        return await status_handlers.health_tools(request)
 
     @app.get("/health/providers")
     async def health_providers(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        provider = runtime.engine.provider
-        warmup_fn = getattr(provider, "warmup", None)
-        if callable(warmup_fn):
-            result = await warmup_fn()
-        else:
-            result = {"ok": True, "detail": "warmup_not_supported"}
-        return {"ok": result.get("ok", False), "provider": result}
+        return await status_handlers.health_providers(request)
 
     @app.get("/metrics/providers")
     async def metrics_providers(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="health", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        from clawlite.providers.telemetry import get_telemetry_registry
-        return {"metrics": get_telemetry_registry().snapshot_all()}
-
-    async def _status_handler(request: Request) -> ControlPlaneResponse:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        return _control_plane_payload()
-
-    def _dashboard_preview(value: Any, *, max_chars: int = 140) -> str:
-        return _dashboard_preview_text(value, max_chars=max_chars)
-
-    def _recent_dashboard_sessions(*, limit: int = 8) -> dict[str, Any]:
-        return _recent_dashboard_sessions_payload(
-            sessions=runtime.engine.sessions,
-            subagents=runtime.engine.subagents,
-            limit=limit,
-        )
-
-    def _dashboard_channels_summary() -> dict[str, Any]:
-        return _dashboard_channels_summary_payload(runtime.channels.status())
-
-    def _dashboard_cron_summary(*, limit: int = 8) -> dict[str, Any]:
-        return _dashboard_cron_summary_payload(cron=runtime.cron, limit=limit)
-
-    def _dashboard_self_evolution_summary() -> dict[str, Any]:
-        return _dashboard_self_evolution_summary_payload(
-            evolution=runtime.self_evolution,
-            runner_state=self_evolution_runner_state,
-        )
-
-    def _dashboard_memory_summary() -> dict[str, Any]:
-        return _dashboard_memory_summary_payload(
-            memory_monitor=runtime.memory_monitor,
-            memory_store=runtime.engine.memory,
-            config=runtime.config,
-            memory_profile_snapshot_fn=memory_profile_snapshot,
-            memory_suggest_snapshot_fn=memory_suggest_snapshot,
-            memory_version_snapshot_fn=memory_version_snapshot,
-        )
-
-    def _dashboard_telegram_summary() -> dict[str, Any]:
-        return _operator_channel_summary(runtime.channels.get_channel("telegram"))
-
-    def _dashboard_discord_summary() -> dict[str, Any]:
-        return _operator_channel_summary(runtime.channels.get_channel("discord"))
+        return await status_handlers.metrics_providers(request)
 
     def _dashboard_state_payload() -> dict[str, Any]:
         generated_at = _utc_now_iso()
         control_plane = _control_plane_payload(server_time=generated_at)
-        provider_telemetry = _provider_telemetry_snapshot(runtime.engine.provider)
-        provider_autonomy = _provider_autonomy_snapshot(provider=runtime.engine.provider)
-        skills = runtime.skills_loader.diagnostics_report()
-        return _dashboard_state_payload_builder(
+        return _dashboard_state_payload_runtime(
+            runtime=runtime,
             contract_version=GATEWAY_CONTRACT_VERSION,
             generated_at=generated_at,
             control_plane=control_plane,
             control_plane_to_dict=_control_plane_to_dict,
-            queue_payload=runtime.bus.stats(),
-            sessions_payload=_recent_dashboard_sessions(),
-            channels_payload=_dashboard_channels_summary(),
-            channels_dispatcher_payload=runtime.channels.dispatcher_diagnostics(),
-            channels_delivery_payload=runtime.channels.delivery_diagnostics(),
-            channels_inbound_payload=runtime.channels.inbound_diagnostics(),
-            channels_recovery_payload=runtime.channels.recovery_diagnostics(),
-            discord_payload=_dashboard_discord_summary(),
-            telegram_payload=_dashboard_telegram_summary(),
-            cron_payload=_dashboard_cron_summary(),
-            heartbeat_payload=runtime.heartbeat.status(),
-            subagents_payload=runtime.engine.subagents.status(),
-            supervisor_payload=runtime.supervisor.status() if runtime.supervisor is not None else {},
-            skills_payload=skills,
-            workspace_payload=runtime.workspace.runtime_health(),
-            handoff_payload=build_dashboard_handoff(runtime.config),
-            onboarding_payload=runtime.workspace.onboarding_status(),
-            bootstrap_payload=runtime.workspace.bootstrap_status(),
-            memory_payload=_dashboard_memory_summary(),
-            provider_telemetry_payload=provider_telemetry,
-            provider_autonomy_payload=provider_autonomy,
-            self_evolution_payload=_dashboard_self_evolution_summary(),
+            recent_dashboard_sessions_payload=_recent_dashboard_sessions_payload,
+            dashboard_channels_summary_payload=_dashboard_channels_summary_payload,
+            dashboard_cron_summary_payload=_dashboard_cron_summary_payload,
+            dashboard_self_evolution_summary_payload=_dashboard_self_evolution_summary_payload,
+            dashboard_memory_summary_payload=_dashboard_memory_summary_payload,
+            operator_channel_summary=_operator_channel_summary,
+            provider_telemetry_snapshot=_provider_telemetry_snapshot,
+            provider_autonomy_snapshot=_provider_autonomy_snapshot,
+            build_dashboard_handoff=build_dashboard_handoff,
+            memory_profile_snapshot_fn=memory_profile_snapshot,
+            memory_suggest_snapshot_fn=memory_suggest_snapshot,
+            memory_version_snapshot_fn=memory_version_snapshot,
+            self_evolution_runner_state=self_evolution_runner_state,
+            dashboard_state_payload_builder=_dashboard_state_payload_builder,
         )
 
-    async def _dashboard_state_handler(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        return _dashboard_state_payload()
+    async def _diagnostics_response_payload() -> DiagnosticsResponse:
+        generated_at = _utc_now_iso()
+        _refresh_runtime_components()
+        payload = await _diagnostics_payload_builder(
+            cfg=cfg,
+            runtime=runtime,
+            contract_version=GATEWAY_CONTRACT_VERSION,
+            generated_at=generated_at,
+            started_monotonic=started_monotonic,
+            control_plane_payload=_control_plane_payload(generated_at),
+            bootstrap_payload=_bootstrap_status_snapshot(),
+            memory_quality_cache=memory_quality_cache,
+            collect_memory_analysis_metrics=_collect_memory_analysis_metrics,
+            engine_memory_payloads=_engine_memory_payloads,
+            engine_memory_quality_payload=_engine_memory_quality_payload,
+            engine_memory_integration_payload=_engine_memory_integration_payload,
+            provider_telemetry_snapshot=_provider_telemetry_snapshot,
+            memory_monitor_payload=_memory_monitor_payload,
+            http_snapshot=http_telemetry.snapshot,
+            ws_snapshot=ws_telemetry.snapshot,
+            proactive_runner_state=proactive_runner_state,
+            cron_wake_state=cron_wake_state,
+            subagent_maintenance_state=subagent_maintenance_state,
+            tuning_runner_state=tuning_runner_state,
+            self_evolution_runner_state=self_evolution_runner_state,
+        )
+        return DiagnosticsResponse(**payload)
+
+    status_handlers = GatewayStatusHandlers(
+        auth_guard=auth_guard,
+        diagnostics_require_auth=cfg.gateway.diagnostics.require_auth,
+        cfg=cfg,
+        runtime=runtime,
+        lifecycle=lifecycle,
+        status_payload_fn=lambda: _control_plane_payload(),
+        dashboard_state_payload_fn=_dashboard_state_payload,
+        diagnostics_payload_fn=_diagnostics_response_payload,
+        token_payload_fn=lambda: {
+            "token_configured": bool(auth_guard.token),
+            "token_masked": _mask_secret(auth_guard.token),
+            "mode": auth_guard.mode,
+            "header_name": auth_guard.header_name,
+            "query_param": auth_guard.query_param,
+        },
+    )
+    websocket_handlers = GatewayWebSocketHandlers(
+        auth_guard=auth_guard,
+        diagnostics_require_auth=cfg.gateway.diagnostics.require_auth,
+        runtime=runtime,
+        lifecycle=lifecycle,
+        ws_telemetry=ws_telemetry,
+        contract_version=GATEWAY_CONTRACT_VERSION,
+        run_engine_with_timeout_fn=lambda session_id, user_text: _run_engine_with_timeout(
+            engine=runtime.engine,
+            session_id=session_id,
+            user_text=user_text,
+            timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
+        ),
+        provider_error_payload_fn=_provider_error_payload,
+        finalize_bootstrap_for_user_turn_fn=_finalize_bootstrap_for_user_turn,
+        control_plane_payload_fn=_control_plane_payload,
+        control_plane_to_dict_fn=_control_plane_to_dict,
+        build_tools_catalog_payload_fn=build_tools_catalog_payload,
+        parse_include_schema_flag_fn=parse_include_schema_flag,
+        utc_now_iso_fn=_utc_now_iso,
+    )
+    request_handlers = GatewayRequestHandlers(
+        auth_guard=auth_guard,
+        diagnostics_require_auth=cfg.gateway.diagnostics.require_auth,
+        runtime=runtime,
+        dashboard_asset_root=_DASHBOARD_ASSET_ROOT,
+        dashboard_bootstrap_token=_DASHBOARD_BOOTSTRAP_TOKEN,
+        run_engine_with_timeout_fn=lambda session_id, user_text: _run_engine_with_timeout(
+            engine=runtime.engine,
+            session_id=session_id,
+            user_text=user_text,
+            timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
+        ),
+        provider_error_payload_fn=_provider_error_payload,
+        finalize_bootstrap_for_user_turn_fn=_finalize_bootstrap_for_user_turn,
+        build_tools_catalog_payload_fn=build_tools_catalog_payload,
+        parse_include_schema_flag_fn=parse_include_schema_flag,
+        control_plane_payload_fn=_control_plane_payload,
+        dashboard_asset_text_fn=_dashboard_asset_text,
+        render_root_dashboard_html_fn=_render_root_dashboard_html,
+    )
 
     @app.get("/v1/status", response_model=ControlPlaneResponse)
     async def status(request: Request) -> ControlPlaneResponse:
-        return await _status_handler(request)
+        return await status_handlers.status(request)
 
     @app.get("/api/status", response_model=ControlPlaneResponse)
     async def api_status(request: Request) -> ControlPlaneResponse:
-        return await _status_handler(request)
+        return await status_handlers.status(request)
 
     @app.get("/v1/dashboard/state")
     async def dashboard_state(request: Request) -> dict[str, Any]:
-        return await _dashboard_state_handler(request)
+        return await status_handlers.dashboard_state(request)
 
     @app.get("/api/dashboard/state")
     async def api_dashboard_state(request: Request) -> dict[str, Any]:
-        return await _dashboard_state_handler(request)
-
-    async def _diagnostics_handler(request: Request) -> DiagnosticsResponse:
-        if not cfg.gateway.diagnostics.enabled:
-            raise HTTPException(status_code=404, detail="diagnostics_disabled")
-        auth_guard.check_http(request=request, scope="diagnostics", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        generated_at = _utc_now_iso()
-        _refresh_runtime_components()
-        environment: dict[str, Any] = {}
-        if cfg.gateway.diagnostics.include_config:
-            environment = {
-                "workspace_path": cfg.workspace_path,
-                "state_path": cfg.state_path,
-                "provider_model": cfg.agents.defaults.model,
-            }
-        retrieval_metrics_snapshot = runtime.engine.retrieval_metrics_snapshot()
-        turn_metrics_snapshot = runtime.engine.turn_metrics_snapshot()
-        engine_payload: dict[str, Any] = {
-            "retrieval_metrics": retrieval_metrics_snapshot,
-            "turn_metrics": turn_metrics_snapshot,
-            "skills": runtime.skills_loader.diagnostics_report(),
-        }
-        memory_store = getattr(runtime.engine, "memory", None)
-        engine_payload.update(_engine_memory_payloads(memory_store=memory_store))
-        engine_payload["memory_quality"] = await _engine_memory_quality_payload(
-            memory_store=memory_store,
-            retrieval_metrics_snapshot=retrieval_metrics_snapshot,
-            turn_metrics_snapshot=turn_metrics_snapshot,
-            generated_at=generated_at,
-            memory_quality_cache=memory_quality_cache,
-            collect_memory_analysis_metrics=_collect_memory_analysis_metrics,
-        )
-        engine_payload["memory_integration"] = _engine_memory_integration_payload(memory_store=memory_store)
-        if cfg.gateway.diagnostics.include_provider_telemetry:
-            engine_payload["provider"] = _provider_telemetry_snapshot(runtime.engine.provider)
-        monitor_payload = _memory_monitor_payload(
-            memory_monitor=runtime.memory_monitor,
-            proactive_runner_state=proactive_runner_state,
-        )
-        cron_payload = dict(runtime.cron.status())
-        cron_payload["wake_policy"] = dict(cron_wake_state)
-        subagent_payload = dict(runtime.engine.subagents.status())
-        subagent_payload["runner"] = dict(subagent_maintenance_state)
-        self_evolution_payload = runtime.self_evolution.status() if runtime.self_evolution is not None else {}
-        self_evolution_payload["runner"] = dict(self_evolution_runner_state)
-
-        return DiagnosticsResponse(
-            schema_version="2026-03-02",
-            contract_version=GATEWAY_CONTRACT_VERSION,
-            generated_at=generated_at,
-            uptime_s=max(0, int(time.monotonic() - started_monotonic)),
-            control_plane=_control_plane_payload(generated_at),
-            queue=runtime.bus.stats(),
-            channels=runtime.channels.status(),
-            channels_dispatcher=runtime.channels.dispatcher_diagnostics(),
-            channels_delivery=runtime.channels.delivery_diagnostics(),
-            channels_inbound=runtime.channels.inbound_diagnostics(),
-            channels_recovery=runtime.channels.recovery_diagnostics(),
-            cron=cron_payload,
-            heartbeat=runtime.heartbeat.status(),
-            autonomy=runtime.autonomy.status() if runtime.autonomy is not None else {},
-            supervisor=runtime.supervisor.status() if runtime.supervisor is not None else {},
-            autonomy_wake=runtime.autonomy_wake.status(),
-            autonomy_log=runtime.autonomy_log.snapshot(),
-            subagents=subagent_payload,
-            bootstrap=_bootstrap_status_snapshot(),
-            workspace=runtime.workspace.runtime_health(),
-            memory_monitor=monitor_payload,
-            memory_quality_tuning=dict(tuning_runner_state),
-            engine=engine_payload,
-            environment=environment,
-            http=await http_telemetry.snapshot(),
-            ws=await ws_telemetry.snapshot(),
-            self_evolution=self_evolution_payload,
-        )
+        return await status_handlers.dashboard_state(request)
 
     @app.get("/v1/diagnostics", response_model=DiagnosticsResponse)
     async def diagnostics(request: Request) -> DiagnosticsResponse:
-        return await _diagnostics_handler(request)
+        return await status_handlers.diagnostics(request)
 
     @app.get("/api/diagnostics", response_model=DiagnosticsResponse)
     async def api_diagnostics(request: Request) -> DiagnosticsResponse:
-        return await _diagnostics_handler(request)
+        return await status_handlers.diagnostics(request)
 
     @app.post("/v1/control/channels/replay")
     async def channels_replay(request: Request, payload: ChannelReplayRequest | None = None) -> dict[str, Any]:
@@ -4085,437 +3244,60 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def self_evolution_trigger(request: Request) -> dict[str, Any]:
         return await control_handlers.self_evolution_trigger(request)
 
-    async def _chat_handler(req: ChatRequest, request: Request) -> ChatResponse:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        if not req.session_id.strip() or not req.text.strip():
-            raise HTTPException(status_code=400, detail="session_id and text are required")
-        logger.debug("chat request received session={} chars={}", req.session_id, len(req.text))
-        try:
-            out = await _run_engine_with_timeout(
-                engine=runtime.engine,
-                session_id=req.session_id,
-                user_text=req.text,
-                timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
-            )
-        except RuntimeError as exc:
-            status_code, detail = _provider_error_payload(exc)
-            bind_event("gateway.chat", session=req.session_id).error("chat request failed status={} detail={}", status_code, detail)
-            raise HTTPException(status_code=status_code, detail=detail)
-        _finalize_bootstrap_for_user_turn(req.session_id)
-        bind_event("gateway.chat", session=req.session_id).info("chat response generated model={}", out.model)
-        return ChatResponse(text=out.text, model=out.model)
-
     @app.post("/v1/chat", response_model=ChatResponse)
     async def chat(req: ChatRequest, request: Request) -> ChatResponse:
-        return await _chat_handler(req, request)
+        return ChatResponse(**(await request_handlers.chat(req, request)))
 
     @app.post("/api/message", response_model=ChatResponse)
     async def api_message(req: ChatRequest, request: Request) -> ChatResponse:
-        return await _chat_handler(req, request)
-
-    async def _tools_catalog_handler(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        include_schema = parse_include_schema_flag(request.query_params)
-        return build_tools_catalog_payload(runtime.engine.tools.schema(), include_schema=include_schema)
+        return ChatResponse(**(await request_handlers.chat(req, request)))
 
     @app.get("/v1/tools/catalog")
     async def tools_catalog(request: Request) -> dict[str, Any]:
-        return await _tools_catalog_handler(request)
+        return await request_handlers.tools_catalog(request)
 
     @app.get("/api/tools/catalog")
     async def api_tools_catalog(request: Request) -> dict[str, Any]:
-        return await _tools_catalog_handler(request)
+        return await request_handlers.tools_catalog(request)
 
     @app.get("/api/token")
     async def api_token(request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        return {
-            "token_configured": bool(auth_guard.token),
-            "token_masked": _mask_secret(auth_guard.token),
-            "mode": auth_guard.mode,
-            "header_name": auth_guard.header_name,
-            "query_param": auth_guard.query_param,
-        }
+        return await status_handlers.api_token(request)
 
     app.add_api_route(telegram_webhook_path, webhook_handlers.telegram, methods=["POST"])
     app.add_api_route(whatsapp_webhook_path, webhook_handlers.whatsapp, methods=["POST"])
 
     @app.post("/v1/cron/add")
     async def cron_add(req: CronAddRequest, request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        job_id = await runtime.cron.add_job(
-            session_id=req.session_id,
-            expression=req.expression,
-            prompt=req.prompt,
-            name=req.name,
-        )
-        return {"ok": True, "status": "created", "id": job_id}
+        return await request_handlers.cron_add(req, request)
 
     @app.get("/v1/cron/list")
     async def cron_list(session_id: str, request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        return {"jobs": runtime.cron.list_jobs(session_id=session_id)}
+        return await request_handlers.cron_list(session_id=session_id, request=request)
 
     @app.delete("/v1/cron/{job_id}")
     async def cron_remove(job_id: str, request: Request) -> dict[str, Any]:
-        auth_guard.check_http(request=request, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth)
-        removed = await asyncio.to_thread(runtime.cron.remove_job, job_id)
-        return {"ok": removed, "status": "removed" if removed else "not_found"}
-
-    async def _ws_chat(socket: WebSocket, *, path_label: str) -> None:
-        def _ws_envelope_error(*, error: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
-            payload: dict[str, Any] = {
-                "type": "error",
-                "error": str(error or "invalid_request"),
-                "status_code": int(status_code),
-            }
-            if request_id:
-                payload["request_id"] = request_id
-            return payload
-
-        def _ws_req_error(
-            *,
-            request_id: str | int | None,
-            code: str,
-            message: str,
-            status_code: int,
-        ) -> dict[str, Any]:
-            return {
-                "type": "res",
-                "id": request_id,
-                "ok": False,
-                "error": {
-                    "code": str(code or "invalid_request"),
-                    "message": str(message or "invalid_request"),
-                    "status_code": int(status_code),
-                },
-            }
-
-        def _coerce_req_id(value: Any) -> str | int | None:
-            if isinstance(value, bool):
-                return None
-            if isinstance(value, (str, int)):
-                return value
-            return None
-
-        def _coerce_req_payload(payload: dict[str, Any]) -> tuple[str | int | None, str, dict[str, Any] | None]:
-            request_id = _coerce_req_id(payload.get("id"))
-            method = str(payload.get("method", "") or "").strip()
-            params = payload.get("params")
-            if params is None:
-                params = {}
-            if not isinstance(params, dict):
-                return request_id, method, None
-            return request_id, method, params
-
-        async def _ws_req_chat_send(
-            *,
-            request_id: str | int | None,
-            params: dict[str, Any],
-        ) -> dict[str, Any]:
-            session_id = str(params.get("session_id") or params.get("sessionId") or "").strip()
-            text = str(params.get("text") or "").strip()
-            if not session_id or not text:
-                return _ws_req_error(
-                    request_id=request_id,
-                    code="invalid_request",
-                    message="session_id/sessionId and text are required",
-                    status_code=400,
-                )
-            try:
-                out = await _run_engine_with_timeout(
-                    engine=runtime.engine,
-                    session_id=session_id,
-                    user_text=text,
-                    timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
-                )
-            except RuntimeError as exc:
-                status_code, detail = _provider_error_payload(exc)
-                bind_event("gateway.ws", session=session_id, channel="ws").error(
-                    "websocket request failed status={} detail={}",
-                    status_code,
-                    detail,
-                )
-                return _ws_req_error(
-                    request_id=request_id,
-                    code=detail,
-                    message=detail,
-                    status_code=status_code,
-                )
-
-            _finalize_bootstrap_for_user_turn(session_id)
-            return {
-                "type": "res",
-                "id": request_id,
-                "ok": True,
-                "result": {
-                    "session_id": session_id,
-                    "text": out.text,
-                    "model": out.model,
-                },
-            }
-
-        if not await auth_guard.check_ws(socket=socket, scope="control", diagnostics_auth=cfg.gateway.diagnostics.require_auth):
-            return
-        await socket.accept()
-        await ws_telemetry.connection_opened(path=path_label)
-
-        async def _send_ws(payload: Any) -> None:
-            await socket.send_json(payload)
-            await ws_telemetry.frame_outbound(payload=payload)
-
-        await _send_ws(
-            {
-                "type": "event",
-                "event": "connect.challenge",
-                "params": {
-                    "nonce": uuid.uuid4().hex,
-                    "issued_at": _utc_now_iso(),
-                },
-            }
-        )
-        bind_event("gateway.ws", channel="ws").info("websocket client connected path={}", path_label)
-        req_connected = False
-        try:
-            while True:
-                payload = await socket.receive_json()
-                await ws_telemetry.frame_inbound(path=path_label, payload=payload)
-                if not isinstance(payload, dict):
-                    await _send_ws({"error": "session_id and text are required"})
-                    continue
-
-                message_type = str(payload.get("type", "") or "").strip().lower()
-                if message_type:
-                    if message_type == "req":
-                        request_id, method, params = _coerce_req_payload(payload)
-                        if request_id is None or not method or params is None:
-                            await _send_ws(
-                                _ws_req_error(
-                                    request_id=request_id,
-                                    code="invalid_request",
-                                    message="req frames require string|number id, string method, and object params",
-                                    status_code=400,
-                                )
-                            )
-                            continue
-
-                        normalized_method = method.lower()
-                        if normalized_method == "connect":
-                            req_connected = True
-                            await _send_ws(
-                                {
-                                    "type": "res",
-                                    "id": request_id,
-                                    "ok": True,
-                                    "result": {
-                                        "connected": req_connected,
-                                        "contract_version": GATEWAY_CONTRACT_VERSION,
-                                        "server_time": _utc_now_iso(),
-                                    },
-                                }
-                            )
-                            continue
-                        if not req_connected:
-                            await _send_ws(
-                                _ws_req_error(
-                                    request_id=request_id,
-                                    code="not_connected",
-                                    message="connect handshake required",
-                                    status_code=409,
-                                )
-                            )
-                            continue
-                        if normalized_method == "ping":
-                            await _send_ws(
-                                {
-                                    "type": "res",
-                                    "id": request_id,
-                                    "ok": True,
-                                    "result": {
-                                        "server_time": _utc_now_iso(),
-                                    },
-                                }
-                            )
-                            continue
-                        if normalized_method == "health":
-                            await _send_ws(
-                                {
-                                    "type": "res",
-                                    "id": request_id,
-                                    "ok": True,
-                                    "result": {
-                                        "ok": True,
-                                        "ready": lifecycle.ready,
-                                        "phase": lifecycle.phase,
-                                        "channels": runtime.channels.status(),
-                                        "queue": runtime.bus.stats(),
-                                    },
-                                }
-                            )
-                            continue
-                        if normalized_method == "status":
-                            status_payload = _control_plane_to_dict(_control_plane_payload())
-                            await _send_ws(
-                                {
-                                    "type": "res",
-                                    "id": request_id,
-                                    "ok": True,
-                                    "result": status_payload,
-                                }
-                            )
-                            continue
-                        if normalized_method == "tools.catalog":
-                            include_schema = parse_include_schema_flag(params)
-                            await _send_ws(
-                                {
-                                    "type": "res",
-                                    "id": request_id,
-                                    "ok": True,
-                                    "result": build_tools_catalog_payload(
-                                        runtime.engine.tools.schema(),
-                                        include_schema=include_schema,
-                                    ),
-                                }
-                            )
-                            continue
-                        if normalized_method in {"chat.send", "message.send"}:
-                            await _send_ws(
-                                await _ws_req_chat_send(request_id=request_id, params=params)
-                            )
-                            continue
-
-                        await _send_ws(
-                            _ws_req_error(
-                                request_id=request_id,
-                                code="unsupported_method",
-                                message=f"unsupported req method: {method}",
-                                status_code=400,
-                            )
-                        )
-                        continue
-
-                    request_id = str(payload.get("request_id", "") or "").strip() or None
-                    if message_type == "hello":
-                        await _send_ws(
-                            {
-                                "type": "ready",
-                                "contract_version": GATEWAY_CONTRACT_VERSION,
-                                "server_time": _utc_now_iso(),
-                            }
-                        )
-                        continue
-                    if message_type == "ping":
-                        await _send_ws({"type": "pong", "server_time": _utc_now_iso()})
-                        continue
-                    if message_type != "message":
-                        await _send_ws(
-                            _ws_envelope_error(
-                                error="unsupported_message_type",
-                                status_code=400,
-                                request_id=request_id,
-                            )
-                        )
-                        continue
-
-                    session_id = str(payload.get("session_id", "") or "").strip()
-                    text = str(payload.get("text", "") or "").strip()
-                    if not session_id or not text:
-                        await _send_ws(
-                            _ws_envelope_error(
-                                error="session_id and text are required",
-                                status_code=400,
-                                request_id=request_id,
-                            )
-                        )
-                        continue
-
-                    try:
-                        out = await _run_engine_with_timeout(
-                            engine=runtime.engine,
-                            session_id=session_id,
-                            user_text=text,
-                            timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
-                        )
-                    except RuntimeError as exc:
-                        status_code, detail = _provider_error_payload(exc)
-                        bind_event("gateway.ws", session=session_id, channel="ws").error(
-                            "websocket request failed status={} detail={}",
-                            status_code,
-                            detail,
-                        )
-                        await _send_ws(
-                            _ws_envelope_error(error=detail, status_code=status_code, request_id=request_id)
-                        )
-                        continue
-
-                    _finalize_bootstrap_for_user_turn(session_id)
-                    response_payload: dict[str, Any] = {
-                        "type": "message_result",
-                        "session_id": session_id,
-                        "text": out.text,
-                        "model": out.model,
-                    }
-                    if request_id:
-                        response_payload["request_id"] = request_id
-                    await _send_ws(response_payload)
-                    bind_event("gateway.ws", session=session_id, channel="ws").debug(
-                        "websocket response sent model={}",
-                        out.model,
-                    )
-                    continue
-
-                session_id = str(payload.get("session_id", "")).strip()
-                text = str(payload.get("text", "")).strip()
-                if not session_id or not text:
-                    await _send_ws({"error": "session_id and text are required"})
-                    continue
-                try:
-                    out = await _run_engine_with_timeout(
-                        engine=runtime.engine,
-                        session_id=session_id,
-                        user_text=text,
-                        timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
-                    )
-                except RuntimeError as exc:
-                    status_code, detail = _provider_error_payload(exc)
-                    bind_event("gateway.ws", session=session_id, channel="ws").error("websocket request failed status={} detail={}", status_code, detail)
-                    await _send_ws({"error": detail, "status_code": status_code})
-                    continue
-                _finalize_bootstrap_for_user_turn(session_id)
-                await _send_ws({"text": out.text, "model": out.model})
-                bind_event("gateway.ws", session=session_id, channel="ws").debug("websocket response sent model={}", out.model)
-        except WebSocketDisconnect:
-            bind_event("gateway.ws", channel="ws").info("websocket client disconnected path={}", path_label)
-        finally:
-            await ws_telemetry.connection_closed()
+        return await request_handlers.cron_remove(job_id=job_id, request=request)
 
     @app.websocket("/v1/ws")
     async def ws_chat(socket: WebSocket) -> None:
-        await _ws_chat(socket, path_label="/v1/ws")
+        await websocket_handlers.handle(socket, path_label="/v1/ws")
 
     @app.websocket("/ws")
     async def ws_chat_alias(socket: WebSocket) -> None:
-        await _ws_chat(socket, path_label="/ws")
+        await websocket_handlers.handle(socket, path_label="/ws")
 
     @app.get(f"{_DASHBOARD_ASSET_ROOT}/dashboard.css")
     async def dashboard_css() -> Response:
-        return Response(content=_dashboard_asset_text("dashboard.css"), media_type="text/css")
+        return await request_handlers.dashboard_css()
 
     @app.get(f"{_DASHBOARD_ASSET_ROOT}/dashboard.js")
     async def dashboard_js() -> Response:
-        return Response(content=_dashboard_asset_text("dashboard.js"), media_type="application/javascript")
+        return await request_handlers.dashboard_js()
 
     @app.get("/", response_class=HTMLResponse)
     async def root() -> HTMLResponse:
-        control_plane = _control_plane_payload()
-        return HTMLResponse(
-            content=_render_root_dashboard_html(
-                control_plane=control_plane,
-                dashboard_asset_root=_DASHBOARD_ASSET_ROOT,
-                dashboard_bootstrap_token=_DASHBOARD_BOOTSTRAP_TOKEN,
-            ),
-            status_code=200,
-        )
+        return await request_handlers.root()
 
     return app
 

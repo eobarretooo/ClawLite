@@ -10,7 +10,6 @@ import asyncio
 import threading
 import unicodedata
 import uuid
-from collections import Counter, deque
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -19,6 +18,21 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from clawlite.core.memory_backend import MemoryBackend, resolve_memory_backend
+from clawlite.core.memory_artifacts import (
+    append_resource_layer as _append_resource_layer_helper,
+    upsert_item_layer as _upsert_item_layer_helper,
+)
+from clawlite.core.memory_add import (
+    build_pending_record as _build_pending_record_helper,
+    finalize_added_record as _finalize_added_record_helper,
+)
+from clawlite.core.memory_api import (
+    analysis_stats as _analysis_stats_helper,
+    delete_by_prefixes as _delete_by_prefixes_helper,
+    export_payload as _export_payload_helper,
+    import_payload as _import_payload_helper,
+    retrieve as _retrieve_helper,
+)
 from clawlite.core.memory_classification import (
     categorize_memory as _categorize_memory_helper,
     classify_category_with_llm as _classify_category_with_llm_helper,
@@ -37,6 +51,14 @@ from clawlite.core.memory_curation import (
     consolidate_messages as _consolidate_messages_helper,
     curate_candidates as _curate_candidates_helper,
     extract_consolidation_lines as _extract_consolidation_lines_helper,
+)
+from clawlite.core.memory_history import (
+    append_or_reinforce_history_record as _append_or_reinforce_history_record_helper,
+    read_history_records as _read_history_records_helper,
+    read_history_records_from as _read_history_records_from_helper,
+    repair_history_file as _repair_history_file_helper,
+    stored_history_payload as _stored_history_payload_helper,
+    upsert_history_record_by_id as _upsert_history_record_by_id_helper,
 )
 from clawlite.core.memory_ingest import (
     compact_whitespace as _compact_whitespace,
@@ -64,6 +86,14 @@ from clawlite.core.memory_policy import (
     integration_policies_snapshot as _integration_policies_snapshot,
     integration_policy as _integration_policy,
 )
+from clawlite.core.memory_prune import (
+    cleanup_expired_ephemeral_records as _cleanup_expired_ephemeral_records_helper,
+    delete_records_by_ids as _delete_records_by_ids_helper,
+    delete_records_by_ids_in_scope as _delete_records_by_ids_in_scope_helper,
+    prune_curated_facts_for_ids as _prune_curated_facts_for_ids_helper,
+    prune_item_and_category_layers as _prune_item_and_category_layers_helper,
+    prune_jsonl_records_for_ids as _prune_jsonl_records_for_ids_helper,
+)
 from clawlite.core.memory_privacy import (
     append_privacy_audit_event as _append_privacy_audit_event_helper,
     decrypt_text_for_category as _decrypt_text_for_category_helper,
@@ -76,6 +106,16 @@ from clawlite.core.memory_privacy import (
     privacy_settings as _privacy_settings_helper,
     xor_with_keystream as _xor_with_keystream_helper,
 )
+from clawlite.core.memory_resources import (
+    create_resource as _create_resource_helper,
+    fetch_record_by_id as _fetch_record_by_id_helper,
+    get_record_ttl as _get_record_ttl_helper,
+    get_resource as _get_resource_helper,
+    get_resource_records as _get_resource_records_helper,
+    list_resources as _list_resources_helper,
+    purge_expired_records as _purge_expired_records_helper,
+    set_record_ttl as _set_record_ttl_helper,
+)
 from clawlite.core.memory_profile import (
     extract_timezone as _extract_timezone_helper,
     extract_topics as _extract_topics_helper,
@@ -86,10 +126,15 @@ from clawlite.core.memory_profile import (
 )
 from clawlite.core.memory_retrieval import (
     build_progressive_retrieval_payload as _build_progressive_retrieval_payload_helper,
+    collect_retrieval_records as _collect_retrieval_records_helper,
+    curated_records as _curated_records_helper,
     evaluate_retrieval_sufficiency as _evaluate_retrieval_sufficiency_helper,
     filter_records_to_categories as _filter_records_to_categories,
+    list_recent_candidates as _list_recent_candidates_helper,
     query_coverage as _query_coverage_helper,
     refine_hits_with_llm as _refine_hits_with_llm_helper,
+    recover_session_context as _recover_session_context_helper,
+    resolve_retrieval_scopes as _resolve_retrieval_scopes_helper,
     retrieve_category_hits as _retrieve_category_hits_helper,
     retrieve_resource_hits as _retrieve_resource_hits_helper,
     rewrite_retrieval_query as _rewrite_retrieval_query_helper,
@@ -122,6 +167,7 @@ from clawlite.core.memory_versions import (
     write_snapshot_payload as _write_snapshot_payload_helper,
 )
 from clawlite.core.memory_working_set import (
+    collect_visible_working_set as _collect_visible_working_set_helper,
     default_working_memory_share_scope as _default_working_memory_share_scope_helper,
     default_working_memory_state as _default_working_memory_state_helper,
     episodic_digest_label as _episodic_digest_label_helper,
@@ -135,12 +181,21 @@ from clawlite.core.memory_working_set import (
     normalize_working_memory_share_scope as _normalize_working_memory_share_scope_helper,
     normalize_working_memory_state_payload as _normalize_working_memory_state_payload_helper,
     parent_session_id as _parent_session_id_helper,
+    promote_working_memory_locked as _promote_working_memory_locked_helper,
+    remember_working_message as _remember_working_message_helper,
+    synthesize_visible_episode_digest as _synthesize_visible_episode_digest_helper,
     working_episode_context as _working_episode_context_helper,
     working_episode_visible_in_session as _working_episode_visible_in_session_helper,
     working_memory_episode_summary as _working_memory_episode_summary_helper,
     working_memory_recent_direct_messages as _working_memory_recent_direct_messages_helper,
     working_memory_related_sessions as _working_memory_related_sessions_helper,
     working_memory_share_group as _working_memory_share_group_helper,
+)
+from clawlite.core.memory_workflows import (
+    consolidate as _consolidate_workflow_helper,
+    consolidate_in_scope as _consolidate_in_scope_helper,
+    ingest_file as _ingest_file_helper,
+    memorize as _memorize_workflow_helper,
 )
 
 WORD_RE = re.compile(r"[a-zA-Z0-9_]+")
@@ -1747,62 +1802,24 @@ class MemoryStore:
         semantic_enabled: bool,
         limit: int,
     ) -> dict[str, Any] | None:
-        clean_session_id = self._normalize_session_id(session_id)
-        if not clean_session_id:
-            return None
-        episodic_records = [row for row in records if self._is_working_episode_record(row)]
-        if not episodic_records:
-            return None
-        ranked = self._rank_records(
-            query,
-            episodic_records,
+        return _synthesize_visible_episode_digest_helper(
+            query=query,
+            session_id=session_id,
+            records=records,
             curated_importance=curated_importance,
             curated_mentions=curated_mentions,
-            limit=max(1, min(8, limit)),
             semantic_enabled=semantic_enabled,
-            session_id=clean_session_id,
+            limit=limit,
+            normalize_session_id_fn=self._normalize_session_id,
+            is_working_episode_record_fn=self._is_working_episode_record,
+            rank_records_fn=self._rank_records,
+            working_episode_context_fn=self._working_episode_context,
+            episodic_digest_label_fn=lambda active_session_id, target_session_id: self._episodic_digest_label(
+                active_session_id=active_session_id,
+                target_session_id=target_session_id,
+            ),
+            compact_whitespace_fn=self._compact_whitespace,
         )
-        if not ranked:
-            return None
-
-        groups: list[dict[str, Any]] = []
-        seen_sessions: set[str] = set()
-        for row in ranked:
-            ctx = self._working_episode_context(row)
-            target_session_id = str(ctx.get("session_id", "") or "")
-            if not target_session_id or target_session_id in seen_sessions:
-                continue
-            seen_sessions.add(target_session_id)
-            groups.append(
-                {
-                    "session_id": target_session_id,
-                    "label": self._episodic_digest_label(
-                        active_session_id=clean_session_id,
-                        target_session_id=target_session_id,
-                    ),
-                    "share_scope": str(ctx.get("share_scope", "") or ""),
-                    "created_at": str(getattr(row, "created_at", "") or ""),
-                    "source": str(getattr(row, "source", "") or ""),
-                    "text": self._compact_whitespace(str(getattr(row, "text", "") or ""))[:220],
-                    "memory_id": str(getattr(row, "id", "") or ""),
-                }
-            )
-            if len(groups) >= max(1, min(4, limit)):
-                break
-        if not groups:
-            return None
-
-        summary_parts = [
-            f"{item['label']}:{item['session_id']} -> {item['text']}"
-            for item in groups
-            if str(item.get("text", "") or "")
-        ]
-        return {
-            "session_id": clean_session_id,
-            "count": len(groups),
-            "sessions": groups,
-            "summary": " | ".join(summary_parts),
-        }
 
     @classmethod
     def _working_memory_episode_summary(cls, session_id: str, messages: list[dict[str, Any]]) -> str:
@@ -1822,81 +1839,25 @@ class MemoryStore:
         session_id: str,
         force: bool,
     ) -> MemoryRecord | None:
-        entry = self._normalize_working_memory_session(session_id, sessions.get(session_id, {}))
-        if entry is None:
-            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
-            return None
-
-        direct_messages = self._working_memory_recent_direct_messages(entry)
-        if len(direct_messages) < self._WORKING_MEMORY_PROMOTION_MIN_MESSAGES and not force:
-            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
-            return None
-        recent = direct_messages[-self._WORKING_MEMORY_PROMOTION_WINDOW :]
-
-        candidate_messages = [
-            {"role": str(item.get("role", "") or ""), "content": str(item.get("content", "") or "")}
-            for item in recent
-        ]
-        if len(self._extract_consolidation_lines(candidate_messages)) < 2 and not force:
-            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
-            return None
-
-        raw_resource_text = "\n".join(
-            f"{str(item.get('role', '') or '').strip().lower()}: {self._compact_whitespace(str(item.get('content', '') or ''))}"
-            for item in recent
-            if self._compact_whitespace(str(item.get("content", "") or ""))
-        ).strip()
-        if not raw_resource_text:
-            self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
-            return None
-
-        promotion = self._normalize_working_memory_promotion_state(entry.get("promotion", {}))
-        signature = self._chunk_signature(raw_resource_text.splitlines())
-        message_count = len(direct_messages)
-        if not force:
-            if signature == str(promotion.get("last_promoted_signature", "") or ""):
-                self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
-                return None
-            last_count = int(promotion.get("last_promoted_message_count", 0) or 0)
-            if last_count > 0 and (message_count - last_count) < self._WORKING_MEMORY_PROMOTION_STEP:
-                self._diagnostics["working_memory_promotion_skips"] = int(self._diagnostics["working_memory_promotion_skips"]) + 1
-                return None
-
-        session_key = str(entry.get("session_id", session_id) or session_id)
-        happened_at = str(recent[-1].get("created_at", "") or self._utcnow_iso())
-        summary = self._working_memory_episode_summary(session_key, recent)
-        metadata = self._normalize_memory_metadata(
-            {
-                "working_memory_promoted": True,
-                "working_memory_session_id": session_key,
-                "working_memory_parent_session_id": str(entry.get("parent_session_id", "") or ""),
-                "working_memory_share_group": str(entry.get("share_group", "") or ""),
-                "working_memory_share_scope": str(entry.get("share_scope", "") or ""),
-                "working_memory_message_count": len(recent),
-                "working_memory_signature": signature,
-                "skip_profile_sync": True,
-            }
+        return _promote_working_memory_locked_helper(
+            sessions=sessions,
+            session_id=session_id,
+            force=force,
+            diagnostics=self._diagnostics,
+            normalize_working_memory_session_fn=self._normalize_working_memory_session,
+            working_memory_recent_direct_messages_fn=self._working_memory_recent_direct_messages,
+            extract_consolidation_lines_fn=self._extract_consolidation_lines,
+            compact_whitespace_fn=self._compact_whitespace,
+            normalize_working_memory_promotion_state_fn=self._normalize_working_memory_promotion_state,
+            chunk_signature_fn=self._chunk_signature,
+            working_memory_episode_summary_fn=self._working_memory_episode_summary,
+            normalize_memory_metadata_fn=self._normalize_memory_metadata,
+            add_record_fn=self.add,
+            utcnow_iso=self._utcnow_iso,
+            promotion_min_messages=self._WORKING_MEMORY_PROMOTION_MIN_MESSAGES,
+            promotion_window=self._WORKING_MEMORY_PROMOTION_WINDOW,
+            promotion_step=self._WORKING_MEMORY_PROMOTION_STEP,
         )
-        record = self.add(
-            summary,
-            source=f"working-session:{session_key}",
-            raw_resource_text=raw_resource_text,
-            user_id=str(entry.get("user_id", "default") or "default"),
-            shared=False,
-            metadata=metadata,
-            reasoning_layer="outcome",
-            confidence=min(0.95, 0.55 + (0.05 * len(recent))),
-            memory_type="event",
-            happened_at=happened_at,
-        )
-        promotion["last_promoted_signature"] = signature
-        promotion["last_promoted_at"] = self._utcnow_iso()
-        promotion["last_promoted_message_count"] = message_count
-        promotion["total_promotions"] = int(promotion.get("total_promotions", 0) or 0) + 1
-        entry["promotion"] = promotion
-        sessions[session_key] = entry
-        self._diagnostics["working_memory_promotions"] = int(self._diagnostics["working_memory_promotions"]) + 1
-        return record
 
     def promote_working_set(self, session_id: str, *, force: bool = False) -> dict[str, Any]:
         clean_session_id = self._normalize_session_id(session_id)
@@ -1948,80 +1909,30 @@ class MemoryStore:
                 payload = {}
             state = self._normalize_working_memory_state_payload(payload)
             sessions = dict(state.get("sessions", {}))
-            existing = self._normalize_working_memory_session(clean_session_id, sessions.get(clean_session_id, {}))
-            if existing is None:
-                existing = {
-                    "session_id": clean_session_id,
-                    "user_id": self._normalize_user_id(user_id),
-                    "share_group": self._working_memory_share_group(clean_session_id),
-                    "share_scope": self._default_working_memory_share_scope(clean_session_id),
-                    "parent_session_id": self._parent_session_id(clean_session_id),
-                    "promotion": self._normalize_working_memory_promotion_state({}),
-                    "updated_at": "",
-                    "messages": [],
-                }
-
-            entry = self._normalize_working_memory_entry(
-                {
-                    "session_id": clean_session_id,
-                    "role": role,
-                    "content": clean_content,
-                    "user_id": self._normalize_user_id(user_id),
-                    "share_group": existing["share_group"],
-                    "share_scope": existing["share_scope"],
-                    "parent_session_id": existing["parent_session_id"],
-                    "metadata": self._normalize_memory_metadata(metadata),
-                    "created_at": self._utcnow_iso(),
-                },
+            _remember_working_message_helper(
+                sessions=sessions,
                 session_id=clean_session_id,
-                fallback_user_id=user_id,
+                role=role,
+                content=clean_content,
+                user_id=user_id,
+                metadata=metadata,
+                allow_promotion=allow_promotion,
+                normalize_working_memory_session_fn=self._normalize_working_memory_session,
+                normalize_user_id_fn=self._normalize_user_id,
+                working_memory_share_group_fn=self._working_memory_share_group,
+                default_working_memory_share_scope_fn=self._default_working_memory_share_scope,
+                parent_session_id_fn=self._parent_session_id,
+                normalize_working_memory_promotion_state_fn=self._normalize_working_memory_promotion_state,
+                normalize_working_memory_entry_fn=lambda payload, current_session_id, fallback_user_id: self._normalize_working_memory_entry(
+                    payload,
+                    session_id=current_session_id,
+                    fallback_user_id=fallback_user_id,
+                ),
+                normalize_memory_metadata_fn=self._normalize_memory_metadata,
+                utcnow_iso=self._utcnow_iso,
+                max_messages_per_session=self._WORKING_MEMORY_MAX_MESSAGES_PER_SESSION,
+                promote_working_memory_locked_fn=self._promote_working_memory_locked,
             )
-            if entry is None:
-                return
-
-            messages = list(existing.get("messages", []))
-            if messages:
-                last = dict(messages[-1])
-                if (
-                    str(last.get("role", "") or "") == str(entry.get("role", "") or "")
-                    and str(last.get("content", "") or "") == str(entry.get("content", "") or "")
-                ):
-                    merged_metadata = self._normalize_memory_metadata(
-                        {
-                            **self._normalize_memory_metadata(last.get("metadata", {})),
-                            **self._normalize_memory_metadata(entry.get("metadata", {})),
-                        }
-                    )
-                    last["metadata"] = merged_metadata
-                    last["created_at"] = str(entry.get("created_at", "") or last.get("created_at", ""))
-                    last["share_group"] = str(entry.get("share_group", "") or existing["share_group"])
-                    last["share_scope"] = str(entry.get("share_scope", "") or existing["share_scope"])
-                    last["parent_session_id"] = str(entry.get("parent_session_id", "") or existing["parent_session_id"])
-                    last["user_id"] = str(entry.get("user_id", "") or existing["user_id"])
-                    messages[-1] = last
-                else:
-                    messages.append(entry)
-            else:
-                messages.append(entry)
-
-            messages = sorted(messages, key=lambda item: str(item.get("created_at", "") or ""))[
-                -self._WORKING_MEMORY_MAX_MESSAGES_PER_SESSION :
-            ]
-            existing["messages"] = messages
-            existing["updated_at"] = str(messages[-1].get("created_at", "") or self._utcnow_iso())
-            existing["user_id"] = str(entry.get("user_id", "") or existing.get("user_id", "default"))
-            sessions[clean_session_id] = existing
-            if allow_promotion:
-                promoted = self._promote_working_memory_locked(
-                    sessions=sessions,
-                    session_id=clean_session_id,
-                    force=False,
-                )
-                if promoted is not None:
-                    sessions[clean_session_id] = self._normalize_working_memory_session(
-                        clean_session_id,
-                        sessions.get(clean_session_id, {}),
-                    ) or existing
             state["sessions"] = sessions
             state["updated_at"] = self._utcnow_iso()
             normalized_state = self._normalize_working_memory_state_payload(state)
@@ -2037,51 +1948,20 @@ class MemoryStore:
         limit: int = 8,
         include_shared_subagents: bool = True,
     ) -> list[dict[str, Any]]:
-        clean_session_id = self._normalize_session_id(session_id)
-        if not clean_session_id:
-            return []
-
-        bounded_limit = max(1, int(limit or 1))
-        state = self._load_working_memory_state()
-        sessions_raw = state.get("sessions", {})
-        sessions = sessions_raw if isinstance(sessions_raw, dict) else {}
-        primary = self._normalize_working_memory_session(clean_session_id, sessions.get(clean_session_id, {}))
-        if primary is None:
-            return []
-
-        candidates = self._working_memory_related_sessions(
-            sessions,
-            primary,
+        return _collect_visible_working_set_helper(
+            session_id,
+            limit=limit,
             include_shared_subagents=include_shared_subagents,
+            load_working_memory_state_fn=self._load_working_memory_state,
+            normalize_session_id_fn=self._normalize_session_id,
+            normalize_working_memory_session_fn=self._normalize_working_memory_session,
+            working_memory_related_sessions_fn=self._working_memory_related_sessions,
+            normalize_working_memory_entry_fn=lambda payload, current_session_id, fallback_user_id: self._normalize_working_memory_entry(
+                payload,
+                session_id=current_session_id,
+                fallback_user_id=fallback_user_id,
+            ),
         )
-
-        entries: list[dict[str, Any]] = []
-        seen: set[tuple[str, str, str, str]] = set()
-        for candidate in candidates:
-            messages = candidate.get("messages", [])
-            if not isinstance(messages, list):
-                continue
-            for item in messages:
-                normalized = self._normalize_working_memory_entry(
-                    item,
-                    session_id=str(candidate.get("session_id", clean_session_id) or clean_session_id),
-                    fallback_user_id=str(candidate.get("user_id", "default") or "default"),
-                )
-                if normalized is None:
-                    continue
-                key = (
-                    str(normalized.get("session_id", "") or ""),
-                    str(normalized.get("role", "") or ""),
-                    str(normalized.get("content", "") or ""),
-                    str(normalized.get("created_at", "") or ""),
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                entries.append(normalized)
-
-        entries.sort(key=lambda item: str(item.get("created_at", "") or ""), reverse=True)
-        return entries[:bounded_limit]
 
     def _scope_paths(self, *, user_id: str = "default", shared: bool = False) -> dict[str, Path]:
         clean_user = self._normalize_user_id(user_id)
@@ -2644,35 +2524,12 @@ class MemoryStore:
         return out
 
     def _prune_embeddings_for_ids(self, removed_ids: set[str]) -> int:
-        if not removed_ids:
-            return 0
-        removed = 0
-        with self._locked_file(self.embeddings_path, "r+", exclusive=True) as fh:
-            lines = fh.read().splitlines()
-            kept_lines: list[str] = []
-            for line in lines:
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    kept_lines.append(raw)
-                    continue
-                if not isinstance(payload, dict):
-                    kept_lines.append(raw)
-                    continue
-                row_id = str(payload.get("id", "")).strip()
-                if row_id and row_id in removed_ids:
-                    removed += 1
-                    continue
-                kept_lines.append(raw)
-
-            fh.seek(0)
-            fh.truncate()
-            if kept_lines:
-                fh.write("\n".join(kept_lines) + "\n")
-            self._flush_and_fsync(fh)
+        removed = _prune_jsonl_records_for_ids_helper(
+            path=self.embeddings_path,
+            record_ids=removed_ids,
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+        )
         try:
             self.backend.delete_embeddings(list(removed_ids))
         except Exception:
@@ -3126,25 +2983,12 @@ class MemoryStore:
         self._atomic_write_text_locked(curated_path, encoded + "\n")
 
     def _read_history_records_from(self, history_path: Path) -> list[MemoryRecord]:
-        out: list[MemoryRecord] = []
-        with self._locked_file(history_path, "r", exclusive=False) as fh:
-            lines = fh.read().splitlines()
-        for line in lines:
-            raw = line.strip()
-            if not raw:
-                continue
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            row = self._record_from_payload(payload)
-            if row is None:
-                continue
-            row.text = self._decrypt_text_for_category(str(row.text or ""), row.category)
-            out.append(row)
-        return out
+        return _read_history_records_from_helper(
+            history_path=history_path,
+            locked_file=self._locked_file,
+            record_from_payload=self._record_from_payload,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+        )
 
     @staticmethod
     def _source_session_key(source: str) -> str:
@@ -3280,35 +3124,19 @@ class MemoryStore:
         return self.categories_path / f"{self._safe_category_slug(category)}.md"
 
     def _append_resource_layer(self, *, record: MemoryRecord, raw_text: str) -> None:
-        category = str(record.category or "context")
-        payload = {
-            "id": str(record.id or ""),
-            "text": self._encrypt_text_for_category(str(raw_text or "").strip(), category),
-            "source": str(record.source or ""),
-            "category": category,
-            "created_at": str(record.created_at or ""),
-            "layer": MemoryLayer.RESOURCE.value,
-            "reasoning_layer": self._normalize_reasoning_layer(record.reasoning_layer),
-            "confidence": self._normalize_confidence(record.confidence, default=1.0),
-        }
-        if not payload["id"] or not payload["text"]:
-            return
-        resource_file = self._resource_file_path_for_timestamp(payload["created_at"])
-        self._ensure_file(resource_file, default="")
-        with self._locked_file(resource_file, "a", exclusive=True) as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            self._flush_and_fsync(fh)
-        try:
-            self.backend.upsert_layer_record(
-                layer=MemoryLayer.RESOURCE.value,
-                record_id=payload["id"],
-                payload=payload,
-                category=payload["category"],
-                created_at=payload["created_at"],
-                updated_at=payload["created_at"],
-            )
-        except Exception:
-            pass
+        _append_resource_layer_helper(
+            record=record,
+            raw_text=raw_text,
+            resource_layer_value=MemoryLayer.RESOURCE.value,
+            encrypt_text_for_category=self._encrypt_text_for_category,
+            normalize_reasoning_layer=self._normalize_reasoning_layer,
+            normalize_confidence=lambda value: self._normalize_confidence(value, default=1.0),
+            resource_file_for_timestamp=self._resource_file_path_for_timestamp,
+            ensure_file=lambda path: self._ensure_file(path, default=""),
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+            backend_upsert_layer_record=self.backend.upsert_layer_record,
+        )
 
     def _load_category_items(self, category: str) -> list[dict[str, Any]]:
         return _load_category_items_from_path(
@@ -3336,9 +3164,10 @@ class MemoryStore:
         )
 
     def _stored_history_payload(self, record: MemoryRecord) -> dict[str, Any]:
-        payload = asdict(record)
-        payload["text"] = self._encrypt_text_for_category(str(record.text or ""), record.category)
-        return payload
+        return _stored_history_payload_helper(
+            record=record,
+            encrypt_text_for_category=self._encrypt_text_for_category,
+        )
 
     def _reinforce_record(
         self,
@@ -3401,140 +3230,49 @@ class MemoryStore:
         source: str,
         reinforced_at: str,
     ) -> tuple[MemoryRecord, bool]:
-        self._ensure_file(history_path, default="")
-        with self._locked_file(history_path, "r+", exclusive=True) as fh:
-            lines = fh.read().splitlines()
-            rewritten_lines: list[str] = []
-            reinforced_row: MemoryRecord | None = None
-
-            for line in lines:
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    rewritten_lines.append(raw)
-                    continue
-                if not isinstance(payload, dict):
-                    rewritten_lines.append(raw)
-                    continue
-                candidate = self._record_from_payload(payload)
-                if candidate is None:
-                    rewritten_lines.append(raw)
-                    continue
-                candidate.text = self._decrypt_text_for_category(str(candidate.text or ""), candidate.category)
-                candidate_hash = self._record_content_hash(candidate)
-                if (
-                    reinforced_row is None
-                    and candidate_hash == content_hash
-                    and self._record_scope_key(candidate) == scope_key
-                ):
-                    reinforced_row = self._reinforce_record(
-                        candidate,
-                        record,
-                        source=source,
-                        scope_key=scope_key,
-                        reinforced_at=reinforced_at,
-                    )
-                    rewritten_lines.append(json.dumps(self._stored_history_payload(reinforced_row), ensure_ascii=False))
-                    continue
-                rewritten_lines.append(raw)
-
-            if reinforced_row is None:
-                fh.seek(0, os.SEEK_END)
-                fh.write(json.dumps(self._stored_history_payload(record), ensure_ascii=False) + "\n")
-                self._flush_and_fsync(fh)
-                return record, True
-
-            fh.seek(0)
-            fh.truncate()
-            if rewritten_lines:
-                fh.write("\n".join(rewritten_lines) + "\n")
-            self._flush_and_fsync(fh)
-            return reinforced_row, False
+        return _append_or_reinforce_history_record_helper(
+            history_path=history_path,
+            record=record,
+            content_hash=content_hash,
+            scope_key=scope_key,
+            source=source,
+            reinforced_at=reinforced_at,
+            ensure_file=lambda path: self._ensure_file(path, default=""),
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+            record_from_payload=self._record_from_payload,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+            record_content_hash=self._record_content_hash,
+            record_scope_key=self._record_scope_key,
+            reinforce_record=self._reinforce_record,
+            stored_history_payload_fn=self._stored_history_payload,
+        )
 
     def _upsert_history_record_by_id(self, history_path: Path, record: MemoryRecord, *, append_if_missing: bool = False) -> bool:
-        self._ensure_file(history_path, default="")
-        stored_payload = self._stored_history_payload(record)
-        with self._locked_file(history_path, "r+", exclusive=True) as fh:
-            lines = fh.read().splitlines()
-            rewritten_lines: list[str] = []
-            found = False
-
-            for line in lines:
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    rewritten_lines.append(raw)
-                    continue
-                if not isinstance(payload, dict):
-                    rewritten_lines.append(raw)
-                    continue
-                if str(payload.get("id", "")).strip() == record.id:
-                    rewritten_lines.append(json.dumps(stored_payload, ensure_ascii=False))
-                    found = True
-                    continue
-                rewritten_lines.append(raw)
-
-            if not found and append_if_missing:
-                fh.seek(0, os.SEEK_END)
-                fh.write(json.dumps(stored_payload, ensure_ascii=False) + "\n")
-                self._flush_and_fsync(fh)
-                return True
-
-            if not found:
-                return False
-
-            fh.seek(0)
-            fh.truncate()
-            if rewritten_lines:
-                fh.write("\n".join(rewritten_lines) + "\n")
-            self._flush_and_fsync(fh)
-            return True
+        return _upsert_history_record_by_id_helper(
+            history_path=history_path,
+            record=record,
+            append_if_missing=append_if_missing,
+            ensure_file=lambda path: self._ensure_file(path, default=""),
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+            stored_history_payload_fn=self._stored_history_payload,
+        )
 
     def _upsert_item_layer(self, record: MemoryRecord) -> None:
-        category, updated_rows = _upsert_category_item_rows(
+        _upsert_item_layer_helper(
             record=record,
-            rows=self._load_category_items(str(record.category or "context")),
+            load_category_items=self._load_category_items,
             serialize_hit=self._serialize_hit,
             encrypt_text_for_category=self._encrypt_text_for_category,
+            write_category_items=self._write_category_items,
+            update_category_summary=self._update_category_summary_file,
+            category_file_path=self._category_file_path,
+            utcnow_iso=self._utcnow_iso,
+            backend_upsert_layer_record=self.backend.upsert_layer_record,
+            item_layer_value=MemoryLayer.ITEM.value,
+            category_layer_value=MemoryLayer.CATEGORY.value,
         )
-        stored_payload = next(
-            (dict(row) for row in updated_rows if str(row.get("id", "")).strip() == str(record.id or "").strip()),
-            {},
-        )
-        self._write_category_items(category, updated_rows)
-        self._update_category_summary_file(category)
-        category_path = self._category_file_path(category)
-        now_iso = self._utcnow_iso()
-        try:
-            self.backend.upsert_layer_record(
-                layer=MemoryLayer.ITEM.value,
-                record_id=str(record.id),
-                payload=stored_payload,
-                category=category,
-                created_at=str(record.created_at or ""),
-                updated_at=str(record.updated_at or record.created_at or ""),
-            )
-            self.backend.upsert_layer_record(
-                layer=MemoryLayer.CATEGORY.value,
-                record_id=str(record.id),
-                payload={
-                    "category": category,
-                    "path": str(category_path),
-                    "updated_at": now_iso,
-                    "total_items": len(updated_rows),
-                },
-                category=category,
-                created_at=str(record.created_at or now_iso),
-                updated_at=now_iso,
-            )
-        except Exception:
-            pass
 
     def _persist_layer_artifacts(self, record: MemoryRecord, *, raw_resource_text: str) -> None:
         self._append_resource_layer(record=record, raw_text=raw_resource_text)
@@ -3566,64 +3304,44 @@ class MemoryStore:
         )
 
     def _upsert_item_layer_in_scope(self, scope: dict[str, Path], record: MemoryRecord) -> None:
-        category, updated_rows = _upsert_category_item_rows(
+        _upsert_item_layer_helper(
             record=record,
-            rows=self._load_scope_category_items(scope, str(record.category or "context")),
+            load_category_items=lambda category: self._load_scope_category_items(scope, category),
             serialize_hit=self._serialize_hit,
             encrypt_text_for_category=self._encrypt_text_for_category,
+            write_category_items=lambda category, rows: self._write_scope_category_items(scope, category, rows),
+            update_category_summary=lambda category: self._update_scope_category_summary_file(scope, category),
+            category_file_path=lambda category: self._scope_category_file_path(scope, category),
+            utcnow_iso=self._utcnow_iso,
+            backend_upsert_layer_record=None,
+            item_layer_value=MemoryLayer.ITEM.value,
+            category_layer_value=MemoryLayer.CATEGORY.value,
         )
-        self._write_scope_category_items(scope, category, updated_rows)
-        self._update_scope_category_summary_file(scope, category)
 
     def _persist_layer_artifacts_to_scope(self, scope: dict[str, Path], record: MemoryRecord, *, raw_resource_text: str) -> None:
-        category = str(record.category or "context")
-        resource_payload = {
-            "id": str(record.id or ""),
-            "text": self._encrypt_text_for_category(str(raw_resource_text or "").strip(), category),
-            "source": str(record.source or ""),
-            "category": category,
-            "created_at": str(record.created_at or ""),
-            "layer": MemoryLayer.RESOURCE.value,
-            "reasoning_layer": self._normalize_reasoning_layer(record.reasoning_layer),
-            "confidence": self._normalize_confidence(record.confidence, default=1.0),
-        }
-        resource_file = self._scope_resource_file_path_for_timestamp(scope, resource_payload["created_at"])
-        self._ensure_file(resource_file, default="")
-        with self._locked_file(resource_file, "a", exclusive=True) as fh:
-            fh.write(json.dumps(resource_payload, ensure_ascii=False) + "\n")
-            self._flush_and_fsync(fh)
+        _append_resource_layer_helper(
+            record=record,
+            raw_text=raw_resource_text,
+            resource_layer_value=MemoryLayer.RESOURCE.value,
+            encrypt_text_for_category=self._encrypt_text_for_category,
+            normalize_reasoning_layer=self._normalize_reasoning_layer,
+            normalize_confidence=lambda value: self._normalize_confidence(value, default=1.0),
+            resource_file_for_timestamp=lambda stamp: self._scope_resource_file_path_for_timestamp(scope, stamp),
+            ensure_file=lambda path: self._ensure_file(path, default=""),
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+            backend_upsert_layer_record=None,
+        )
         self._upsert_item_layer_in_scope(scope, record)
 
     def _prune_item_and_category_layers(self, record_ids: set[str]) -> int:
-        if not record_ids:
-            return 0
-        deleted = 0
-        for item_file in self.items_path.glob("*.json"):
-            try:
-                payload = json.loads(item_file.read_text(encoding="utf-8") or "{}")
-            except Exception:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            category = str(payload.get("category", item_file.stem) or item_file.stem)
-            rows = payload.get("items", [])
-            if not isinstance(rows, list):
-                continue
-            kept: list[dict[str, Any]] = []
-            removed_here = 0
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                row_id = str(row.get("id", "")).strip()
-                if row_id and row_id in record_ids:
-                    removed_here += 1
-                    continue
-                kept.append(row)
-            if removed_here > 0:
-                deleted += removed_here
-                self._write_category_items(category, kept)
-                self._update_category_summary_file(category)
-        return deleted
+        return _prune_item_and_category_layers_helper(
+            items_path=self.items_path,
+            record_ids=record_ids,
+            utcnow_iso=self._utcnow_iso,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+            update_category_summary=self._update_category_summary_file,
+        )
 
     def _prune_resource_layer_for_ids(self, record_ids: set[str]) -> int:
         if not record_ids:
@@ -3631,119 +3349,40 @@ class MemoryStore:
         deleted = 0
         for resource_file in self.resources_path.glob("conv_*.jsonl"):
             try:
-                with self._locked_file(resource_file, "r+", exclusive=True) as fh:
-                    lines = fh.read().splitlines()
-                    kept_lines: list[str] = []
-                    for line in lines:
-                        raw = line.strip()
-                        if not raw:
-                            continue
-                        try:
-                            payload = json.loads(raw)
-                        except Exception:
-                            kept_lines.append(raw)
-                            continue
-                        if not isinstance(payload, dict):
-                            kept_lines.append(raw)
-                            continue
-                        row_id = str(payload.get("id", "")).strip()
-                        if row_id and row_id in record_ids:
-                            deleted += 1
-                            continue
-                        kept_lines.append(raw)
-                    fh.seek(0)
-                    fh.truncate()
-                    if kept_lines:
-                        fh.write("\n".join(kept_lines) + "\n")
-                    self._flush_and_fsync(fh)
+                deleted += _prune_jsonl_records_for_ids_helper(
+                    path=resource_file,
+                    record_ids=record_ids,
+                    locked_file=self._locked_file,
+                    flush_and_fsync=self._flush_and_fsync,
+                )
             except Exception:
                 continue
         return deleted
 
     def _prune_history_records_for_ids(self, history_path: Path, record_ids: set[str]) -> int:
-        if not record_ids or not history_path.exists():
-            return 0
-        deleted = 0
-        with self._locked_file(history_path, "r+", exclusive=True) as fh:
-            lines = fh.read().splitlines()
-            kept_lines: list[str] = []
-            for line in lines:
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    kept_lines.append(raw)
-                    continue
-                if not isinstance(payload, dict):
-                    kept_lines.append(raw)
-                    continue
-                row_id = str(payload.get("id", "")).strip()
-                if row_id and row_id in record_ids:
-                    deleted += 1
-                    continue
-                kept_lines.append(raw)
-
-            fh.seek(0)
-            fh.truncate()
-            if kept_lines:
-                fh.write("\n".join(kept_lines) + "\n")
-            self._flush_and_fsync(fh)
-        return deleted
+        return _prune_jsonl_records_for_ids_helper(
+            path=history_path,
+            record_ids=record_ids,
+            locked_file=self._locked_file,
+            flush_and_fsync=self._flush_and_fsync,
+        )
 
     def _prune_curated_facts_for_ids(self, curated_path: Path | None, record_ids: set[str]) -> int:
-        if not record_ids or curated_path is None or not curated_path.exists():
-            return 0
-        facts = self._read_curated_facts_from(curated_path)
-        kept_facts: list[dict[str, object]] = []
-        deleted = 0
-        for fact in facts:
-            row_id = str(fact.get("id", "")).strip()
-            if row_id and row_id in record_ids:
-                deleted += 1
-                continue
-            kept_facts.append(fact)
-        self._write_curated_facts_to(curated_path, kept_facts)
-        return deleted
+        return _prune_curated_facts_for_ids_helper(
+            curated_path=curated_path,
+            record_ids=record_ids,
+            read_curated_facts_from=self._read_curated_facts_from,
+            write_curated_facts_to=self._write_curated_facts_to,
+        )
 
     def _prune_item_and_category_layers_in_scope(self, scope: dict[str, Path], record_ids: set[str]) -> int:
-        if not record_ids or not scope["items"].exists():
-            return 0
-        deleted = 0
-        for item_file in scope["items"].glob("*.json"):
-            try:
-                payload = json.loads(item_file.read_text(encoding="utf-8") or "{}")
-            except Exception:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            category = str(payload.get("category", item_file.stem) or item_file.stem)
-            rows = payload.get("items", [])
-            if not isinstance(rows, list):
-                continue
-            kept: list[dict[str, Any]] = []
-            removed_here = 0
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                row_id = str(row.get("id", "")).strip()
-                if row_id and row_id in record_ids:
-                    removed_here += 1
-                    continue
-                kept.append(row)
-            if removed_here <= 0:
-                continue
-            deleted += removed_here
-            updated_payload = {
-                "version": int(payload.get("version", 1) or 1),
-                "category": category,
-                "updated_at": self._utcnow_iso(),
-                "items": kept,
-            }
-            self._atomic_write_text_locked(item_file, json.dumps(updated_payload, ensure_ascii=False, indent=2) + "\n")
-            self._update_scope_category_summary_file(scope, category)
-        return deleted
+        return _prune_item_and_category_layers_helper(
+            items_path=scope["items"],
+            record_ids=record_ids,
+            utcnow_iso=self._utcnow_iso,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+            update_category_summary=lambda category: self._update_scope_category_summary_file(scope, category),
+        )
 
     def _prune_resource_layer_for_ids_in_scope(self, scope: dict[str, Path], record_ids: set[str]) -> int:
         if not record_ids or not scope["resources"].exists():
@@ -3751,250 +3390,111 @@ class MemoryStore:
         deleted = 0
         for resource_file in scope["resources"].glob("conv_*.jsonl"):
             try:
-                with self._locked_file(resource_file, "r+", exclusive=True) as fh:
-                    lines = fh.read().splitlines()
-                    kept_lines: list[str] = []
-                    for line in lines:
-                        raw = line.strip()
-                        if not raw:
-                            continue
-                        try:
-                            payload = json.loads(raw)
-                        except Exception:
-                            kept_lines.append(raw)
-                            continue
-                        if not isinstance(payload, dict):
-                            kept_lines.append(raw)
-                            continue
-                        row_id = str(payload.get("id", "")).strip()
-                        if row_id and row_id in record_ids:
-                            deleted += 1
-                            continue
-                        kept_lines.append(raw)
-                    fh.seek(0)
-                    fh.truncate()
-                    if kept_lines:
-                        fh.write("\n".join(kept_lines) + "\n")
-                    self._flush_and_fsync(fh)
+                deleted += _prune_jsonl_records_for_ids_helper(
+                    path=resource_file,
+                    record_ids=record_ids,
+                    locked_file=self._locked_file,
+                    flush_and_fsync=self._flush_and_fsync,
+                )
             except Exception:
                 continue
         return deleted
 
     def _delete_records_by_ids_in_scope(self, scope: dict[str, Path], record_ids: set[str]) -> dict[str, int]:
-        history_deleted = self._prune_history_records_for_ids(scope["history"], record_ids)
-        curated_deleted = self._prune_curated_facts_for_ids(scope.get("curated"), record_ids)
-        if scope["root"] == self.memory_home:
-            layer_deleted = self._prune_item_and_category_layers(record_ids)
-            layer_deleted += self._prune_resource_layer_for_ids(record_ids)
-        else:
-            layer_deleted = self._prune_item_and_category_layers_in_scope(scope, record_ids)
-            layer_deleted += self._prune_resource_layer_for_ids_in_scope(scope, record_ids)
-        return {
-            "history_deleted": int(history_deleted),
-            "curated_deleted": int(curated_deleted),
-            "layer_deleted": int(layer_deleted),
-        }
+        return _delete_records_by_ids_in_scope_helper(
+            scope=scope,
+            record_ids=record_ids,
+            memory_home=self.memory_home,
+            prune_history_records=self._prune_history_records_for_ids,
+            prune_curated_facts=self._prune_curated_facts_for_ids,
+            prune_root_item_layers=self._prune_item_and_category_layers,
+            prune_root_resource_layers=self._prune_resource_layer_for_ids,
+            prune_scope_item_layers=self._prune_item_and_category_layers_in_scope,
+            prune_scope_resource_layers=self._prune_resource_layer_for_ids_in_scope,
+        )
 
     def _delete_records_by_ids(self, record_ids: set[str]) -> dict[str, int | list[str]]:
-        if not record_ids:
-            return {
-                "deleted_ids": [],
-                "history_deleted": 0,
-                "curated_deleted": 0,
-                "embeddings_deleted": 0,
-                "layer_deleted": 0,
-                "backend_deleted": 0,
-                "deleted_count": 0,
-            }
-
-        history_deleted = 0
-        curated_deleted = 0
-        embeddings_deleted = 0
-        backend_deleted = 0
-        layer_deleted = 0
-
-        try:
-            for scope in self._iter_existing_scopes():
-                deleted = self._delete_records_by_ids_in_scope(scope, record_ids)
-                history_deleted += int(deleted.get("history_deleted", 0) or 0)
-                curated_deleted += int(deleted.get("curated_deleted", 0) or 0)
-                layer_deleted += int(deleted.get("layer_deleted", 0) or 0)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        try:
-            embeddings_deleted = self._prune_embeddings_for_ids(record_ids)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        try:
-            backend_deleted = int(self.backend.delete_layer_records(record_ids) or 0)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        deleted_ids = sorted(record_ids)
-        return {
-            "deleted_ids": deleted_ids,
-            "history_deleted": history_deleted,
-            "curated_deleted": curated_deleted,
-            "embeddings_deleted": embeddings_deleted,
-            "layer_deleted": layer_deleted,
-            "backend_deleted": backend_deleted,
-            "deleted_count": len(deleted_ids),
-        }
+        return _delete_records_by_ids_helper(
+            record_ids=record_ids,
+            iter_existing_scopes=self._iter_existing_scopes,
+            delete_records_by_ids_in_scope_fn=self._delete_records_by_ids_in_scope,
+            prune_embeddings_for_ids=self._prune_embeddings_for_ids,
+            backend_delete_layer_records=self.backend.delete_layer_records,
+            diagnostics=self._diagnostics,
+        )
 
     def _cleanup_expired_ephemeral_records(self) -> int:
-        privacy = self._privacy_settings()
-        raw_categories = privacy.get("ephemeral_categories", [])
-        if not isinstance(raw_categories, list):
-            return 0
-        categories = {str(item or "").strip().lower() for item in raw_categories if str(item or "").strip()}
-        if not categories:
-            return 0
-        try:
-            ttl_days = int(privacy.get("ephemeral_ttl_days", 0) or 0)
-        except Exception:
-            ttl_days = 0
-        if ttl_days <= 0:
-            return 0
-
-        cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
-        expired_ids: set[str] = set()
-
-        for scope in self._iter_existing_scopes():
-            history_path = scope["history"]
-            if history_path.exists():
-                for row in self._read_history_records_from(history_path):
-                    row_id = str(row.id or "").strip()
-                    if not row_id:
-                        continue
-                    if str(row.category or "context").strip().lower() not in categories:
-                        continue
-                    if self._parse_iso_timestamp(str(row.created_at or "")) < cutoff:
-                        expired_ids.add(row_id)
-
-            curated_path = scope.get("curated")
-            if curated_path is None or not curated_path.exists():
-                continue
-            for row in self._read_curated_facts_from(curated_path):
-                row_id = str(row.get("id", "")).strip()
-                if not row_id:
-                    continue
-                if str(row.get("category", "context") or "context").strip().lower() not in categories:
-                    continue
-                if self._parse_iso_timestamp(str(row.get("created_at", "") or "")) < cutoff:
-                    expired_ids.add(row_id)
-
-        if not expired_ids:
-            return 0
-
-        deleted = self._delete_records_by_ids(expired_ids)
-        deleted_count = int(deleted.get("deleted_count", 0) or 0)
-        if deleted_count > 0:
-            self._diagnostics["privacy_ttl_deleted"] = int(self._diagnostics["privacy_ttl_deleted"]) + deleted_count
-            self._append_privacy_audit_event(
-                action="ttl_cleanup",
-                reason="ephemeral_ttl_expired",
-                metadata={
-                    "deleted_count": deleted_count,
-                    "ttl_days": ttl_days,
-                    "categories": sorted(categories),
-                },
-            )
-        return deleted_count
+        return _cleanup_expired_ephemeral_records_helper(
+            privacy_settings=self._privacy_settings,
+            iter_existing_scopes=self._iter_existing_scopes,
+            read_history_records_from=self._read_history_records_from,
+            read_curated_facts_from=self._read_curated_facts_from,
+            parse_iso_timestamp=self._parse_iso_timestamp,
+            delete_records_by_ids=self._delete_records_by_ids,
+            diagnostics=self._diagnostics,
+            append_privacy_audit_event=self._append_privacy_audit_event,
+        )
 
     # ------------------------------------------------------------------
     # ResourceContext CRUD
     # ------------------------------------------------------------------
 
     def create_resource(self, resource: "ResourceContext") -> str:
-        self.backend.upsert_resource({
-            "id": resource.id, "name": resource.name, "kind": resource.kind,
-            "description": resource.description, "tags": json.dumps(resource.tags),
-            "created_at": resource.created_at, "updated_at": resource.updated_at,
-        })
-        return resource.id
+        return _create_resource_helper(
+            backend=self.backend,
+            resource=resource,
+        )
 
     def get_resource(self, resource_id: str) -> "ResourceContext | None":
-        row = self.backend.fetch_resource(resource_id)
-        if row is None:
-            return None
-        tags: list[str] = []
-        try:
-            tags = json.loads(row.get("tags") or "[]")
-        except Exception:
-            pass
-        return ResourceContext(
-            id=row["id"], name=row["name"], kind=row["kind"],
-            description=row.get("description", ""),
-            tags=tags,
-            created_at=row.get("created_at", ""),
-            updated_at=row.get("updated_at", ""),
+        return _get_resource_helper(
+            backend=self.backend,
+            resource_id=resource_id,
+            resource_context_cls=ResourceContext,
         )
 
     def list_resources(self) -> list["ResourceContext"]:
-        rows = self.backend.fetch_all_resources()
-        return [r for r in (self.get_resource(row["id"]) for row in rows if row.get("id")) if r is not None]
+        return _list_resources_helper(
+            backend=self.backend,
+            resource_context_cls=ResourceContext,
+        )
 
     def delete_resource(self, resource_id: str) -> None:
         self.backend.delete_resource(resource_id)
 
     def get_resource_records(self, resource_id: str) -> list["MemoryRecord"]:
-        record_ids = self.backend.fetch_records_by_resource(resource_id)
-        results: list[MemoryRecord] = []
-        for rid in record_ids:
-            rec = self._fetch_record_by_id(rid)
-            if rec is not None:
-                results.append(rec)
-        return results
+        return _get_resource_records_helper(
+            backend=self.backend,
+            resource_id=resource_id,
+            fetch_record_by_id_fn=self._fetch_record_by_id,
+        )
 
     def _fetch_record_by_id(self, record_id: str) -> "MemoryRecord | None":
-        """Fetch a single MemoryRecord from the backend by its ID."""
-        # Fetch all item rows and find by id (simple scan — resource lookups are small)
-        all_rows = self.backend.fetch_layer_records(layer=MemoryLayer.ITEM.value, limit=50000)
-        for row in all_rows:
-            if row.get("record_id") == record_id:
-                payload = row.get("payload", {})
-                if isinstance(payload, dict) and payload.get("text"):
-                    return MemoryRecord(
-                        id=str(payload.get("id", record_id)),
-                        text=str(payload.get("text", "")),
-                        source=str(payload.get("source", "user")),
-                        created_at=str(payload.get("created_at", row.get("created_at", ""))),
-                        category=str(payload.get("category", row.get("category", "context"))),
-                        user_id=str(payload.get("user_id", "default")),
-                        layer=str(payload.get("layer", MemoryLayer.ITEM.value)),
-                        reasoning_layer=str(payload.get("reasoning_layer", "fact")),
-                        modality=str(payload.get("modality", "text")),
-                        updated_at=str(payload.get("updated_at", "")),
-                        confidence=float(payload.get("confidence", 1.0)),
-                        decay_rate=float(payload.get("decay_rate", 0.0)),
-                        emotional_tone=str(payload.get("emotional_tone", "neutral")),
-                        memory_type=str(payload.get("memory_type", "knowledge")),
-                        happened_at=str(payload.get("happened_at", "")),
-                        metadata=payload.get("metadata", {}),
-                    )
-        return None
+        return _fetch_record_by_id_helper(
+            backend=self.backend,
+            record_id=record_id,
+            item_layer_value=MemoryLayer.ITEM.value,
+            memory_record_cls=MemoryRecord,
+        )
 
     # ------------------------------------------------------------------
     # TTL
     # ------------------------------------------------------------------
 
     def set_record_ttl(self, record_id: str, ttl_seconds: float) -> None:
-        from datetime import timedelta
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
-        self.backend.set_ttl(record_id, expires_at)
+        _set_record_ttl_helper(
+            backend=self.backend,
+            record_id=record_id,
+            ttl_seconds=ttl_seconds,
+        )
 
     def get_record_ttl(self, record_id: str) -> dict[str, str] | None:
-        return self.backend.get_ttl(record_id)
+        return _get_record_ttl_helper(
+            backend=self.backend,
+            record_id=record_id,
+        )
 
     def purge_expired_records(self) -> int:
-        expired_ids = self.backend.fetch_expired_record_ids()
-        if not expired_ids:
-            return 0
-        deleted = self.backend.delete_layer_records(set(expired_ids))
-        self.backend.delete_ttl_entries(expired_ids)
-        return int(deleted) if isinstance(deleted, int) else len(expired_ids)
+        return _purge_expired_records_helper(backend=self.backend)
 
     # ------------------------------------------------------------------
     # Multi-modal file ingest
@@ -4007,45 +3507,12 @@ class MemoryStore:
         source: str = "file",
         resource_id: str | None = None,
     ) -> dict[str, Any]:
-        """Ingest .txt/.md/.pdf into memory. Returns {ok, modality, record_id, reason}."""
-        from pathlib import Path as _Path
-        p = _Path(path)
-        if not p.exists():
-            return {"ok": False, "modality": "", "record_id": "", "reason": f"file not found: {path}"}
-
-        suffix = p.suffix.lower()
-
-        if suffix in (".txt", ".md"):
-            try:
-                text = p.read_text(encoding="utf-8", errors="replace").strip()
-            except Exception as exc:
-                return {"ok": False, "modality": "text", "record_id": "", "reason": str(exc)}
-            if not text:
-                return {"ok": False, "modality": "text", "record_id": "", "reason": "empty file"}
-            record = self.add(text, source=source, modality="text", resource_id=resource_id)
-            return {"ok": True, "modality": "text", "record_id": str(getattr(record, "id", "")), "reason": ""}
-
-        if suffix == ".pdf":
-            try:
-                import pypdf
-                reader = pypdf.PdfReader(str(p))
-                pages = [page.extract_text() or "" for page in reader.pages]
-                text = "\n\n".join(pages).strip()
-            except ImportError:
-                return {
-                    "ok": False,
-                    "modality": "document",
-                    "record_id": "",
-                    "reason": 'pdf read error: pypdf not installed. Run: pip install "clawlite[media]"',
-                }
-            except Exception as exc:
-                return {"ok": False, "modality": "document", "record_id": "", "reason": f"pdf read error: {exc}"}
-            if not text:
-                return {"ok": False, "modality": "document", "record_id": "", "reason": "pdf has no extractable text"}
-            record = self.add(text, source=source, modality="document", resource_id=resource_id)
-            return {"ok": True, "modality": "document", "record_id": str(getattr(record, "id", "")), "reason": ""}
-
-        return {"ok": False, "modality": "", "record_id": "", "reason": f"unsupported file type: {suffix}"}
+        return _ingest_file_helper(
+            path=path,
+            source=source,
+            resource_id=resource_id,
+            add_record=self.add,
+        )
 
     def add(
         self,
@@ -4064,58 +3531,40 @@ class MemoryStore:
         decay_rate: float | None = None,
         resource_id: str | None = None,
     ) -> MemoryRecord:
-        clean = text.strip()
-        if not clean:
-            raise ValueError("memory text must not be empty")
-        clean_user = self._normalize_user_id(user_id)
-        category = self._categorize_memory(clean, source)
-        memory_basis = str(raw_resource_text or clean)
-        resolved_memory_type = self._normalize_memory_type(memory_type or self._infer_memory_type(memory_basis, source, category=category))
-        resolved_happened_at = str(happened_at or self._infer_happened_at(memory_basis) or "")
-        resolved_decay_rate = self._normalize_decay_rate(
-            decay_rate,
-            default=self._default_decay_rate(
-                memory_type=resolved_memory_type,
-                category=category,
-                happened_at=resolved_happened_at,
-            ),
-        )
-        reinforced_at = datetime.now(timezone.utc).isoformat()
-        scope_key = self._memory_scope_key(user_id=clean_user, shared=shared)
-        resolved_metadata = self._prepare_memory_metadata(
-            text=memory_basis,
+        row, content_hash, scope_key, reinforced_at, raw_text, scoped = _build_pending_record_helper(
+            text=text,
             source=source,
+            raw_resource_text=raw_resource_text,
+            user_id=user_id,
+            shared=shared,
+            modality=modality,
             metadata=metadata,
-            memory_type=resolved_memory_type,
-            happened_at=resolved_happened_at,
+            reasoning_layer=reasoning_layer,
+            confidence=confidence,
+            memory_type=memory_type,
+            happened_at=happened_at,
+            decay_rate=decay_rate,
+            normalize_user_id=self._normalize_user_id,
+            categorize_memory=self._categorize_memory,
+            normalize_memory_type=self._normalize_memory_type,
+            infer_memory_type=self._infer_memory_type,
+            infer_happened_at=self._infer_happened_at,
+            normalize_decay_rate=self._normalize_decay_rate,
+            default_decay_rate=self._default_decay_rate,
+            memory_scope_key=self._memory_scope_key,
+            prepare_memory_metadata=self._prepare_memory_metadata,
+            seed_reinforcement_metadata=self._seed_reinforcement_metadata,
+            normalize_reasoning_layer=self._normalize_reasoning_layer,
+            normalize_confidence=self._normalize_confidence,
+            detect_emotional_tone=self._detect_emotional_tone,
+            emotional_tracking=self.emotional_tracking,
+            memory_record_cls=MemoryRecord,
+            metadata_content_hash=self._metadata_content_hash,
+            memory_content_hash=self._memory_content_hash,
         )
-        resolved_metadata = self._seed_reinforcement_metadata(
-            resolved_metadata,
-            source=source,
-            scope_key=scope_key,
-            reinforced_at=reinforced_at,
-        )
-        row = MemoryRecord(
-            id=uuid.uuid4().hex,
-            text=clean,
-            source=source,
-            created_at=reinforced_at,
-            category=category,
-            user_id=clean_user,
-            layer=MemoryLayer.ITEM.value,
-            reasoning_layer=self._normalize_reasoning_layer(reasoning_layer),
-            modality=str(modality or "text").strip().lower() or "text",
-            confidence=self._normalize_confidence(confidence, default=1.0),
-            decay_rate=resolved_decay_rate,
-            emotional_tone=self._detect_emotional_tone(clean) if self.emotional_tracking else "neutral",
-            memory_type=resolved_memory_type,
-            happened_at=resolved_happened_at,
-            metadata=resolved_metadata,
-        )
-        content_hash = self._metadata_content_hash(row.metadata) or self._memory_content_hash(memory_basis, resolved_memory_type)
-        raw_text = str(raw_resource_text or clean)
 
-        if shared or clean_user != "default":
+        if scoped:
+            clean_user = str(row.user_id or "default")
             scope = self._scope_paths(user_id=clean_user, shared=shared)
             self._ensure_scope_paths(scope)
             row, created_new = self._append_or_reinforce_history_record(
@@ -4163,95 +3612,53 @@ class MemoryStore:
             except Exception:
                 pass
 
-        if created_new:
-            self._diagnostics["reinforcement_creates"] = int(self._diagnostics["reinforcement_creates"]) + 1
-            embedding = self._generate_embedding(clean)
-            if embedding is not None:
-                try:
-                    self._append_embedding(
-                        record_id=row.id,
-                        embedding=embedding,
-                        created_at=row.created_at,
-                        source=row.source,
-                    )
-                except Exception:
-                    pass
-        else:
-            self._diagnostics["reinforcement_hits"] = int(self._diagnostics["reinforcement_hits"]) + 1
-        self._update_profile_from_record(row)
-        self._prune_history()
-        if resource_id:
-            try:
-                self.backend.link_record_resource(row.id, resource_id)
-            except Exception:
-                pass
-        return row
+        return _finalize_added_record_helper(
+            row=row,
+            created_new=created_new,
+            clean_text=str(row.text or ""),
+            resource_id=resource_id,
+            diagnostics=self._diagnostics,
+            generate_embedding=self._generate_embedding,
+            append_embedding=self._append_embedding,
+            update_profile_from_record=self._update_profile_from_record,
+            prune_history=self._prune_history,
+            link_record_resource=self.backend.link_record_resource,
+        )
 
     def _read_history_records(self) -> list[MemoryRecord]:
-        out: list[MemoryRecord] = []
-        valid_lines: list[str] = []
-        corrupt_lines = 0
-        with self._locked_file(self.history_path, "r", exclusive=False) as fh:
-            lines = fh.read().splitlines()
-        for line in lines:
-            raw = line.strip()
-            if not raw:
-                continue
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                corrupt_lines += 1
-                continue
-            if not isinstance(payload, dict):
-                corrupt_lines += 1
-                continue
-            valid_lines.append(raw)
-            row = self._record_from_payload(payload)
-            if row is None:
-                continue
-            row.text = self._decrypt_text_for_category(str(row.text or ""), row.category)
-            out.append(row)
-
-        if corrupt_lines:
-            self._diagnostics["history_read_corrupt_lines"] = int(self._diagnostics["history_read_corrupt_lines"]) + corrupt_lines
-            self._repair_history_file(valid_lines)
-
-        return out
+        return _read_history_records_helper(
+            history_path=self.history_path,
+            locked_file=self._locked_file,
+            record_from_payload=self._record_from_payload,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+            repair_history_file_fn=self._repair_history_file,
+            diagnostics=self._diagnostics,
+        )
 
     def _repair_history_file(self, valid_lines: list[str]) -> None:
-        try:
-            rewritten = "\n".join(valid_lines)
-            if rewritten:
-                rewritten = f"{rewritten}\n"
-            self._atomic_write_text_locked(self.history_path, rewritten)
-            self._diagnostics["history_repaired_files"] = int(self._diagnostics["history_repaired_files"]) + 1
-            self._diagnostics["last_error"] = ""
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
+        _repair_history_file_helper(
+            history_path=self.history_path,
+            valid_lines=valid_lines,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+            diagnostics=self._diagnostics,
+        )
 
     def all(self) -> list[MemoryRecord]:
         return self._read_history_records()
 
     def curated(self) -> list[MemoryRecord]:
-        rows = self._read_curated_facts()
-        return [
-            MemoryRecord(
-                id=str(item.get("id", "")),
-                text=str(item.get("text", "")).strip(),
-                source=str(item.get("source", "curated")),
-                created_at=str(item.get("created_at", "")),
-                category=str(item.get("category", "context") or "context"),
-                layer=self._normalize_layer(item.get("layer", MemoryLayer.ITEM.value)),
-                reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
-                confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
-                decay_rate=self._normalize_decay_rate(item.get("decay_rate", item.get("decayRate", self._default_decay_rate(memory_type=item.get("memory_type", item.get("memoryType", "knowledge")))))),
-                memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
-                happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
-                metadata=self._normalize_memory_metadata(item.get("metadata", {})),
-            )
-            for item in rows
-            if str(item.get("text", "")).strip()
-        ]
+        return _curated_records_helper(
+            self._read_curated_facts(),
+            record_cls=MemoryRecord,
+            user_id="default",
+            normalize_layer=self._normalize_layer,
+            normalize_reasoning_layer=self._normalize_reasoning_layer,
+            normalize_confidence=self._normalize_confidence,
+            normalize_decay_rate=self._normalize_decay_rate,
+            default_decay_rate=self._default_decay_rate,
+            normalize_memory_type=self._normalize_memory_type,
+            normalize_memory_metadata=self._normalize_memory_metadata,
+        )
 
     def list_recent_candidates(
         self,
@@ -4261,73 +3668,21 @@ class MemoryStore:
         limit: int = 10,
         max_scan: int = 500,
     ) -> list[MemoryRecord]:
-        bounded_limit = max(1, int(limit or 1))
-        bounded_scan = max(bounded_limit, min(max(1, int(max_scan or bounded_limit)), 5000))
-        clean_source = str(source or "").strip()
-        clean_prefix = self._normalize_prefix(ref_prefix)
-
-        out: list[MemoryRecord] = []
-        seen_ids: set[str] = set()
-
-        def _accept(row: MemoryRecord | None) -> bool:
-            if row is None:
-                return False
-            row_id = str(row.id or "").strip()
-            if not row_id or row_id in seen_ids:
-                return False
-            if clean_prefix and not self._normalize_prefix(row_id).startswith(clean_prefix):
-                return False
-            if clean_source and str(row.source or "") != clean_source:
-                return False
-            seen_ids.add(row_id)
-            out.append(row)
-            return len(out) >= bounded_limit
-
-        try:
-            backend_rows = self.backend.fetch_layer_records(layer=MemoryLayer.ITEM.value, limit=bounded_scan)
-        except Exception:
-            backend_rows = []
-        for row in backend_rows:
-            if not isinstance(row, dict):
-                continue
-            payload = row.get("payload", {})
-            if not isinstance(payload, dict):
-                continue
-            candidate = self._record_from_payload(payload)
-            if candidate is None:
-                continue
-            candidate.text = self._decrypt_text_for_category(str(candidate.text or ""), candidate.category)
-            if _accept(candidate):
-                return out
-
-        with self._locked_file(self.history_path, "r", exclusive=False) as fh:
-            recent_lines = deque(fh, maxlen=bounded_scan)
-        for line in reversed(list(recent_lines)):
-            raw = str(line or "").strip()
-            if not raw:
-                continue
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            candidate = self._record_from_payload(payload)
-            if candidate is None:
-                continue
-            candidate.text = self._decrypt_text_for_category(str(candidate.text or ""), candidate.category)
-            if _accept(candidate):
-                return out
-
-        for item in self._read_curated_facts():
-            candidate = self._record_from_payload(item)
-            if candidate is None:
-                continue
-            if _accept(candidate):
-                return out
-
-        out.sort(key=self._record_sort_key, reverse=True)
-        return out[:bounded_limit]
+        return _list_recent_candidates_helper(
+            source=source,
+            ref_prefix=ref_prefix,
+            limit=limit,
+            max_scan=max_scan,
+            fetch_layer_records=self.backend.fetch_layer_records,
+            record_from_payload=self._record_from_payload,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+            normalize_prefix=self._normalize_prefix,
+            record_sort_key=self._record_sort_key,
+            history_path=self.history_path,
+            locked_file=self._locked_file,
+            read_curated_facts=self._read_curated_facts,
+            item_layer_value=MemoryLayer.ITEM.value,
+        )
 
     async def memorize(
         self,
@@ -4348,82 +3703,31 @@ class MemoryStore:
         happened_at: str | None = None,
         decay_rate: float | None = None,
     ) -> dict[str, Any]:
-        _ = include_shared
-        try:
-            await asyncio.to_thread(self._cleanup_expired_ephemeral_records)
-        except Exception as exc:
-            self._diagnostics["last_error"] = str(exc)
-
-        if messages is not None:
-            joined_text = "\n".join(str(item.get("content", "") or "") for item in messages if isinstance(item, dict))
-            blocked_reason = self._privacy_block_reason(joined_text) if joined_text else None
-            if blocked_reason is not None:
-                self._append_privacy_audit_event(
-                    action="memorize_skipped",
-                    reason=blocked_reason,
-                    source=source,
-                    metadata={"mode": "consolidate"},
-                )
-                return {"status": "skipped", "mode": "consolidate", "record": None}
-            record = await asyncio.to_thread(
-                self.consolidate,
-                messages,
-                source=source,
-                user_id=user_id,
-                shared=shared,
-                metadata=metadata,
-                reasoning_layer=reasoning_layer,
-                confidence=confidence,
-                memory_type=memory_type,
-                happened_at=happened_at,
-                decay_rate=decay_rate,
-            )
-            if record is None:
-                return {"status": "skipped", "mode": "consolidate", "record": None}
-            return {"status": "ok", "mode": "consolidate", "record": asdict(record)}
-
-        resolved_modality = str(modality or "text").strip().lower() or "text"
-        clean = str(text or "").strip()
-        if not clean and file_path:
-            clean = await asyncio.to_thread(
-                self._memory_text_from_file,
-                file_path,
-                modality=resolved_modality,
-                metadata=metadata,
-            )
-        if not clean and url:
-            clean = await asyncio.to_thread(
-                self._memory_text_from_url,
-                url,
-                modality=resolved_modality,
-                metadata=metadata,
-            )
-        if not clean:
-            raise ValueError("text or messages is required")
-        blocked_reason = self._privacy_block_reason(clean)
-        if blocked_reason is not None:
-            self._append_privacy_audit_event(
-                action="memorize_skipped",
-                reason=blocked_reason,
-                source=source,
-                metadata={"mode": "add"},
-            )
-            return {"status": "skipped", "mode": "add", "record": None}
-        record = await asyncio.to_thread(
-            self.add,
-            clean,
+        return await _memorize_workflow_helper(
+            text=text,
+            messages=messages,
             source=source,
             user_id=user_id,
             shared=shared,
-            modality=resolved_modality,
+            include_shared=include_shared,
+            file_path=file_path,
+            url=url,
+            modality=modality,
             metadata=metadata,
             reasoning_layer=reasoning_layer,
             confidence=confidence,
             memory_type=memory_type,
             happened_at=happened_at,
             decay_rate=decay_rate,
+            cleanup_expired_ephemeral_records=self._cleanup_expired_ephemeral_records,
+            diagnostics=self._diagnostics,
+            privacy_block_reason=self._privacy_block_reason,
+            append_privacy_audit_event=self._append_privacy_audit_event,
+            consolidate_fn=self.consolidate,
+            add_fn=self.add,
+            memory_text_from_file=self._memory_text_from_file,
+            memory_text_from_url=self._memory_text_from_url,
         )
-        return {"status": "ok", "mode": "add", "record": asdict(record)}
 
     @staticmethod
     def _serialize_hit(row: MemoryRecord) -> dict[str, Any]:
@@ -4447,14 +3751,14 @@ class MemoryStore:
         }
 
     def _resolve_retrieval_scopes(self, *, user_id: str, include_shared: bool) -> list[dict[str, Path]]:
-        clean_user = self._normalize_user_id(user_id or "default")
-        scopes: list[dict[str, Path]] = []
-        scopes.append(self._scope_paths(user_id=clean_user, shared=False))
-        if clean_user != "default" and include_shared and self.shared_opt_in(clean_user):
-            scopes.append(self._scope_paths(shared=True))
-        for scope in scopes:
-            self._ensure_scope_paths(scope)
-        return scopes
+        return _resolve_retrieval_scopes_helper(
+            user_id=user_id,
+            include_shared=include_shared,
+            normalize_user_id=self._normalize_user_id,
+            shared_opt_in=self.shared_opt_in,
+            scope_paths=self._scope_paths,
+            ensure_scope_paths=self._ensure_scope_paths,
+        )
 
     def _collect_retrieval_records(
         self,
@@ -4466,58 +3770,37 @@ class MemoryStore:
         min_confidence: float | None,
         filters: dict[str, Any] | None,
     ) -> tuple[list[MemoryRecord], dict[str, float], dict[str, int], list[dict[str, Path]], bool]:
-        clean_user = self._normalize_user_id(user_id or "default")
-        reasoning_filter = self._normalize_reasoning_layers_filter(reasoning_layers)
-        min_conf_filter = self._normalize_confidence(min_confidence, default=0.0) if min_confidence is not None else None
-        normalized_filters = self._normalize_retrieval_filters(filters)
-        scopes = self._resolve_retrieval_scopes(user_id=clean_user, include_shared=include_shared)
-
-        records: list[MemoryRecord] = []
-        curated_importance: dict[str, float] = {}
-        curated_mentions: dict[str, int] = {}
-
-        for scope in scopes:
-            scope_root = scope["root"]
-            scope_user_id = "shared" if scope_root == self.shared_path else clean_user
-            curated_rows = self._read_curated_facts_from(scope["curated"])
-            for item in curated_rows:
-                text = str(item.get("text", "")).strip()
-                if not text:
-                    continue
-                row = MemoryRecord(
-                    id=str(item.get("id", "")),
-                    text=text,
-                    source=str(item.get("source", "curated")),
-                    created_at=str(item.get("created_at", "")),
-                    category=str(item.get("category", "context") or "context"),
-                    user_id=scope_user_id,
-                    reasoning_layer=self._normalize_reasoning_layer(item.get("reasoning_layer", item.get("reasoningLayer", "fact"))),
-                    modality=str(item.get("modality", "text") or "text"),
-                    confidence=self._normalize_confidence(item.get("confidence", 1.0), default=1.0),
-                    decay_rate=self._normalize_decay_rate(item.get("decay_rate", item.get("decayRate", self._default_decay_rate(memory_type=item.get("memory_type", item.get("memoryType", "knowledge")))))),
-                    memory_type=self._normalize_memory_type(item.get("memory_type", item.get("memoryType", "knowledge"))),
-                    happened_at=str(item.get("happened_at", item.get("happenedAt", "")) or ""),
-                    metadata=self._normalize_memory_metadata(item.get("metadata", {})),
-                )
-                records.append(row)
-                curated_importance[row.id] = float(item.get("importance", 1.0) or 1.0)
-                try:
-                    curated_mentions[row.id] = int(item.get("mentions", 1) or 1)
-                except Exception:
-                    curated_mentions[row.id] = 1
-
-            records.extend(self._read_history_records_from(scope["history"]))
-
-        records = self._apply_retrieval_filters(records, normalized_filters)
-        if reasoning_filter:
-            records = [row for row in records if self._normalize_reasoning_layer(row.reasoning_layer) in reasoning_filter]
-        if min_conf_filter is not None:
-            records = [row for row in records if self._normalize_confidence(row.confidence, default=1.0) >= min_conf_filter]
-        if session_id:
-            records = [row for row in records if self._working_episode_visible_in_session(row, session_id=session_id)]
-
-        semantic_enabled = bool(self.semantic_enabled and bool(records))
-        return records, curated_importance, curated_mentions, scopes, semantic_enabled
+        return _collect_retrieval_records_helper(
+            user_id=user_id,
+            include_shared=include_shared,
+            session_id=session_id,
+            reasoning_layers=reasoning_layers,
+            min_confidence=min_confidence,
+            filters=filters,
+            normalize_user_id=self._normalize_user_id,
+            normalize_reasoning_layers_filter=self._normalize_reasoning_layers_filter,
+            normalize_confidence=self._normalize_confidence,
+            normalize_retrieval_filters=self._normalize_retrieval_filters,
+            resolve_retrieval_scopes_fn=self._resolve_retrieval_scopes,
+            shared_root=self.shared_path,
+            read_curated_facts_from=self._read_curated_facts_from,
+            read_history_records_from=self._read_history_records_from,
+            curated_records_fn=lambda rows, *, user_id: _curated_records_helper(
+                rows,
+                record_cls=MemoryRecord,
+                user_id=user_id,
+                normalize_layer=self._normalize_layer,
+                normalize_reasoning_layer=self._normalize_reasoning_layer,
+                normalize_confidence=self._normalize_confidence,
+                normalize_decay_rate=self._normalize_decay_rate,
+                default_decay_rate=self._default_decay_rate,
+                normalize_memory_type=self._normalize_memory_type,
+                normalize_memory_metadata=self._normalize_memory_metadata,
+            ),
+            apply_retrieval_filters=self._apply_retrieval_filters,
+            working_episode_visible_in_session=self._working_episode_visible_in_session,
+            semantic_enabled=self.semantic_enabled,
+        )
 
     @classmethod
     def _rewrite_retrieval_query(cls, query: str) -> str:
@@ -4658,87 +3941,20 @@ class MemoryStore:
         min_confidence: float | None = None,
         filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        clean_query = str(query or "").strip()
-        if not clean_query:
-            raise ValueError("query is required")
-        bounded_limit = max(1, int(limit or 1))
-        resolved_user = user_id or "default"
-        progressive = await asyncio.to_thread(
-            self._build_progressive_retrieval_payload,
-            clean_query,
-            user_id=resolved_user,
+        return await asyncio.to_thread(
+            _retrieve_helper,
+            query,
+            limit=limit,
+            method=method,
+            user_id=user_id,
             session_id=session_id,
-            limit=bounded_limit,
             include_shared=include_shared,
             reasoning_layers=reasoning_layers,
             min_confidence=min_confidence,
             filters=filters,
+            build_progressive_retrieval_payload=self._build_progressive_retrieval_payload,
+            refine_hits_with_llm=self._refine_hits_with_llm,
         )
-        hits = progressive["hits"]
-        category_hits = progressive["category_hits"]
-        resource_hits = progressive["resource_hits"]
-        rewritten_query = str(progressive.get("rewritten_query", "") or "")
-
-        rag_payload: dict[str, Any] = {
-            "status": "ok",
-            "method": "rag",
-            "query": clean_query,
-            "rewritten_query": rewritten_query,
-            "limit": bounded_limit,
-            "count": len(hits),
-            "hits": hits,
-            "category_hits": category_hits,
-            "resource_hits": resource_hits,
-            "episodic_digest": progressive.get("episodic_digest"),
-            "metadata": {
-                "fallback_to_rag": False,
-                "progressive": progressive["progressive"],
-                "episodic_digest": progressive.get("episodic_digest"),
-            },
-        }
-        normalized_method = str(method or "rag").strip().lower()
-        if normalized_method == "rag":
-            return rag_payload
-        if normalized_method != "llm":
-            raise ValueError("method must be 'rag' or 'llm'")
-
-        llm_refinement = await asyncio.to_thread(
-            self._refine_hits_with_llm,
-            clean_query,
-            hits,
-            category_hits=category_hits,
-            resource_hits=resource_hits,
-        )
-        if llm_refinement is None:
-            rag_payload["method"] = "llm"
-            rag_payload["metadata"] = {
-                "fallback_to_rag": True,
-                "progressive": progressive["progressive"],
-                "episodic_digest": progressive.get("episodic_digest"),
-            }
-            rag_payload["answer"] = ""
-            rag_payload["next_step_query"] = ""
-            return rag_payload
-
-        return {
-            "status": "ok",
-            "method": "llm",
-            "query": clean_query,
-            "rewritten_query": rewritten_query,
-            "limit": bounded_limit,
-            "count": len(hits),
-            "hits": hits,
-            "category_hits": category_hits,
-            "resource_hits": resource_hits,
-            "episodic_digest": progressive.get("episodic_digest"),
-            "answer": str(llm_refinement.get("answer", "") or ""),
-            "next_step_query": str(llm_refinement.get("next_step_query", "") or ""),
-            "metadata": {
-                "fallback_to_rag": False,
-                "progressive": progressive["progressive"],
-                "episodic_digest": progressive.get("episodic_digest"),
-            },
-        }
 
     def _rank_records(
         self,
@@ -4830,32 +4046,23 @@ class MemoryStore:
         happened_at: str | None = None,
         decay_rate: float | None = None,
     ) -> MemoryRecord | None:
-        self._ensure_scope_paths(scope)
-        return self._consolidate_messages(
-            messages,
+        return _consolidate_in_scope_helper(
+            scope=scope,
+            messages=messages,
             source=source,
+            user_id=user_id,
+            shared=shared,
             metadata=metadata,
             reasoning_layer=reasoning_layer,
             confidence=confidence,
             memory_type=memory_type,
             happened_at=happened_at,
             decay_rate=decay_rate,
-            checkpoints_path=scope["checkpoints"],
-            add_record=lambda summary, resource_text: self.add(
-                summary,
-                source=source,
-                raw_resource_text=resource_text,
-                user_id=user_id,
-                shared=shared,
-                metadata=metadata,
-                reasoning_layer=reasoning_layer,
-                confidence=confidence,
-                memory_type=memory_type,
-                happened_at=happened_at,
-                decay_rate=decay_rate,
-            ),
-            read_curated_facts=lambda: self._read_curated_facts_from(scope["curated"]),
-            write_curated_facts=lambda facts: self._write_curated_facts_to(scope["curated"], facts),
+            ensure_scope_paths=self._ensure_scope_paths,
+            consolidate_messages=self._consolidate_messages,
+            read_curated_facts_from=self._read_curated_facts_from,
+            write_curated_facts_to=self._write_curated_facts_to,
+            add_record=self.add,
         )
 
     def _consolidate_messages(
@@ -4920,108 +4127,39 @@ class MemoryStore:
         happened_at: str | None = None,
         decay_rate: float | None = None,
     ) -> MemoryRecord | None:
-        clean_user = self._normalize_user_id(user_id)
-        if shared or clean_user != "default":
-            scope = self._scope_paths(user_id=clean_user, shared=shared)
-            return self._consolidate_in_scope(
-                scope,
-                messages,
-                source=source,
-                user_id=clean_user,
-                shared=shared,
-                metadata=metadata,
-                reasoning_layer=reasoning_layer,
-                confidence=confidence,
-                memory_type=memory_type,
-                happened_at=happened_at,
-                decay_rate=decay_rate,
-            )
-        return self._consolidate_messages(
-            messages,
+        return _consolidate_workflow_helper(
+            messages=messages,
             source=source,
+            user_id=user_id,
+            shared=shared,
             metadata=metadata,
             reasoning_layer=reasoning_layer,
             confidence=confidence,
             memory_type=memory_type,
             happened_at=happened_at,
             decay_rate=decay_rate,
+            normalize_user_id=self._normalize_user_id,
+            scope_paths=self._scope_paths,
+            consolidate_in_scope_fn=self._consolidate_in_scope,
+            consolidate_messages=self._consolidate_messages,
             checkpoints_path=self.checkpoints_path,
-            add_record=lambda summary, resource_text: self.add(
-                summary,
-                source=source,
-                raw_resource_text=resource_text,
-                metadata=metadata,
-                reasoning_layer=reasoning_layer,
-                confidence=confidence,
-                memory_type=memory_type,
-                happened_at=happened_at,
-                decay_rate=decay_rate,
-            ),
             read_curated_facts=self._read_curated_facts,
             write_curated_facts=self._write_curated_facts,
+            add_record=self.add,
             max_checkpoint_sources=self._MAX_CHECKPOINT_SOURCES,
             max_checkpoint_signatures=self._MAX_CHECKPOINT_SIGNATURES,
         )
 
     def recover_session_context(self, session_id: str, *, limit: int = 4) -> list[str]:
-        self._diagnostics["session_recovery_attempts"] = int(self._diagnostics["session_recovery_attempts"]) + 1
-        bounded_limit = max(1, int(limit or 1))
-        clean_session_id = str(session_id or "").strip()
-        normalized_targets = {
-            clean_session_id,
-            f"session:{clean_session_id}" if clean_session_id else "",
-        }
-        normalized_targets.discard("")
-        normalized_session_targets = {
-            self._source_session_key(clean_session_id),
-            self._source_session_key(f"session:{clean_session_id}"),
-        }
-
-        picked: list[str] = []
-        seen: set[str] = set()
-
-        working_rows = self.get_working_set(clean_session_id, limit=bounded_limit, include_shared_subagents=True)
-        for entry in working_rows:
-            snippet = str(entry.get("content", "") or "").strip()
-            if not snippet or snippet in seen:
-                continue
-            seen.add(snippet)
-            picked.append(snippet)
-            if len(picked) >= bounded_limit:
-                break
-
-        history_rows = self._read_history_records()
-        for row in reversed(history_rows):
-            if row.source not in normalized_targets:
-                continue
-            snippet = row.text.strip()
-            if not snippet or snippet in seen:
-                continue
-            seen.add(snippet)
-            picked.append(snippet)
-            if len(picked) >= bounded_limit:
-                break
-
-        if len(picked) < bounded_limit:
-            for fact in self._read_curated_facts():
-                sessions = fact.get("sessions", [])
-                if not isinstance(sessions, list):
-                    continue
-                normalized_sessions = {self._source_session_key(str(item or "")) for item in sessions}
-                if not normalized_sessions.intersection(normalized_session_targets):
-                    continue
-                snippet = str(fact.get("text", "")).strip()
-                if not snippet or snippet in seen:
-                    continue
-                seen.add(snippet)
-                picked.append(snippet)
-                if len(picked) >= bounded_limit:
-                    break
-
-        if picked:
-            self._diagnostics["session_recovery_hits"] = int(self._diagnostics["session_recovery_hits"]) + 1
-
-        return picked
+        return _recover_session_context_helper(
+            session_id,
+            limit=limit,
+            diagnostics=self._diagnostics,
+            source_session_key=self._source_session_key,
+            get_working_set=self.get_working_set,
+            read_history_records=self._read_history_records,
+            read_curated_facts=self._read_curated_facts,
+        )
 
     def diagnostics(self) -> dict[str, int | str | bool]:
         return _build_memory_diagnostics(
@@ -5048,58 +4186,20 @@ class MemoryStore:
         return (MemoryStore._parse_iso_timestamp(str(row.created_at or "")), str(row.id or ""))
 
     def delete_by_prefixes(self, prefixes: Iterable[str], *, limit: int | None = None) -> dict[str, int | list[str]]:
-        clean_prefixes = {
-            self._normalize_prefix(prefix)
-            for prefix in prefixes
-            if self._normalize_prefix(prefix)
-        }
-        if not clean_prefixes:
-            return {
-                "deleted_ids": [],
-                "history_deleted": 0,
-                "curated_deleted": 0,
-                "embeddings_deleted": 0,
-                "layer_deleted": 0,
-                "backend_deleted": 0,
-                "deleted_count": 0,
-            }
-
-        bounded_limit = max(1, int(limit)) if limit is not None else None
-        history_rows = self._read_history_records()
-        curated_rows = self.curated()
-        combined = history_rows + curated_rows
-        combined.sort(key=self._record_sort_key, reverse=True)
-
-        selected_ids: list[str] = []
-        seen_ids: set[str] = set()
-        for row in combined:
-            row_id = str(row.id or "").strip()
-            if not row_id or row_id in seen_ids:
-                continue
-            if not self._match_prefixes(row_id, clean_prefixes):
-                continue
-            seen_ids.add(row_id)
-            selected_ids.append(row_id)
-            if bounded_limit is not None and len(selected_ids) >= bounded_limit:
-                break
-
-        if not selected_ids:
-            return {
-                "deleted_ids": [],
-                "history_deleted": 0,
-                "curated_deleted": 0,
-                "embeddings_deleted": 0,
-                "layer_deleted": 0,
-                "backend_deleted": 0,
-                "deleted_count": 0,
-            }
-        deleted = self._delete_records_by_ids(set(selected_ids))
-        deleted["deleted_ids"] = selected_ids
-        deleted["deleted_count"] = len(selected_ids)
-        return deleted
+        return _delete_by_prefixes_helper(
+            prefixes,
+            limit=limit,
+            normalize_prefix=self._normalize_prefix,
+            read_history_records=self._read_history_records,
+            curated_records=self.curated,
+            record_sort_key=self._record_sort_key,
+            match_prefixes=self._match_prefixes,
+            delete_records_by_ids=self._delete_records_by_ids,
+        )
 
     def export_payload(self) -> dict[str, Any]:
-        return _export_memory_payload(
+        return _export_payload_helper(
+            export_memory_payload_fn=_export_memory_payload,
             history_rows=self.all(),
             curated_rows=self.curated(),
             checkpoints_path=self.checkpoints_path,
@@ -5113,8 +4213,9 @@ class MemoryStore:
         )
 
     def import_payload(self, payload: dict[str, Any]) -> None:
-        _import_memory_payload(
-            payload=payload,
+        _import_payload_helper(
+            payload,
+            import_memory_payload_fn=_import_memory_payload,
             record_from_payload=self._record_from_payload,
             encrypt_text_for_category=self._encrypt_text_for_category,
             atomic_write_text_locked=self._atomic_write_text_locked,
@@ -5206,7 +4307,8 @@ class MemoryStore:
         def _on_embeddings_error(exc: Exception) -> None:
             self._diagnostics["last_error"] = str(exc)
 
-        return _build_memory_analysis_stats(
+        return _analysis_stats_helper(
+            build_memory_analysis_stats_fn=_build_memory_analysis_stats,
             history_rows=self.all(),
             curated_rows=self.curated(),
             semantic_enabled=self.semantic_enabled,
