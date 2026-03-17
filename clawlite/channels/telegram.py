@@ -2437,7 +2437,6 @@ class TelegramChannel(BaseChannel):
                 logger.debug("telegram callback_query skipped reason=missing_chat_id")
                 return True
 
-            callback_query = getattr(item, "callback_query", None)
             callback_data = callback_payload.callback_data
             callback_text = callback_payload.callback_text
 

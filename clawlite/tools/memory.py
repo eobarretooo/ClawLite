@@ -151,13 +151,12 @@ def _discover_non_query_candidates(
     return None
 
 
-_SIGNATURE_PARAM_CACHE: dict[tuple[int, str], bool] = {}
+_SIGNATURE_PARAM_CACHE: dict[tuple[object, str], bool] = {}
 _SIGNATURE_PARAM_CACHE_MAX_SIZE = 4096
 
 
-def _callable_identity(func: Any) -> int:
-    target = getattr(func, "__func__", func)
-    return id(target)
+def _callable_identity(func: Any) -> object:
+    return getattr(func, "__func__", func)
 
 
 def _accepts_parameter(func: Any, parameter: str) -> bool:

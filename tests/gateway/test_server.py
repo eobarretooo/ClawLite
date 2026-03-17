@@ -1506,6 +1506,9 @@ def test_gateway_skills_watcher_tracks_hot_reload_and_diagnostics(tmp_path: Path
             for item in first["engine"]["skills"]["skills"]
             if item["name"] == "dynamic"
         )
+        first_watcher_refresh = float(
+            first["engine"]["skills"]["watcher"].get("last_refresh_monotonic", 0.0) or 0.0
+        )
         assert first["control_plane"]["components"]["skills_watcher"]["running"] is True
 
         skill_path.write_text(
@@ -1524,7 +1527,14 @@ def test_gateway_skills_watcher_tracks_hot_reload_and_diagnostics(tmp_path: Path
             )
             if refreshed_version != first_version:
                 assert payload["engine"]["skills"]["watcher"]["running"] is True
-                assert int(payload["engine"]["skills"]["watcher"]["ticks"]) >= 1
+                assert payload["engine"]["skills"]["watcher"]["task_state"] == "running"
+                refreshed_monotonic = float(
+                    payload["engine"]["skills"]["watcher"].get(
+                        "last_refresh_monotonic", 0.0
+                    )
+                    or 0.0
+                )
+                assert refreshed_monotonic >= first_watcher_refresh
                 break
         else:
             raise AssertionError("skills watcher did not reload updated skill")
