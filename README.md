@@ -276,6 +276,81 @@ Use a `/v1` base URL for local providers. Reverse-proxied prefixes such as `http
 
 OpenAI Codex · Gemini OAuth · Qwen OAuth
 
+**OpenAI Codex**
+
+```json
+{
+  "auth": {
+    "providers": {
+      "openai_codex": {
+        "access_token": "oauth-token",
+        "account_id": "org-123"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "openai-codex/gpt-5.3-codex"
+    }
+  }
+}
+```
+
+```bash
+clawlite provider login openai-codex
+clawlite provider status codex
+```
+
+**Gemini OAuth**
+
+```json
+{
+  "auth": {
+    "providers": {
+      "gemini_oauth": {
+        "access_token": "oauth-token"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "gemini_oauth/gemini-2.0-flash"
+    }
+  }
+}
+```
+
+```bash
+clawlite provider login gemini-oauth
+clawlite provider status gemini-oauth
+```
+
+**Qwen OAuth**
+
+```json
+{
+  "auth": {
+    "providers": {
+      "qwen_oauth": {
+        "access_token": "oauth-token"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "qwen_oauth/qwen-plus"
+    }
+  }
+}
+```
+
+```bash
+clawlite provider login qwen-oauth
+clawlite provider status qwen-oauth
+```
+
+Full provider auth details: [`docs/providers.md`](docs/providers.md)
+
 </details>
 
 Default: `gemini/gemini-2.5-flash` — fast and free-tier friendly.
