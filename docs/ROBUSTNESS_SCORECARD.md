@@ -1,6 +1,6 @@
 # ClawLite Robustness Scorecard
 
-Last updated: 2026-03-16
+Last updated: 2026-03-17
 
 ## Purpose
 
@@ -15,17 +15,17 @@ Benchmark references:
 
 | Area | Score | Notes |
 |---|---:|---|
-| Installation and onboarding | 8.0/10 | Good quickstart and CLI recovery now, but optional integrations still install by default |
-| Providers and local runtimes | 7.5/10 | Strong coverage and failover path, but still lighter than OpenClaw in operational contracts |
-| Tools and safety policy | 6.0/10 | Registry is solid, but policy is not enforced uniformly across all tool-like paths |
-| Skills | 6.5/10 | Rich feature set, but parser, watcher, and script dispatch are still fragile |
-| Cron and jobs | 5.0/10 | Biggest gap: ownership, cancellation, retention, and concurrency model |
-| Memory | 7.0/10 | Powerful, but heavy and concentrated in a very large module |
-| Config, wizard, docs | 8.0/10 | Mature enough for daily use; still needs better optional-dependency boundaries |
-| Tests and regression safety | 7.5/10 | Large suite, but boundary and end-to-end coverage are still uneven |
-| Architecture and maintainability | 6.0/10 | Major modules are now large enough to slow future hardening work |
+| Installation and onboarding | 8.5/10 | YAML config, better CLI hints, and extras-based packaging landed; optional runtime setup is much clearer now |
+| Providers and local runtimes | 8.0/10 | Reverse-proxy local providers, startup failover, and probe coverage are solid; still lighter than OpenClaw in operator contracts |
+| Tools and safety policy | 7.0/10 | Shared network policy and aggregated validation landed; sandboxing/capabilities are still less explicit than OpenClaw |
+| Skills | 7.5/10 | YAML frontmatter, watcher improvements, and safer runtime dispatch raised the floor considerably |
+| Cron and jobs | 7.5/10 | Ownership, real cancellation, concurrency, and retention landed; isolated-run model can still improve |
+| Memory | 7.5/10 | Reporting, versioning, quality, and maintenance were split out, but the core surface is still large |
+| Config, wizard, docs | 8.5/10 | Quickstart, extras, and runtime docs are in good shape; keep status docs synced with fast-moving code |
+| Tests and regression safety | 8.0/10 | Large suite plus explicit smoke slices now cover core public runtime surfaces |
+| Architecture and maintainability | 7.0/10 | Gateway, memory, and Telegram are materially better, but `server.py` and `memory.py` still need more extraction |
 
-Overall score: `6.8/10`
+Overall score: `7.7/10`
 
 ## P0 - Boundary and Runtime Safety
 
@@ -69,7 +69,7 @@ Acceptance:
 
 ### 3. Route all outbound skill traffic through one network policy
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed on `main` by 2026-03-17.
 
 Files:
 
@@ -85,7 +85,7 @@ Acceptance:
 
 ### 4. Fix browser lifecycle leaks
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed on `main` by 2026-03-17.
 
 Files:
 
@@ -103,7 +103,7 @@ Goal: make recurring work predictable under load and make skills easier to evolv
 
 ### 1. Rework cron execution around isolation and concurrency
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed on `main` by 2026-03-17.
 
 Files:
 
@@ -122,7 +122,7 @@ Reference signal:
 
 ### 2. Add cron retention and cleanup
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed on `main` by 2026-03-17.
 
 Files:
 
@@ -137,7 +137,7 @@ Acceptance:
 
 ### 3. Replace custom skill frontmatter parsing with real YAML
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed on `main` by 2026-03-17.
 
 Files:
 
@@ -167,6 +167,8 @@ Acceptance:
 
 ### 5. Improve tool validation feedback
 
+Status: completed on `main` by 2026-03-17.
+
 Files:
 
 - `clawlite/tools/registry.py`
@@ -186,7 +188,7 @@ Goal: reduce installation drag and lower regression risk in the biggest modules.
 
 ### 1. Split optional integrations into extras
 
-Status: completed locally on 2026-03-16. Keep uncommitted until the docs batch is ready.
+Status: completed on `main` by 2026-03-17.
 
 Files:
 
@@ -201,7 +203,7 @@ Acceptance:
 
 ### 2. Break up the largest modules
 
-Status: in progress locally on 2026-03-17. Keep uncommitted until the docs batch is ready.
+Status: in progress on `main` as of 2026-03-17.
 
 Priority modules:
 
@@ -224,8 +226,21 @@ Acceptance:
 - memory versioning helpers now live in `clawlite/core/memory_versions.py`
 - memory quality-state helpers now live in `clawlite/core/memory_quality.py`
 - memory maintenance loops and purge/consolidation helpers now live in `clawlite/core/memory_maintenance.py`
+- Telegram dedupe now lives in `clawlite/channels/telegram_dedupe.py`
+- Telegram offset runtime now lives in `clawlite/channels/telegram_offset_runtime.py`
+- Telegram status payload builders now live in `clawlite/channels/telegram_status.py`
+- Telegram transport lifecycle now lives in `clawlite/channels/telegram_transport.py`
+- Telegram delivery policy now lives in `clawlite/channels/telegram_delivery.py`
+- Telegram outbound send loops now live in `clawlite/channels/telegram_outbound.py`
+- Telegram auxiliary update handlers now live in `clawlite/channels/telegram_aux_updates.py`
+- Telegram interaction handlers now live in `clawlite/channels/telegram_interactions.py`
+- Telegram inbound message parsing now lives in `clawlite/channels/telegram_inbound_message.py`
+- Telegram inbound dispatch helpers now live in `clawlite/channels/telegram_inbound_dispatch.py`
+- Telegram typing + emit runtime helpers now live in `clawlite/channels/telegram_inbound_runtime.py`
 
 ### 3. Add real end-to-end smoke coverage
+
+Status: completed on `main` by 2026-03-17.
 
 Targets:
 
@@ -238,18 +253,13 @@ Acceptance:
 
 - CI runs at least one smoke path per public runtime surface
 - failures produce setup hints instead of raw tracebacks
+- smoke coverage explicitly exercises YAML CLI config, local-provider probes (`ollama`, `vllm`), quickstart wizard, cron execution, and browser bootstrap hinting
 
-## Recommended Execution Order
+## Remaining Execution Order
 
-1. Session ownership for cron and jobs
-2. Running-job cancellation
-3. Unified outbound network policy for skills
-4. Browser lifecycle fix
-5. Cron concurrency + retention
-6. Skills YAML + watcher cleanup
-7. Tool validation aggregation
-8. Packaging extras
-9. Large-module extraction
+1. Continue extracting `clawlite/gateway/server.py` and `clawlite/core/memory.py` by responsibility, not by line count
+2. Add heavier operational smokes when CI can host them safely, especially container-backed local-provider and browser-runtime checks
+3. Keep `docs/STATUS.md`, this scorecard, and README status lines synced with each green slice
 
 ## Done Definition
 

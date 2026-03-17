@@ -52,7 +52,7 @@ jobs:
         run: ruff check clawlite/ --select E9,F --ignore F401,F811
 
   smoke:
-    name: Smoke test (doctor)
+    name: Smoke test (runtime surfaces)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -67,6 +67,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .
+          pip install pytest pytest-asyncio
 
       - name: Smoke - import core modules
         run: |
@@ -97,6 +98,27 @@ jobs:
           )
           subprocess.run(["clawlite", "--config", str(config_path), "status"], check=True)
           PY
+
+      - name: Smoke - local provider probes
+        run: |
+          python -m pytest -q --tb=short \
+            tests/cli/test_commands.py::test_provider_live_probe_ollama_success_detects_missing_model \
+            tests/cli/test_commands.py::test_provider_live_probe_vllm_network_error_returns_runtime_hint
+
+      - name: Smoke - quickstart wizard
+        run: |
+          python -m pytest -q --tb=short \
+            tests/cli/test_onboarding.py::test_run_onboarding_wizard_quickstart_uses_guided_defaults
+
+      - name: Smoke - cron execution
+        run: |
+          python -m pytest -q --tb=short \
+            tests/scheduler/test_cron.py::test_cron_service_add_and_run \
+            tests/scheduler/test_cron.py::test_cron_loop_survives_callback_failure_and_tracks_job_health
+
+      - name: Smoke - browser bootstrap hints
+        run: |
+          python -m pytest -q --tb=short tests/tools/test_browser_tool.py
 
   autonomy-contract:
     name: Autonomy control contracts

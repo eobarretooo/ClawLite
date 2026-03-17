@@ -1,20 +1,20 @@
 # ClawLite Status
 
-Last updated: 2026-03-16
+Last updated: 2026-03-17
 
 ## Summary
 
-ClawLite is a **local-first autonomous agent runtime** in active hardening. The Robustness Milestone is in progress (phases 1–6 of 7 complete). Core runtime, memory, channels, providers, runtime recovery, and skills/subagent orchestration are production-grade. Phase 7 is advanced memory + self-improvement.
+ClawLite is a **local-first autonomous agent runtime** in active hardening. Robustness phases 1–6 are already landed on `main`; the remaining work is the last large-module extractions, broader operational smokes, and phase 7 (`advanced memory + self-improvement`).
 
 > **🤖 AI-built · Solo dev** — Every commit is written by Claude (AI), with the author supervising direction. No team.
 
 ## Current Baseline
 
 - Latest tag: `v0.5.0-beta.2`
-- `main` is ahead of that tag — Robustness phases 1–6 landed since the tag
-- Suite: `python -m pytest tests/core tests/tools tests/jobs` → **526 passed, 0 failed**
-- Full suite (all tests): ~1200+ passed (run `python -m pytest tests/ -q --tb=short`)
-- CI: pytest on Python 3.10 and 3.12, Ruff lint, smoke imports, autonomy contracts
+- `main` is ahead of that tag — hardening, packaging extras, CI stabilization, and large module extractions landed after the tag
+- Full suite: `python -m pytest tests/ -q --tb=short --ignore=tests/scripts/test_assemble_gif.py` → **1400 passed, 1 skipped**
+- Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py` → **165 passed**
+- CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, and browser bootstrap hints
 
 ## Robustness Milestone Progress
 
@@ -53,7 +53,7 @@ ClawLite is a **local-first autonomous agent runtime** in active hardening. The 
 | Channel | Status |
 |---------|--------|
 | **Telegram** | ✅ Complete — polling + webhook, reactions, topics, reply keyboards, streaming, offset safety, pairing, dedupe, circuit breaker |
-| **Discord** | ✅ Complete — gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming, embeds, threads, attachments |
+| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming, embeds, threads, attachments |
 | **Email** | 🟡 Usable — IMAP inbound + SMTP outbound |
 | **WhatsApp** | 🟡 Usable — webhook inbound + outbound bridge |
 | **Slack** | 📤 Send-only |
@@ -81,16 +81,16 @@ ClawLite is a **local-first autonomous agent runtime** in active hardening. The 
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short    # 1178 passed
-python -m ruff check --select=E,F,W .   # clean
+python -m pytest tests/ -q --tb=short --ignore=tests/scripts/test_assemble_gif.py  # 1400 passed, 1 skipped
+python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py  # 165 passed
+python -m ruff check --select=E,F,W .  # clean
 clawlite validate config
 ```
 
 ## Reference Repositories
 
-- Behavioral parity reference: `/root/projetos/ref/openclaw`
-- Autonomy/reliability reference: `/root/projetos/ref/nanobot`
-- Memory inspiration reference: `/root/projetos/memU`
+- Behavioral parity reference: `ref/openclaw`
+- Autonomy/reliability reference: `ref/nanobot`
 
 ## Delivery Policy
 
