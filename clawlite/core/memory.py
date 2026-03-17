@@ -42,6 +42,12 @@ from clawlite.core.memory_policy import (
     integration_policies_snapshot as _integration_policies_snapshot,
     integration_policy as _integration_policy,
 )
+from clawlite.core.memory_retrieval import (
+    build_progressive_retrieval_payload as _build_progressive_retrieval_payload_helper,
+    filter_records_to_categories as _filter_records_to_categories,
+    refine_hits_with_llm as _refine_hits_with_llm_helper,
+    retrieve_resource_hits as _retrieve_resource_hits_helper,
+)
 from clawlite.core.memory_quality import (
     merge_quality_tuning_state as _merge_quality_tuning_state,
     normalize_quality_tuning_state as _normalize_quality_tuning_state,
@@ -5364,10 +5370,7 @@ class MemoryStore:
 
     @staticmethod
     def _filter_records_to_categories(records: list[MemoryRecord], categories: list[str]) -> list[MemoryRecord]:
-        allowed = {str(item or "").strip().lower() for item in categories if str(item or "").strip()}
-        if not allowed:
-            return list(records)
-        return [row for row in records if str(row.category or "context").strip().lower() in allowed]
+        return _filter_records_to_categories(records, categories)
 
     def _retrieve_resource_hits(
         self,
@@ -5376,51 +5379,14 @@ class MemoryStore:
         record_ids: list[str],
         limit: int,
     ) -> list[dict[str, Any]]:
-        wanted_ids = {str(item or "").strip() for item in record_ids if str(item or "").strip()}
-        if not wanted_ids:
-            return []
-
-        out: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for scope in scopes:
-            resources_root = scope["resources"]
-            if not resources_root.exists():
-                continue
-            for resource_file in sorted(resources_root.glob("conv_*.jsonl"), reverse=True):
-                try:
-                    with self._locked_file(resource_file, "r", exclusive=False) as fh:
-                        lines = fh.read().splitlines()
-                except Exception:
-                    continue
-                for line in reversed(lines):
-                    raw = str(line or "").strip()
-                    if not raw:
-                        continue
-                    try:
-                        payload = json.loads(raw)
-                    except Exception:
-                        continue
-                    if not isinstance(payload, dict):
-                        continue
-                    row_id = str(payload.get("id", "")).strip()
-                    if not row_id or row_id not in wanted_ids or row_id in seen_ids:
-                        continue
-                    category = str(payload.get("category", "context") or "context")
-                    text = self._decrypt_text_for_category(str(payload.get("text", "") or ""), category)
-                    out.append(
-                        {
-                            "id": row_id,
-                            "text": text,
-                            "source": str(payload.get("source", "") or ""),
-                            "category": category,
-                            "created_at": str(payload.get("created_at", "") or ""),
-                            "layer": MemoryLayer.RESOURCE.value,
-                        }
-                    )
-                    seen_ids.add(row_id)
-                    if len(out) >= limit:
-                        return out
-        return out
+        return _retrieve_resource_hits_helper(
+            scopes=scopes,
+            record_ids=record_ids,
+            limit=limit,
+            locked_file=self._locked_file,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+            resource_layer_value=MemoryLayer.RESOURCE.value,
+        )
 
     def _build_progressive_retrieval_payload(
         self,
@@ -5434,116 +5400,24 @@ class MemoryStore:
         min_confidence: float | None,
         filters: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        rewritten_query = self._rewrite_retrieval_query(query)
-        active_query = rewritten_query or query
-        records, curated_importance, curated_mentions, scopes, semantic_enabled = self._collect_retrieval_records(
+        return _build_progressive_retrieval_payload_helper(
+            query,
+            limit=limit,
             user_id=user_id,
-            include_shared=include_shared,
             session_id=session_id,
+            include_shared=include_shared,
             reasoning_layers=reasoning_layers,
             min_confidence=min_confidence,
             filters=filters,
+            rewrite_retrieval_query=self._rewrite_retrieval_query,
+            collect_retrieval_records=self._collect_retrieval_records,
+            retrieve_category_hits=self._retrieve_category_hits,
+            evaluate_retrieval_sufficiency=self._evaluate_retrieval_sufficiency,
+            rank_records=self._rank_records,
+            serialize_hit=self._serialize_hit,
+            retrieve_resource_hits=self._retrieve_resource_hits,
+            synthesize_visible_episode_digest=self._synthesize_visible_episode_digest,
         )
-
-        category_hits = self._retrieve_category_hits(active_query, records, limit=max(3, min(6, limit)))
-        selected_categories = [str(item.get("category", "")) for item in category_hits[:3] if str(item.get("category", ""))]
-        category_sufficiency = self._evaluate_retrieval_sufficiency(
-            active_query,
-            [str(item.get("sample_text", "") or "") for item in category_hits if str(item.get("sample_text", "") or "")],
-            stage="category",
-        )
-
-        candidate_records = self._filter_records_to_categories(records, selected_categories)
-        if not candidate_records:
-            candidate_records = list(records)
-        item_records = self._rank_records(
-            active_query,
-            candidate_records,
-            curated_importance=curated_importance,
-            curated_mentions=curated_mentions,
-            limit=limit,
-            semantic_enabled=semantic_enabled,
-            session_id=session_id,
-        )
-        item_hits = [self._serialize_hit(row) for row in item_records]
-        item_sufficiency = self._evaluate_retrieval_sufficiency(
-            active_query,
-            [str(row.text or "") for row in item_records],
-            stage="item",
-        )
-
-        resource_hits: list[dict[str, Any]] = []
-        resource_sufficiency = {
-            "stage": "resource",
-            "sufficient": False,
-            "reason": "resource_stage_skipped" if item_sufficiency["sufficient"] else "no_resource_hits",
-            "covered_tokens": [],
-            "missing_tokens": list(item_sufficiency.get("missing_tokens", [])),
-            "coverage_ratio": 0.0,
-            "entity_score": 0.0,
-            "temporal_match": False,
-        }
-        if item_records and not item_sufficiency["sufficient"]:
-            resource_hits = self._retrieve_resource_hits(
-                scopes,
-                record_ids=[str(row.id or "") for row in item_records],
-                limit=max(1, limit),
-            )
-            combined_texts = [str(row.text or "") for row in item_records] + [str(item.get("text", "") or "") for item in resource_hits]
-            resource_sufficiency = self._evaluate_retrieval_sufficiency(active_query, combined_texts, stage="resource")
-        episodic_digest = self._synthesize_visible_episode_digest(
-            query=active_query,
-            session_id=session_id,
-            records=candidate_records,
-            curated_importance=curated_importance,
-            curated_mentions=curated_mentions,
-            semantic_enabled=semantic_enabled,
-            limit=limit,
-        )
-
-        stages = [
-            {
-                "stage": "category",
-                "query": active_query,
-                "count": len(category_hits),
-                "selected_categories": selected_categories,
-                "sufficiency": category_sufficiency,
-            },
-            {
-                "stage": "item",
-                "query": active_query,
-                "count": len(item_hits),
-                "selected_categories": selected_categories,
-                "sufficiency": item_sufficiency,
-            },
-        ]
-        if resource_hits or not item_sufficiency["sufficient"]:
-            stages.append(
-                {
-                    "stage": "resource",
-                    "query": active_query,
-                    "count": len(resource_hits),
-                    "sufficiency": resource_sufficiency,
-                }
-            )
-
-        return {
-            "query": query,
-            "rewritten_query": rewritten_query,
-            "active_query": active_query,
-            "hits": item_hits,
-            "category_hits": category_hits,
-            "resource_hits": resource_hits,
-            "progressive": {
-                "route": "category_item_resource",
-                "selected_categories": selected_categories,
-                "category_sufficiency": category_sufficiency,
-                "item_sufficiency": item_sufficiency,
-                "resource_sufficiency": resource_sufficiency,
-                "stages": stages,
-            },
-            "episodic_digest": episodic_digest,
-        }
 
     def _refine_hits_with_llm(
         self,
@@ -5553,25 +5427,16 @@ class MemoryStore:
         category_hits: list[dict[str, Any]] | None = None,
         resource_hits: list[dict[str, Any]] | None = None,
     ) -> dict[str, str] | None:
-        if not hits:
-            return {"answer": "", "next_step_query": ""}
-        category_payload = category_hits if isinstance(category_hits, list) else []
-        resource_payload = resource_hits if isinstance(resource_hits, list) else []
-        prompt = (
-            "Use os trechos de memoria abaixo para responder de forma objetiva. "
-            "Se os trechos nao forem suficientes, diga isso explicitamente. "
-            "Responda APENAS em JSON valido com as chaves: answer (string) e next_step_query (string opcional).\n\n"
-            f"PERGUNTA:\n{query}\n\n"
-            f"CATEGORIAS:\n{json.dumps(category_payload, ensure_ascii=False)}\n\n"
-            f"MEMORIAS:\n{json.dumps(hits, ensure_ascii=False)}\n\n"
-            f"RECURSOS:\n{json.dumps(resource_payload, ensure_ascii=False)}"
-        )
         try:
             import litellm  # type: ignore
         except Exception:
             return None
-        try:
-            response = self._run_coro_sync(
+        return _refine_hits_with_llm_helper(
+            query,
+            hits,
+            category_hits=category_hits,
+            resource_hits=resource_hits,
+            run_completion=lambda prompt: self._run_coro_sync(
                 litellm.acompletion(
                     model="gemini/gemini-2.5-flash",
                     temperature=0,
@@ -5581,32 +5446,8 @@ class MemoryStore:
                         {"role": "user", "content": prompt},
                     ],
                 )
-            )
-        except Exception:
-            return None
-        choices = getattr(response, "choices", None)
-        if choices is None and isinstance(response, dict):
-            choices = response.get("choices")
-        if not isinstance(choices, list) or not choices:
-            return None
-        first = choices[0]
-        message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
-        if isinstance(message, dict):
-            content = str(message.get("content", "") or "")
-        else:
-            content = str(getattr(message, "content", "") or "")
-        content = content.strip()
-        if not content:
-            return {"answer": "", "next_step_query": ""}
-        try:
-            parsed = json.loads(content)
-        except Exception:
-            return {"answer": content, "next_step_query": ""}
-        if not isinstance(parsed, dict):
-            return {"answer": content, "next_step_query": ""}
-        answer = str(parsed.get("answer", "") or "").strip()
-        next_step = str(parsed.get("next_step_query", "") or "").strip()
-        return {"answer": answer, "next_step_query": next_step}
+            ),
+        )
 
     async def retrieve(
         self,

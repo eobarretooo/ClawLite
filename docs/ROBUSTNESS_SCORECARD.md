@@ -228,6 +228,7 @@ Acceptance:
 - memory quality-state helpers now live in `clawlite/core/memory_quality.py`
 - memory integration policy helpers now live in `clawlite/core/memory_policy.py`
 - memory ingest and multimodal extraction helpers now live in `clawlite/core/memory_ingest.py`
+- memory progressive retrieval helpers now live in `clawlite/core/memory_retrieval.py`
 - memory maintenance loops and purge/consolidation helpers now live in `clawlite/core/memory_maintenance.py`
 - Telegram dedupe now lives in `clawlite/channels/telegram_dedupe.py`
 - Telegram offset runtime now lives in `clawlite/channels/telegram_offset_runtime.py`
