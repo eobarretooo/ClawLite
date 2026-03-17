@@ -46,6 +46,12 @@ from clawlite.core.memory_ingest import (
     try_ocr_image_text as _try_ocr_image_text,
     try_transcribe_audio_text as _try_transcribe_audio_text,
 )
+from clawlite.core.memory_layers import (
+    load_category_items_from_path as _load_category_items_from_path,
+    upsert_category_item_rows as _upsert_category_item_rows,
+    write_category_items_to_path as _write_category_items_to_path,
+    write_category_summary_to_path as _write_category_summary_to_path,
+)
 from clawlite.core.memory_maintenance import (
     consolidate_categories as _consolidate_categories,
     periodic_task_loop as _periodic_task_loop,
@@ -3305,67 +3311,29 @@ class MemoryStore:
             pass
 
     def _load_category_items(self, category: str) -> list[dict[str, Any]]:
-        item_path = self._item_file_path(category)
-        if not item_path.exists():
-            return []
-        try:
-            payload = json.loads(item_path.read_text(encoding="utf-8") or "{}")
-        except Exception:
-            return []
-        if not isinstance(payload, dict):
-            return []
-        rows = payload.get("items", [])
-        if not isinstance(rows, list):
-            return []
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            if isinstance(row, dict) and str(row.get("id", "")).strip():
-                decoded = dict(row)
-                decoded["text"] = self._decrypt_text_for_category(str(decoded.get("text", "") or ""), category)
-                out.append(decoded)
-        return out
+        return _load_category_items_from_path(
+            item_path=self._item_file_path(category),
+            category=category,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+        )
 
     def _write_category_items(self, category: str, rows: list[dict[str, Any]]) -> None:
-        item_path = self._item_file_path(category)
-        item_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": 1,
-            "category": str(category or "context"),
-            "updated_at": self._utcnow_iso(),
-            "items": rows,
-        }
-        self._atomic_write_text_locked(item_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        _write_category_items_to_path(
+            item_path=self._item_file_path(category),
+            category=category,
+            rows=rows,
+            utcnow_iso=self._utcnow_iso,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+        )
 
     def _update_category_summary_file(self, category: str) -> None:
-        rows = self._load_category_items(category)
-        category_path = self._category_file_path(category)
-        category_path.parent.mkdir(parents=True, exist_ok=True)
-        now_iso = self._utcnow_iso()
-        sources: Counter[str] = Counter()
-        for row in rows:
-            sources[str(row.get("source", "unknown") or "unknown")] += 1
-        top_sources = [
-            f"- {source}: {count}"
-            for source, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))[:5]
-        ]
-        recent_lines = [
-            f"- {str(row.get('id', '') or '')}: {str(row.get('text', '') or '').strip()[:160]}"
-            for row in rows[-5:]
-        ]
-        body = [
-            f"# Category: {category}",
-            "",
-            f"Updated: {now_iso}",
-            f"Total items: {len(rows)}",
-            "",
-            "## Top Sources",
-            *(top_sources or ["- none"]),
-            "",
-            "## Recent Items",
-            *(recent_lines or ["- none"]),
-            "",
-        ]
-        self._atomic_write_text_locked(category_path, "\n".join(body))
+        _write_category_summary_to_path(
+            category_path=self._category_file_path(category),
+            category=category,
+            rows=self._load_category_items(category),
+            utcnow_iso=self._utcnow_iso,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+        )
 
     def _stored_history_payload(self, record: MemoryRecord) -> dict[str, Any]:
         payload = asdict(record)
@@ -3529,23 +3497,12 @@ class MemoryStore:
             return True
 
     def _upsert_item_layer(self, record: MemoryRecord) -> None:
-        category = str(record.category or "context")
-        rows = self._load_category_items(category)
-        row_payload = self._serialize_hit(record)
-        stored_payload = dict(row_payload)
-        stored_payload["text"] = self._encrypt_text_for_category(str(row_payload.get("text", "") or ""), category)
-        updated_rows: list[dict[str, Any]] = []
-        found = False
-        for row in rows:
-            if str(row.get("id", "")).strip() == record.id:
-                updated_rows.append(stored_payload)
-                found = True
-            else:
-                preserved = dict(row)
-                preserved["text"] = self._encrypt_text_for_category(str(preserved.get("text", "") or ""), category)
-                updated_rows.append(preserved)
-        if not found:
-            updated_rows.append(stored_payload)
+        category, updated_rows = _upsert_category_item_rows(
+            record=record,
+            rows=self._load_category_items(str(record.category or "context")),
+            serialize_hit=self._serialize_hit,
+            encrypt_text_for_category=self._encrypt_text_for_category,
+        )
         self._write_category_items(category, updated_rows)
         self._update_category_summary_file(category)
         category_path = self._category_file_path(category)
@@ -3580,86 +3537,37 @@ class MemoryStore:
         self._upsert_item_layer(record)
 
     def _load_scope_category_items(self, scope: dict[str, Path], category: str) -> list[dict[str, Any]]:
-        item_path = self._scope_item_file_path(scope, category)
-        if not item_path.exists():
-            return []
-        try:
-            payload = json.loads(item_path.read_text(encoding="utf-8") or "{}")
-        except Exception:
-            return []
-        if not isinstance(payload, dict):
-            return []
-        rows = payload.get("items", [])
-        if not isinstance(rows, list):
-            return []
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            if isinstance(row, dict) and str(row.get("id", "")).strip():
-                decoded = dict(row)
-                decoded["text"] = self._decrypt_text_for_category(str(decoded.get("text", "") or ""), category)
-                out.append(decoded)
-        return out
+        return _load_category_items_from_path(
+            item_path=self._scope_item_file_path(scope, category),
+            category=category,
+            decrypt_text_for_category=self._decrypt_text_for_category,
+        )
 
     def _write_scope_category_items(self, scope: dict[str, Path], category: str, rows: list[dict[str, Any]]) -> None:
-        item_path = self._scope_item_file_path(scope, category)
-        item_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": 1,
-            "category": str(category or "context"),
-            "updated_at": self._utcnow_iso(),
-            "items": rows,
-        }
-        self._atomic_write_text_locked(item_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        _write_category_items_to_path(
+            item_path=self._scope_item_file_path(scope, category),
+            category=category,
+            rows=rows,
+            utcnow_iso=self._utcnow_iso,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+        )
 
     def _update_scope_category_summary_file(self, scope: dict[str, Path], category: str) -> None:
-        rows = self._load_scope_category_items(scope, category)
-        category_path = self._scope_category_file_path(scope, category)
-        category_path.parent.mkdir(parents=True, exist_ok=True)
-        now_iso = self._utcnow_iso()
-        sources: Counter[str] = Counter()
-        for row in rows:
-            sources[str(row.get("source", "unknown") or "unknown")] += 1
-        top_sources = [
-            f"- {source}: {count}"
-            for source, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))[:5]
-        ]
-        recent_lines = [
-            f"- {str(row.get('id', '') or '')}: {str(row.get('text', '') or '').strip()[:160]}"
-            for row in rows[-5:]
-        ]
-        body = [
-            f"# Category: {category}",
-            "",
-            f"Updated: {now_iso}",
-            f"Total items: {len(rows)}",
-            "",
-            "## Top Sources",
-            *(top_sources or ["- none"]),
-            "",
-            "## Recent Items",
-            *(recent_lines or ["- none"]),
-            "",
-        ]
-        self._atomic_write_text_locked(category_path, "\n".join(body))
+        _write_category_summary_to_path(
+            category_path=self._scope_category_file_path(scope, category),
+            category=category,
+            rows=self._load_scope_category_items(scope, category),
+            utcnow_iso=self._utcnow_iso,
+            atomic_write_text_locked=self._atomic_write_text_locked,
+        )
 
     def _upsert_item_layer_in_scope(self, scope: dict[str, Path], record: MemoryRecord) -> None:
-        category = str(record.category or "context")
-        rows = self._load_scope_category_items(scope, category)
-        row_payload = self._serialize_hit(record)
-        stored_payload = dict(row_payload)
-        stored_payload["text"] = self._encrypt_text_for_category(str(row_payload.get("text", "") or ""), category)
-        updated_rows: list[dict[str, Any]] = []
-        found = False
-        for row in rows:
-            if str(row.get("id", "")).strip() == record.id:
-                updated_rows.append(stored_payload)
-                found = True
-            else:
-                preserved = dict(row)
-                preserved["text"] = self._encrypt_text_for_category(str(preserved.get("text", "") or ""), category)
-                updated_rows.append(preserved)
-        if not found:
-            updated_rows.append(stored_payload)
+        category, updated_rows = _upsert_category_item_rows(
+            record=record,
+            rows=self._load_scope_category_items(scope, str(record.category or "context")),
+            serialize_hit=self._serialize_hit,
+            encrypt_text_for_category=self._encrypt_text_for_category,
+        )
         self._write_scope_category_items(scope, category, updated_rows)
         self._update_scope_category_summary_file(scope, category)
 

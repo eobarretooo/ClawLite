@@ -54,6 +54,12 @@ from clawlite.gateway.tuning_policy import (
     resolve_tuning_snapshot_tag as _resolve_tuning_snapshot_tag_helper,
     select_tuning_action_playbook as _select_tuning_action_playbook_helper,
 )
+from clawlite.gateway.tuning_runtime import (
+    build_tuning_action_entry as _build_tuning_action_entry_helper,
+    build_tuning_patch as _build_tuning_patch_helper,
+    count_recent_tuning_actions as _count_recent_tuning_actions_helper,
+    record_tuning_runner_action as _record_tuning_runner_action_helper,
+)
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary as _dashboard_channels_summary_payload,
@@ -2281,18 +2287,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     recent_actions_raw = tuning_state.get("recent_actions", [])
                     recent_actions = list(recent_actions_raw) if isinstance(recent_actions_raw, list) else []
                     recent_actions = recent_actions[-tuning_recent_actions_limit:]
-                    one_hour_ago = now - dt.timedelta(hours=1)
-                    action_events_last_hour = 0
-                    for entry in recent_actions:
-                        if not isinstance(entry, dict):
-                            continue
-                        status = str(entry.get("status", "") or "")
-                        if status in {"cooldown_skipped", "rate_limited", "noop"}:
-                            continue
-                        at_dt = _parse_iso(str(entry.get("at", "") or ""))
-                        if at_dt is None or at_dt < one_hour_ago:
-                            continue
-                        action_events_last_hour += 1
+                    action_events_last_hour = _count_recent_tuning_actions_helper(
+                        recent_actions,
+                        now=now,
+                        parse_iso=_parse_iso,
+                        ignored_statuses=frozenset({"cooldown_skipped", "rate_limited", "noop"}),
+                    )
 
                     if in_cooldown:
                         action_status = "cooldown_skipped"
@@ -2355,52 +2355,35 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                             else:
                                 action_status = "unsupported"
 
-                action_entry = None
-                if action:
-                    action_entry = {
-                        "action": action,
-                        "status": action_status,
-                        "reason": action_reason,
-                        "at": now_iso,
-                        "metadata": dict(action_metadata),
-                    }
+                action_entry = _build_tuning_action_entry_helper(
+                    action=action,
+                    status=action_status,
+                    reason=action_reason,
+                    at=now_iso,
+                    metadata=action_metadata,
+                )
 
                 if action_status == "ok":
                     tuning_runner_state["action_count"] = int(tuning_runner_state.get("action_count", 0) or 0) + 1
 
                 if action:
-                    layer_key = _resolve_tuning_layer(weakest_layer)
-                    actions_by_layer = tuning_runner_state.setdefault("actions_by_layer", {})
-                    actions_by_layer[layer_key] = int(actions_by_layer.get(layer_key, 0) or 0) + 1
-
-                    actions_by_playbook = tuning_runner_state.setdefault("actions_by_playbook", {})
-                    if playbook_id:
-                        actions_by_playbook[playbook_id] = int(actions_by_playbook.get(playbook_id, 0) or 0) + 1
-
-                    actions_by_action = tuning_runner_state.setdefault("actions_by_action", {})
-                    actions_by_action[action] = int(actions_by_action.get(action, 0) or 0) + 1
-
-                    status_by_layer = tuning_runner_state.setdefault("action_status_by_layer", {})
-                    layer_status_raw = status_by_layer.get(layer_key, {})
-                    layer_status = dict(layer_status_raw) if isinstance(layer_status_raw, dict) else {}
-                    layer_status[action_status] = int(layer_status.get(action_status, 0) or 0) + 1
-                    status_by_layer[layer_key] = layer_status
-                    tuning_runner_state["last_action_metadata"] = dict(action_metadata)
+                    _record_tuning_runner_action_helper(
+                        tuning_runner_state,
+                        weakest_layer=weakest_layer,
+                        action=action,
+                        playbook_id=playbook_id,
+                        action_status=action_status,
+                        action_metadata=action_metadata,
+                        resolve_tuning_layer=_resolve_tuning_layer,
+                    )
 
                 if callable(update_tuning_fn):
-                    tuning_patch: dict[str, Any] = {
-                        "degrading_streak": degrading_streak,
-                        "last_run_at": now_iso,
-                        "next_run_at": (now + dt.timedelta(seconds=tuning_loop_interval_seconds)).isoformat(timespec="seconds"),
-                        "last_error": "",
-                    }
-                    if action_entry is not None:
-                        tuning_patch["last_action"] = action_entry.get("action", "")
-                        tuning_patch["last_action_status"] = action_entry.get("status", "")
-                        tuning_patch["last_reason"] = action_entry.get("reason", "")
-                        tuning_patch["recent_actions"] = [action_entry]
-                        if action_entry.get("status", "") not in {"cooldown_skipped", "rate_limited"}:
-                            tuning_patch["last_action_at"] = action_entry.get("at", "")
+                    tuning_patch = _build_tuning_patch_helper(
+                        degrading_streak=degrading_streak,
+                        now_iso=now_iso,
+                        interval_seconds=tuning_loop_interval_seconds,
+                        action_entry=action_entry,
+                    )
                     await asyncio.wait_for(asyncio.to_thread(update_tuning_fn, tuning_patch), timeout=tuning_loop_timeout_seconds)
 
                 tuning_runner_state["success_count"] = int(tuning_runner_state.get("success_count", 0) or 0) + 1

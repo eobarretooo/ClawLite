@@ -5,6 +5,7 @@
 **A local-first Python autonomous agent — persistent memory, 20+ LLM providers,<br>real chat channels, and a 24/7 self-healing runtime. No cloud required.**
 
 [![CI](https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eobarretooo/ClawLite/actions/workflows/ci.yml)
+[![Discord](https://img.shields.io/discord/1369440028984567839?label=discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/F4wQvdv9fR)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![LiteLLM](https://img.shields.io/badge/LiteLLM-20%2B%20providers-blueviolet)](https://litellm.ai)
 [![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)

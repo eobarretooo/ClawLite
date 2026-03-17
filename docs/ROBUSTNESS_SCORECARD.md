@@ -219,6 +219,7 @@ Acceptance:
 - first slices extracted provider/dashboard payload helpers into `clawlite/gateway/payloads.py`
 - control-plane payload and diagnostics metric parsing now live in `clawlite/gateway/control_plane.py`
 - tuning playbook, notify variants and layer-specific limits now live in `clawlite/gateway/tuning_policy.py`
+- tuning runner state/update helpers now live in `clawlite/gateway/tuning_runtime.py`
 - runtime bootstrap now lives in `clawlite/gateway/runtime_builder.py`
 - dashboard state summary builders now live in `clawlite/gateway/dashboard_state.py`
 - dashboard memory summary now lives in `clawlite/gateway/memory_dashboard.py`
@@ -237,6 +238,7 @@ Acceptance:
 - memory privacy helpers now live in `clawlite/core/memory_privacy.py`
 - memory profile helpers now live in `clawlite/core/memory_profile.py`
 - working-memory session/share/visibility helpers now live in `clawlite/core/memory_working_set.py`
+- memory item/category layer helpers now live in `clawlite/core/memory_layers.py`
 - memory maintenance loops and purge/consolidation helpers now live in `clawlite/core/memory_maintenance.py`
 - Telegram dedupe now lives in `clawlite/channels/telegram_dedupe.py`
 - Telegram offset runtime now lives in `clawlite/channels/telegram_offset_runtime.py`
