@@ -238,7 +238,7 @@ def install_playwright_runtime() -> None:
 
 
 def rich_flow() -> None:
-    console.print("[bold #ff6b2b]🦊 ClawLite Installer v0.5.0-beta.2[/bold #ff6b2b]")
+    console.print("[bold #ff6b2b]🦊 ClawLite Installer v0.6.0-beta.0[/bold #ff6b2b]")
     console.print("[bold #00f5ff]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold #00f5ff]")
     console.print(f"[cyan]Platform: Linux | Python: {platform.python_version()}[/cyan]")
 
@@ -283,11 +283,11 @@ def rich_flow() -> None:
         sp.update(t, completed=1)
     console.print("[green]✓[/green]")
 
-    console.print(Panel.fit("🦊 ClawLite v0.5.0-beta.2 installed!\n👉 clawlite onboard", border_style="#ff6b2b"))
+    console.print(Panel.fit("🦊 ClawLite v0.6.0-beta.0 installed!\n👉 clawlite onboard", border_style="#ff6b2b"))
 
 
 def simple_flow() -> None:
-    print("🦊 ClawLite Installer v0.5.0-beta.2")
+    print("🦊 ClawLite Installer v0.6.0-beta.0")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(f"Platform: Linux | Python: {platform.python_version()}")
 
@@ -309,7 +309,7 @@ def simple_flow() -> None:
     doctor_check()
     ensure_gateway_runtime()
     print("✓")
-    print("🦊 ClawLite v0.5.0-beta.2 installed!\n👉 clawlite onboard")
+    print("🦊 ClawLite v0.6.0-beta.0 installed!\n👉 clawlite onboard")
 
 
 def main() -> None:

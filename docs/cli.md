@@ -25,6 +25,7 @@ The module entry point is also available as `python -m clawlite.cli`.
 | `dashboard` | Opens or prints the local dashboard handoff | `clawlite dashboard --no-open` |
 | `discord` | Discord operator control commands | `clawlite discord status` |
 | `telegram` | Telegram operator control commands | `clawlite telegram status` |
+| `jobs` | Inspects or cancels persisted background jobs | `clawlite jobs list` |
 | `provider recover` | Clears provider failover suppression/cooldown through the gateway | `clawlite provider recover --role primary` |
 | `supervisor recover` | Triggers runtime supervisor recovery through the gateway | `clawlite supervisor recover --component heartbeat` |
 | `autonomy wake` | Triggers a manual autonomy wake through the gateway | `clawlite autonomy wake --kind proactive` |
@@ -37,6 +38,7 @@ Notes:
 - `dashboard` prints the current dashboard URL, tokenized handoff URL, bootstrap state, post-onboarding guidance (including web-search hints), and can open the browser unless `--no-open` is passed.
 - `discord status` reads Discord runtime state from `/api/dashboard/state`; `discord refresh` calls the live gateway transport-refresh control.
 - `telegram status` reads Telegram runtime state from `/api/dashboard/state` and includes operator hints; `telegram refresh`, `telegram offset-commit`, `telegram offset-sync`, and `telegram offset-reset` call the live gateway control endpoints.
+- `jobs list` reads from the persisted job store, `jobs status` inspects one job by id, and `jobs cancel` requires a live runtime because it calls the gateway cancellation path.
 - `provider recover` calls the live gateway provider recovery control and is intended for failover suppression/cooldown recovery after auth/quota/config issues are fixed.
 - `supervisor recover` calls the live gateway supervisor recovery control and can target one component or all tracked components.
 - `autonomy wake` triggers the live autonomy wake control and is intended for manual proactive/autonomy nudges when an operator wants to run the loop immediately.
@@ -205,6 +207,8 @@ Notes:
 | `skills disable <name>` | Disables a skill in local state | `clawlite skills disable github` |
 | `skills pin <name>` | Pins a skill in local state | `clawlite skills pin summarize` |
 | `skills unpin <name>` | Unpins a skill in local state | `clawlite skills unpin summarize` |
+| `skills pin-version <name> <version>` | Locks a skill to a specific version string | `clawlite skills pin-version github 2026.03` |
+| `skills clear-version <name>` | Removes the local version pin for a skill | `clawlite skills clear-version github` |
 
 Skill discovery includes:
 

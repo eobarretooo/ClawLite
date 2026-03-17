@@ -12,8 +12,8 @@ Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, pro
 
 ## Current Baseline
 
-- Latest tag: `v0.5.0-beta.2`
-- `main` is ahead of that tag — hardening, packaging extras, CI stabilization, and large module extractions landed after the tag
+- Latest tag: `v0.6.0-beta.0`
+- `main` currently matches that tag — phase 7 hardening, packaging extras, CI stabilization, and large module extractions are included in the beta release baseline
 - Full suite: `python -m pytest tests/ -q --tb=short` → **1500 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **179 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation

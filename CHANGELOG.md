@@ -266,7 +266,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Verification Status
 - Validated through foundational smoke runs and integration tests spanning CLI, gateway, and dashboard pathways.
 
-[Unreleased]: https://github.com/eobarretooo/ClawLite/compare/v0.5.0-beta.2...HEAD
+[Unreleased]: https://github.com/eobarretooo/ClawLite/compare/v0.6.0-beta.0...HEAD
 [v0.5.0-beta.2]: https://github.com/eobarretooo/ClawLite/compare/v0.5.0-beta.1...v0.5.0-beta.2
 [v0.5.0-beta.1]: https://github.com/eobarretooo/ClawLite/compare/v0.4.1...v0.5.0-beta.1
 [v0.4.1]: https://github.com/eobarretooo/ClawLite/compare/v0.4.0...v0.4.1
