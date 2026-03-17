@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import contextmanager
 from pathlib import Path
 
 import clawlite.core.memory_backend as memory_backend_module
@@ -81,6 +82,62 @@ def test_sqlite_query_similar_embeddings_returns_best_match(tmp_path: Path) -> N
     assert hits
     assert hits[0]["record_id"] == "alpha"
     assert float(hits[0]["score"]) > float(hits[1]["score"])
+
+
+def test_sqlite_vec_backend_falls_back_to_sqlite_when_extension_unavailable(tmp_path: Path, monkeypatch) -> None:
+    backend = resolve_memory_backend("sqlite-vec")
+    monkeypatch.setattr(
+        type(backend),
+        "_load_sqlite_vec",
+        lambda self, conn: (False, "", "sqlite_vec package not installed; falling back to sqlite cosine search"),
+    )
+    backend.initialize(tmp_path)
+
+    backend.upsert_embedding("alpha", [1.0, 0.0], "2026-03-01T00:00:00+00:00", "seed")
+    backend.upsert_embedding("beta", [0.0, 1.0], "2026-03-01T00:00:00+00:00", "seed")
+
+    hits = backend.query_similar_embeddings([0.9, 0.1], limit=1)
+    details = backend.diagnostics()
+
+    assert hits == [{"record_id": "alpha", "score": hits[0]["score"]}]
+    assert details["vector_extension"] is False
+    assert "sqlite_vec" in str(details["last_error"])
+
+
+def test_sqlite_vec_backend_uses_sql_distance_when_extension_available(tmp_path: Path, monkeypatch) -> None:
+    backend = resolve_memory_backend("sqlite-vec")
+    backend.initialize(tmp_path)
+    monkeypatch.setattr(type(backend), "_load_sqlite_vec", lambda self, conn: (True, "0.1.6", ""))
+
+    class FakeResult:
+        def fetchall(self):
+            return [("alpha", 0.01), ("beta", 0.20)]
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, tuple[object, ...]]] = []
+
+        def execute(self, query: str, params: tuple[object, ...] | list[object] = ()):
+            self.queries.append((query, tuple(params)))
+            return FakeResult()
+
+    fake_conn = FakeConnection()
+
+    @contextmanager
+    def _fake_connect(self):
+        yield fake_conn
+
+    monkeypatch.setattr(type(backend), "_connect", _fake_connect)
+
+    hits = backend.query_similar_embeddings([1.0, 0.0], record_ids=["alpha", "beta"], limit=2)
+    details = backend.diagnostics()
+
+    assert hits[0]["record_id"] == "alpha"
+    assert hits[1]["record_id"] == "beta"
+    assert "vec_distance_cosine" in fake_conn.queries[0][0]
+    assert fake_conn.queries[0][1][0] == "[1.0,0.0]"
+    assert details["vector_extension"] is True
+    assert details["vector_version"] == "0.1.6"
 
 
 def test_pgvector_backend_remains_graceful_when_unsupported(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -25,17 +26,48 @@ def _response(
 class _FakeClient:
     def __init__(self, responses: list[httpx.Response]) -> None:
         self._responses = list(responses)
-        self.posts: list[tuple[str, dict[str, Any]]] = []
+        self.posts: list[tuple[str, dict[str, Any], dict[str, str]]] = []
         self.closed = False
 
-    async def post(self, url: str, json: dict[str, Any] | None = None) -> httpx.Response:
-        self.posts.append((url, dict(json or {})))
+    async def post(
+        self,
+        url: str,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        self.posts.append((url, dict(json or {}), dict(headers or {})))
         if not self._responses:
             raise AssertionError("unexpected slack post")
         return self._responses.pop(0)
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class _FakeWebSocket:
+    def __init__(self, messages: list[dict[str, Any] | str]) -> None:
+        self._messages = list(messages)
+        self.sent: list[str] = []
+
+    async def __aenter__(self) -> _FakeWebSocket:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        del exc_type, exc, tb
+
+    def __aiter__(self) -> _FakeWebSocket:
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._messages:
+            raise StopAsyncIteration
+        item = self._messages.pop(0)
+        if isinstance(item, str):
+            return item
+        return json.dumps(item)
+
+    async def send(self, payload: str) -> None:
+        self.sent.append(payload)
 
 
 def test_slack_channel_reuses_persistent_client_across_sends(monkeypatch) -> None:
@@ -143,5 +175,160 @@ def test_slack_send_retries_api_ratelimited_error(monkeypatch) -> None:
         assert len(client.posts) == 2
         assert sleep_mock.await_count == 1
         assert sleep_mock.await_args.args == (1.5,)
+
+    asyncio.run(_scenario())
+
+
+def test_slack_socket_mode_acknowledges_and_emits_user_message() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = SlackChannel(config={"bot_token": "xoxb-1"}, on_message=_on_message)
+        ws = _FakeWebSocket([])
+        processed = await channel._handle_socket_envelope(
+            ws,
+            {
+                "envelope_id": "env-1",
+                "type": "events_api",
+                "payload": {
+                    "event": {
+                        "type": "message",
+                        "user": "U123",
+                        "channel": "C999",
+                        "ts": "1700.3",
+                        "text": "hello from slack",
+                    }
+                },
+            },
+        )
+
+        assert processed is True
+        assert ws.sent == ['{"envelope_id": "env-1"}']
+        assert emitted == [
+            (
+                "slack:C999",
+                "U123",
+                "hello from slack",
+                {
+                    "channel": "slack",
+                    "chat_id": "C999",
+                    "channel_id": "C999",
+                    "user": "U123",
+                    "sender_id": "U123",
+                    "message_id": "1700.3",
+                    "thread_ts": "",
+                    "slack_event": {
+                        "type": "message",
+                        "user": "U123",
+                        "channel": "C999",
+                        "ts": "1700.3",
+                        "text": "hello from slack",
+                    },
+                },
+            )
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_slack_socket_mode_ignores_bot_and_acl_blocked_messages() -> None:
+    async def _scenario() -> None:
+        emitted: list[str] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            del session_id, user_id, metadata
+            emitted.append(text)
+
+        channel = SlackChannel(
+            config={"bot_token": "xoxb-1", "allow_from": ["U-allowed"]},
+            on_message=_on_message,
+        )
+
+        bot_message = await channel._handle_slack_event(
+            {
+                "event": {
+                    "type": "message",
+                    "bot_id": "B123",
+                    "user": "U-bot",
+                    "channel": "C1",
+                    "ts": "1.0",
+                    "text": "ignore bot",
+                }
+            }
+        )
+        blocked = await channel._handle_slack_event(
+            {
+                "event": {
+                    "type": "message",
+                    "user": "U-blocked",
+                    "channel": "C1",
+                    "ts": "1.1",
+                    "text": "ignore acl",
+                }
+            }
+        )
+        allowed = await channel._handle_slack_event(
+            {
+                "event": {
+                    "type": "app_mention",
+                    "user": "U-allowed",
+                    "channel": "C1",
+                    "ts": "1.2",
+                    "text": "<@bot> hi",
+                }
+            }
+        )
+
+        assert bot_message is False
+        assert blocked is False
+        assert allowed is True
+        assert emitted == ["<@bot> hi"]
+
+    asyncio.run(_scenario())
+
+
+def test_slack_typing_keepalive_adds_and_removes_working_indicator(monkeypatch) -> None:
+    async def _scenario() -> None:
+        client = _FakeClient(
+            [
+                _response(status=200, url="https://slack.com/api/reactions.add", payload={"ok": True}),
+                _response(status=200, url="https://slack.com/api/reactions.remove", payload={"ok": True}),
+            ]
+        )
+
+        def _factory(*args, **kwargs):
+            del args, kwargs
+            return client
+
+        monkeypatch.setattr(httpx, "AsyncClient", _factory)
+
+        channel = SlackChannel(config={"bot_token": "xoxb-1", "typing_enabled": True})
+        await channel.start()
+        channel._latest_inbound_ts["C123"] = "1700.4"
+
+        channel._start_typing_keepalive(chat_id="C123")
+        await asyncio.sleep(0)
+        await channel._stop_typing_keepalive(chat_id="C123")
+        await channel.stop()
+
+        assert [row[0] for row in client.posts] == [
+            "https://slack.com/api/reactions.add",
+            "https://slack.com/api/reactions.remove",
+        ]
+        assert client.posts[0][1]["timestamp"] == "1700.4"
+        assert client.posts[1][1]["name"] == "hourglass_flowing_sand"
 
     asyncio.run(_scenario())

@@ -4,6 +4,7 @@ import asyncio
 import json
 
 from clawlite.config.schema import ToolSafetyLayerConfig, ToolSafetyPolicyConfig
+from clawlite.runtime.telemetry import set_test_tracer_factory
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
 
@@ -108,12 +109,61 @@ class NestedSchemaTool(Tool):
         return str(arguments)
 
 
+class _FakeSpan:
+    def __init__(self, name: str, sink: list[dict[str, object]]) -> None:
+        self._row = {"name": name, "attributes": {}, "exceptions": []}
+        self._sink = sink
+
+    def __enter__(self) -> "_FakeSpan":
+        self._sink.append(self._row)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def set_attribute(self, name: str, value: object) -> None:
+        self._row["attributes"][name] = value
+
+    def record_exception(self, exc: Exception) -> None:
+        self._row["exceptions"].append(type(exc).__name__)
+
+
+class _FakeTracer:
+    def __init__(self, sink: list[dict[str, object]]) -> None:
+        self._sink = sink
+
+    def start_as_current_span(self, name: str) -> _FakeSpan:
+        return _FakeSpan(name, self._sink)
+
+
 def test_tool_registry_execute() -> None:
     async def _scenario() -> None:
         reg = ToolRegistry()
         reg.register(EchoTool())
         out = await reg.execute("echo", {"text": "ok"}, session_id="s")
         assert out == "ok"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_execute_emits_tool_span() -> None:
+    async def _scenario() -> None:
+        spans: list[dict[str, object]] = []
+        set_test_tracer_factory(lambda _name: _FakeTracer(spans))
+        try:
+            reg = ToolRegistry()
+            reg.register(EchoTool())
+            out = await reg.execute("echo", {"text": "ok"}, session_id="s", channel="telegram", user_id="u1")
+        finally:
+            set_test_tracer_factory(None)
+
+        assert out == "ok"
+        assert spans
+        span = spans[-1]
+        assert span["name"] == "tool.execute"
+        assert span["attributes"]["tool.name"] == "echo"
+        assert span["attributes"]["tool.channel"] == "telegram"
+        assert int(span["attributes"]["tool.result.length"]) == 2
 
     asyncio.run(_scenario())
 

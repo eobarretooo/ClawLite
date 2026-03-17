@@ -2768,6 +2768,31 @@ def test_consolidate_categories_returns_dict(tmp_path: Path) -> None:
     assert isinstance(result, dict)
 
 
+def test_memory_compact_combines_expiry_decay_and_consolidation_results(tmp_path: Path, monkeypatch) -> None:
+    import asyncio
+
+    store = MemoryStore(tmp_path / "memory.jsonl")
+
+    monkeypatch.setattr(store, "purge_expired_records", lambda: 2)
+
+    async def _purge_decayed() -> dict[str, int]:
+        return {"purged": 3}
+
+    async def _consolidate_categories() -> dict[str, int]:
+        return {"context": 4, "profile": 1}
+
+    monkeypatch.setattr(store, "purge_decayed_records", _purge_decayed)
+    monkeypatch.setattr(store, "consolidate_categories", _consolidate_categories)
+
+    payload = asyncio.run(store.compact())
+    assert payload == {
+        "expired_records": 2,
+        "decayed_records": 3,
+        "consolidated_records": 5,
+        "consolidated_categories": {"context": 4, "profile": 1},
+    }
+
+
 def test_consolidate_categories_skips_when_below_threshold(tmp_path: Path) -> None:
     """With fewer records than threshold, no knowledge records are created."""
     import asyncio

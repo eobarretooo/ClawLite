@@ -9,9 +9,12 @@ Most commands print JSON to stdout. By default, ClawLite reads `~/.clawlite/conf
 | Flag | What it does | Example |
 | --- | --- | --- |
 | `--config <path>` | Uses a non-default config file | `clawlite --config ./config.dev.json status` |
+| `--profile <name>` | Applies `config.<profile>.json|yaml` as an overlay on top of `--config` | `clawlite --config ./config.yaml --profile prod status` |
 | `--version` | Prints the installed version | `clawlite --version` |
 
 The module entry point is also available as `python -m clawlite.cli`.
+
+Profile precedence is: base config file → `config.<profile>.json|yaml` overlay → environment variables.
 
 ## Runtime Commands
 
@@ -90,31 +93,32 @@ Current built-in `validate channels` checks:
 
 - Telegram: requires `token`, warns if `allow_from` is empty.
 - Discord: requires `token`.
-- Slack: requires `bot_token`, warns if `app_token` is empty.
-- WhatsApp: requires `bridge_url`.
+- Slack: requires `bot_token`; `app_token` is needed for inbound Socket Mode.
+- WhatsApp: requires `bridge_url`; inbound webhook also needs `webhook_secret`.
+- IRC: requires `host`, `port`, and `channels_to_join`.
 - Extra placeholder channels have no deep static validation rules.
 
 ## Provider Commands
 
 | Command | What it does | Example |
 | --- | --- | --- |
-| `provider login openai-codex` | Persists OpenAI Codex OAuth credentials | `clawlite provider login openai-codex` |
+| `provider login <oauth-provider>` | Persists OAuth credentials for `openai-codex`, `gemini-oauth`, or `qwen-oauth` | `clawlite provider login gemini-oauth` |
 | `provider status [provider]` | Shows auth/status for one provider | `clawlite provider status openai` |
-| `provider logout [provider]` | Clears Codex OAuth credentials from config | `clawlite provider logout` |
+| `provider logout [provider]` | Clears persisted OAuth credentials for one OAuth provider | `clawlite provider logout gemini-oauth` |
 | `provider use <provider> --model <model>` | Persists the active provider/model | `clawlite provider use openai --model openai/gpt-4o-mini` |
 | `provider set-auth <provider> --api-key <key>` | Persists API-key auth for non-OAuth providers | `clawlite provider set-auth openrouter --api-key sk-or-...` |
 | `provider clear-auth <provider>` | Clears API-key auth and optional base URL | `clawlite provider clear-auth openrouter --clear-api-base` |
 
 Useful flags:
 
-- `provider login openai-codex`: `--access-token`, `--account-id`, `--keep-model`, `--set-model`, `--no-interactive`
+- `provider login openai-codex|gemini-oauth|qwen-oauth`: `--access-token`, `--account-id`, `--keep-model`, `--set-model`, `--no-interactive`
 - `provider use`: `--fallback-model`, `--clear-fallback`
 - `provider set-auth`: `--api-base`, `--header key=value`, `--clear-headers`, `--clear-api-base`
 - `provider clear-auth`: `--clear-api-base`
 
 Notes:
 
-- `provider login` and `provider logout` only support `openai-codex` today.
+- `provider login` and `provider logout` support `openai-codex`, `gemini-oauth`, and `qwen-oauth`.
 - `--set-model` is a deprecated compatibility flag; Codex login already switches to the default Codex model unless you pass `--keep-model`.
 - `provider status` defaults to `openai-codex` when no provider is supplied.
 - Provider aliases such as `codex`, `google`, `claude`, `hf`, and `kimi` are accepted where supported by the registry.

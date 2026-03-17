@@ -26,7 +26,7 @@
 ## ⚡ Why ClawLite?
 
 - **Truly local-first** — runs entirely on your machine; no vendor lock-in, no cloud accounts required
-- **Real channel adapters out of the box** — Telegram, Discord, Email, WhatsApp, and Slack outbound
+- **Real channel adapters out of the box** — Telegram, Discord, Email, WhatsApp, Slack, and IRC
 - **Persistent, searchable memory** — hybrid BM25 + vector search, temporal decay, consolidation loop
 - **Self-healing runtime** — heartbeat supervisor, dead-letter replay, automatic provider failover
 - **Batteries included** — 25+ skills, built-in tools, streaming responses, operator dashboard
@@ -60,6 +60,7 @@ clawlite gateway
 Open **http://127.0.0.1:8787** → live dashboard with chat, automation, memory, and tools.
 
 If you pass `--config path.yaml`, YAML configs work out of the box. Optional runtimes now install via extras: `.[browser]` for Playwright, `.[telegram]` for the Telegram channel, and `.[media]` for TTS/PDF helpers.
+Config profiles are also supported: `clawlite --config ./config.yaml --profile prod status` loads `config.yaml`, overlays `config.prod.yaml` if present, and then applies env vars.
 
 **Android / Termux path:** use `proot-distro` with Ubuntu instead of trying to run the full stack directly on native Termux. The one-shot wrapper is:
 
@@ -90,8 +91,10 @@ clawlite run "hello — what can you do?"
 - Local-provider startup, cron/jobs boundaries, browser lifecycle, skill networking policy, and Telegram runtime internals are hardened on `main`.
 - The biggest runtime monoliths were split by responsibility: `clawlite/gateway/server.py` is down to about `3.3k` lines and `clawlite/core/memory.py` to about `4.4k`.
 - Packaging is now split into extras: base install stays leaner, while `.[browser]`, `.[telegram]`, and `.[media]` enable optional runtimes.
-- Phase 7 is complete on `main`: `self_evolution` now uses provider-direct proposal, pre-apply patch policy, isolated git worktree branches, and real operator notices while staying disabled by default.
-- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1500 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `179 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
+- Phase 7 is complete on `main`: `self_evolution` now uses provider-direct proposal, pre-apply patch policy, isolated git worktree branches, configurable branch prefixes, and Telegram/Discord approval callbacks that record human review state while staying disabled by default.
+- Gateway startup now uses per-subsystem timeouts, so a slow channel transport no longer blocks the whole control plane from coming up.
+- OAuth-backed free-tier cloud setup now includes `gemini-oauth` and `qwen-oauth` alongside `openai-codex`.
+- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1561 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `190 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
 - Tracking docs: [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROBUSTNESS_SCORECARD.md`](docs/ROBUSTNESS_SCORECARD.md).
 
 ---
@@ -220,9 +223,10 @@ Skill lifecycle: `enable` / `disable` · `pin` / `unpin` · `pin-version` / `cle
 | **Telegram** | ✅ | ✅ | ✅ Complete | Polling + webhook, reactions, topics, reply keyboards, streaming |
 | **Discord** | ✅ | ✅ | 🟡 Usable | Gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming |
 | **Email** | ✅ | ✅ | 🟡 Usable | IMAP inbound + SMTP outbound |
-| **WhatsApp** | ✅ | ✅ | 🟡 Usable | Webhook inbound + outbound bridge |
-| **Slack** | ❌ | ✅ | 📤 Send-only | Outbound delivery |
-| Signal / Matrix / IRC / iMessage / DingTalk / Feishu | ❌ | ❌ | 🚧 Planned | Registered surfaces |
+| **WhatsApp** | ✅ | ✅ | 🟡 Usable | Webhook inbound, outbound retry, bridge typing keepalive |
+| **Slack** | ✅ | ✅ | 🟡 Usable | Socket Mode inbound, outbound delivery, reversible working indicator |
+| **IRC** | ✅ | ✅ | 🟡 Minimal | Asyncio transport, PING/PONG, JOIN, PRIVMSG |
+| Signal / Matrix / iMessage / DingTalk / Feishu | ❌ | ❌ | 🚧 Planned | Registered surfaces |
 
 ---
 
@@ -256,7 +260,7 @@ Use a `/v1` base URL for local providers. Reverse-proxied prefixes such as `http
 <details>
 <summary><strong>Special</strong></summary>
 
-OpenAI Codex (OAuth)
+OpenAI Codex · Gemini OAuth · Qwen OAuth
 
 </details>
 

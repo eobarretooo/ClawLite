@@ -7,12 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.7.0-beta.0] - 2026-03-17
+
 ### Phase 7 — Advanced memory and self-improvement (`main`, 2026-03-17)
 - `self_evolution` now uses provider-direct proposal instead of the full agent/tool loop
 - unsafe proposals are rejected before apply via file/path/header/diff-size policy
 - successful runs now commit only inside isolated git worktree branches, leaving the live checkout untouched
 - operator notices are routed through the real autonomy notice path and surfaced in diagnostics with `last_branch`
 - added end-to-end smoke coverage for isolated self-evolution runs plus CI/smoke-script wiring
+- `self_evolution` now supports dry-run review, configurable branch prefixes, approval-required mode, and Telegram/Discord approval callbacks that persist review state
+
+### Plan Milestone — `plano.md` completion (2026-03-17)
+- Added file-based config profiles (`config.<profile>.yaml|json`) with CLI `--profile` support and documented merge precedence
+- Completed engine loop recovery with a single meta-prompt retry before fail-closed abort
+- Finished incremental streaming UX for Discord, Telegram progress integration, and websocket streaming alignment
+- Added session TTL, history compaction, `sqlite-vec`, `memory_compact`, and working-memory rate limiting
+- Added Redis-backed message bus, opt-in runtime telemetry/OTLP hooks, and subsystem startup timeouts
+- Completed WhatsApp, Slack, and IRC operational channel paths
+- Added Gemini/Qwen OAuth helpers and completed custom-provider expansion path
+- Kept `self_evolution` disabled by default while adding approval-ready notices and isolated branch workflows
 
 ### Robustness Milestone — Phases 1–5 (2026-03-15)
 
@@ -266,7 +279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Verification Status
 - Validated through foundational smoke runs and integration tests spanning CLI, gateway, and dashboard pathways.
 
-[Unreleased]: https://github.com/eobarretooo/ClawLite/compare/v0.6.0-beta.0...HEAD
+[Unreleased]: https://github.com/eobarretooo/ClawLite/compare/v0.7.0-beta.0...HEAD
+[v0.7.0-beta.0]: https://github.com/eobarretooo/ClawLite/compare/v0.6.0-beta.0...v0.7.0-beta.0
 [v0.5.0-beta.2]: https://github.com/eobarretooo/ClawLite/compare/v0.5.0-beta.1...v0.5.0-beta.2
 [v0.5.0-beta.1]: https://github.com/eobarretooo/ClawLite/compare/v0.4.1...v0.5.0-beta.1
 [v0.4.1]: https://github.com/eobarretooo/ClawLite/compare/v0.4.0...v0.4.1

@@ -199,6 +199,7 @@ class ChannelManager:
         self._recovery_cooldown_s = 30.0
         self._recovery_task: asyncio.Task[Any] | None = None
         self._recovery_notifier: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
+        self._inbound_interceptor: Callable[[InboundEvent], Awaitable[bool]] | None = None
         self._recovery_total: dict[str, int] = {
             "attempts": 0,
             "success": 0,
@@ -1192,6 +1193,9 @@ class ChannelManager:
     def register(self, name: str, channel_cls: type[BaseChannel]) -> None:
         self._registry[name] = channel_cls
 
+    def set_inbound_interceptor(self, handler: Callable[[InboundEvent], Awaitable[bool]] | None) -> None:
+        self._inbound_interceptor = handler
+
     async def _on_channel_message(self, session_id: str, user_id: str, text: str, metadata: dict[str, Any]) -> None:
         channel = str(metadata.get("channel", "")).strip() or session_id.split(":", 1)[0]
         event = InboundEvent(
@@ -1201,6 +1205,18 @@ class ChannelManager:
             text=text,
             metadata=metadata,
         )
+        interceptor = self._inbound_interceptor
+        if interceptor is not None:
+            try:
+                handled = bool(await interceptor(event))
+            except Exception as exc:
+                bind_event("channel.inbound", session=session_id, channel=channel).warning(
+                    "inbound interceptor failed error={}",
+                    exc,
+                )
+                handled = False
+            if handled:
+                return
         await self._persist_pending_inbound(event)
         bind_event("channel.inbound", session=session_id, channel=channel).debug("inbound message queued user={} chars={}", user_id, len(text))
         await self.bus.publish_inbound(event)

@@ -1,6 +1,6 @@
 # Channels
 
-ClawLite can send and receive messages through multiple channel adapters. Today, Telegram is the most complete adapter. Discord, Email, and WhatsApp are usable. Slack is outbound-only. Several extra channel names are registered as placeholders but are not implemented yet.
+ClawLite can send and receive messages through multiple channel adapters. Today, Telegram is the most complete adapter. Discord, Email, WhatsApp, Slack, and IRC are usable to different degrees. Several extra channel names are still registered as placeholders but are not implemented yet.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ ClawLite can send and receive messages through multiple channel adapters. Today,
 4. For Telegram tokens, you can also run `clawlite validate preflight --telegram-live`.
 5. Inspect live channel state in `/v1/diagnostics` under `channels`, `channels_dispatcher`, `channels_delivery`, `channels_inbound`, and `channels_recovery`.
 
-Quickstart note: `clawlite configure --flow quickstart` only offers Telegram. Discord, Email, WhatsApp, and Slack are manual config today.
+Quickstart note: `clawlite configure --flow quickstart` only offers Telegram. Discord, Email, WhatsApp, Slack, and IRC are manual config today.
 
 ## Channel Matrix
 
@@ -19,12 +19,12 @@ Quickstart note: `clawlite configure --flow quickstart` only offers Telegram. Di
 | Telegram | Yes | Yes | Most complete | Polling and webhook, pairing, reactions, topics, typing keepalive, voice/audio transcription |
 | Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), embeds, thread creation, attachment download |
 | Email | Yes | Yes | Usable | IMAP polling inbound plus SMTP replies |
-| WhatsApp | Yes | Yes | Usable | Inbound webhook plus outbound bridge `/send` |
-| Slack | No | Yes | Send-only | Outbound `chat.postMessage`; no inbound event loop yet |
+| WhatsApp | Yes | Yes | Usable | Inbound webhook, outbound retry, bridge typing keepalive |
+| Slack | Yes | Yes | Usable | Socket Mode inbound, outbound `chat.postMessage`, reversible working indicator |
 | Signal | No | No | Placeholder | Passive stub only |
 | Google Chat | No | No | Placeholder | Passive stub only |
 | Matrix | No | No | Placeholder | Passive stub only |
-| IRC | No | No | Placeholder | Passive stub only |
+| IRC | Yes | Yes | Minimal | Asyncio transport, JOIN, PING/PONG, PRIVMSG |
 | iMessage | No | No | Placeholder | Passive stub only |
 | DingTalk | No | No | Placeholder | Passive stub only |
 | Feishu | No | No | Placeholder | Passive stub only |
@@ -288,6 +288,10 @@ Important config keys:
 - `webhook_path`
 - `webhook_secret`
 - `allow_from`
+- `send_retry_attempts`
+- `send_retry_after_default_s`
+- `typing_enabled`
+- `typing_interval_s`
 
 Example config:
 
@@ -311,11 +315,13 @@ Notes:
 
 - `bridge_url` may be `ws://` or `wss://`; ClawLite normalizes it to `http(s)://.../send` for outbound calls.
 - Inbound webhook auth requires `webhook_secret`; the gateway accepts it through `X-Webhook-Secret` or a bearer token.
+- Outbound sends retry on `429`, bridge 5xx, and transport failures using `send_retry_*`.
+- Typing keepalive uses the bridge `/typing` endpoint when `typing_enabled` is true.
 - Media arrives as placeholders such as `[whatsapp image]`; ClawLite does not download media files.
 
 ## Slack
 
-Slack is currently outbound-only.
+Slack supports inbound Socket Mode plus outbound delivery.
 
 Important config keys:
 
@@ -324,6 +330,14 @@ Important config keys:
 - `api_base`
 - `timeout_s`
 - `allow_from`
+- `send_retry_attempts`
+- `send_retry_after_default_s`
+- `socket_mode_enabled`
+- `socket_backoff_base_s`
+- `socket_backoff_max_s`
+- `typing_enabled`
+- `working_indicator_enabled`
+- `working_indicator_emoji`
 
 Example config:
 
@@ -333,7 +347,7 @@ Example config:
     "slack": {
       "enabled": true,
       "bot_token": "xoxb-test",
-      "app_token": "",
+      "app_token": "xapp-test",
       "api_base": "https://slack.com/api",
       "timeout_s": 10.0,
       "allow_from": []
@@ -345,8 +359,46 @@ Example config:
 Notes:
 
 - Outbound sends use `chat.postMessage` with rate-limit retry handling.
-- There is no inbound event or Socket Mode worker yet.
-- `validate channels` warns when `app_token` is empty, but runtime outbound send only needs `bot_token`.
+- Inbound uses Slack Socket Mode when `app_token` is present and `socket_mode_enabled` is true.
+- The working indicator adds and later removes a reaction on the latest inbound message for that channel.
+- `validate channels` still treats `bot_token` as the required minimum; `app_token` is required only for inbound Socket Mode.
+
+## IRC
+
+IRC is a minimal but functional asyncio adapter.
+
+Important config keys:
+
+- `host`
+- `port`
+- `nick`
+- `username`
+- `realname`
+- `channels_to_join`
+- `use_ssl`
+- `connect_timeout_s`
+
+Example config:
+
+```json
+{
+  "channels": {
+    "irc": {
+      "enabled": true,
+      "host": "irc.libera.chat",
+      "port": 6697,
+      "nick": "clawlite-bot",
+      "channels_to_join": ["#clawlite"],
+      "use_ssl": true
+    }
+  }
+}
+```
+
+Notes:
+
+- The current implementation supports connect, JOIN, PING/PONG, inbound `PRIVMSG`, outbound `PRIVMSG`, and clean shutdown.
+- It does not yet implement SASL, nickname recovery, CTCP helpers, or reconnect persistence.
 
 ## Placeholder Channels
 
@@ -355,7 +407,6 @@ These names are registered in the channel manager, but they are passive stubs an
 - `signal`
 - `googlechat`
 - `matrix`
-- `irc`
 - `imessage`
 - `dingtalk`
 - `feishu`

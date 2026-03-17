@@ -31,12 +31,19 @@ class SessionStore:
     ~/.clawlite/state/sessions/<session_id>.jsonl
     """
 
-    def __init__(self, root: str | Path | None = None, max_messages_per_session: int | None = 2000) -> None:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        max_messages_per_session: int | None = 2000,
+        session_retention_ttl_s: float | int | None = None,
+    ) -> None:
         base = Path(root) if root else (Path.home() / ".clawlite" / "state" / "sessions")
         self.root = base
         self.root.mkdir(parents=True, exist_ok=True)
         configured_limit = None if max_messages_per_session is None else int(max_messages_per_session)
         self.max_messages_per_session = configured_limit if configured_limit and configured_limit > 0 else None
+        configured_ttl = None if session_retention_ttl_s is None else float(session_retention_ttl_s)
+        self.session_retention_ttl_s = configured_ttl if configured_ttl and configured_ttl > 0 else None
         self._strict_compaction_limit = 64
         self._session_line_estimates: dict[Path, int] = {}
         self._diagnostics: dict[str, int | str] = {
@@ -49,6 +56,10 @@ class SessionStore:
             "compaction_failures": 0,
             "read_corrupt_lines": 0,
             "read_repaired_files": 0,
+            "ttl_prune_runs": 0,
+            "ttl_prune_deleted_sessions": 0,
+            "ttl_prune_failures": 0,
+            "ttl_last_prune_iso": "",
             "last_error": "",
         }
 
@@ -286,6 +297,13 @@ class SessionStore:
             "compaction_failures": int(self._diagnostics["compaction_failures"]),
             "read_corrupt_lines": int(self._diagnostics["read_corrupt_lines"]),
             "read_repaired_files": int(self._diagnostics["read_repaired_files"]),
+            "session_retention_ttl_s": (
+                None if self.session_retention_ttl_s is None else float(self.session_retention_ttl_s)
+            ),
+            "ttl_prune_runs": int(self._diagnostics["ttl_prune_runs"]),
+            "ttl_prune_deleted_sessions": int(self._diagnostics["ttl_prune_deleted_sessions"]),
+            "ttl_prune_failures": int(self._diagnostics["ttl_prune_failures"]),
+            "ttl_last_prune_iso": str(self._diagnostics["ttl_last_prune_iso"]),
             "last_error": str(self._diagnostics["last_error"]),
         }
 
@@ -298,3 +316,37 @@ class SessionStore:
             return False
         path.unlink()
         return True
+
+    def prune_expired(self, *, now: float | None = None, max_age_seconds: float | None = None) -> int:
+        ttl_s = self.session_retention_ttl_s if max_age_seconds is None else float(max_age_seconds)
+        if ttl_s is None or ttl_s <= 0:
+            return 0
+        current_time = time.time() if now is None else float(now)
+        deleted = 0
+        self._diagnostics["ttl_prune_runs"] = int(self._diagnostics["ttl_prune_runs"]) + 1
+        self._diagnostics["ttl_last_prune_iso"] = _utc_now()
+        for path in self.root.glob("*.jsonl"):
+            try:
+                modified_at = path.stat().st_mtime
+            except OSError as exc:
+                self._diagnostics["ttl_prune_failures"] = int(self._diagnostics["ttl_prune_failures"]) + 1
+                self._diagnostics["last_error"] = str(exc)
+                continue
+            age_seconds = max(0.0, current_time - float(modified_at))
+            if age_seconds <= ttl_s:
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                self._diagnostics["ttl_prune_failures"] = int(self._diagnostics["ttl_prune_failures"]) + 1
+                self._diagnostics["last_error"] = str(exc)
+                continue
+            self._session_line_estimates.pop(path, None)
+            deleted += 1
+        if deleted:
+            self._diagnostics["ttl_prune_deleted_sessions"] = int(
+                self._diagnostics["ttl_prune_deleted_sessions"]
+            ) + deleted
+        if deleted or int(self._diagnostics["ttl_prune_failures"]) == 0:
+            self._diagnostics["last_error"] = ""
+        return deleted

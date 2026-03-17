@@ -293,6 +293,40 @@ def test_build_provider_openai_codex_reads_auth_file_when_env_missing(tmp_path, 
     assert provider.account_id == "org-file"
 
 
+def test_build_provider_gemini_oauth_reads_auth_file_when_env_missing(tmp_path, monkeypatch) -> None:
+    auth_path = tmp_path / "oauth_creds.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "gemini-file-token"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CLAWLITE_GEMINI_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("CLAWLITE_GEMINI_AUTH_PATH", str(auth_path))
+
+    provider = build_provider({"model": "gemini_oauth/gemini-2.0-flash"})
+
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.provider_name == "gemini_oauth"
+    assert provider.api_key == "gemini-file-token"
+    assert provider.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def test_build_provider_qwen_oauth_reads_auth_file_when_env_missing(tmp_path, monkeypatch) -> None:
+    auth_path = tmp_path / "oauth_creds.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "qwen-file-token"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CLAWLITE_QWEN_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("CLAWLITE_QWEN_AUTH_PATH", str(auth_path))
+
+    provider = build_provider({"model": "qwen_oauth/qwen-plus"})
+
+    assert isinstance(provider, LiteLLMProvider)
+    assert provider.provider_name == "qwen_oauth"
+    assert provider.api_key == "qwen-file-token"
+    assert provider.base_url == "https://api.qwen.ai/v1"
+
+
 def test_build_provider_detects_ollama_from_local_base_url_without_api_key() -> None:
     provider = build_provider(
         {

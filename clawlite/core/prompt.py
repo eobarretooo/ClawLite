@@ -14,6 +14,7 @@ from clawlite.workspace.loader import WorkspaceLoader
 class PromptArtifacts:
     system_prompt: str
     memory_section: str
+    history_summary: str
     history_messages: list[dict[str, str]]
     runtime_context: str
     skills_context: str
@@ -173,6 +174,37 @@ class PromptBuilder:
         return kept
 
     @classmethod
+    def _summarize_trimmed_history(cls, history: list[dict[str, str]], token_limit: int) -> str:
+        if token_limit <= 0 or not history:
+            return ""
+        role_counts = {"system": 0, "user": 0, "assistant": 0, "tool": 0}
+        for row in history:
+            role = str(row.get("role", "")).strip()
+            if role in role_counts:
+                role_counts[role] += 1
+        recent_samples: list[str] = []
+        for row in history[-4:]:
+            role = str(row.get("role", "")).strip() or "message"
+            content = " ".join(str(row.get("content", "")).split()).strip()
+            if not content:
+                continue
+            recent_samples.append(f"- {role}: {cls._truncate_text(content, 18)}")
+        lines = [
+            "[Compressed Session History]",
+            f"- {len(history)} earlier messages hidden for context budget.",
+        ]
+        if recent_samples:
+            lines.extend(recent_samples)
+        lines.append(
+            (
+                "- Roles: "
+                f"user={role_counts['user']}, assistant={role_counts['assistant']}, "
+                f"tool={role_counts['tool']}, system={role_counts['system']}."
+            )
+        )
+        return cls._truncate_text("\n".join(lines), token_limit)
+
+    @classmethod
     def _shape_memory_items(cls, memory_items: list[str], token_limit: int) -> list[str]:
         if token_limit <= 0:
             return []
@@ -205,15 +237,16 @@ class PromptBuilder:
         runtime_context: str,
         user_text: str,
         token_budget: int,
-    ) -> tuple[str, list[str], str, list[dict[str, str]]]:
+    ) -> tuple[str, list[str], str, str, list[dict[str, str]]]:
         total_budget = max(512, int(token_budget))
         reserved = cls._estimate_tokens(runtime_context) + cls._estimate_tokens(user_text) + 32
         available = max(128, total_budget - reserved)
 
         system_cap = max(96, int(available * 0.40))
-        history_cap = max(64, int(available * 0.28))
+        history_summary_cap = max(48, int(available * 0.10))
+        history_cap = max(64, int(available * 0.18))
         skills_cap = max(64, int(available * 0.22))
-        memory_cap = max(32, available - (system_cap + history_cap + skills_cap))
+        memory_cap = max(32, available - (system_cap + history_summary_cap + history_cap + skills_cap))
 
         shaped_system = cls._shape_system_prompt(
             workspace_block=workspace_block,
@@ -225,8 +258,15 @@ class PromptBuilder:
         shaped_memory = cls._shape_memory_items(memory_items, memory_cap)
         shaped_skills_context = cls._truncate_text(skills_context.strip(), skills_cap)
         shaped_history = cls._shape_history(history_rows, history_cap)
+        dropped_count = max(0, len(history_rows) - len(shaped_history))
+        shaped_history_summary = ""
+        if dropped_count > 0:
+            shaped_history_summary = cls._summarize_trimmed_history(
+                history_rows[:dropped_count],
+                history_summary_cap,
+            )
 
-        return shaped_system, shaped_memory, shaped_skills_context, shaped_history
+        return shaped_system, shaped_memory, shaped_skills_context, shaped_history_summary, shaped_history
 
     @classmethod
     def _split_workspace_sections(cls, workspace_block: str) -> list[tuple[str, str]]:
@@ -347,7 +387,7 @@ class PromptBuilder:
 
         normalized_history = self._normalize_history(history)
         clean_memory = [item.strip() for item in memory_snippets if item and item.strip()]
-        shaped_system, shaped_memory, shaped_skills_context, shaped_history = self._shape_context(
+        shaped_system, shaped_memory, shaped_skills_context, shaped_history_summary, shaped_history = self._shape_context(
             workspace_block=workspace_block,
             identity_guard=self._IDENTITY_GUARD_SECTION,
             profile_text=profile_text,
@@ -363,6 +403,7 @@ class PromptBuilder:
         return PromptArtifacts(
             system_prompt=shaped_system,
             memory_section=self._render_memory(shaped_memory),
+            history_summary=shaped_history_summary,
             history_messages=shaped_history,
             runtime_context=runtime_context,
             skills_context=shaped_skills_context,

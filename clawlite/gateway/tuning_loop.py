@@ -159,6 +159,26 @@ async def run_memory_quality_tuning_tick(
                     action_status = "ok"
                 else:
                     action_status = "unsupported"
+            elif action == "memory_compact":
+                compact_memory_fn = getattr(memory_store, "compact", None)
+                if callable(compact_memory_fn):
+                    compact_result = await asyncio.wait_for(
+                        compact_memory_fn(),
+                        timeout=tuning_loop_timeout_seconds,
+                    )
+                    compact_payload = dict(compact_result) if isinstance(compact_result, dict) else {}
+                    action_metadata["expired_records"] = int(compact_payload.get("expired_records", 0) or 0)
+                    action_metadata["decayed_records"] = int(compact_payload.get("decayed_records", 0) or 0)
+                    action_metadata["consolidated_records"] = int(
+                        compact_payload.get("consolidated_records", 0) or 0
+                    )
+                    categories = compact_payload.get("consolidated_categories", {})
+                    action_metadata["consolidated_categories"] = (
+                        dict(categories) if isinstance(categories, dict) else {}
+                    )
+                    action_status = "ok"
+                else:
+                    action_status = "unsupported"
 
         action_entry = build_tuning_action_entry(
             action=action,

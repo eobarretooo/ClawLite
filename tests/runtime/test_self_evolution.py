@@ -174,6 +174,105 @@ def test_self_evolution_run_once_commits_and_notifies(tmp_path: Path, monkeypatc
     assert recent["branch_name"] == status["last_branch"]
 
 
+def test_self_evolution_supports_branch_prefix_and_approval_notice(tmp_path: Path, monkeypatch) -> None:
+    project_root, source_root, target_file, original = _build_sample_self_evolution_project(tmp_path)
+    notices: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_llm(prompt: str) -> str:
+        del prompt
+        return (
+            "DESCRIPTION: implement target\n"
+            "```python\n"
+            "def target():\n"
+            "    return 42\n"
+            "```\n"
+        )
+
+    async def _fake_notify(source: str, payload: dict[str, object]) -> None:
+        notices.append((source, dict(payload)))
+
+    engine = SelfEvolutionEngine(
+        project_root=project_root,
+        source_root=source_root,
+        run_llm=_fake_llm,
+        notify=_fake_notify,
+        enabled=True,
+        branch_prefix="review queue",
+        require_approval=True,
+        log_path=tmp_path / "evolution-log.json",
+    )
+    monkeypatch.setattr(self_evolution_module.Validator, "run_ruff", lambda self: (True, "ok"))
+    monkeypatch.setattr(self_evolution_module.Validator, "run_pytest", lambda self: (True, "ok"))
+
+    status = asyncio.run(engine.run_once())
+
+    assert status["last_outcome"] == "committed"
+    assert status["branch_prefix"] == "review-queue"
+    assert status["require_approval"] is True
+    assert str(status["last_branch"]).startswith("review-queue/evo-")
+    assert target_file.read_text(encoding="utf-8") == original
+    payload = notices[0][1]
+    assert payload["status"] == "awaiting_approval"
+    assert "Awaiting operator approval before merge." in str(payload["text"])
+    metadata = dict(payload["metadata"])
+    assert metadata["approval_required"] is True
+    assert metadata["_telegram_inline_keyboard"][0][0]["callback_data"].startswith("self_evolution:approve:")
+    assert metadata["discord_components"][0]["components"][0]["custom_id"].startswith("self_evolution:approve:")
+
+
+def test_self_evolution_review_run_records_approval_state(tmp_path: Path, monkeypatch) -> None:
+    project_root, source_root, target_file, original = _build_sample_self_evolution_project(tmp_path)
+    notices: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_llm(prompt: str) -> str:
+        del prompt
+        return (
+            "DESCRIPTION: implement target\n"
+            "```python\n"
+            "def target():\n"
+            "    return 42\n"
+            "```\n"
+        )
+
+    async def _fake_notify(source: str, payload: dict[str, object]) -> None:
+        notices.append((source, dict(payload)))
+
+    engine = SelfEvolutionEngine(
+        project_root=project_root,
+        source_root=source_root,
+        run_llm=_fake_llm,
+        notify=_fake_notify,
+        enabled=True,
+        branch_prefix="review-queue",
+        require_approval=True,
+        log_path=tmp_path / "evolution-log.json",
+    )
+    monkeypatch.setattr(self_evolution_module.Validator, "run_ruff", lambda self: (True, "ok"))
+    monkeypatch.setattr(self_evolution_module.Validator, "run_pytest", lambda self: (True, "ok"))
+
+    status = asyncio.run(engine.run_once())
+    run_id = str(notices[0][1]["metadata"]["run_id"])
+
+    approved = engine.review_run(run_id, decision="approved", actor="telegram:42", note="owner")
+    repeat = engine.review_run(run_id, decision="approved", actor="telegram:42", note="owner")
+    rejected = engine.review_run(run_id, decision="rejected", actor="telegram:42", note="owner")
+
+    assert status["require_approval"] is True
+    assert approved["ok"] is True
+    assert approved["changed"] is True
+    assert approved["status"] == "approved"
+    assert repeat["ok"] is True
+    assert repeat["changed"] is False
+    assert rejected["ok"] is False
+    assert rejected["error"] == "review_run_already_decided:approved"
+    latest = engine.log.get(run_id)
+    assert latest is not None
+    assert latest["review_status"] == "approved"
+    assert latest["reviewed_by"] == "telegram:42"
+    assert latest["review_note"] == "owner"
+    assert target_file.read_text(encoding="utf-8") == original
+
+
 def test_patch_applicator_preserves_decorated_neighbor_block(tmp_path: Path) -> None:
     root = tmp_path / "src"
     root.mkdir(parents=True, exist_ok=True)
@@ -446,6 +545,57 @@ def test_self_evolution_fails_closed_when_primary_checkout_is_dirty(tmp_path: Pa
     assert status["last_error"] == "git_worktree_dirty"
     assert status["last_branch"] == ""
     assert _git_output(project_root, "branch", "--list", "self-evolution/*") == ""
+
+
+def test_self_evolution_dry_run_reports_preview_without_commit(tmp_path: Path, monkeypatch) -> None:
+    project_root, source_root, target_file, original = _build_sample_self_evolution_project(tmp_path)
+    notices: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_llm(prompt: str) -> str:
+        assert "sample.py" in prompt
+        return (
+            "DESCRIPTION: implement target\n"
+            "```python\n"
+            "def target():\n"
+            "    return 42\n"
+            "```\n"
+        )
+
+    async def _fake_notify(source: str, payload: dict[str, object]) -> None:
+        notices.append((source, dict(payload)))
+
+    def _validator_should_not_run(self):
+        raise AssertionError("validator_should_not_run")
+
+    monkeypatch.setattr(self_evolution_module.Validator, "run_ruff", _validator_should_not_run)
+    monkeypatch.setattr(self_evolution_module.Validator, "run_pytest", _validator_should_not_run)
+
+    engine = SelfEvolutionEngine(
+        project_root=project_root,
+        source_root=source_root,
+        run_llm=_fake_llm,
+        notify=_fake_notify,
+        enabled=True,
+        log_path=tmp_path / "evolution-log.json",
+    )
+
+    status = asyncio.run(engine.run_once(dry_run=True))
+
+    assert status["last_outcome"] == "dry_run"
+    assert status["dry_run_count"] == 1
+    assert status["committed_count"] == 0
+    assert status["last_branch"] == ""
+    assert target_file.read_text(encoding="utf-8") == original
+    assert _git_output(project_root, "branch", "--list", "self-evolution/*") == ""
+    assert notices and notices[0][0] == "self_evolution"
+    payload = notices[0][1]
+    assert payload["status"] == "dry_run"
+    assert payload["summary"] == "self-evolution dry-run for sample.py:2"
+    assert payload["metadata"]["dry_run"] is True
+    assert "Preview:" in str(payload["text"])
+    recent = engine.log.recent(1)[0]
+    assert recent["outcome"] == "dry_run"
+    assert recent["patch_preview"]
 
 
 def test_self_evolution_end_to_end_smoke_uses_isolated_branch(tmp_path: Path) -> None:

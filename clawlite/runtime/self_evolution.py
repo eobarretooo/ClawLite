@@ -50,6 +50,7 @@ _DEF_LINE = re.compile(r"^\s*(async\s+)?def\s+\w+")
 _ROADMAP_UNCHECKED = re.compile(r"^\s*-\s*\[\s*\]\s+(.+)$")
 
 NotifyCallback = Callable[[str, dict[str, Any]], Awaitable[Any]]
+_BRANCH_SEGMENT_RE = re.compile(r"[^a-zA-Z0-9._/-]+")
 
 
 # ── data classes ──────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ class EvolutionRecord:
     run_id: str
     started_at: str
     finished_at: str = ""
-    outcome: str = "pending"   # "committed" | "validation_failed" | "no_gaps" | "error"
+    outcome: str = "pending"   # "committed" | "dry_run" | "validation_failed" | "no_gaps" | "error"
     gaps_found: int = 0
     fix_description: str = ""
     files_changed: list[str] = field(default_factory=list)
@@ -84,6 +85,11 @@ class EvolutionRecord:
     ruff_ok: bool = False
     pytest_ok: bool = False
     branch_name: str = ""
+    patch_preview: str = ""
+    review_status: str = ""
+    reviewed_at: str = ""
+    reviewed_by: str = ""
+    review_note: str = ""
 
 
 @dataclass
@@ -613,6 +619,35 @@ class EvolutionLog:
     def recent(self, n: int = 10) -> list[dict[str, Any]]:
         return self._load()[-n:]
 
+    def update(self, run_id: str, **changes: Any) -> dict[str, Any] | None:
+        rows = self._load()
+        target_id = str(run_id or "").strip()
+        if not target_id:
+            return None
+        updated: dict[str, Any] | None = None
+        for row in rows:
+            if str(row.get("run_id", "") or "").strip() != target_id:
+                continue
+            row.update(changes)
+            updated = dict(row)
+            break
+        if updated is None:
+            return None
+        try:
+            self.path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            return None
+        return updated
+
+    def get(self, run_id: str) -> dict[str, Any] | None:
+        target_id = str(run_id or "").strip()
+        if not target_id:
+            return None
+        for row in self._load():
+            if str(row.get("run_id", "") or "").strip() == target_id:
+                return dict(row)
+        return None
+
 
 # ── main engine ───────────────────────────────────────────────────────────────
 
@@ -633,6 +668,8 @@ class SelfEvolutionEngine:
         notify: NotifyCallback | None = None,
         cooldown_s: float = 3600.0,
         enabled: bool = False,
+        branch_prefix: str = "self-evolution",
+        require_approval: bool = False,
         log_path: str | Path | None = None,
     ) -> None:
         self.project_root = Path(project_root).resolve()
@@ -645,6 +682,8 @@ class SelfEvolutionEngine:
         self._notify = notify
         self.cooldown_s = max(60.0, float(cooldown_s))
         self.enabled = bool(enabled)
+        self.branch_prefix = self._normalize_branch_prefix(branch_prefix)
+        self.require_approval = bool(require_approval)
 
         log_file = Path(log_path) if log_path else self.project_root / "memory" / "evolution-log.json"
         self.log = EvolutionLog(log_file)
@@ -657,9 +696,18 @@ class SelfEvolutionEngine:
         self._last_run_at: float | None = None
         self._run_count = 0
         self._committed_count = 0
+        self._dry_run_count = 0
         self._last_outcome = ""
         self._last_error = ""
         self._last_branch = ""
+        self._last_review_status = ""
+
+    @classmethod
+    def _normalize_branch_prefix(cls, value: str) -> str:
+        normalized = _BRANCH_SEGMENT_RE.sub("-", str(value or "self-evolution").strip())
+        normalized = normalized.strip("/.-")
+        normalized = re.sub(r"/{2,}", "/", normalized)
+        return normalized or "self-evolution"
 
     @staticmethod
     def _utc_iso() -> str:
@@ -676,7 +724,7 @@ class SelfEvolutionEngine:
                 return None, detail
             return None, "git_worktree_dirty"
 
-        branch_name = f"self-evolution/{run_id}"
+        branch_name = f"{self.branch_prefix}/{run_id}"
         worktree_dir = Path(tempfile.mkdtemp(prefix=f"clawlite-{run_id}-", dir=str(self.project_root.parent)))
         rc, out = _git(
             ["worktree", "add", "--quiet", "-b", branch_name, str(worktree_dir), "HEAD"],
@@ -719,7 +767,96 @@ class SelfEvolutionEngine:
         except Exception as exc:
             bind_event("self_evolution").warning("notify failed: {}", exc)
 
-    async def run_once(self, *, force: bool = False) -> dict[str, Any]:
+    def _approval_metadata(self, *, run_id: str, branch_name: str, commit_sha: str) -> dict[str, Any]:
+        if not self.require_approval:
+            return {}
+        callback_prefix = f"self_evolution:approve:{run_id}"
+        reject_prefix = f"self_evolution:reject:{run_id}"
+        return {
+            "approval_required": True,
+            "approval_command": f"clawlite self-evolution status",
+            "_telegram_inline_keyboard": [
+                [
+                    {"text": "Approve", "callback_data": callback_prefix},
+                    {"text": "Reject", "callback_data": reject_prefix},
+                ]
+            ],
+            "discord_components": [
+                {
+                    "type": 1,
+                    "components": [
+                        {"type": 2, "style": 1, "label": "Approve", "custom_id": callback_prefix},
+                        {"type": 2, "style": 4, "label": "Reject", "custom_id": reject_prefix},
+                    ],
+                }
+            ],
+            "branch_name": branch_name,
+            "commit_sha": commit_sha,
+        }
+
+    def review_run(
+        self,
+        run_id: str,
+        *,
+        decision: str,
+        actor: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        normalized_run_id = str(run_id or "").strip()
+        normalized_decision = str(decision or "").strip().lower()
+        if normalized_decision not in {"approved", "rejected"}:
+            return {"ok": False, "error": "invalid_review_decision"}
+        row = self.log.get(normalized_run_id)
+        if row is None:
+            return {"ok": False, "error": "review_run_not_found", "run_id": normalized_run_id}
+        outcome = str(row.get("outcome", "") or "").strip()
+        if outcome not in {"committed", "dry_run"}:
+            return {
+                "ok": False,
+                "error": f"review_run_not_reviewable:{outcome or 'unknown'}",
+                "run_id": normalized_run_id,
+            }
+        existing_status = str(row.get("review_status", "") or "").strip().lower()
+        if existing_status:
+            if existing_status == normalized_decision:
+                self._last_review_status = existing_status
+                return {
+                    "ok": True,
+                    "status": existing_status,
+                    "changed": False,
+                    "run_id": normalized_run_id,
+                    "branch_name": str(row.get("branch_name", "") or ""),
+                    "commit_sha": str(row.get("commit_sha", "") or ""),
+                }
+            return {
+                "ok": False,
+                "error": f"review_run_already_decided:{existing_status}",
+                "run_id": normalized_run_id,
+            }
+
+        reviewed_at = self._utc_iso()
+        updated = self.log.update(
+            normalized_run_id,
+            review_status=normalized_decision,
+            reviewed_at=reviewed_at,
+            reviewed_by=str(actor or "").strip(),
+            review_note=str(note or "").strip(),
+        )
+        if updated is None:
+            return {"ok": False, "error": "review_update_failed", "run_id": normalized_run_id}
+        self._last_review_status = normalized_decision
+        return {
+            "ok": True,
+            "status": normalized_decision,
+            "changed": True,
+            "run_id": normalized_run_id,
+            "reviewed_at": reviewed_at,
+            "reviewed_by": str(actor or "").strip(),
+            "branch_name": str(updated.get("branch_name", "") or ""),
+            "commit_sha": str(updated.get("commit_sha", "") or ""),
+        }
+
+    async def run_once(self, *, force: bool = False, dry_run: bool = False) -> dict[str, Any]:
         if not self.enabled and not force:
             return self.status()
 
@@ -735,9 +872,9 @@ class SelfEvolutionEngine:
             return self.status()
 
         async with self._lock:
-            return await self._do_run()
+            return await self._do_run(dry_run=dry_run)
 
-    async def _do_run(self) -> dict[str, Any]:
+    async def _do_run(self, *, dry_run: bool = False) -> dict[str, Any]:
         run_id = f"evo-{int(time.time() * 1000)}"
         record = EvolutionRecord(run_id=run_id, started_at=self._utc_iso())
         self._last_run_at = self._now_monotonic()
@@ -838,6 +975,37 @@ class SelfEvolutionEngine:
                 self._last_error = record.error
                 self._last_branch = ""
                 self.log.append(record)
+                return self.status()
+
+            record.patch_preview = "\n".join(preview.patch_lines).strip()[:2000]
+
+            if dry_run:
+                record.outcome = "dry_run"
+                record.finished_at = self._utc_iso()
+                self._last_outcome = "dry_run"
+                self._last_error = ""
+                self._last_branch = ""
+                self._dry_run_count += 1
+                self.log.append(record)
+                preview_snippet = proposal.patch_unified.strip() or record.patch_preview
+                preview_snippet = preview_snippet[:500]
+                await self._notify_operator(
+                    f"[self-evolution dry-run] Proposed isolated fix `{target_gap.file}:{target_gap.line}` "
+                    f"({target_gap.kind})\n"
+                    f"Description: {proposal.description}\n"
+                    f"Files: {', '.join(record.files_changed) or target_gap.file}\n"
+                    f"Preview:\n```diff\n{preview_snippet}\n```",
+                    status="dry_run",
+                    summary=f"self-evolution dry-run for {target_gap.file}:{target_gap.line}",
+                    metadata={
+                        "dry_run": True,
+                        "gap_file": target_gap.file,
+                        "gap_line": int(target_gap.line),
+                        "gap_kind": target_gap.kind,
+                        "run_id": run_id,
+                        "files_changed": list(record.files_changed),
+                    },
+                )
                 return self.status()
 
             # 4. Backup original files
@@ -942,13 +1110,20 @@ class SelfEvolutionEngine:
 
             # 8. Notify operator (no approval required)
             await self._notify_operator(
-                f"[self-evolution] Prepared isolated fix `{target_gap.file}:{target_gap.line}` "
-                f"({target_gap.kind})\n"
-                f"Description: {proposal.description}\n"
-                f"Branch: {sandbox.branch_name}\n"
-                f"Commit: {sha}  •  ruff ✓  pytest ✓",
-                status="committed",
-                summary=f"self-evolution committed fix for {target_gap.file}:{target_gap.line}",
+                (
+                    f"[self-evolution] Prepared isolated fix `{target_gap.file}:{target_gap.line}` "
+                    f"({target_gap.kind})\n"
+                    f"Description: {proposal.description}\n"
+                    f"Branch: {sandbox.branch_name}\n"
+                    f"Commit: {sha}  •  ruff ✓  pytest ✓"
+                    + ("\nAwaiting operator approval before merge." if self.require_approval else "")
+                ),
+                status=("awaiting_approval" if self.require_approval else "committed"),
+                summary=(
+                    f"self-evolution awaiting approval for {target_gap.file}:{target_gap.line}"
+                    if self.require_approval
+                    else f"self-evolution committed fix for {target_gap.file}:{target_gap.line}"
+                ),
                 metadata={
                     "gap_file": target_gap.file,
                     "gap_line": int(target_gap.line),
@@ -956,6 +1131,11 @@ class SelfEvolutionEngine:
                     "run_id": run_id,
                     "branch_name": sandbox.branch_name,
                     "commit_sha": sha,
+                    **self._approval_metadata(
+                        run_id=run_id,
+                        branch_name=sandbox.branch_name,
+                        commit_sha=sha,
+                    ),
                 },
             )
 
@@ -1022,9 +1202,13 @@ class SelfEvolutionEngine:
             "enabled": self.enabled,
             "run_count": self._run_count,
             "committed_count": self._committed_count,
+            "dry_run_count": self._dry_run_count,
             "last_outcome": self._last_outcome,
             "last_error": self._last_error,
             "last_branch": self._last_branch,
+            "last_review_status": self._last_review_status,
+            "branch_prefix": self.branch_prefix,
+            "require_approval": self.require_approval,
             "cooldown_remaining_s": round(cooldown_remaining, 1),
             "locked": self._lock.locked(),
         }

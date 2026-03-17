@@ -19,8 +19,10 @@ from clawlite.providers.catalog import default_provider_model, provider_profile
 from clawlite.providers.codex import CODEX_DEFAULT_BASE_URL
 from clawlite.providers.codex_auth import load_codex_auth_file
 from clawlite.providers.discovery import probe_local_provider_runtime
+from clawlite.providers.gemini_auth import load_gemini_auth_file
 from clawlite.providers.hints import provider_probe_hints, provider_status_hints, provider_transport_name
 from clawlite.providers.model_probe import evaluate_remote_model_check, model_check_hints
+from clawlite.providers.qwen_auth import load_qwen_auth_file
 from clawlite.providers.registry import SPECS, _configured_provider_hint, detect_provider_name
 from clawlite.providers.reliability import classify_provider_error
 from clawlite.workspace.loader import TEMPLATE_FILES
@@ -43,6 +45,13 @@ def _provider_name_variants(spec_name: str, aliases: tuple[str, ...]) -> set[str
 
 
 SUPPORTED_PROVIDER_AUTH: tuple[str, ...] = tuple(spec.name for spec in SPECS if not spec.is_oauth)
+SUPPORTED_OAUTH_PROVIDER_AUTH: tuple[str, ...] = tuple(spec.name for spec in SPECS if spec.is_oauth)
+
+OAUTH_PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    "openai_codex": "openai-codex/gpt-5.3-codex",
+    "gemini_oauth": "gemini_oauth/gemini-2.0-flash",
+    "qwen_oauth": "qwen_oauth/qwen-plus",
+}
 
 
 def _normalize_provider_name(value: str) -> str:
@@ -548,6 +557,64 @@ def autonomy_wake(
     return payload
 
 
+def self_evolution_status(
+    config: AppConfig,
+    *,
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="GET",
+        endpoint="/v1/self-evolution/status",
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict):
+        payload["ok"] = True
+        payload["status"] = dict(body.get("status", {})) if isinstance(body.get("status"), dict) else {}
+        payload["runner"] = dict(body.get("runner", {})) if isinstance(body.get("runner"), dict) else {}
+        payload["recent"] = list(body.get("recent", [])) if isinstance(body.get("recent"), list) else []
+        payload["enabled"] = bool(body.get("enabled", False))
+        return payload
+    detail = body.get("detail", body.get("error", "self_evolution_status_failed")) if isinstance(body, dict) else str(body or "self_evolution_status_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
+def self_evolution_trigger(
+    config: AppConfig,
+    *,
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="POST",
+        endpoint="/v1/self-evolution/trigger",
+        json_body={"dry_run": bool(dry_run)},
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict) and bool(body.get("ok", False)):
+        payload["ok"] = True
+        payload["status"] = body.get("status", {})
+        payload["runner"] = body.get("runner", {})
+        return payload
+    detail = body.get("detail", body.get("error", "self_evolution_trigger_failed")) if isinstance(body, dict) else str(body or "self_evolution_trigger_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
 def _telegram_pairing_store(config: AppConfig) -> TelegramPairingStore | None:
     telegram = getattr(config.channels, "telegram", None)
     if telegram is None:
@@ -648,6 +715,17 @@ def resolve_codex_auth(config: AppConfig) -> dict[str, Any]:
     cfg_token = str(codex.access_token or "").strip()
     cfg_account = str(codex.account_id or "").strip()
     cfg_source = str(codex.source or "").strip()
+    if cfg_source == "disabled" and not cfg_token:
+        return {
+            "configured": False,
+            "access_token": "",
+            "account_id": "",
+            "source": "disabled",
+            "token_masked": "",
+            "account_id_masked": "",
+            "env_token_name": "",
+            "env_account_name": "",
+        }
     file_auth = load_codex_auth_file()
 
     env_token_candidates: tuple[tuple[str, str], ...] = (
@@ -699,6 +777,115 @@ def resolve_codex_auth(config: AppConfig) -> dict[str, Any]:
         "account_id_masked": _mask_secret(account_id),
         "env_token_name": env_token_name,
         "env_account_name": env_account_name,
+    }
+
+
+def _resolve_generic_oauth_status(
+    config: AppConfig,
+    *,
+    provider_key: str,
+    file_loader,
+    token_envs: tuple[str, ...],
+    account_envs: tuple[str, ...],
+) -> dict[str, Any]:
+    auth_cfg = getattr(config.auth.providers, provider_key)
+    cfg_token = str(auth_cfg.access_token or "").strip()
+    cfg_account = str(auth_cfg.account_id or "").strip()
+    cfg_source = str(auth_cfg.source or "").strip()
+    if cfg_source == "disabled" and not cfg_token:
+        return {
+            "configured": False,
+            "access_token": "",
+            "account_id": "",
+            "source": "disabled",
+            "token_masked": "",
+            "account_id_masked": "",
+            "env_token_name": "",
+            "env_account_name": "",
+        }
+    file_auth = file_loader()
+
+    env_token_name = ""
+    env_token = ""
+    for name in token_envs:
+        value = os.getenv(name, "").strip()
+        if value:
+            env_token_name = name
+            env_token = value
+            break
+
+    env_account_name = ""
+    env_account = ""
+    for name in account_envs:
+        value = os.getenv(name, "").strip()
+        if value:
+            env_account_name = name
+            env_account = value
+            break
+
+    file_token = str(file_auth.get("access_token", "") or "").strip()
+    file_account = str(file_auth.get("account_id", "") or "").strip()
+
+    token = cfg_token or env_token or file_token
+    account_id = cfg_account or env_account or file_account
+    if cfg_token:
+        source = cfg_source or "config"
+    elif env_token_name:
+        source = f"env:{env_token_name}"
+    elif file_token:
+        source = str(file_auth.get("source", "") or "")
+    else:
+        source = ""
+
+    return {
+        "configured": bool(token),
+        "access_token": token,
+        "account_id": account_id,
+        "source": source,
+        "token_masked": _mask_secret(token),
+        "account_id_masked": _mask_secret(account_id),
+        "env_token_name": env_token_name,
+        "env_account_name": env_account_name,
+    }
+
+
+def resolve_gemini_oauth(config: AppConfig) -> dict[str, Any]:
+    return _resolve_generic_oauth_status(
+        config,
+        provider_key="gemini_oauth",
+        file_loader=load_gemini_auth_file,
+        token_envs=("CLAWLITE_GEMINI_ACCESS_TOKEN", "GEMINI_ACCESS_TOKEN"),
+        account_envs=("CLAWLITE_GEMINI_ACCOUNT_ID", "GEMINI_ACCOUNT_ID"),
+    )
+
+
+def resolve_qwen_oauth(config: AppConfig) -> dict[str, Any]:
+    return _resolve_generic_oauth_status(
+        config,
+        provider_key="qwen_oauth",
+        file_loader=load_qwen_auth_file,
+        token_envs=("CLAWLITE_QWEN_ACCESS_TOKEN", "QWEN_ACCESS_TOKEN"),
+        account_envs=("CLAWLITE_QWEN_ACCOUNT_ID", "QWEN_ACCOUNT_ID"),
+    )
+
+
+def resolve_oauth_provider_auth(config: AppConfig, provider: str) -> dict[str, Any]:
+    provider_key = str(provider or "").strip().lower().replace("-", "_")
+    if provider_key == "openai_codex":
+        return resolve_codex_auth(config)
+    if provider_key == "gemini_oauth":
+        return resolve_gemini_oauth(config)
+    if provider_key == "qwen_oauth":
+        return resolve_qwen_oauth(config)
+    return {
+        "configured": False,
+        "access_token": "",
+        "account_id": "",
+        "source": "",
+        "token_masked": "",
+        "account_id_masked": "",
+        "env_token_name": "",
+        "env_account_name": "",
     }
 
 
@@ -832,30 +1019,41 @@ def provider_login_openai_codex(
 
 def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[str, Any]:
     provider_norm = str(provider or "openai-codex").strip().lower().replace("_", "-")
-    if provider_norm in {"openai-codex", "codex"}:
-        status = resolve_codex_auth(config)
-        transport = provider_transport_name(provider="openai_codex", auth_mode="oauth")
+    provider_key = provider_norm.replace("-", "_")
+    spec = _provider_spec(provider_key)
+    if spec is not None and bool(spec.is_oauth):
+        status = resolve_oauth_provider_auth(config, provider_key)
+        transport = provider_transport_name(provider=provider_key, spec=spec, auth_mode="oauth")
+        selected = _provider_override(config, provider_key)
+        cfg_base_url = str(getattr(selected, "api_base", "") or "").strip()
+        default_base_url = str(spec.default_base_url or "")
+        base_url = cfg_base_url or default_base_url
+        base_url_source = (
+            f"config:providers.{provider_key}.api_base"
+            if cfg_base_url
+            else f"spec:{provider_key}.default_base_url"
+        )
         codex_base_url, codex_base_url_source = _resolve_codex_base_url(config)
         return {
             "ok": True,
-            "provider": "openai_codex",
+            "provider": provider_key,
             "configured": bool(status["configured"]),
             "token_masked": status["token_masked"],
             "account_id_masked": status["account_id_masked"],
             "source": status["source"],
             "model": str(config.agents.defaults.model or config.provider.model),
             "transport": transport,
-            "default_base_url": CODEX_DEFAULT_BASE_URL,
-            "base_url": codex_base_url,
-            "base_url_source": codex_base_url_source,
+            "default_base_url": CODEX_DEFAULT_BASE_URL if provider_key == "openai_codex" else default_base_url,
+            "base_url": codex_base_url if provider_key == "openai_codex" else base_url,
+            "base_url_source": codex_base_url_source if provider_key == "openai_codex" else base_url_source,
             "key_envs": [],
-            **_provider_profile_payload("openai_codex"),
+            **_provider_profile_payload(provider_key),
             "hints": provider_status_hints(
-                provider="openai_codex",
+                provider=provider_key,
                 configured=bool(status["configured"]),
                 auth_mode="oauth",
                 transport=transport,
-                default_base_url=CODEX_DEFAULT_BASE_URL,
+                default_base_url=CODEX_DEFAULT_BASE_URL if provider_key == "openai_codex" else default_base_url,
             ),
         }
 
@@ -949,14 +1147,107 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
 
 
 def provider_logout_openai_codex(config: AppConfig, *, config_path: str | Path | None) -> dict[str, Any]:
-    config.auth.providers.openai_codex.access_token = ""
-    config.auth.providers.openai_codex.account_id = ""
-    config.auth.providers.openai_codex.source = ""
+    return provider_logout_oauth(config, config_path=config_path, provider="openai_codex")
+
+
+def provider_login_oauth(
+    config: AppConfig,
+    *,
+    config_path: str | Path | None,
+    provider: str,
+    access_token: str = "",
+    account_id: str = "",
+    set_model: bool = False,
+    keep_model: bool = False,
+    interactive: bool = True,
+) -> dict[str, Any]:
+    provider_key = str(provider or "").strip().lower().replace("-", "_")
+    if provider_key not in set(SUPPORTED_OAUTH_PROVIDER_AUTH):
+        return {"ok": False, "error": f"unsupported_provider:{provider}"}
+
+    if provider_key == "openai_codex":
+        return provider_login_openai_codex(
+            config,
+            config_path=config_path,
+            access_token=access_token,
+            account_id=account_id,
+            set_model=set_model,
+            keep_model=keep_model,
+            interactive=interactive,
+        )
+
+    token = str(access_token or "").strip()
+    resolved_account_id = str(account_id or "").strip()
+    source = ""
+    if token:
+        source = "cli:access_token"
+    else:
+        status = resolve_oauth_provider_auth(config, provider_key)
+        token = str(status.get("access_token", "") or "").strip()
+        if not resolved_account_id:
+            resolved_account_id = str(status.get("account_id", "") or "").strip()
+        if token:
+            source = str(status.get("source", "") or "") or "file"
+
+    if not token:
+        action = "Gemini CLI login" if provider_key == "gemini_oauth" else "Qwen Code login"
+        return {
+            "ok": False,
+            "provider": provider_key,
+            "error": f"{provider_key}_access_token_missing",
+            "detail": f"Missing OAuth access token. Complete {action} or pass --access-token.",
+        }
+
+    auth_cfg = getattr(config.auth.providers, provider_key)
+    auth_cfg.access_token = token
+    auth_cfg.account_id = resolved_account_id
+    auth_cfg.source = source or "config"
+
+    if set_model and keep_model:
+        return {
+            "ok": False,
+            "provider": provider_key,
+            "error": "invalid_model_selection_options",
+            "detail": "Cannot combine --set-model with --keep-model.",
+        }
+
+    if (not keep_model) or set_model:
+        model = OAUTH_PROVIDER_DEFAULT_MODELS[provider_key]
+        config.provider.model = model
+        config.agents.defaults.model = model
+
     saved_path = save_config(config, path=config_path)
-    status = resolve_codex_auth(config)
+    status = resolve_oauth_provider_auth(config, provider_key)
     return {
         "ok": True,
-        "provider": "openai_codex",
+        "provider": provider_key,
+        "configured": bool(status["configured"]),
+        "token_masked": status["token_masked"],
+        "account_id_masked": status["account_id_masked"],
+        "source": status["source"],
+        "model": str(config.agents.defaults.model or config.provider.model),
+        "saved_path": str(saved_path),
+    }
+
+
+def provider_logout_oauth(
+    config: AppConfig,
+    *,
+    config_path: str | Path | None,
+    provider: str,
+) -> dict[str, Any]:
+    provider_key = str(provider or "").strip().lower().replace("-", "_")
+    if provider_key not in set(SUPPORTED_OAUTH_PROVIDER_AUTH):
+        return {"ok": False, "error": f"unsupported_provider:{provider}"}
+    auth_cfg = getattr(config.auth.providers, provider_key)
+    auth_cfg.access_token = ""
+    auth_cfg.account_id = ""
+    auth_cfg.source = "disabled"
+    saved_path = save_config(config, path=config_path)
+    status = resolve_oauth_provider_auth(config, provider_key)
+    return {
+        "ok": True,
+        "provider": provider_key,
         "configured": bool(status["configured"]),
         "saved_path": str(saved_path),
     }
@@ -983,19 +1274,30 @@ def _provider_spec(name: str) -> Any:
 def _resolve_provider_probe_target(config: AppConfig, provider_name: str) -> dict[str, Any]:
     provider_key = str(provider_name or "").strip().lower().replace("-", "_")
 
-    if provider_key == "openai_codex":
-        codex = resolve_codex_auth(config)
-        base_url, base_url_source = _resolve_codex_base_url(config)
+    spec = _provider_spec(provider_key)
+    if spec is not None and bool(spec.is_oauth):
+        oauth_status = resolve_oauth_provider_auth(config, provider_key)
+        if provider_key == "openai_codex":
+            base_url, base_url_source = _resolve_codex_base_url(config)
+        else:
+            selected = _provider_override(config, provider_key)
+            cfg_base = str(getattr(selected, "api_base", "") or "").strip()
+            base_url = cfg_base or str(spec.default_base_url or "")
+            base_url_source = (
+                f"config:providers.{provider_key}.api_base"
+                if cfg_base
+                else f"spec:{provider_key}.default_base_url"
+            )
         return {
             "ok": True,
             "provider": provider_key,
-            "api_key": str(codex.get("access_token", "") or "").strip(),
-            "api_key_masked": str(codex.get("token_masked", "") or ""),
-            "api_key_source": str(codex.get("source", "") or ""),
+            "api_key": str(oauth_status.get("access_token", "") or "").strip(),
+            "api_key_masked": str(oauth_status.get("token_masked", "") or ""),
+            "api_key_source": str(oauth_status.get("source", "") or ""),
             "base_url": base_url,
             "base_url_source": base_url_source,
             "auth_mode": "oauth",
-            "account_id": str(codex.get("account_id", "") or "").strip(),
+            "account_id": str(oauth_status.get("account_id", "") or "").strip(),
         }
 
     if provider_key in {"ollama", "vllm"}:
@@ -1556,7 +1858,7 @@ def provider_use_model(
     fallback_norm = str(fallback_model or "").strip()
     guidance = _provider_profile_payload(provider_norm)
     provider_spec = _provider_spec(provider_norm)
-    auth_mode = "oauth" if provider_norm == "openai-codex" else ("none" if provider_norm in {"ollama", "vllm"} else "api_key")
+    auth_mode = "oauth" if bool(provider_spec and provider_spec.is_oauth) else ("none" if provider_norm in {"ollama", "vllm"} else "api_key")
     transport = provider_transport_name(provider=provider_norm, spec=provider_spec, auth_mode=auth_mode)
 
     if not provider_norm:
@@ -1588,15 +1890,16 @@ def provider_use_model(
             "model": model_norm,
         }
 
-    if provider_norm == "openai-codex":
+    if bool(provider_spec and provider_spec.is_oauth):
         model_lower = model_norm.lower()
-        if not (model_lower.startswith("openai-codex/") or model_lower.startswith("openai_codex/")):
+        normalized_prefix = provider_norm.replace("-", "_")
+        if not (model_lower.startswith(f"{provider_norm}/") or model_lower.startswith(f"{normalized_prefix}/")):
             return {
                 "ok": False,
                 "error": "provider_model_mismatch",
                 "provider": provider_norm,
                 "model": model_norm,
-                "expected": "openai-codex/*",
+                "expected": f"{provider_norm}/*",
                 "transport": transport,
                 **guidance,
             }
@@ -1616,16 +1919,17 @@ def provider_use_model(
             }
 
     if fallback_norm:
-        if provider_norm == "openai-codex":
+        if bool(provider_spec and provider_spec.is_oauth):
             fallback_lower = fallback_norm.lower()
-            if not (fallback_lower.startswith("openai-codex/") or fallback_lower.startswith("openai_codex/")):
+            normalized_prefix = provider_norm.replace("-", "_")
+            if not (fallback_lower.startswith(f"{provider_norm}/") or fallback_lower.startswith(f"{normalized_prefix}/")):
                 return {
                     "ok": False,
                     "error": "fallback_provider_model_mismatch",
                     "provider": provider_norm,
                     "model": model_norm,
                     "fallback_model": fallback_norm,
-                    "expected": "openai-codex/*",
+                    "expected": f"{provider_norm}/*",
                     "transport": transport,
                     **guidance,
                 }
@@ -1717,44 +2021,38 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
     checks.append({"name": "provider_detected", "status": "ok", "detail": provider_name})
 
     if oauth:
-        codex_status = resolve_codex_auth(config)
-        if provider_name == "openai_codex":
-            if codex_status["configured"]:
-                checks.append(
-                    {
-                        "name": "oauth_access_token",
-                        "status": "ok",
-                        "detail": f"Codex token configured ({codex_status['token_masked']}) from {codex_status['source'] or 'unknown'}.",
-                    }
-                )
-            else:
-                errors.append("Missing OAuth access token for provider 'openai_codex'.")
-                checks.append(
-                    {
-                        "name": "oauth_access_token",
-                        "status": "error",
-                        "detail": "Run 'clawlite provider login openai-codex' or set CLAWLITE_CODEX_ACCESS_TOKEN.",
-                    }
-                )
+        oauth_status = resolve_oauth_provider_auth(config, provider_name)
+        if oauth_status["configured"]:
             checks.append(
                 {
-                    "name": "oauth_account_id",
-                    "status": "ok" if codex_status["account_id"] else "warning",
-                    "detail": (
-                        f"account_id={codex_status['account_id_masked']}"
-                        if codex_status["account_id"]
-                        else "account_id not configured (optional)."
-                    ),
+                    "name": "oauth_access_token",
+                    "status": "ok",
+                    "detail": f"OAuth token configured ({oauth_status['token_masked']}) from {oauth_status['source'] or 'unknown'}.",
                 }
             )
         else:
+            errors.append(f"Missing OAuth access token for provider '{provider_name}'.")
+            login_hint = f"Run 'clawlite provider login {provider_name.replace('_', '-')}'"
+            if provider_name == "openai_codex":
+                login_hint = "Run 'clawlite provider login openai-codex'"
             checks.append(
                 {
-                    "name": "oauth_mode",
-                    "status": "ok",
-                    "detail": "OAuth provider selected.",
+                    "name": "oauth_access_token",
+                    "status": "error",
+                    "detail": f"{login_hint} or set the provider access token environment variable.",
                 }
             )
+        checks.append(
+            {
+                "name": "oauth_account_id",
+                "status": "ok" if oauth_status["account_id"] else "warning",
+                "detail": (
+                    f"account_id={oauth_status['account_id_masked']}"
+                    if oauth_status["account_id"]
+                    else "account_id not configured (optional)."
+                ),
+            }
+        )
     else:
         key_optional = provider_name in {"ollama", "vllm"}
         has_key = bool(resolved_api_key) or any(env_hits.values()) or key_optional
@@ -1835,8 +2133,8 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
         "transport": transport,
         "oauth": oauth,
         "api_key_masked": _mask_secret(resolved_api_key),
-        "oauth_token_masked": resolve_codex_auth(config)["token_masked"] if provider_name == "openai_codex" else "",
-        "oauth_source": resolve_codex_auth(config)["source"] if provider_name == "openai_codex" else "",
+        "oauth_token_masked": resolve_oauth_provider_auth(config, provider_name)["token_masked"] if oauth else "",
+        "oauth_source": resolve_oauth_provider_auth(config, provider_name)["source"] if oauth else "",
         "base_url": resolved_base_url,
         "env_key_present": env_hits,
         **guidance,

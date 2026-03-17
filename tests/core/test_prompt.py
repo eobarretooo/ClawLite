@@ -76,6 +76,8 @@ def test_prompt_builder_applies_token_budget_shaping_deterministically(
     assert len(out.history_messages) == 1
     assert "recent-message" in out.history_messages[0]["content"]
     assert "old-message" not in out.history_messages[0]["content"]
+    assert "[Compressed Session History]" in out.history_summary
+    assert "old-message" in out.history_summary
 
 
 def test_prompt_builder_preserves_soul_and_user_sections_under_workspace_pressure(
@@ -227,3 +229,21 @@ def test_prompt_builder_runtime_context_includes_timezone_offset() -> None:
     context = PromptBuilder._render_runtime_context(channel="telegram", chat_id="42")
     assert "Current Time:" in context
     assert re.search(r"UTC[+-]\d{4}", context)
+
+
+def test_prompt_builder_omits_history_summary_when_history_fits_budget(tmp_path: Path) -> None:
+    (tmp_path / "IDENTITY.md").write_text("I am ClawLite", encoding="utf-8")
+
+    builder = PromptBuilder(tmp_path, context_token_budget=600)
+    out = builder.build(
+        user_text="hello",
+        memory_snippets=[],
+        history=[
+            {"role": "user", "content": "short message"},
+            {"role": "assistant", "content": "short reply"},
+        ],
+        skills_for_prompt=[],
+    )
+
+    assert out.history_summary == ""
+    assert len(out.history_messages) == 2

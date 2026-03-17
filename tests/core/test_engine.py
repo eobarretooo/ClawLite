@@ -14,6 +14,7 @@ from clawlite.core.memory import MemoryRecord
 from clawlite.core.subagent import SubagentRun
 from clawlite.core.subagent_synthesizer import SubagentSynthesizer
 from clawlite.core.prompt import PromptBuilder
+from clawlite.runtime.telemetry import set_test_tracer_factory
 from clawlite.tools.base import Tool, ToolContext
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logging import bind_event
@@ -22,6 +23,9 @@ from clawlite.utils.logging import bind_event
 class FakeProvider:
     def __init__(self) -> None:
         self.calls = 0
+
+    def get_default_model(self) -> str:
+        return "fake/model"
 
     async def complete(self, *, messages, tools):
         self.calls += 1
@@ -138,6 +142,33 @@ class SessionStoreCapture:
     def read(self, session_id: str, limit: int = 20) -> list[dict[str, str]]:
         self.last_limit = limit
         return []
+
+
+class _FakeSpan:
+    def __init__(self, name: str, sink: list[dict[str, Any]]) -> None:
+        self._row = {"name": name, "attributes": {}, "exceptions": []}
+        self._sink = sink
+
+    def __enter__(self) -> "_FakeSpan":
+        self._sink.append(self._row)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def set_attribute(self, name: str, value: Any) -> None:
+        self._row["attributes"][name] = value
+
+    def record_exception(self, exc: Exception) -> None:
+        self._row["exceptions"].append(type(exc).__name__)
+
+
+class _FakeTracer:
+    def __init__(self, sink: list[dict[str, Any]]) -> None:
+        self._sink = sink
+
+    def start_as_current_span(self, name: str) -> _FakeSpan:
+        return _FakeSpan(name, self._sink)
 
     def append(self, session_id: str, role: str, content: str) -> None:
         return None
@@ -781,6 +812,31 @@ class FakeRepeatedPlanProvider:
         )
 
 
+class FakeLoopRecoveryProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *, messages, tools):
+        del tools
+        self.calls += 1
+        recovery_notice = any(
+            row.get("role") == "system" and "Do not repeat the same action unchanged" in str(row.get("content", ""))
+            for row in messages
+            if isinstance(row, dict)
+        )
+        if recovery_notice:
+            return ProviderResult(
+                text="I changed strategy and will answer directly.",
+                tool_calls=[],
+                model="fake/model",
+            )
+        return ProviderResult(
+            text="keep using the same plan",
+            tool_calls=[ToolCall(name="echo", arguments={"text": "loop"})],
+            model="fake/model",
+        )
+
+
 class FakeDiagnosticSwitchProvider:
     def __init__(self) -> None:
         self.calls = 0
@@ -1085,6 +1141,34 @@ class BlockingConcurrencyProvider:
             return ProviderResult(text="ok", tool_calls=[], model="fake/model")
         finally:
             self.active_calls -= 1
+
+
+def test_engine_run_emits_engine_and_provider_spans() -> None:
+    async def _scenario() -> None:
+        spans: list[dict[str, Any]] = []
+        set_test_tracer_factory(lambda _name: _FakeTracer(spans))
+        try:
+            engine = AgentEngine(
+                provider=FakeProvider(),
+                tools=FakeTools(),
+            )
+            out = await engine.run(session_id="abc", user_text="say hi")
+        finally:
+            set_test_tracer_factory(None)
+
+        assert out.text == "final answer"
+        span_names = [row["name"] for row in spans]
+        assert "engine.run" in span_names
+        assert "provider.complete" in span_names
+        engine_span = next(row for row in spans if row["name"] == "engine.run")
+        provider_span = next(row for row in spans if row["name"] == "provider.complete")
+        assert engine_span["attributes"]["session.id"] == "abc"
+        assert engine_span["attributes"]["result.model"] == "fake/model"
+        assert int(engine_span["attributes"]["result.tool_calls"]) == 0
+        assert provider_span["attributes"]["provider.model_hint"] == "fake/model"
+        assert int(provider_span["attributes"]["tools.count"]) >= 1
+
+    asyncio.run(_scenario())
 
 
 def test_engine_runs_tool_roundtrip() -> None:
@@ -1624,6 +1708,51 @@ def test_engine_uses_configured_memory_window_for_session_history() -> None:
         out = await engine.run(session_id="cli:memory-window", user_text="hello")
         assert out.text == "ok"
         assert sessions.last_limit == 7
+
+    asyncio.run(_scenario())
+
+
+def test_engine_injects_compressed_history_summary_before_recent_turns() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        prompt_builder = PromptBuilder(context_token_budget=220)
+
+        class _Sessions:
+            def __init__(self) -> None:
+                self.rows = {
+                    "cli:compressed-history": [
+                        {"role": "user", "content": "older request " * 35},
+                        {"role": "assistant", "content": "older answer " * 35},
+                        {"role": "user", "content": "recent request " * 35},
+                        {"role": "assistant", "content": "recent answer " * 35},
+                    ]
+                }
+
+            def read(self, session_id: str, limit: int = 20) -> list[dict[str, str]]:
+                return list(self.rows.get(session_id, []))[-limit:]
+
+            def append(self, session_id: str, role: str, content: str) -> None:
+                self.rows.setdefault(session_id, []).append({"role": role, "content": content})
+
+        sessions = _Sessions()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            prompt_builder=prompt_builder,
+        )
+
+        out = await engine.run(session_id="cli:compressed-history", user_text="continue")
+
+        assert out.text == "ok"
+        snapshot = provider.snapshots[0]
+        summary_index = next(
+            idx for idx, row in enumerate(snapshot) if row["role"] == "system" and "[Compressed Session History]" in row["content"]
+        )
+        recent_index = next(
+            idx for idx, row in enumerate(snapshot) if row["role"] == "assistant" and "recent answer" in row["content"]
+        )
+        assert summary_index < recent_index
 
     asyncio.run(_scenario())
 
@@ -2662,7 +2791,7 @@ def test_engine_detects_ping_pong_non_progress_tool_loops() -> None:
         )
         out = await engine.run(session_id="cli:ping-pong-detect", user_text="run", progress_hook=_hook)
         assert out.model == "engine/loop-detected"
-        assert "alternating" in out.text.lower()
+        assert "loop detection found" in out.text.lower()
         assert provider.calls < 20
         assert loop_events
         assert loop_events[0]["detector"] == "ping_pong_no_progress"
@@ -2695,10 +2824,42 @@ def test_engine_detects_repeated_provider_plans_before_extra_tool_execution() ->
         out = await engine.run(session_id="cli:provider-plan-detect", user_text="run", progress_hook=_hook)
         assert out.model == "engine/loop-detected"
         assert "same no-progress tool plan" in out.text.lower()
-        assert provider.calls == 2
+        assert provider.calls == 3
         assert tools.calls == 1
         assert loop_events
         assert loop_events[0]["detector"] == "provider_plan_no_progress"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_injects_loop_recovery_notice_once_before_stopping() -> None:
+    async def _scenario() -> None:
+        provider = FakeLoopRecoveryProvider()
+        tools = FakeChangingResultTools()
+        diagnostic_events: list[dict[str, Any]] = []
+
+        def _hook(event) -> None:
+            if event.stage == "diagnostic_switch":
+                diagnostic_events.append(event.metadata or {})
+
+        engine = AgentEngine(
+            provider=provider,
+            tools=tools,
+            max_iterations=20,
+            loop_detection=LoopDetectionSettings(
+                enabled=True,
+                history_size=10,
+                repeat_threshold=1,
+                critical_threshold=2,
+            ),
+        )
+        out = await engine.run(session_id="cli:loop-recovery", user_text="run", progress_hook=_hook)
+        assert out.text == "I changed strategy and will answer directly."
+        assert provider.calls == 3
+        assert tools.calls == 1
+        assert diagnostic_events
+        assert diagnostic_events[0]["detector"] == "provider_plan_no_progress"
+        assert diagnostic_events[0]["loop_recovery"] is True
 
     asyncio.run(_scenario())
 

@@ -38,6 +38,7 @@ class MessageQueue:
         self._subscriber_queue_maxsize = max(1, int(subscriber_queue_maxsize or 1))
         self._journal = journal  # optional BusJournal instance
         self._inbound_journal_ids: dict[str, int] = {}  # correlation_id -> row_id
+        self._outbound_journal_ids: dict[str, int] = {}  # correlation_id -> row_id
         self._outbound_created_at: deque[str] = deque()
         self._dead_letter_events: deque[OutboundEvent] = deque()
         self._stop_event_ttl_s = max(0.01, float(stop_event_ttl_s or 0.01))
@@ -146,6 +147,12 @@ class MessageQueue:
             self._outbound_enqueued += 1
         except asyncio.QueueFull:
             self._outbound_dropped += 1
+            return
+
+        if self._journal is not None:
+            row_id = self._journal.append_outbound(event)
+            if row_id is not None:
+                self._outbound_journal_ids[event.correlation_id] = row_id
 
     async def next_inbound(self) -> InboundEvent:
         event = await self._inbound.get()
@@ -159,7 +166,20 @@ class MessageQueue:
         event = await self._outbound.get()
         if self._outbound_created_at:
             self._outbound_created_at.popleft()
+        if self._journal is not None:
+            row_id = self._outbound_journal_ids.pop(event.correlation_id, None)
+            if row_id is not None:
+                self._journal.ack_outbound(row_id)
         return event
+
+    async def connect(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        if self._journal is not None:
+            close_fn = getattr(self._journal, "close", None)
+            if callable(close_fn):
+                close_fn()
 
     async def publish_dead_letter(self, event: OutboundEvent) -> None:
         await self._enqueue_dead_letter(event)

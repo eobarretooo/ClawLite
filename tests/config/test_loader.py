@@ -92,6 +92,185 @@ def test_load_config_file_and_env_override(tmp_path: Path, monkeypatch) -> None:
     assert cfg.gateway.port == 7777
 
 
+def test_load_config_profile_overlay_merges_over_base_file(tmp_path: Path) -> None:
+    base_path = tmp_path / "config.yaml"
+    base_path.write_text(
+        "\n".join(
+            [
+                "provider:",
+                "  model: openai/gpt-4.1-mini",
+                "gateway:",
+                "  port: 8787",
+                "channels:",
+                "  send_progress: false",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config.prod.yaml").write_text(
+        "\n".join(
+            [
+                "gateway:",
+                "  port: 9797",
+                "channels:",
+                "  send_progress: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(base_path, profile="prod")
+
+    assert cfg.provider.model == "openai/gpt-4.1-mini"
+    assert cfg.gateway.port == 9797
+    assert cfg.channels.send_progress is True
+
+
+def test_load_config_profile_defaults_to_env_variable(tmp_path: Path, monkeypatch) -> None:
+    base_path = tmp_path / "config.json"
+    base_path.write_text(
+        json.dumps(
+            {
+                "provider": {"model": "openai/gpt-4.1-mini"},
+                "gateway": {"port": 8787},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config.prod.json").write_text(
+        json.dumps(
+            {
+                "gateway": {"port": 9797},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_PROFILE", "prod")
+
+    cfg = load_config(base_path)
+
+    assert cfg.gateway.port == 9797
+
+
+def test_load_config_rejects_invalid_profile_name(tmp_path: Path) -> None:
+    base_path = tmp_path / "config.json"
+    base_path.write_text("{}", encoding="utf-8")
+
+    try:
+        load_config(base_path, profile="../prod")
+    except RuntimeError as exc:
+        assert str(exc) == "invalid profile name"
+    else:
+        raise AssertionError("invalid profile name should fail")
+
+
+def test_load_config_bus_backend_and_redis_fields(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "bus:",
+                "  backend: redis",
+                "  redis_url: redis://localhost:6379/2",
+                "  redis_prefix: clawlite:cluster",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.bus.backend == "redis"
+    assert cfg.bus.redis_url == "redis://localhost:6379/2"
+    assert cfg.bus.redis_prefix == "clawlite:cluster"
+
+
+def test_load_config_observability_fields(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "observability:",
+                "  enabled: true",
+                "  otlp_endpoint: http://otel:4317",
+                "  service_name: clawlite-dev",
+                "  service_namespace: local",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.observability.enabled is True
+    assert cfg.observability.otlp_endpoint == "http://otel:4317"
+    assert cfg.observability.service_name == "clawlite-dev"
+    assert cfg.observability.service_namespace == "local"
+
+
+def test_load_config_gateway_startup_timeouts_and_self_evolution_controls(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "gateway:",
+                "  startup_timeout_default_s: 12",
+                "  startup_timeout_channels_s: 25",
+                "  startup_timeout_autonomy_s: 9",
+                "  startup_timeout_supervisor_s: 4",
+                "  autonomy:",
+                "    self_evolution_branch_prefix: review-queue",
+                "    self_evolution_require_approval: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.gateway.startup_timeout_default_s == 12
+    assert cfg.gateway.startup_timeout_channels_s == 25
+    assert cfg.gateway.startup_timeout_autonomy_s == 9
+    assert cfg.gateway.startup_timeout_supervisor_s == 4
+    assert cfg.gateway.autonomy.self_evolution_branch_prefix == "review-queue"
+    assert cfg.gateway.autonomy.self_evolution_require_approval is True
+
+
+def test_load_config_channel_runtime_fields_for_slack_whatsapp_and_irc(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "channels:",
+                "  slack:",
+                "    enabled: true",
+                "    bot_token: xoxb-1",
+                "    app_token: xapp-1",
+                "    send_retry_attempts: 4",
+                "  whatsapp:",
+                "    enabled: true",
+                "    bridge_url: http://localhost:3001",
+                "    typing_interval_s: 3.5",
+                "  irc:",
+                "    enabled: true",
+                "    host: irc.example.net",
+                "    channels_to_join:",
+                "      - \"#clawlite\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.channels.slack.send_retry_attempts == 4
+    assert cfg.channels.whatsapp.typing_interval_s == 3.5
+    assert cfg.channels.irc.host == "irc.example.net"
+    assert cfg.channels.irc.channels_to_join == ["#clawlite"]
+
+
 def test_app_config_gateway_preserves_explicit_zero_values_and_clamps_minimums() -> None:
     cfg = AppConfig.from_dict(
         {
@@ -563,6 +742,44 @@ def test_load_config_agent_defaults_session_retention_messages_camel_case(tmp_pa
     assert cfg.agents.defaults.session_retention_messages == 654
 
 
+def test_load_config_agent_defaults_session_retention_ttl_snake_case(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "session_retention_ttl_s": 7200,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.agents.defaults.session_retention_ttl_s == 7200
+
+
+def test_load_config_agent_defaults_session_retention_ttl_camel_case(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "sessionRetentionTtlS": 3600,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.agents.defaults.session_retention_ttl_s == 3600
+
+
 def test_load_config_gateway_diagnostics_include_provider_telemetry_snake_and_camel(tmp_path: Path) -> None:
     path_snake = tmp_path / "snake.json"
     path_snake.write_text(
@@ -729,3 +946,24 @@ def test_load_config_agent_memory_nested_camel_case_and_legacy_fallback(tmp_path
     assert cfg.agents.defaults.memory.pgvector_url == "postgresql://ignored"
     assert cfg.agents.defaults.semantic_memory is True
     assert cfg.agents.defaults.memory_auto_categorize is True
+
+
+def test_load_config_agent_memory_accepts_sqlite_vec_backend_variants(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "memory": {
+                            "backend": "sqlite_vec",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.agents.defaults.memory.backend == "sqlite-vec"

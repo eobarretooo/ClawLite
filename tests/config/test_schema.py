@@ -174,6 +174,79 @@ def test_autonomy_dev_profile_balanced_defaults():
     assert aut.min_action_confidence == 0.55
 
 
+def test_bus_config_accepts_redis_backend_and_normalizes_aliases():
+    cfg = AppConfig.model_validate(
+        {
+            "bus": {
+                "backend": "memory",
+                "redis_url": " redis://localhost:6379/1 ",
+                "redis_prefix": " clawlite:test ",
+            }
+        }
+    )
+    assert cfg.bus.backend == "inprocess"
+    assert cfg.bus.redis_url == "redis://localhost:6379/1"
+    assert cfg.bus.redis_prefix == "clawlite:test"
+
+    redis_cfg = AppConfig.model_validate({"bus": {"backend": "redis"}})
+    assert redis_cfg.bus.backend == "redis"
+
+
+def test_observability_config_accepts_endpoint_and_defaults() -> None:
+    cfg = AppConfig.model_validate(
+        {
+            "observability": {
+                "enabled": True,
+                "otlp_endpoint": " http://otel:4317 ",
+                "service_name": " clawlite-dev ",
+                "service_namespace": " local ",
+            }
+        }
+    )
+    assert cfg.observability.enabled is True
+    assert cfg.observability.otlp_endpoint == "http://otel:4317"
+    assert cfg.observability.service_name == "clawlite-dev"
+    assert cfg.observability.service_namespace == "local"
+
+
+def test_channels_config_supports_slack_whatsapp_and_irc_runtime_fields() -> None:
+    cfg = AppConfig.model_validate(
+        {
+            "channels": {
+                "slack": {
+                    "enabled": True,
+                    "botToken": "xoxb-1",
+                    "appToken": "xapp-1",
+                    "allowFrom": ["U123"],
+                    "sendRetryAttempts": 4,
+                    "socketModeEnabled": True,
+                    "workingIndicatorEmoji": "hourglass",
+                },
+                "whatsapp": {
+                    "enabled": True,
+                    "bridgeUrl": "http://localhost:3001",
+                    "sendRetryAttempts": 4,
+                    "typingIntervalS": 3.5,
+                },
+                "irc": {
+                    "enabled": True,
+                    "channelsToJoin": ["#clawlite"],
+                    "useSsl": False,
+                },
+            }
+        }
+    )
+
+    assert cfg.channels.slack.allow_from == ["U123"]
+    assert cfg.channels.slack.send_retry_attempts == 4
+    assert cfg.channels.slack.working_indicator_emoji == "hourglass"
+    assert cfg.channels.whatsapp.send_retry_attempts == 4
+    assert cfg.channels.whatsapp.typing_interval_s == 3.5
+    assert cfg.channels.irc.channels_to_join == ["#clawlite"]
+    assert cfg.channels.irc.use_ssl is False
+    assert "irc" in cfg.channels.enabled_names()
+
+
 # ---------------------------------------------------------------------------
 # 9. ProvidersConfig.get() returns custom provider
 # ---------------------------------------------------------------------------
@@ -343,3 +416,19 @@ def test_agent_memory_config():
     # Legacy flags synced
     assert cfg.agents.defaults.semantic_memory is True
     assert cfg.agents.defaults.memory_auto_categorize is True
+
+
+def test_agent_memory_config_accepts_sqlite_vec_alias() -> None:
+    cfg = AppConfig.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "memory": {
+                        "backend": "sqlite_vec",
+                    }
+                }
+            }
+        }
+    )
+
+    assert cfg.agents.defaults.memory.backend == "sqlite-vec"

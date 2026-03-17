@@ -110,10 +110,19 @@ class SQLiteMemoryBackend:
     db_path: str = ""
     _db_file: Path | None = field(init=False, default=None)
     _lock: threading.Lock = field(init=False)
+    _status: dict[str, Any] = field(init=False)
 
     def __post_init__(self) -> None:
         self._db_file = Path(self.db_path).expanduser() if str(self.db_path or "").strip() else None
         self._lock = threading.Lock()
+        self._status = {
+            "driver_name": "sqlite3",
+            "connection_ok": False,
+            "vector_extension": False,
+            "vector_version": "",
+            "supported": True,
+            "last_error": "",
+        }
 
     @property
     def name(self) -> str:
@@ -121,6 +130,9 @@ class SQLiteMemoryBackend:
 
     def is_supported(self) -> bool:
         return True
+
+    def diagnostics(self) -> dict[str, Any]:
+        return dict(self._status)
 
     @contextmanager
     def _connect(self):
@@ -224,6 +236,7 @@ class SQLiteMemoryBackend:
                     )
                 """)
                 conn.commit()
+                self._status.update(connection_ok=True, supported=True, last_error="")
 
     # ------------------------------------------------------------------
     # Resource CRUD
@@ -582,6 +595,120 @@ class SQLiteMemoryBackend:
                     return [{"record_id": r[0], "score": float(r[1])} for r in rows]
                 except Exception:
                     return []
+
+
+@dataclass(slots=True)
+class SQLiteVecMemoryBackend(SQLiteMemoryBackend):
+    @property
+    def name(self) -> str:
+        return "sqlite-vec"
+
+    def is_supported(self) -> bool:
+        self._status.update(supported=True)
+        return True
+
+    def _load_sqlite_vec(self, conn: sqlite3.Connection) -> tuple[bool, str, str]:
+        try:
+            sqlite_vec = importlib.import_module("sqlite_vec")
+        except Exception:
+            return False, "", "sqlite_vec package not installed; falling back to sqlite cosine search"
+
+        load_fn = getattr(sqlite_vec, "load", None)
+        if not callable(load_fn):
+            return False, "", "sqlite_vec.load() is unavailable; falling back to sqlite cosine search"
+
+        try:
+            conn.enable_load_extension(True)
+        except Exception:
+            pass
+        try:
+            load_fn(conn)
+            row = conn.execute("select vec_version()").fetchone()
+            version = str(row[0] or "").strip() if isinstance(row, (list, tuple)) and row else ""
+            return True, version, ""
+        except Exception as exc:
+            return False, "", str(exc)
+        finally:
+            try:
+                conn.enable_load_extension(False)
+            except Exception:
+                pass
+
+    def initialize(self, memory_home: str | Path) -> None:
+        SQLiteMemoryBackend.initialize(self, memory_home)
+        if self._db_file is None:
+            return
+        with self._lock:
+            with self._connect() as conn:
+                enabled, version, error = self._load_sqlite_vec(conn)
+                self._status.update(
+                    connection_ok=True,
+                    vector_extension=enabled,
+                    vector_version=version,
+                    supported=True,
+                    last_error=error,
+                )
+
+    def query_similar_embeddings(
+        self,
+        query_embedding: list[float],
+        record_ids: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        normalized_query = _normalize_embedding(query_embedding)
+        if normalized_query is None or self._db_file is None:
+            return []
+        bounded_limit = max(1, int(limit or 1))
+        clean_ids = [str(item).strip() for item in (record_ids or []) if str(item).strip()]
+        placeholders = ", ".join("?" for _ in clean_ids)
+        where_clause = f"WHERE record_id IN ({placeholders})" if clean_ids else ""
+        query_literal = json.dumps(normalized_query, ensure_ascii=True, separators=(",", ":"))
+        params: list[Any] = [query_literal, *clean_ids, bounded_limit]
+        try:
+            with self._lock:
+                with self._connect() as conn:
+                    enabled, version, error = self._load_sqlite_vec(conn)
+                    self._status.update(
+                        connection_ok=True,
+                        vector_extension=enabled,
+                        vector_version=version,
+                        supported=True,
+                        last_error=error,
+                    )
+                    if not enabled:
+                        raise RuntimeError(error or "sqlite_vec unavailable")
+                    rows = conn.execute(
+                        f"""
+                        SELECT record_id, distance
+                        FROM (
+                            SELECT
+                                record_id,
+                                vec_distance_cosine(vec_f32(embedding), vec_f32(?)) AS distance
+                            FROM embeddings
+                            {where_clause}
+                        )
+                        ORDER BY distance ASC, record_id DESC
+                        LIMIT ?
+                        """,
+                        params,
+                    ).fetchall()
+        except Exception as exc:
+            self._status["last_error"] = str(exc)
+            return SQLiteMemoryBackend.query_similar_embeddings(
+                self,
+                normalized_query,
+                record_ids=record_ids,
+                limit=bounded_limit,
+            )
+
+        return [
+            {
+                "record_id": str(row_id or ""),
+                "score": float(1.0 - float(distance or 0.0)),
+            }
+            for row_id, distance in rows
+            if str(row_id or "").strip()
+        ]
 
 
 @dataclass(slots=True)
@@ -1265,6 +1392,8 @@ class PgvectorMemoryBackend:
 
 def resolve_memory_backend(backend_name: str, pgvector_url: str = "") -> MemoryBackend:
     normalized = str(backend_name or "sqlite").strip().lower()
+    if normalized in {"sqlite-vec", "sqlite_vec"}:
+        return SQLiteVecMemoryBackend()
     if normalized == "pgvector":
         return PgvectorMemoryBackend(pgvector_url=str(pgvector_url or ""))
     return SQLiteMemoryBackend()

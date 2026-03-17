@@ -497,6 +497,33 @@ async def _run_engine_with_timeout(
         raise RuntimeError("engine_run_timeout") from exc
 
 
+async def _stream_engine_with_timeout(
+    *,
+    engine: AgentEngine,
+    session_id: str,
+    user_text: str,
+    timeout_s: float,
+):
+    stream = engine.stream_run(session_id=session_id, user_text=user_text)
+    deadline = time.monotonic() + max(0.001, float(timeout_s))
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("engine_run_timeout")
+            try:
+                chunk = await asyncio.wait_for(anext(stream), timeout=remaining)
+            except StopAsyncIteration:
+                break
+            except (asyncio.TimeoutError, TimeoutError) as exc:
+                raise RuntimeError("engine_run_timeout") from exc
+            yield chunk
+    finally:
+        close_fn = getattr(stream, "aclose", None)
+        if callable(close_fn):
+            await close_fn()
+
+
 async def _normalize_background_task(task: asyncio.Task[Any] | None) -> tuple[asyncio.Task[Any] | None, str]:
     if task is None:
         return None, "missing"
@@ -929,6 +956,22 @@ async def _run_heartbeat(runtime: RuntimeContainer) -> HeartbeatDecision:
         "Do not infer or repeat old tasks from prior chats. "
         "If nothing needs attention, reply HEARTBEAT_OK."
     )
+    sessions_store = getattr(getattr(runtime, "engine", None), "sessions", None)
+    prune_sessions = getattr(sessions_store, "prune_expired", None)
+    if callable(prune_sessions):
+        try:
+            pruned_sessions = int(await asyncio.to_thread(prune_sessions))
+        except Exception as exc:
+            bind_event("heartbeat.tick", session="heartbeat:system").warning(
+                "session ttl prune failed error={}",
+                exc,
+            )
+        else:
+            if pruned_sessions > 0:
+                bind_event("heartbeat.tick", session="heartbeat:system").info(
+                    "session ttl prune deleted_sessions={}",
+                    pruned_sessions,
+                )
     workspace_heartbeat = ""
     workspace = getattr(runtime, "workspace", None)
     workspace_heartbeat_prompt = getattr(workspace, "heartbeat_prompt", None)
@@ -2568,6 +2611,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         lifecycle.phase = "starting"
         lifecycle.ready = False
         bind_event("gateway.lifecycle").info("gateway startup begin host={} port={}", cfg.gateway.host, cfg.gateway.port)
+        bus_connect = getattr(runtime.bus, "connect", None)
+        if callable(bus_connect):
+            await bus_connect()
         await _start_subsystems()
         lifecycle.phase = "running"
         lifecycle.ready = True
@@ -2579,6 +2625,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             lifecycle.ready = False
             bind_event("gateway.lifecycle").info("gateway shutdown begin")
             await _stop_subsystems()
+            bus_close = getattr(runtime.bus, "close", None)
+            if callable(bus_close):
+                await bus_close()
             lifecycle.phase = "stopped"
             bind_event("gateway.lifecycle").info("gateway shutdown complete")
 
@@ -2902,6 +2951,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         ws_telemetry=ws_telemetry,
         contract_version=GATEWAY_CONTRACT_VERSION,
         run_engine_with_timeout_fn=lambda session_id, user_text: _run_engine_with_timeout(
+            engine=runtime.engine,
+            session_id=session_id,
+            user_text=user_text,
+            timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
+        ),
+        stream_engine_with_timeout_fn=lambda session_id, user_text: _stream_engine_with_timeout(
             engine=runtime.engine,
             session_id=session_id,
             user_text=user_text,

@@ -19,6 +19,7 @@ class GatewayWebSocketHandlers:
     ws_telemetry: Any
     contract_version: str
     run_engine_with_timeout_fn: Callable[[str, str], Awaitable[Any]]
+    stream_engine_with_timeout_fn: Callable[[str, str], Any] | None
     provider_error_payload_fn: Callable[[RuntimeError], tuple[int, str]]
     finalize_bootstrap_for_user_turn_fn: Callable[[str], None]
     control_plane_payload_fn: Callable[[], Any]
@@ -76,6 +77,15 @@ class GatewayWebSocketHandlers:
             return request_id, method, None
         return request_id, method, params
 
+    @staticmethod
+    def _coerce_stream_flag(payload: dict[str, Any]) -> bool:
+        raw = payload.get("stream")
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
     async def _run_chat_request(self, *, request_id: str | int | None, params: dict[str, Any]) -> dict[str, Any]:
         session_id = str(params.get("session_id") or params.get("sessionId") or "").strip()
         text = str(params.get("text") or "").strip()
@@ -113,6 +123,121 @@ class GatewayWebSocketHandlers:
                 "model": out.model,
             },
         }
+
+    async def _run_chat_stream_request(
+        self,
+        *,
+        request_id: str | int | None,
+        params: dict[str, Any],
+        send_ws_fn: Callable[[Any], Awaitable[None]],
+        legacy_envelope: bool = False,
+    ) -> bool:
+        session_id = str(params.get("session_id") or params.get("sessionId") or "").strip()
+        text = str(params.get("text") or "").strip()
+        if not session_id or not text:
+            if legacy_envelope:
+                await send_ws_fn(
+                    self._envelope_error(
+                        error="session_id and text are required",
+                        status_code=400,
+                        request_id=str(request_id or "").strip() or None,
+                    )
+                )
+            else:
+                await send_ws_fn(
+                    self._req_error(
+                        request_id=request_id,
+                        code="invalid_request",
+                        message="session_id/sessionId and text are required",
+                        status_code=400,
+                    )
+                )
+            return False
+        if self.stream_engine_with_timeout_fn is None:
+            return False
+
+        last_accumulated = ""
+        last_model = ""
+        try:
+            async for chunk in self.stream_engine_with_timeout_fn(session_id, text):
+                last_accumulated = str(getattr(chunk, "accumulated", "") or last_accumulated)
+                last_model = str(getattr(chunk, "model", "") or last_model)
+                event_payload = {
+                    "session_id": session_id,
+                    "text": str(getattr(chunk, "text", "") or ""),
+                    "accumulated": last_accumulated,
+                    "done": bool(getattr(chunk, "done", False)),
+                    "degraded": bool(getattr(chunk, "degraded", False)),
+                }
+                error_text = str(getattr(chunk, "error", "") or "").strip()
+                if error_text:
+                    event_payload["error"] = error_text
+                if last_model:
+                    event_payload["model"] = last_model
+                if legacy_envelope:
+                    outbound = {
+                        "type": "message_chunk",
+                        **event_payload,
+                    }
+                    if request_id is not None:
+                        outbound["request_id"] = request_id
+                else:
+                    outbound = {
+                        "type": "event",
+                        "event": "chat.chunk",
+                        "id": request_id,
+                        "params": event_payload,
+                    }
+                await send_ws_fn(outbound)
+        except RuntimeError as exc:
+            status_code, detail = self.provider_error_payload_fn(exc)
+            bind_event("gateway.ws", session=session_id, channel="ws").error(
+                "websocket request failed status={} detail={}",
+                status_code,
+                detail,
+            )
+            if legacy_envelope:
+                await send_ws_fn(self._envelope_error(error=detail, status_code=status_code, request_id=str(request_id or "").strip() or None))
+            else:
+                await send_ws_fn(
+                    self._req_error(
+                        request_id=request_id,
+                        code=detail,
+                        message=detail,
+                        status_code=status_code,
+                    )
+                )
+            return True
+
+        self.finalize_bootstrap_for_user_turn_fn(session_id)
+        if legacy_envelope:
+            response_payload: dict[str, Any] = {
+                "type": "message_result",
+                "session_id": session_id,
+                "text": last_accumulated,
+                "model": last_model,
+            }
+            if request_id is not None:
+                response_payload["request_id"] = request_id
+            await send_ws_fn(response_payload)
+        else:
+            await send_ws_fn(
+                {
+                    "type": "res",
+                    "id": request_id,
+                    "ok": True,
+                    "result": {
+                        "session_id": session_id,
+                        "text": last_accumulated,
+                        "model": last_model,
+                    },
+                }
+            )
+        bind_event("gateway.ws", session=session_id, channel="ws").debug(
+            "websocket streaming response sent model={}",
+            last_model or "-",
+        )
+        return True
 
     async def handle(self, socket: WebSocket, *, path_label: str) -> None:
         if not await self.auth_guard.check_ws(
@@ -243,6 +368,14 @@ class GatewayWebSocketHandlers:
                             )
                             continue
                         if normalized_method in {"chat.send", "message.send"}:
+                            if self._coerce_stream_flag(params):
+                                handled = await self._run_chat_stream_request(
+                                    request_id=request_id,
+                                    params=params,
+                                    send_ws_fn=_send_ws,
+                                )
+                                if handled:
+                                    continue
                             await _send_ws(await self._run_chat_request(request_id=request_id, params=params))
                             continue
 
@@ -290,6 +423,16 @@ class GatewayWebSocketHandlers:
                             )
                         )
                         continue
+
+                    if self._coerce_stream_flag(payload):
+                        handled = await self._run_chat_stream_request(
+                            request_id=request_id,
+                            params=payload,
+                            send_ws_fn=_send_ws,
+                            legacy_envelope=True,
+                        )
+                        if handled:
+                            continue
 
                     try:
                         out = await self.run_engine_with_timeout_fn(session_id, text)

@@ -32,7 +32,7 @@ _TUNING_LAYER_ACTION_PLAYBOOKS: dict[str, dict[str, str]] = {
     "outcome": {
         "low": "notify_operator",
         "medium": "semantic_backfill",
-        "high": "memory_snapshot",
+        "high": "memory_compact",
     },
 }
 

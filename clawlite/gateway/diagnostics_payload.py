@@ -132,6 +132,7 @@ async def diagnostics_payload(
         "memory_quality_tuning": dict(tuning_runner_state),
         "engine": engine_payload,
         "environment": environment,
+        "observability": dict(getattr(runtime, "telemetry", {}) or {}),
         "http": await http_snapshot(),
         "ws": await ws_snapshot(),
         "self_evolution": self_evolution_payload,

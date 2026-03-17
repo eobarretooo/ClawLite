@@ -91,7 +91,8 @@ def provider_probe_hints(
 
     if error_text == "api_key_missing":
         if str(auth_mode or "").strip().lower() == "oauth":
-            _append_hint(hints, "Run 'clawlite provider login openai-codex' to authenticate Codex.")
+            login_target = provider_name.replace("_", "-")
+            _append_hint(hints, f"Run 'clawlite provider login {login_target}' to authenticate this OAuth provider.")
         else:
             _append_hint(hints, f"Configure the API key for provider '{provider_name}' in config or an environment variable before testing again.")
             if key_envs:

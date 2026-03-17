@@ -1,6 +1,6 @@
 # Providers
 
-ClawLite can talk to hosted APIs, local runtimes, OpenAI Codex OAuth, and custom OpenAI-compatible backends. The default model is `gemini/gemini-2.5-flash`.
+ClawLite can talk to hosted APIs, local runtimes, OAuth-backed free-tier providers, and custom OpenAI-compatible backends. The default model is `gemini/gemini-2.5-flash`.
 
 ## Fastest Manual Setup
 
@@ -56,6 +56,8 @@ Useful environment variables:
 - `CLAWLITE_LITELLM_API_KEY`
 - provider-specific key vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`
 - Codex OAuth vars such as `CLAWLITE_CODEX_ACCESS_TOKEN`, `OPENAI_CODEX_ACCESS_TOKEN`, `OPENAI_ACCESS_TOKEN`, `CLAWLITE_CODEX_ACCOUNT_ID`, `OPENAI_ORG_ID`
+- Gemini OAuth vars such as `CLAWLITE_GEMINI_ACCESS_TOKEN`, `GEMINI_ACCESS_TOKEN`, `CLAWLITE_GEMINI_ACCOUNT_ID`
+- Qwen OAuth vars such as `CLAWLITE_QWEN_ACCESS_TOKEN`, `QWEN_ACCESS_TOKEN`, `CLAWLITE_QWEN_ACCOUNT_ID`
 
 Important behavior:
 
@@ -107,7 +109,9 @@ Important behavior:
 | --- | --- | --- | --- | --- | --- |
 | `ollama` | - | Local OpenAI-compatible | `openai/llama3.2` | `http://127.0.0.1:11434/v1` | No API key required |
 | `vllm` | - | Local OpenAI-compatible | `vllm/meta-llama/Llama-3.2-3B-Instruct` | `http://127.0.0.1:8000/v1` | No API key required |
-| `openai-codex` | `openai_codex`, `codex` | OAuth-backed OpenAI-compatible | `openai-codex/gpt-5.3-codex` | `https://api.openai.com/v1` | OAuth access token and optional account/org ID |
+| `openai-codex` | `openai_codex`, `codex` | OAuth-backed OpenAI-compatible | `openai-codex/gpt-5.3-codex` | `https://chatgpt.com/backend-api` | OAuth access token and optional account/org ID |
+| `gemini-oauth` | `gemini_oauth` | OAuth-backed OpenAI-compatible | `gemini_oauth/gemini-2.0-flash` | `https://generativelanguage.googleapis.com/v1beta/openai` | OAuth access token discovered from config, env, or local CLI auth file |
+| `qwen-oauth` | `qwen_oauth` | OAuth-backed OpenAI-compatible | `qwen_oauth/qwen-plus` | `https://api.qwen.ai/v1` | OAuth access token discovered from config, env, or local CLI auth file |
 | `custom` | - | User-defined OpenAI-compatible | `custom/<model>` | your choice | API key and headers are fully user-defined |
 
 ## Onboarding Support
@@ -134,7 +138,7 @@ The interactive wizard currently offers this subset:
 - `ollama`
 - `vllm`
 
-Runtime support is broader than wizard support. `custom`, `openai-codex`, `nvidia`, `byteplus`, `doubao`, and `volcengine` are supported in code but not surfaced by the onboarding wizard.
+Runtime support is broader than wizard support. `custom`, `openai-codex`, `gemini-oauth`, `qwen-oauth`, `nvidia`, `byteplus`, `doubao`, and `volcengine` are supported in code but not surfaced by the onboarding wizard.
 
 ## Example Configs
 
@@ -223,6 +227,42 @@ Runtime support is broader than wizard support. `custom`, `openai-codex`, `nvidi
   "agents": {
     "defaults": {
       "model": "openai-codex/gpt-5.3-codex"
+    }
+  }
+}
+```
+
+### Gemini OAuth
+
+```json
+{
+  "provider": {
+    "model": "gemini_oauth/gemini-2.0-flash"
+  },
+  "auth": {
+    "providers": {
+      "gemini_oauth": {
+        "access_token": "oauth-token",
+        "source": "config:test"
+      }
+    }
+  }
+}
+```
+
+### Qwen OAuth
+
+```json
+{
+  "provider": {
+    "model": "qwen_oauth/qwen-plus"
+  },
+  "auth": {
+    "providers": {
+      "qwen_oauth": {
+        "access_token": "oauth-token",
+        "source": "config:test"
+      }
     }
   }
 }
@@ -317,6 +357,34 @@ clawlite provider logout
 ```
 
 `--set-model` is kept as a deprecated compatibility flag. Use `--keep-model` if you want to persist Codex auth without switching the active model.
+
+## Gemini and Qwen OAuth Details
+
+Gemini OAuth is resolved in this order:
+
+1. `auth.providers.gemini_oauth` in config
+2. `CLAWLITE_GEMINI_ACCESS_TOKEN`
+3. `GEMINI_ACCESS_TOKEN`
+4. auth file at `~/.gemini/oauth_creds.json` or `CLAWLITE_GEMINI_AUTH_PATH`
+
+Qwen OAuth is resolved in this order:
+
+1. `auth.providers.qwen_oauth` in config
+2. `CLAWLITE_QWEN_ACCESS_TOKEN`
+3. `QWEN_ACCESS_TOKEN`
+4. auth file at `~/.qwen/oauth_creds.json`, `~/.qwen/auth.json`, or `CLAWLITE_QWEN_AUTH_PATH`
+
+CLI helpers:
+
+```bash
+clawlite provider login gemini-oauth
+clawlite provider status gemini-oauth
+clawlite provider logout gemini-oauth
+
+clawlite provider login qwen-oauth
+clawlite provider status qwen-oauth
+clawlite provider logout qwen-oauth
+```
 
 ## Validation and Troubleshooting
 

@@ -10,7 +10,9 @@ from clawlite.providers.codex_auth import load_codex_auth_file
 from clawlite.providers.custom import CustomProvider
 from clawlite.providers.discovery import detect_local_runtime, normalize_local_runtime_base_url
 from clawlite.providers.failover import FailoverCandidate, FailoverProvider
+from clawlite.providers.gemini_auth import load_gemini_auth_file
 from clawlite.providers.litellm import LiteLLMProvider
+from clawlite.providers.qwen_auth import load_qwen_auth_file
 
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -264,6 +266,26 @@ SPECS: tuple[ProviderSpec, ...] = (
         model_prefixes=("openai-codex/", "openai_codex/"),
         key_envs=(),
         default_base_url=CODEX_DEFAULT_BASE_URL,
+        openai_compatible=True,
+        is_oauth=True,
+    ),
+    ProviderSpec(
+        name="gemini_oauth",
+        aliases=("gemini-oauth",),
+        keywords=("gemini-oauth",),
+        model_prefixes=("gemini-oauth/", "gemini_oauth/"),
+        key_envs=(),
+        default_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        openai_compatible=True,
+        is_oauth=True,
+    ),
+    ProviderSpec(
+        name="qwen_oauth",
+        aliases=("qwen-oauth",),
+        keywords=("qwen-oauth",),
+        model_prefixes=("qwen-oauth/", "qwen_oauth/"),
+        key_envs=(),
+        default_base_url="https://api.qwen.ai/v1",
         openai_compatible=True,
         is_oauth=True,
     ),
@@ -563,6 +585,62 @@ def _resolve_codex_oauth(config: dict[str, Any]) -> tuple[str, str]:
     return token, account_id
 
 
+def _resolve_generic_oauth(
+    config: dict[str, Any],
+    *,
+    provider_names: tuple[str, ...],
+    token_envs: tuple[str, ...],
+    account_envs: tuple[str, ...],
+    file_loader,
+) -> tuple[str, str]:
+    auth = dict(config.get("auth") or {})
+    auth_providers = auth.get("providers")
+    auth_provider_map = dict(auth_providers) if isinstance(auth_providers, dict) else {}
+    auth_file = file_loader()
+
+    payload: dict[str, Any] = {}
+    for key in provider_names:
+        candidate = auth_provider_map.get(key)
+        if isinstance(candidate, dict):
+            payload = dict(candidate)
+            break
+
+    token = (
+        _cfg_value(payload, "access_token", "accessToken")
+        or _cfg_value(payload, "token", "token")
+        or next((os.getenv(env_name, "").strip() for env_name in token_envs if os.getenv(env_name, "").strip()), "")
+        or str(auth_file.get("access_token", "") or "").strip()
+    )
+    account_id = (
+        _cfg_value(payload, "account_id", "accountId")
+        or _cfg_value(payload, "org_id", "orgId")
+        or _cfg_value(payload, "organization", "organization")
+        or next((os.getenv(env_name, "").strip() for env_name in account_envs if os.getenv(env_name, "").strip()), "")
+        or str(auth_file.get("account_id", "") or "").strip()
+    )
+    return token, account_id
+
+
+def _resolve_gemini_oauth(config: dict[str, Any]) -> tuple[str, str]:
+    return _resolve_generic_oauth(
+        config,
+        provider_names=("gemini_oauth", "gemini-oauth", "geminiOAuth", "gemini"),
+        token_envs=("CLAWLITE_GEMINI_ACCESS_TOKEN", "GEMINI_ACCESS_TOKEN"),
+        account_envs=("CLAWLITE_GEMINI_ACCOUNT_ID", "GEMINI_ACCOUNT_ID"),
+        file_loader=load_gemini_auth_file,
+    )
+
+
+def _resolve_qwen_oauth(config: dict[str, Any]) -> tuple[str, str]:
+    return _resolve_generic_oauth(
+        config,
+        provider_names=("qwen_oauth", "qwen-oauth", "qwenOAuth", "qwen"),
+        token_envs=("CLAWLITE_QWEN_ACCESS_TOKEN", "QWEN_ACCESS_TOKEN"),
+        account_envs=("CLAWLITE_QWEN_ACCOUNT_ID", "QWEN_ACCOUNT_ID"),
+        file_loader=load_qwen_auth_file,
+    )
+
+
 def _reliability_settings(config: dict[str, Any]) -> dict[str, Any]:
     retry_max_attempts = max(1, int(config.get("retry_max_attempts", config.get("retryMaxAttempts", 3)) or 3))
     retry_initial_backoff_s = max(
@@ -638,6 +716,42 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
             access_token=token,
             account_id=account_id,
             base_url=codex_base_url,
+            **reliability,
+        )
+
+    if model_lower.startswith(("gemini-oauth/", "gemini_oauth/")):
+        model_name = model.split("/", 1)[1] if "/" in model else model
+        token, _account_id = _resolve_gemini_oauth(config)
+        gemini_cfg = _provider_cfg(providers_cfg, "gemini_oauth")
+        gemini_base_url = (
+            _cfg_value(gemini_cfg, "api_base", "apiBase")
+            or _cfg_value(gemini_cfg, "base_url", "baseUrl")
+            or "https://generativelanguage.googleapis.com/v1beta/openai"
+        )
+        return LiteLLMProvider(
+            base_url=gemini_base_url,
+            api_key=token,
+            model=model_name,
+            provider_name="gemini_oauth",
+            allow_empty_api_key=False,
+            **reliability,
+        )
+
+    if model_lower.startswith(("qwen-oauth/", "qwen_oauth/")):
+        model_name = model.split("/", 1)[1] if "/" in model else model
+        token, _account_id = _resolve_qwen_oauth(config)
+        qwen_cfg = _provider_cfg(providers_cfg, "qwen_oauth")
+        qwen_base_url = (
+            _cfg_value(qwen_cfg, "api_base", "apiBase")
+            or _cfg_value(qwen_cfg, "base_url", "baseUrl")
+            or "https://api.qwen.ai/v1"
+        )
+        return LiteLLMProvider(
+            base_url=qwen_base_url,
+            api_key=token,
+            model=model_name,
+            provider_name="qwen_oauth",
+            allow_empty_api_key=False,
             **reliability,
         )
 

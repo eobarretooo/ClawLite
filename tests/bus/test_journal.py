@@ -139,6 +139,24 @@ async def test_queue_journal_replay_on_restart(tmp_path):
     j2.close()
 
 
+@pytest.mark.asyncio
+async def test_queue_with_journal_acks_outbound_on_consume(tmp_path):
+    db = tmp_path / "bus.db"
+    journal = BusJournal(db)
+    journal.open()
+
+    bus = MessageQueue(journal=journal)
+    event = OutboundEvent(channel="discord", session_id="s5", target="u5", text="ack me too")
+    await bus.publish_outbound(event)
+
+    assert len(journal.unacked_outbound()) == 1
+
+    consumed = await bus.next_outbound()
+    assert consumed.text == "ack me too"
+    assert journal.unacked_outbound() == []
+    journal.close()
+
+
 # ---------------------------------------------------------------------------
 # Wildcard subscription
 # ---------------------------------------------------------------------------

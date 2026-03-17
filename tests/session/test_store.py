@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -139,3 +141,35 @@ def test_session_store_batches_compaction_for_larger_limits(tmp_path: Path) -> N
     assert len(rows) == 100
     assert rows[0]["content"] == "m30"
     assert rows[-1]["content"] == "m129"
+
+
+def test_session_store_prune_expired_deletes_stale_session_files(tmp_path: Path) -> None:
+    store = SessionStore(root=tmp_path / "sessions", session_retention_ttl_s=60)
+    store.append("telegram:stale", "user", "old")
+    store.append("telegram:fresh", "user", "new")
+
+    stale_path = store._path("telegram:stale")
+    fresh_path = store._path("telegram:fresh")
+    now = time.time()
+    os.utime(stale_path, (now - 3600, now - 3600))
+
+    deleted = store.prune_expired(now=now)
+
+    assert deleted == 1
+    assert stale_path.exists() is False
+    assert fresh_path.exists() is True
+    diag = store.diagnostics()
+    assert diag["ttl_prune_runs"] == 1
+    assert diag["ttl_prune_deleted_sessions"] == 1
+
+
+def test_session_store_prune_expired_is_noop_when_ttl_disabled(tmp_path: Path) -> None:
+    store = SessionStore(root=tmp_path / "sessions", session_retention_ttl_s=None)
+    store.append("telegram:1", "user", "hello")
+
+    deleted = store.prune_expired(now=time.time())
+
+    assert deleted == 0
+    assert store.list_sessions() == ["telegram:1"]
+    diag = store.diagnostics()
+    assert diag["ttl_prune_runs"] == 0

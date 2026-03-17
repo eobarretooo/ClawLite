@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from starlette.websockets import WebSocketDisconnect
 
+from clawlite.core.engine import ProviderChunk
 from clawlite.gateway.websocket_handlers import GatewayWebSocketHandlers
 
 
@@ -46,6 +47,11 @@ def _build_handler(*, inbound: list[object], run_result: object | None = None) -
     )
     finalized: list[str] = []
     chat_result = run_result or SimpleNamespace(text="pong", model="fake/test")
+
+    async def _stream_result(_session_id: str, _text: str):
+        yield ProviderChunk(text="po", accumulated="po", done=False)
+        yield ProviderChunk(text="ng", accumulated="pong", done=True)
+
     handler = GatewayWebSocketHandlers(
         auth_guard=auth_guard,
         diagnostics_require_auth=False,
@@ -54,6 +60,7 @@ def _build_handler(*, inbound: list[object], run_result: object | None = None) -
         ws_telemetry=ws_telemetry,
         contract_version="2026-03-04",
         run_engine_with_timeout_fn=AsyncMock(return_value=chat_result),
+        stream_engine_with_timeout_fn=_stream_result,
         provider_error_payload_fn=lambda exc: (500, str(exc)),
         finalize_bootstrap_for_user_turn_fn=finalized.append,
         control_plane_payload_fn=lambda: {"contract_version": "2026-03-04", "components": {}, "auth": {}},
@@ -108,5 +115,56 @@ def test_websocket_handler_rejects_req_before_connect() -> None:
             "code": "not_connected",
             "message": "connect handshake required",
             "status_code": 409,
+        },
+    }
+
+
+def test_websocket_handler_streams_req_chat_chunks_before_final_result() -> None:
+    handler, socket = _build_handler(
+        inbound=[
+            {"type": "req", "id": "c1", "method": "connect", "params": {}},
+            {
+                "type": "req",
+                "id": "m1",
+                "method": "chat.send",
+                "params": {"sessionId": "cli:req-stream", "text": "ping", "stream": True},
+            },
+        ]
+    )
+
+    asyncio.run(handler.handle(socket, path_label="/ws"))
+
+    assert socket.sent[2] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m1",
+        "params": {
+            "session_id": "cli:req-stream",
+            "text": "po",
+            "accumulated": "po",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[3] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m1",
+        "params": {
+            "session_id": "cli:req-stream",
+            "text": "ng",
+            "accumulated": "pong",
+            "done": True,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[4] == {
+        "type": "res",
+        "id": "m1",
+        "ok": True,
+        "result": {
+            "session_id": "cli:req-stream",
+            "text": "pong",
+            "model": "",
         },
     }

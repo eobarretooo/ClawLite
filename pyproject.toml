@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawlite"
-version = "0.6.0b0"
+version = "0.7.0b0"
 description = "Portable agentic assistant for Linux"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,6 +30,10 @@ dependencies = [
 browser = [
   "playwright>=1.46.0",
 ]
+observability = [
+  "opentelemetry-sdk>=1.27.0",
+  "opentelemetry-exporter-otlp>=1.27.0",
+]
 telegram = [
   "python-telegram-bot>=21.0",
 ]
@@ -39,12 +43,16 @@ media = [
 ]
 all = [
   "playwright>=1.46.0",
+  "opentelemetry-sdk>=1.27.0",
+  "opentelemetry-exporter-otlp>=1.27.0",
   "python-telegram-bot>=21.0",
   "edge-tts>=6.1.12",
   "pypdf>=4.0.0",
 ]
 dev = [
   "playwright>=1.46.0",
+  "opentelemetry-sdk>=1.27.0",
+  "opentelemetry-exporter-otlp>=1.27.0",
   "python-telegram-bot>=21.0",
   "edge-tts>=6.1.12",
   "pypdf>=4.0.0",

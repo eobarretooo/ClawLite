@@ -26,6 +26,10 @@ def test_select_tuning_action_playbook_prefers_layer_specific_actions() -> None:
         "memory_snapshot",
         "layer_decision_high_v1",
     )
+    assert select_tuning_action_playbook(severity="high", weakest_layer="outcome") == (
+        "memory_compact",
+        "layer_outcome_high_v1",
+    )
 
 
 def test_tuning_layer_resolution_and_backfill_limit_are_bounded() -> None:

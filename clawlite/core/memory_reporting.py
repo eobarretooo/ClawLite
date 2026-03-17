@@ -7,35 +7,45 @@ from typing import Any, Callable
 
 
 def build_memory_diagnostics(*, diagnostics: dict[str, Any], backend_diagnostics: dict[str, Any]) -> dict[str, int | str | bool]:
+    def _int_metric(source: dict[str, Any], name: str) -> int:
+        return int(source.get(name, 0) or 0)
+
+    def _str_metric(source: dict[str, Any], name: str) -> str:
+        return str(source.get(name, "") or "")
+
+    def _bool_metric(source: dict[str, Any], name: str) -> bool:
+        return bool(source.get(name, False))
+
     return {
-        "history_read_corrupt_lines": int(diagnostics["history_read_corrupt_lines"]),
-        "history_repaired_files": int(diagnostics["history_repaired_files"]),
-        "consolidate_writes": int(diagnostics["consolidate_writes"]),
-        "consolidate_dedup_hits": int(diagnostics["consolidate_dedup_hits"]),
-        "session_recovery_attempts": int(diagnostics["session_recovery_attempts"]),
-        "session_recovery_hits": int(diagnostics["session_recovery_hits"]),
-        "working_memory_promotions": int(diagnostics["working_memory_promotions"]),
-        "working_memory_promotion_skips": int(diagnostics["working_memory_promotion_skips"]),
-        "privacy_audit_writes": int(diagnostics["privacy_audit_writes"]),
-        "privacy_audit_skipped": int(diagnostics["privacy_audit_skipped"]),
-        "privacy_audit_errors": int(diagnostics["privacy_audit_errors"]),
-        "privacy_ttl_deleted": int(diagnostics["privacy_ttl_deleted"]),
-        "privacy_encrypt_events": int(diagnostics["privacy_encrypt_events"]),
-        "privacy_encrypt_errors": int(diagnostics["privacy_encrypt_errors"]),
-        "privacy_decrypt_events": int(diagnostics["privacy_decrypt_events"]),
-        "privacy_decrypt_errors": int(diagnostics["privacy_decrypt_errors"]),
-        "privacy_key_load_events": int(diagnostics["privacy_key_load_events"]),
-        "privacy_key_create_events": int(diagnostics["privacy_key_create_events"]),
-        "privacy_key_errors": int(diagnostics["privacy_key_errors"]),
-        "last_error": str(diagnostics["last_error"]),
-        "backend_name": str(backend_diagnostics["backend_name"]),
-        "backend_supported": bool(backend_diagnostics["backend_supported"]),
-        "backend_initialized": bool(backend_diagnostics["backend_initialized"]),
-        "backend_init_error": str(backend_diagnostics["backend_init_error"]),
-        "backend_driver": str(backend_diagnostics["backend_driver"]),
-        "backend_connection_ok": bool(backend_diagnostics["backend_connection_ok"]),
-        "backend_vector_extension": bool(backend_diagnostics["backend_vector_extension"]),
-        "backend_vector_version": str(backend_diagnostics["backend_vector_version"]),
+        "history_read_corrupt_lines": _int_metric(diagnostics, "history_read_corrupt_lines"),
+        "history_repaired_files": _int_metric(diagnostics, "history_repaired_files"),
+        "consolidate_writes": _int_metric(diagnostics, "consolidate_writes"),
+        "consolidate_dedup_hits": _int_metric(diagnostics, "consolidate_dedup_hits"),
+        "session_recovery_attempts": _int_metric(diagnostics, "session_recovery_attempts"),
+        "session_recovery_hits": _int_metric(diagnostics, "session_recovery_hits"),
+        "working_memory_promotions": _int_metric(diagnostics, "working_memory_promotions"),
+        "working_memory_promotion_skips": _int_metric(diagnostics, "working_memory_promotion_skips"),
+        "working_memory_promotion_rate_limited": _int_metric(diagnostics, "working_memory_promotion_rate_limited"),
+        "privacy_audit_writes": _int_metric(diagnostics, "privacy_audit_writes"),
+        "privacy_audit_skipped": _int_metric(diagnostics, "privacy_audit_skipped"),
+        "privacy_audit_errors": _int_metric(diagnostics, "privacy_audit_errors"),
+        "privacy_ttl_deleted": _int_metric(diagnostics, "privacy_ttl_deleted"),
+        "privacy_encrypt_events": _int_metric(diagnostics, "privacy_encrypt_events"),
+        "privacy_encrypt_errors": _int_metric(diagnostics, "privacy_encrypt_errors"),
+        "privacy_decrypt_events": _int_metric(diagnostics, "privacy_decrypt_events"),
+        "privacy_decrypt_errors": _int_metric(diagnostics, "privacy_decrypt_errors"),
+        "privacy_key_load_events": _int_metric(diagnostics, "privacy_key_load_events"),
+        "privacy_key_create_events": _int_metric(diagnostics, "privacy_key_create_events"),
+        "privacy_key_errors": _int_metric(diagnostics, "privacy_key_errors"),
+        "last_error": _str_metric(diagnostics, "last_error"),
+        "backend_name": _str_metric(backend_diagnostics, "backend_name"),
+        "backend_supported": _bool_metric(backend_diagnostics, "backend_supported"),
+        "backend_initialized": _bool_metric(backend_diagnostics, "backend_initialized"),
+        "backend_init_error": _str_metric(backend_diagnostics, "backend_init_error"),
+        "backend_driver": _str_metric(backend_diagnostics, "backend_driver"),
+        "backend_connection_ok": _bool_metric(backend_diagnostics, "backend_connection_ok"),
+        "backend_vector_extension": _bool_metric(backend_diagnostics, "backend_vector_extension"),
+        "backend_vector_version": _str_metric(backend_diagnostics, "backend_vector_version"),
     }
 
 

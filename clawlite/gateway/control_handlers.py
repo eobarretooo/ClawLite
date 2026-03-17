@@ -217,5 +217,11 @@ class GatewayControlHandlers:
         evo = self.runtime.self_evolution
         if evo is None:
             raise HTTPException(status_code=404, detail="self_evolution_not_configured")
-        status = await evo.run_once(force=True)
+        payload: Any = {}
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        dry_run = bool(payload.get("dry_run", False)) if isinstance(payload, dict) else False
+        status = await evo.run_once(force=True, dry_run=dry_run)
         return {"ok": True, "status": status, "runner": dict(self.self_evolution_runner_state)}

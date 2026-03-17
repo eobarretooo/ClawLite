@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from clawlite.config.schema import ToolSafetyPolicyConfig
+from clawlite.runtime.telemetry import get_tracer, set_span_attributes
 from clawlite.tools.base import Tool, ToolContext, ToolError, ToolTimeoutError
 
 
@@ -425,8 +426,30 @@ class ToolRegistry:
 
         # Execute with centralized timeout middleware
         timeout_s = self._resolve_timeout(tool, validated_arguments)
+        tracer = get_tracer("clawlite.tools")
         try:
-            result = await asyncio.wait_for(tool.run(validated_arguments, ctx), timeout=timeout_s)
+            with tracer.start_as_current_span("tool.execute") as span:
+                set_span_attributes(
+                    span,
+                    {
+                        "tool.name": name,
+                        "tool.session_id": session_id,
+                        "tool.channel": resolved_channel,
+                        "tool.user_id": user_id,
+                        "tool.timeout_s": timeout_s,
+                    },
+                )
+                try:
+                    result = await asyncio.wait_for(tool.run(validated_arguments, ctx), timeout=timeout_s)
+                except Exception as exc:
+                    span.record_exception(exc)
+                    raise
+                set_span_attributes(
+                    span,
+                    {
+                        "tool.result.length": len(str(result or "")),
+                    },
+                )
         except asyncio.TimeoutError:
             raise ToolTimeoutError(name, timeout_s)
         except (ToolError, ToolTimeoutError):

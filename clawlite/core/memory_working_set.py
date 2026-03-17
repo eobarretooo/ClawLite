@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import re
 from typing import Any, Callable
 
@@ -74,6 +75,8 @@ def normalize_working_memory_promotion_state(value: Any) -> dict[str, Any]:
         total = int(payload.get("total_promotions", payload.get("totalPromotions", 0)) or 0)
     except Exception:
         total = 0
+    recent_raw = payload.get("recent_promoted_at", payload.get("recentPromotedAt", []))
+    recent_promoted_at = recent_raw if isinstance(recent_raw, list) else []
     return {
         "last_promoted_signature": str(
             payload.get("last_promoted_signature", payload.get("lastPromotedSignature", "")) or ""
@@ -81,7 +84,30 @@ def normalize_working_memory_promotion_state(value: Any) -> dict[str, Any]:
         "last_promoted_at": str(payload.get("last_promoted_at", payload.get("lastPromotedAt", "")) or "").strip(),
         "last_promoted_message_count": max(0, message_count),
         "total_promotions": max(0, total),
+        "recent_promoted_at": [str(item or "").strip() for item in recent_promoted_at if str(item or "").strip()],
     }
+
+
+def prune_recent_promotion_timestamps(
+    timestamps: list[str],
+    *,
+    current_time_iso: str,
+    window_seconds: int,
+    parse_iso_fn: Callable[[str], dt.datetime | None],
+) -> list[str]:
+    if window_seconds <= 0:
+        return []
+    current_time = parse_iso_fn(current_time_iso)
+    if current_time is None:
+        return []
+    kept: list[str] = []
+    for item in timestamps:
+        parsed = parse_iso_fn(str(item or ""))
+        if parsed is None:
+            continue
+        if (current_time - parsed).total_seconds() <= float(window_seconds):
+            kept.append(str(item))
+    return kept
 
 
 def default_working_memory_state() -> dict[str, Any]:
@@ -537,9 +563,12 @@ def promote_working_memory_locked(
     normalize_memory_metadata_fn: Callable[[Any], dict[str, Any]],
     add_record_fn: Callable[..., Any],
     utcnow_iso: Callable[[], str],
+    parse_iso_fn: Callable[[str], dt.datetime | None],
     promotion_min_messages: int,
     promotion_window: int,
     promotion_step: int,
+    promotion_rate_limit_window_s: int,
+    promotion_rate_limit_max: int,
 ) -> Any | None:
     entry = normalize_working_memory_session_fn(session_id, sessions.get(session_id, {}))
     if entry is None:
@@ -570,9 +599,22 @@ def promote_working_memory_locked(
         return None
 
     promotion = normalize_working_memory_promotion_state_fn(entry.get("promotion", {}))
+    now_iso = utcnow_iso()
+    recent_promoted_at = prune_recent_promotion_timestamps(
+        list(promotion.get("recent_promoted_at", [])),
+        current_time_iso=now_iso,
+        window_seconds=promotion_rate_limit_window_s,
+        parse_iso_fn=parse_iso_fn,
+    )
     signature = chunk_signature_fn(raw_resource_text.splitlines())
     message_count = len(direct_messages)
     if not force:
+        if promotion_rate_limit_max > 0 and len(recent_promoted_at) >= promotion_rate_limit_max:
+            diagnostics["working_memory_promotion_skips"] = int(diagnostics.get("working_memory_promotion_skips", 0) or 0) + 1
+            diagnostics["working_memory_promotion_rate_limited"] = int(
+                diagnostics.get("working_memory_promotion_rate_limited", 0) or 0
+            ) + 1
+            return None
         if signature == str(promotion.get("last_promoted_signature", "") or ""):
             diagnostics["working_memory_promotion_skips"] = int(diagnostics.get("working_memory_promotion_skips", 0) or 0) + 1
             return None
@@ -582,7 +624,7 @@ def promote_working_memory_locked(
             return None
 
     session_key = str(entry.get("session_id", session_id) or session_id)
-    happened_at = str(recent[-1].get("created_at", "") or utcnow_iso())
+    happened_at = str(recent[-1].get("created_at", "") or now_iso)
     summary = working_memory_episode_summary_fn(session_key, recent)
     metadata = normalize_memory_metadata_fn(
         {
@@ -609,9 +651,10 @@ def promote_working_memory_locked(
         happened_at=happened_at,
     )
     promotion["last_promoted_signature"] = signature
-    promotion["last_promoted_at"] = utcnow_iso()
+    promotion["last_promoted_at"] = now_iso
     promotion["last_promoted_message_count"] = message_count
     promotion["total_promotions"] = int(promotion.get("total_promotions", 0) or 0) + 1
+    promotion["recent_promoted_at"] = [*recent_promoted_at, now_iso]
     entry["promotion"] = promotion
     sessions[session_key] = entry
     diagnostics["working_memory_promotions"] = int(diagnostics.get("working_memory_promotions", 0) or 0) + 1
@@ -778,6 +821,7 @@ __all__ = [
     "normalize_working_memory_session",
     "normalize_working_memory_share_scope",
     "normalize_working_memory_state_payload",
+    "prune_recent_promotion_timestamps",
     "parent_session_id",
     "promote_working_memory_locked",
     "remember_working_message",

@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from clawlite.bus.journal import BusJournal
 from clawlite.bus.queue import MessageQueue
+from clawlite.bus.redis_queue import RedisMessageQueue
 from clawlite.channels.manager import ChannelManager
 from clawlite.config.schema import AppConfig
 from clawlite.core.engine import AgentEngine, LoopDetectionSettings
@@ -23,7 +25,9 @@ from clawlite.runtime import (
     AutonomyWakeCoordinator,
     RuntimeSupervisor,
 )
+from clawlite.runtime.telemetry import configure_observability
 from clawlite.gateway.autonomy_notice import send_autonomy_notice
+from clawlite.gateway.self_evolution_approval import handle_self_evolution_inbound_action
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatService
 from clawlite.session.store import SessionStore
@@ -82,6 +86,7 @@ class RuntimeContainer:
     self_evolution: Any | None = None
     autonomy: AutonomyService | None = None
     job_queue: JobQueue | None = None
+    telemetry: dict[str, Any] | None = None
 
 
 class _CronAPI:
@@ -265,6 +270,12 @@ def _validate_local_provider_runtime(provider: Any) -> None:
 
 def build_runtime(config: AppConfig) -> RuntimeContainer:
     bind_event("gateway.runtime").info("building runtime workspace={} state={}", config.workspace_path, config.state_path)
+    telemetry = configure_observability(
+        enabled=bool(getattr(config.observability, "enabled", False)),
+        endpoint=str(getattr(config.observability, "otlp_endpoint", "") or "").strip(),
+        service_name=str(getattr(config.observability, "service_name", "") or "clawlite"),
+        service_namespace=str(getattr(config.observability, "service_namespace", "") or "").strip(),
+    )
     workspace = WorkspaceLoader(workspace_path=config.workspace_path)
     workspace.ensure_runtime_files()
     workspace.bootstrap()
@@ -358,6 +369,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     sessions = SessionStore(
         root=Path(config.state_path) / "sessions",
         max_messages_per_session=config.agents.defaults.session_retention_messages,
+        session_retention_ttl_s=config.agents.defaults.session_retention_ttl_s,
     )
     memory_backend = resolve_memory_backend(
         backend_name=str(config.agents.defaults.memory.backend or "sqlite"),
@@ -473,7 +485,22 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         job_queue.restore_from_journal()
     tools.register(JobsTool(job_queue))
 
-    bus = MessageQueue()
+    bus_journal: BusJournal | None = None
+    if bool(getattr(config.bus, "journal_enabled", False)):
+        journal_path = str(getattr(config.bus, "journal_path", "") or "").strip()
+        if not journal_path:
+            journal_path = str(Path(config.state_path) / "bus.db")
+        bus_journal = BusJournal(journal_path)
+        bus_journal.open()
+
+    if str(getattr(config.bus, "backend", "inprocess") or "inprocess").strip().lower() == "redis":
+        bus = RedisMessageQueue(
+            redis_url=str(getattr(config.bus, "redis_url", "") or "").strip() or "redis://127.0.0.1:6379/0",
+            prefix=str(getattr(config.bus, "redis_prefix", "") or "").strip() or "clawlite:bus",
+            journal=bus_journal,
+        )
+    else:
+        bus = MessageQueue(journal=bus_journal)
     engine._bus = bus
     channels = ChannelManager(bus=bus, engine=engine)
     autonomy_log = AutonomyLog(path=Path(config.state_path) / "autonomy-events.json")
@@ -543,8 +570,19 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         notify=_evo_notify,
         cooldown_s=float(config.gateway.autonomy.self_evolution_cooldown_s),
         enabled=bool(config.gateway.autonomy.self_evolution_enabled),
+        branch_prefix=str(config.gateway.autonomy.self_evolution_branch_prefix or "self-evolution"),
+        require_approval=bool(config.gateway.autonomy.self_evolution_require_approval),
         log_path=Path(config.state_path) / "evolution-log.json",
     )
+
+    async def _channel_inbound_interceptor(event) -> bool:
+        return await handle_self_evolution_inbound_action(
+            event,
+            self_evolution=self_evolution,
+            channels=channels,
+        )
+
+    channels.set_inbound_interceptor(_channel_inbound_interceptor)
 
     bind_event("gateway.runtime").info("runtime ready provider_model={} tools={}", config.agents.defaults.model, len(tools.schema()))
     return RuntimeContainer(
@@ -561,6 +599,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         memory_monitor=memory_monitor,
         self_evolution=self_evolution,
         job_queue=job_queue,
+        telemetry=telemetry,
     )
 
 

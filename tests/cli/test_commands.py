@@ -363,6 +363,65 @@ def test_cli_status_and_version(tmp_path: Path, capsys) -> None:
     assert ver_out
 
 
+def test_cli_status_respects_profile_overlay(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "scheduler": {"heartbeat_interval_seconds": 1234},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config.prod.json").write_text(
+        json.dumps(
+            {
+                "scheduler": {"heartbeat_interval_seconds": 4321},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "--profile", "prod", "status"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["heartbeat_interval_seconds"] == 4321
+
+
+def test_cli_self_evolution_trigger_posts_dry_run(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_trigger(config, *, gateway_url="", token="", timeout=10.0, dry_run=False):
+        assert dry_run is True
+        assert gateway_url == ""
+        assert token == ""
+        assert timeout == 10.0
+        return {"ok": True, "status": {"last_outcome": "dry_run"}, "runner": {"running": False}}
+
+    monkeypatch.setattr("clawlite.cli.commands.self_evolution_trigger", _fake_trigger)
+
+    rc = main(["--config", str(config_path), "self-evolution", "trigger", "--dry-run"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["status"]["last_outcome"] == "dry_run"
+
+
 def test_cli_dashboard_no_open_returns_tokenized_handoff_and_bootstrap_state(
     tmp_path: Path, capsys
 ) -> None:
@@ -2072,6 +2131,98 @@ def test_cli_provider_login_status_logout_openai_codex(
     persisted_after = json.loads(config_path.read_text(encoding="utf-8"))
     assert persisted_after["auth"]["providers"]["openai_codex"]["access_token"] == ""
     assert persisted_after["auth"]["providers"]["openai_codex"]["account_id"] == ""
+
+
+def test_cli_provider_login_status_logout_gemini_oauth(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    auth_path = tmp_path / "gemini-oauth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "gemini-token-1234"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_GEMINI_AUTH_PATH", str(auth_path))
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc_login = main(
+        [
+            "--config",
+            str(config_path),
+            "provider",
+            "login",
+            "gemini-oauth",
+            "--no-interactive",
+        ]
+    )
+    assert rc_login == 0
+    login_payload = json.loads(capsys.readouterr().out)
+    assert login_payload["ok"] is True
+    assert login_payload["provider"] == "gemini_oauth"
+    assert login_payload["configured"] is True
+
+    rc_status = main(
+        ["--config", str(config_path), "provider", "status", "gemini-oauth"]
+    )
+    assert rc_status == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["configured"] is True
+    assert status_payload["provider"] == "gemini_oauth"
+    assert status_payload["model"] == "gemini_oauth/gemini-2.0-flash"
+    assert status_payload["transport"] == "oauth_openai_compatible"
+    assert status_payload["default_base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert status_payload["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+
+    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["auth"]["providers"]["gemini_oauth"]["access_token"] == "gemini-token-1234"
+    assert persisted["provider"]["model"] == "gemini_oauth/gemini-2.0-flash"
+
+    rc_logout = main(
+        ["--config", str(config_path), "provider", "logout", "gemini-oauth"]
+    )
+    assert rc_logout == 0
+    logout_payload = json.loads(capsys.readouterr().out)
+    assert logout_payload["configured"] is False
+
+
+def test_cli_provider_status_qwen_oauth_uses_auth_file_when_config_missing(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    auth_path = tmp_path / "qwen-oauth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "qwen-token-1234"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_QWEN_AUTH_PATH", str(auth_path))
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "qwen_oauth/qwen-plus"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc_status = main(["--config", str(config_path), "provider", "status", "qwen-oauth"])
+    assert rc_status == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["configured"] is True
+    assert status_payload["provider"] == "qwen_oauth"
+    assert status_payload["transport"] == "oauth_openai_compatible"
+    assert status_payload["default_base_url"] == "https://api.qwen.ai/v1"
+    assert status_payload["base_url"] == "https://api.qwen.ai/v1"
 
 
 def test_cli_provider_status_openai_api_key_provider_success(

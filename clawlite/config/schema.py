@@ -118,6 +118,8 @@ class GatewayAutonomyConfig(Base):
     tuning_error_backoff_s: int = 900
     self_evolution_enabled: bool = False
     self_evolution_cooldown_s: int = 3600
+    self_evolution_branch_prefix: str = "self-evolution"
+    self_evolution_require_approval: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -324,10 +326,20 @@ class GatewayAutonomyConfig(Base):
         v = v if v not in (None, "") else 3600
         return max(60, int(v))
 
+    @field_validator("self_evolution_branch_prefix", mode="before")
+    @classmethod
+    def _branch_prefix_default(cls, v: Any) -> str:
+        value = str(v or "self-evolution").strip()
+        return value or "self-evolution"
+
 
 class GatewayConfig(Base):
     host: str = "127.0.0.1"
     port: int = 8787
+    startup_timeout_default_s: float = 15.0
+    startup_timeout_channels_s: float = 30.0
+    startup_timeout_autonomy_s: float = 10.0
+    startup_timeout_supervisor_s: float = 5.0
     heartbeat: GatewayHeartbeatConfig = Field(default_factory=GatewayHeartbeatConfig)
     auth: GatewayAuthConfig = Field(default_factory=GatewayAuthConfig)
     diagnostics: GatewayDiagnosticsConfig = Field(default_factory=GatewayDiagnosticsConfig)
@@ -343,6 +355,18 @@ class GatewayConfig(Base):
     @classmethod
     def _port_default(cls, v: Any) -> int:
         return int(v or 8787)
+
+    @field_validator(
+        "startup_timeout_default_s",
+        "startup_timeout_channels_s",
+        "startup_timeout_autonomy_s",
+        "startup_timeout_supervisor_s",
+        mode="before",
+    )
+    @classmethod
+    def _startup_timeout_default(cls, v: Any) -> float:
+        v = v if v not in (None, "") else 15.0
+        return max(0.1, float(v))
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +562,8 @@ class AuthProviderTokenConfig(Base):
 
 class AuthProvidersConfig(Base):
     openai_codex: AuthProviderTokenConfig = Field(default_factory=AuthProviderTokenConfig)
+    gemini_oauth: AuthProviderTokenConfig = Field(default_factory=AuthProviderTokenConfig)
+    qwen_oauth: AuthProviderTokenConfig = Field(default_factory=AuthProviderTokenConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -549,6 +575,16 @@ class AuthProvidersConfig(Base):
             for key in ("openai-codex", "codex"):
                 if key in data and isinstance(data[key], dict):
                     data["openai_codex"] = data[key]
+                    break
+        if "gemini_oauth" not in data and "geminiOAuth" not in data:
+            for key in ("gemini-oauth", "gemini_oauth", "gemini"):
+                if key in data and isinstance(data[key], dict):
+                    data["gemini_oauth"] = data[key]
+                    break
+        if "qwen_oauth" not in data and "qwenOAuth" not in data:
+            for key in ("qwen-oauth", "qwen_oauth", "qwen"):
+                if key in data and isinstance(data[key], dict):
+                    data["qwen_oauth"] = data[key]
                     break
         return data
 
@@ -577,7 +613,9 @@ class AgentMemoryConfig(Base):
         v = str(v or "sqlite").strip().lower()
         if v == "jsonl":
             return "sqlite"
-        if v in {"sqlite", "pgvector"}:
+        if v in {"sqlite", "pgvector", "sqlite-vec", "sqlite_vec"}:
+            if v == "sqlite_vec":
+                return "sqlite-vec"
             return v
         return "sqlite"
 
@@ -602,6 +640,7 @@ class AgentDefaultsConfig(Base):
     max_tool_iterations: int = 40
     memory_window: int = 100
     session_retention_messages: int | None = 2000
+    session_retention_ttl_s: int | None = None
     reasoning_effort: str | None = None
     semantic_memory: bool = False
     memory_auto_categorize: bool = False
@@ -616,6 +655,8 @@ class AgentDefaultsConfig(Base):
         # Handle session_retention_messages: explicit None is allowed
         if "sessionRetentionMessages" in data and "session_retention_messages" not in data:
             data["session_retention_messages"] = data["sessionRetentionMessages"]
+        if "sessionRetentionTtlS" in data and "session_retention_ttl_s" not in data:
+            data["session_retention_ttl_s"] = data["sessionRetentionTtlS"]
         # Propagate legacy top-level memory flags into the memory sub-config
         legacy_semantic = bool(data.get("semantic_memory", data.get("semanticMemory", False)))
         legacy_auto_cat = bool(data.get("memory_auto_categorize", data.get("memoryAutoCategorize", False)))
@@ -671,6 +712,15 @@ class AgentDefaultsConfig(Base):
             return None
         if isinstance(v, str) and not v.strip():
             return 2000
+        return max(1, int(v))
+
+    @field_validator("session_retention_ttl_s", mode="before")
+    @classmethod
+    def _session_retention_ttl(cls, v: Any) -> int | None:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
         return max(1, int(v))
 
     @field_validator("reasoning_effort", mode="before")
@@ -737,7 +787,7 @@ class TelegramChannelConfig(Base):
     reconnect_initial_s: float = 2.0
     reconnect_max_s: float = 30.0
     send_timeout_s: float = 15.0
-    send_retry_attempts: int = 3
+    send_retry_attempts: int = 1
     send_backoff_base_s: float = 0.35
     send_backoff_max_s: float = 8.0
     send_backoff_jitter: float = 0.2
@@ -949,6 +999,14 @@ class SlackChannelConfig(Base):
     app_token: str = ""
     api_base: str = "https://slack.com/api"
     timeout_s: float = 10.0
+    send_retry_attempts: int = 3
+    send_retry_after_default_s: float = 1.0
+    socket_mode_enabled: bool = True
+    socket_backoff_base_s: float = 1.0
+    socket_backoff_max_s: float = 30.0
+    typing_enabled: bool = True
+    working_indicator_enabled: bool = True
+    working_indicator_emoji: str = "hourglass_flowing_sand"
 
     @field_validator("allow_from", mode="before")
     @classmethod
@@ -963,6 +1021,23 @@ class SlackChannelConfig(Base):
         v = v if v not in (None, "") else 10.0
         return max(0.1, float(v))
 
+    @field_validator(
+        "send_retry_after_default_s",
+        "socket_backoff_base_s",
+        "socket_backoff_max_s",
+        mode="before",
+    )
+    @classmethod
+    def _min_non_negative_float(cls, v: Any) -> float:
+        v = v if v not in (None, "") else 0.0
+        return max(0.0, float(v))
+
+    @field_validator("send_retry_attempts", mode="before")
+    @classmethod
+    def _min_retry_attempts(cls, v: Any) -> int:
+        v = v if v not in (None, "") else 1
+        return max(1, int(v))
+
     @model_validator(mode="before")
     @classmethod
     def _handle_aliases(cls, data: Any) -> Any:
@@ -971,6 +1046,22 @@ class SlackChannelConfig(Base):
         data = dict(data)
         if "allow_from" not in data and "allowFrom" in data:
             data["allow_from"] = data["allowFrom"]
+        if "send_retry_attempts" not in data and "sendRetryAttempts" in data:
+            data["send_retry_attempts"] = data["sendRetryAttempts"]
+        if "send_retry_after_default_s" not in data and "sendRetryAfterDefaultS" in data:
+            data["send_retry_after_default_s"] = data["sendRetryAfterDefaultS"]
+        if "socket_mode_enabled" not in data and "socketModeEnabled" in data:
+            data["socket_mode_enabled"] = data["socketModeEnabled"]
+        if "socket_backoff_base_s" not in data and "socketBackoffBaseS" in data:
+            data["socket_backoff_base_s"] = data["socketBackoffBaseS"]
+        if "socket_backoff_max_s" not in data and "socketBackoffMaxS" in data:
+            data["socket_backoff_max_s"] = data["socketBackoffMaxS"]
+        if "typing_enabled" not in data and "typingEnabled" in data:
+            data["typing_enabled"] = data["typingEnabled"]
+        if "working_indicator_enabled" not in data and "workingIndicatorEnabled" in data:
+            data["working_indicator_enabled"] = data["workingIndicatorEnabled"]
+        if "working_indicator_emoji" not in data and "workingIndicatorEmoji" in data:
+            data["working_indicator_emoji"] = data["workingIndicatorEmoji"]
         return data
 
 
@@ -982,6 +1073,10 @@ class WhatsAppChannelConfig(Base):
     timeout_s: float = 10.0
     webhook_path: str = "/api/webhooks/whatsapp"
     webhook_secret: str = ""
+    send_retry_attempts: int = 3
+    send_retry_after_default_s: float = 1.0
+    typing_enabled: bool = True
+    typing_interval_s: float = 4.0
 
     @field_validator("allow_from", mode="before")
     @classmethod
@@ -990,11 +1085,17 @@ class WhatsAppChannelConfig(Base):
             return []
         return [str(item).strip() for item in v if str(item).strip()]
 
-    @field_validator("timeout_s", mode="before")
+    @field_validator("timeout_s", "send_retry_after_default_s", "typing_interval_s", mode="before")
     @classmethod
     def _min_timeout(cls, v: Any) -> float:
         v = v if v not in (None, "") else 10.0
         return max(0.1, float(v))
+
+    @field_validator("send_retry_attempts", mode="before")
+    @classmethod
+    def _min_retry_attempts(cls, v: Any) -> int:
+        v = v if v not in (None, "") else 3
+        return max(1, int(v))
 
     @model_validator(mode="before")
     @classmethod
@@ -1004,6 +1105,59 @@ class WhatsAppChannelConfig(Base):
         data = dict(data)
         if "allow_from" not in data and "allowFrom" in data:
             data["allow_from"] = data["allowFrom"]
+        if "send_retry_attempts" not in data and "sendRetryAttempts" in data:
+            data["send_retry_attempts"] = data["sendRetryAttempts"]
+        if "send_retry_after_default_s" not in data and "sendRetryAfterDefaultS" in data:
+            data["send_retry_after_default_s"] = data["sendRetryAfterDefaultS"]
+        if "typing_enabled" not in data and "typingEnabled" in data:
+            data["typing_enabled"] = data["typingEnabled"]
+        if "typing_interval_s" not in data and "typingIntervalS" in data:
+            data["typing_interval_s"] = data["typingIntervalS"]
+        return data
+
+
+class IRCChannelConfig(Base):
+    enabled: bool = False
+    host: str = "irc.libera.chat"
+    port: int = 6697
+    nick: str = "clawlite"
+    username: str = "clawlite"
+    realname: str = "ClawLite"
+    channels_to_join: list[str] = Field(default_factory=list)
+    use_ssl: bool = True
+    connect_timeout_s: float = 10.0
+
+    @field_validator("channels_to_join", mode="before")
+    @classmethod
+    def _parse_channels(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [str(item).strip() for item in v if str(item).strip()]
+
+    @field_validator("port", mode="before")
+    @classmethod
+    def _min_port(cls, v: Any) -> int:
+        v = v if v not in (None, "") else 6697
+        return max(1, int(v))
+
+    @field_validator("connect_timeout_s", mode="before")
+    @classmethod
+    def _min_connect_timeout(cls, v: Any) -> float:
+        v = v if v not in (None, "") else 10.0
+        return max(0.1, float(v))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_aliases(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "channels_to_join" not in data and "channelsToJoin" in data:
+            data["channels_to_join"] = data["channelsToJoin"]
+        if "use_ssl" not in data and "useSsl" in data:
+            data["use_ssl"] = data["useSsl"]
+        if "connect_timeout_s" not in data and "connectTimeoutS" in data:
+            data["connect_timeout_s"] = data["connectTimeoutS"]
         return data
 
 
@@ -1024,6 +1178,7 @@ class ChannelsConfig(Base):
     email: EmailChannelConfig = Field(default_factory=EmailChannelConfig)
     slack: SlackChannelConfig = Field(default_factory=SlackChannelConfig)
     whatsapp: WhatsAppChannelConfig = Field(default_factory=WhatsAppChannelConfig)
+    irc: IRCChannelConfig = Field(default_factory=IRCChannelConfig)
     extra: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -1042,7 +1197,7 @@ class ChannelsConfig(Base):
             "replay_dead_letters_limit", "replayDeadLettersLimit",
             "replay_dead_letters_reasons", "replayDeadLettersReasons",
             "delivery_persistence_path", "deliveryPersistencePath",
-            "telegram", "discord", "email", "slack", "whatsapp", "extra",
+            "telegram", "discord", "email", "slack", "whatsapp", "irc", "extra",
         }
         extras: dict[str, Any] = {}
         for key, value in data.items():
@@ -1090,7 +1245,7 @@ class ChannelsConfig(Base):
 
     def enabled_names(self) -> list[str]:
         rows: list[str] = []
-        for name in ("telegram", "discord", "email", "slack", "whatsapp"):
+        for name in ("telegram", "discord", "email", "slack", "whatsapp", "irc"):
             payload = getattr(self, name)
             if bool(payload.enabled):
                 rows.append(name)
@@ -1376,12 +1531,42 @@ _DEFAULT_MODEL = "gemini/gemini-2.5-flash"
 
 
 class BusConfig(Base):
+    backend: str = "inprocess"
+    redis_url: str = ""
+    redis_prefix: str = "clawlite:bus"
     journal_enabled: bool = False
     journal_path: str = ""
+
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _normalize_backend(cls, v: Any) -> str:
+        value = str(v or "inprocess").strip().lower()
+        if value in {"inprocess", "memory", "local"}:
+            return "inprocess"
+        if value == "redis":
+            return "redis"
+        return "inprocess"
 
     @field_validator("journal_path", mode="before")
     @classmethod
     def _journal_path_default(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    @field_validator("redis_url", "redis_prefix", mode="before")
+    @classmethod
+    def _string_default(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+
+class ObservabilityConfig(Base):
+    enabled: bool = False
+    otlp_endpoint: str = ""
+    service_name: str = "clawlite"
+    service_namespace: str = ""
+
+    @field_validator("otlp_endpoint", "service_name", "service_namespace", mode="before")
+    @classmethod
+    def _normalize_strings(cls, v: Any) -> str:
         return str(v or "").strip()
 
 
@@ -1413,6 +1598,7 @@ class AppConfig(Base):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     bus: BusConfig = Field(default_factory=BusConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
 
     @field_validator("workspace_path", mode="before")

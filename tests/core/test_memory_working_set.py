@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from types import SimpleNamespace
 
 from clawlite.core.memory_working_set import (
@@ -13,10 +14,13 @@ from clawlite.core.memory_working_set import (
     normalize_working_memory_share_scope,
     normalize_working_memory_state_payload,
     parent_session_id,
+    promote_working_memory_locked,
+    prune_recent_promotion_timestamps,
     synthesize_visible_episode_digest,
     working_episode_context,
     working_episode_visible_in_session,
     working_memory_episode_summary,
+    working_memory_recent_direct_messages,
     working_memory_related_sessions,
     working_memory_share_group,
 )
@@ -81,6 +85,80 @@ def test_normalize_working_memory_state_payload_bounds_sessions_and_messages() -
 
     assert set(normalized["sessions"].keys()) == {"cli:b", "cli:c"}
     assert [row["content"] for row in normalized["sessions"]["cli:c"]["messages"]] == ["c2", "c3"]
+
+
+def test_prune_recent_promotion_timestamps_keeps_only_window_entries() -> None:
+    kept = prune_recent_promotion_timestamps(
+        [
+            "2026-03-17T10:00:00+00:00",
+            "2026-03-17T11:30:00+00:00",
+            "2026-03-17T11:50:00+00:00",
+        ],
+        current_time_iso="2026-03-17T12:00:00+00:00",
+        window_seconds=3600,
+        parse_iso_fn=lambda value: dt.datetime.fromisoformat(value),
+    )
+
+    assert kept == ["2026-03-17T11:30:00+00:00", "2026-03-17T11:50:00+00:00"]
+
+
+def test_promote_working_memory_locked_rate_limits_hot_sessions() -> None:
+    diagnostics: dict[str, int] = {}
+    sessions = {
+        "cli:owner": {
+            "session_id": "cli:owner",
+            "user_id": "42",
+            "share_group": "cli:owner",
+            "share_scope": "family",
+            "parent_session_id": "",
+            "updated_at": "2026-03-17T12:00:00+00:00",
+            "promotion": {
+                "recent_promoted_at": [
+                    "2026-03-17T11:20:00+00:00",
+                    "2026-03-17T11:50:00+00:00",
+                ],
+                "last_promoted_signature": "",
+                "last_promoted_message_count": 0,
+                "total_promotions": 2,
+            },
+            "messages": [
+                {"role": "user", "content": "remember the deployment blocker", "created_at": "2026-03-17T11:57:00+00:00"},
+                {"role": "assistant", "content": "the blocker is still open", "created_at": "2026-03-17T11:58:00+00:00"},
+                {"role": "user", "content": "remember the mitigation plan", "created_at": "2026-03-17T11:59:00+00:00"},
+                {"role": "assistant", "content": "rerun tests and deploy after approval", "created_at": "2026-03-17T12:00:00+00:00"},
+            ],
+        }
+    }
+
+    result = promote_working_memory_locked(
+        sessions=sessions,
+        session_id="cli:owner",
+        force=False,
+        diagnostics=diagnostics,
+        normalize_working_memory_session_fn=lambda session_id, payload: dict(payload) if payload else None,
+        working_memory_recent_direct_messages_fn=lambda entry: working_memory_recent_direct_messages(
+            entry,
+            normalize_working_memory_entry_fn=lambda item, current_session_id, user_id: dict(item),
+        ),
+        extract_consolidation_lines_fn=lambda messages: [str(row.get("content", "") or "") for row in messages if str(row.get("content", "") or "").strip()],
+        compact_whitespace_fn=lambda text: " ".join(str(text or "").split()),
+        normalize_working_memory_promotion_state_fn=normalize_working_memory_promotion_state,
+        chunk_signature_fn=lambda lines: "|".join(lines),
+        working_memory_episode_summary_fn=lambda session_id, recent: f"{session_id}:{len(recent)}",
+        normalize_memory_metadata_fn=lambda value: dict(value or {}),
+        add_record_fn=lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs),
+        utcnow_iso=lambda: "2026-03-17T12:00:00+00:00",
+        parse_iso_fn=lambda value: dt.datetime.fromisoformat(value),
+        promotion_min_messages=4,
+        promotion_window=6,
+        promotion_step=4,
+        promotion_rate_limit_window_s=3600,
+        promotion_rate_limit_max=2,
+    )
+
+    assert result is None
+    assert diagnostics["working_memory_promotion_skips"] == 1
+    assert diagnostics["working_memory_promotion_rate_limited"] == 1
 
 
 def test_working_memory_related_sessions_respects_family_and_parent_scope() -> None:

@@ -84,3 +84,29 @@ def test_plan_tuning_action_honors_cooldown_and_rate_limit() -> None:
     )
     assert rate_limited_plan["action_status"] == "rate_limited"
     assert rate_limited_plan["should_execute"] is False
+
+
+def test_plan_tuning_action_selects_memory_compact_for_high_outcome_drift() -> None:
+    plan = plan_tuning_action(
+        report={
+            "drift": {"assessment": "degrading"},
+            "score": 35,
+            "reasoning_layers": {"weakest_layer": "episodic"},
+        },
+        tuning_state={
+            "degrading_streak": 2,
+            "recent_actions": [],
+        },
+        now=dt.datetime(2026, 3, 17, 12, 0, tzinfo=dt.timezone.utc),
+        parse_iso=lambda value: dt.datetime.fromisoformat(value) if value else None,
+        degrading_streak_threshold=2,
+        recent_actions_limit=20,
+        cooldown_seconds=0,
+        actions_per_hour_cap=20,
+    )
+
+    assert plan["severity"] == "high"
+    assert plan["weakest_layer"] == "outcome"
+    assert plan["action"] == "memory_compact"
+    assert plan["playbook_id"] == "layer_outcome_high_v1"
+    assert plan["should_execute"] is True

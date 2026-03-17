@@ -17,6 +17,7 @@ from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager
 from clawlite.core.subagent_synthesizer import SubagentSynthesizer
+from clawlite.runtime.telemetry import get_tracer, set_span_attributes
 from clawlite.session.store import SessionStore
 from clawlite.utils.logging import bind_event
 from clawlite.workspace.identity_enforcer import IdentityEnforcer
@@ -570,8 +571,34 @@ class AgentEngine:
             kwargs["temperature"] = self.temperature
         if accepts_reasoning_effort and reasoning_effort is not None:
             kwargs["reasoning_effort"] = reasoning_effort
-        raw_result = await self.provider.complete(**kwargs)
-        return self._normalize_provider_result(raw_result)
+        tracer = get_tracer("clawlite.provider")
+        with tracer.start_as_current_span("provider.complete") as span:
+            set_span_attributes(
+                span,
+                {
+                    "provider.model_hint": str(getattr(self.provider, "get_default_model", lambda: "")() or ""),
+                    "messages.count": len(messages),
+                    "tools.count": len(tools),
+                    "max_tokens": kwargs.get("max_tokens"),
+                    "temperature": kwargs.get("temperature"),
+                    "reasoning_effort": kwargs.get("reasoning_effort"),
+                },
+            )
+            try:
+                raw_result = await self.provider.complete(**kwargs)
+            except Exception as exc:
+                span.record_exception(exc)
+                raise
+            normalized = self._normalize_provider_result(raw_result)
+            set_span_attributes(
+                span,
+                {
+                    "result.model": str(normalized.model or ""),
+                    "result.tool_calls": len(normalized.tool_calls),
+                    "result.text.length": len(normalized.text or ""),
+                },
+            )
+            return normalized
 
     @staticmethod
     def _provider_result_field(payload: Any, key: str, default: Any = None) -> Any:
@@ -746,6 +773,43 @@ class AgentEngine:
         if streak >= self.loop_detection.repeat_threshold:
             return True, "warning", streak
         return False, "", streak
+
+    @staticmethod
+    def _loop_recovery_notice(
+        *,
+        detector: str,
+        repeats: int,
+        severity: str,
+        tool_name: str = "",
+        other_tool: str = "",
+    ) -> str:
+        if detector == "provider_plan_no_progress":
+            detail = (
+                f"Loop detection noticed the same no-progress tool plan {repeats} times in a row "
+                f"(severity: {severity})."
+            )
+        elif detector == "ping_pong_no_progress":
+            if other_tool and other_tool != tool_name:
+                detail = (
+                    f"Loop detection noticed alternating no-progress tool calls between `{tool_name}` and "
+                    f"`{other_tool}` for {repeats} steps (severity: {severity})."
+                )
+            else:
+                detail = (
+                    f"Loop detection noticed alternating no-progress tool calls around `{tool_name}` for "
+                    f"{repeats} steps (severity: {severity})."
+                )
+        else:
+            detail = (
+                f"Loop detection noticed repeated no-progress calls to `{tool_name}` {repeats} times "
+                f"(severity: {severity})."
+            )
+        return (
+            "[System notice] "
+            f"{detail} Do not repeat the same action unchanged. Try a materially different approach, "
+            "ask the user for the missing constraint, or explicitly state that the task cannot be completed "
+            "with the currently available tools."
+        )
 
     @staticmethod
     def _tool_call_raw_name(tool_call: Any) -> Any:
@@ -2200,15 +2264,39 @@ class AgentEngine:
     ) -> ProviderResult:
         session_lock = await self._get_session_lock(session_id)
         async with session_lock:
-            return await self._run_serialized(
-                session_id=session_id,
-                user_text=user_text,
-                channel=channel,
-                chat_id=chat_id,
-                turn_budget=turn_budget,
-                progress_hook=progress_hook,
-                stop_event=stop_event,
-            )
+            tracer = get_tracer("clawlite.engine")
+            with tracer.start_as_current_span("engine.run") as span:
+                set_span_attributes(
+                    span,
+                    {
+                        "session.id": session_id,
+                        "channel": str(channel or ""),
+                        "chat.id": str(chat_id or ""),
+                        "user_text.length": len(user_text or ""),
+                    },
+                )
+                try:
+                    result = await self._run_serialized(
+                        session_id=session_id,
+                        user_text=user_text,
+                        channel=channel,
+                        chat_id=chat_id,
+                        turn_budget=turn_budget,
+                        progress_hook=progress_hook,
+                        stop_event=stop_event,
+                    )
+                except Exception as exc:
+                    span.record_exception(exc)
+                    raise
+                set_span_attributes(
+                    span,
+                    {
+                        "result.model": str(getattr(result, "model", "") or ""),
+                        "result.text.length": len(str(getattr(result, "text", "") or "")),
+                        "result.tool_calls": len(list(getattr(result, "tool_calls", []) or [])),
+                    },
+                )
+                return result
 
     async def stream_run(
         self,
@@ -2253,10 +2341,16 @@ class AgentEngine:
                     break
             # Persist assistant reply to session history
             if accumulated:
-                self.sessions.append(session_id, "user", user_text)
-                self.sessions.append(session_id, "assistant", accumulated)
+                self._append_session_message(session_id, "user", user_text)
+                self._append_session_message(session_id, "assistant", accumulated)
 
         return _gen()
+
+    def _append_session_message(self, session_id: str, role: str, content: str) -> None:
+        append_fn = getattr(self.sessions, "append", None)
+        if not callable(append_fn):
+            return
+        append_fn(session_id, role, content)
 
     async def _run_serialized(
         self,
@@ -2318,6 +2412,8 @@ class AgentEngine:
             messages.append({"role": "system", "content": prompt.memory_section})
         if prompt.skills_context:
             messages.append({"role": "system", "content": f"[Skill Guides]\n{prompt.skills_context}"})
+        if prompt.history_summary:
+            messages.append({"role": "system", "content": prompt.history_summary})
         try:
             guidance = await self._emotion_guidance(user_text, session_id=session_id)
         except Exception as exc:
@@ -2362,6 +2458,7 @@ class AgentEngine:
         diagnostic_threshold = self._DIAGNOSTIC_SWITCH_THRESHOLD
         failure_fingerprint_counts: dict[str, int] = {}
         diagnostic_switched_fingerprints: set[str] = set()
+        loop_recovery_used = False
 
         await self._emit_progress(
             progress_hook=progress_hook,
@@ -2503,6 +2600,41 @@ class AgentEngine:
                                     )
                             except Exception:
                                 pass
+                        if not loop_recovery_used and iteration < (budget.max_iterations or 1):
+                            loop_recovery_used = True
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": self._loop_recovery_notice(
+                                        detector="provider_plan_no_progress",
+                                        repeats=plan_streak,
+                                        severity=plan_severity,
+                                    ),
+                                }
+                            )
+                            self._prune_messages_for_turn(
+                                messages,
+                                base_count=base_message_count,
+                                max_dynamic=dynamic_message_cap,
+                            )
+                            await self._emit_progress(
+                                progress_hook=progress_hook,
+                                event=ProgressEvent(
+                                    stage="diagnostic_switch",
+                                    session_id=session_id,
+                                    iteration=iteration,
+                                    message="loop recovery notice injected",
+                                    metadata={
+                                        "detector": "provider_plan_no_progress",
+                                        "severity": plan_severity,
+                                        "repeats": plan_streak,
+                                        "loop_recovery": True,
+                                    },
+                                ),
+                                counter=progress_counter,
+                                limit=budget.max_progress_events or 1,
+                            )
+                            continue
                         break
                     provider_plan_history.append(_ProviderPlanRecord(signature=plan_signature))
                     max_history = self.loop_detection.history_size
@@ -2522,6 +2654,7 @@ class AgentEngine:
                     max_dynamic=dynamic_message_cap,
                 )
 
+                loop_recovery_continue = False
                 for idx, tool_call in enumerate(step.tool_calls):
                     if self._stop_requested(session_id=session_id, stop_event=stop_event):
                         final = ProviderResult(text="Stopped current task.", tool_calls=[], model="engine/stop")
@@ -2628,6 +2761,43 @@ class AgentEngine:
                                         )
                                 except Exception:
                                     pass
+                            if not loop_recovery_used and iteration < (budget.max_iterations or 1):
+                                loop_recovery_used = True
+                                loop_recovery_continue = True
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": self._loop_recovery_notice(
+                                            detector="repeating_no_progress",
+                                            repeats=streak,
+                                            severity=severity,
+                                            tool_name=name,
+                                        ),
+                                    }
+                                )
+                                self._prune_messages_for_turn(
+                                    messages,
+                                    base_count=base_message_count,
+                                    max_dynamic=dynamic_message_cap,
+                                )
+                                await self._emit_progress(
+                                    progress_hook=progress_hook,
+                                    event=ProgressEvent(
+                                        stage="diagnostic_switch",
+                                        session_id=session_id,
+                                        iteration=iteration,
+                                        message="loop recovery notice injected",
+                                        tool_name=name,
+                                        metadata={
+                                            "detector": "repeating_no_progress",
+                                            "severity": severity,
+                                            "repeats": streak,
+                                            "loop_recovery": True,
+                                        },
+                                    ),
+                                    counter=progress_counter,
+                                    limit=budget.max_progress_events or 1,
+                                )
                             break
                         ping_pong_stop, ping_pong_severity, ping_pong_streak, alternating_tool_name = self._detect_ping_pong_loop(
                             tool_history,
@@ -2697,6 +2867,45 @@ class AgentEngine:
                                         )
                                 except Exception:
                                     pass
+                            if not loop_recovery_used and iteration < (budget.max_iterations or 1):
+                                loop_recovery_used = True
+                                loop_recovery_continue = True
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": self._loop_recovery_notice(
+                                            detector="ping_pong_no_progress",
+                                            repeats=ping_pong_streak,
+                                            severity=ping_pong_severity,
+                                            tool_name=name,
+                                            other_tool=alternating_tool_name,
+                                        ),
+                                    }
+                                )
+                                self._prune_messages_for_turn(
+                                    messages,
+                                    base_count=base_message_count,
+                                    max_dynamic=dynamic_message_cap,
+                                )
+                                await self._emit_progress(
+                                    progress_hook=progress_hook,
+                                    event=ProgressEvent(
+                                        stage="diagnostic_switch",
+                                        session_id=session_id,
+                                        iteration=iteration,
+                                        message="loop recovery notice injected",
+                                        tool_name=name,
+                                        metadata={
+                                            "detector": "ping_pong_no_progress",
+                                            "severity": ping_pong_severity,
+                                            "repeats": ping_pong_streak,
+                                            "other_tool": alternating_tool_name,
+                                            "loop_recovery": True,
+                                        },
+                                    ),
+                                    counter=progress_counter,
+                                    limit=budget.max_progress_events or 1,
+                                )
                             break
                     tool_calls_used += 1
                     await self._emit_progress(
@@ -2844,6 +3053,8 @@ class AgentEngine:
                             )
                             break
 
+                if loop_recovery_continue:
+                    continue
                 if final.text:
                     break
                 continue
@@ -2893,9 +3104,9 @@ class AgentEngine:
                 enforcement.persist_allowed,
             )
 
-        self.sessions.append(session_id, "user", user_text)
+        self._append_session_message(session_id, "user", user_text)
         if not graceful_error and enforcement.persist_allowed:
-            self.sessions.append(session_id, "assistant", final.text)
+            self._append_session_message(session_id, "assistant", final.text)
             memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
             remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
             if callable(remember_working_set_fn):

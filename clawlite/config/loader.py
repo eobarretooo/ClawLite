@@ -47,6 +47,23 @@ def _read_file(path: Path) -> dict[str, Any]:
     return dict(loaded)
 
 
+def _normalize_profile_name(profile: str | None) -> str:
+    value = str(profile or "").strip()
+    if not value:
+        return ""
+    if value in {".", ".."} or "/" in value or "\\" in value:
+        raise RuntimeError("invalid profile name")
+    return value
+
+
+def _profile_path(base_path: Path, profile: str) -> Path:
+    suffix = base_path.suffix
+    if suffix:
+        stem = base_path.name[: -len(suffix)]
+        return base_path.with_name(f"{stem}.{profile}{suffix}")
+    return base_path.with_name(f"{base_path.name}.{profile}")
+
+
 
 
 def _migrate_config(raw: dict[str, Any]) -> dict[str, Any]:
@@ -197,9 +214,18 @@ def _validate_config_keys(config: dict[str, Any]) -> None:
         raise RuntimeError(f"invalid config keys: {formatted}")
 
 
-def load_config(path: str | Path | None = None, *, strict: bool | None = None) -> AppConfig:
+def load_config(
+    path: str | Path | None = None,
+    *,
+    strict: bool | None = None,
+    profile: str | None = None,
+) -> AppConfig:
     target = Path(path) if path else DEFAULT_CONFIG_PATH
+    resolved_profile = _normalize_profile_name(profile if profile is not None else os.getenv("CLAWLITE_PROFILE", ""))
     file_cfg = _migrate_config(_read_file(target))
+    if resolved_profile:
+        profile_cfg = _migrate_config(_read_file(_profile_path(target, resolved_profile)))
+        file_cfg = _deep_merge(file_cfg, profile_cfg)
     merged = _deep_merge(file_cfg, _env_overrides(include_model=path is None))
     strict_mode = strict if strict is not None else _strict_mode_enabled()
     if strict_mode:

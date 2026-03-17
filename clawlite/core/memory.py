@@ -369,6 +369,8 @@ class MemoryStore:
     _WORKING_MEMORY_PROMOTION_MIN_MESSAGES = 4
     _WORKING_MEMORY_PROMOTION_STEP = 4
     _WORKING_MEMORY_PROMOTION_WINDOW = 6
+    _WORKING_MEMORY_PROMOTION_RATE_LIMIT_WINDOW_S = 3600
+    _WORKING_MEMORY_PROMOTION_RATE_LIMIT_MAX = 6
     _RECENCY_MAX_BOOST = 0.35
     _RECENCY_HALF_LIFE_HOURS = 24.0 * 21.0
     _TEMPORAL_INTENT_MATCH_BOOST = 0.2
@@ -1100,6 +1102,7 @@ class MemoryStore:
             "session_recovery_hits": 0,
             "working_memory_promotions": 0,
             "working_memory_promotion_skips": 0,
+            "working_memory_promotion_rate_limited": 0,
             "privacy_audit_writes": 0,
             "privacy_audit_skipped": 0,
             "privacy_audit_errors": 0,
@@ -1854,9 +1857,12 @@ class MemoryStore:
             normalize_memory_metadata_fn=self._normalize_memory_metadata,
             add_record_fn=self.add,
             utcnow_iso=self._utcnow_iso,
+            parse_iso_fn=self._parse_iso_timestamp,
             promotion_min_messages=self._WORKING_MEMORY_PROMOTION_MIN_MESSAGES,
             promotion_window=self._WORKING_MEMORY_PROMOTION_WINDOW,
             promotion_step=self._WORKING_MEMORY_PROMOTION_STEP,
+            promotion_rate_limit_window_s=self._WORKING_MEMORY_PROMOTION_RATE_LIMIT_WINDOW_S,
+            promotion_rate_limit_max=self._WORKING_MEMORY_PROMOTION_RATE_LIMIT_MAX,
         )
 
     def promote_working_set(self, session_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -4407,6 +4413,30 @@ class MemoryStore:
             add_record=self.add,
             diagnostics=self._diagnostics,
         )
+
+    async def compact(self) -> dict[str, Any]:
+        """Run safe maintenance passes that reduce memory bloat without deleting core history."""
+
+        expired_records = int(self.purge_expired_records() or 0)
+        decayed_payload = await self.purge_decayed_records()
+        consolidated_payload = await self.consolidate_categories()
+        consolidated_counts = (
+            dict(consolidated_payload) if isinstance(consolidated_payload, dict) else {}
+        )
+        consolidated_total = 0
+        for value in consolidated_counts.values():
+            try:
+                consolidated_total += int(value or 0)
+            except Exception:
+                continue
+        return {
+            "expired_records": expired_records,
+            "decayed_records": int(
+                decayed_payload.get("purged", 0) if isinstance(decayed_payload, dict) else 0
+            ),
+            "consolidated_records": consolidated_total,
+            "consolidated_categories": consolidated_counts,
+        }
 
 
 # Backward-compatible API expected by legacy CLI.

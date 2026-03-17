@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -46,10 +48,12 @@ from clawlite.cli.ops import provider_live_probe
 from clawlite.cli.ops import provider_recover
 from clawlite.cli.ops import supervisor_recover
 from clawlite.cli.ops import autonomy_wake
+from clawlite.cli.ops import self_evolution_status
+from clawlite.cli.ops import self_evolution_trigger
 from clawlite.cli.ops import provider_validation
-from clawlite.cli.ops import provider_login_openai_codex
+from clawlite.cli.ops import provider_login_oauth
 from clawlite.cli.ops import provider_set_auth
-from clawlite.cli.ops import provider_logout_openai_codex
+from clawlite.cli.ops import provider_logout_oauth
 from clawlite.cli.ops import provider_status
 from clawlite.cli.ops import provider_use_model
 from clawlite.cli.ops import telegram_live_probe
@@ -104,6 +108,26 @@ def _ensure_config_materialized(config_path: str | None) -> Any:
         else:
             stdout_text("Config criado em ~/.clawlite/config.json.")
     return cfg
+
+
+@contextmanager
+def _temporary_cli_profile(profile: str | None):
+    if profile is None:
+        yield
+        return
+    previous = os.environ.get("CLAWLITE_PROFILE")
+    normalized = str(profile or "").strip()
+    if normalized:
+        os.environ["CLAWLITE_PROFILE"] = normalized
+    else:
+        os.environ.pop("CLAWLITE_PROFILE", None)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("CLAWLITE_PROFILE", None)
+        else:
+            os.environ["CLAWLITE_PROFILE"] = previous
 
 
 def _parse_bool_flag(value: str) -> bool:
@@ -407,18 +431,16 @@ def cmd_validate_provider(args: argparse.Namespace) -> int:
 
 def cmd_provider_login(args: argparse.Namespace) -> int:
     provider = str(args.provider).strip().lower().replace("_", "-")
-    if provider != "openai-codex":
-        _print_json({"ok": False, "error": f"unsupported_provider:{provider}"})
-        return 2
     cfg = load_config(args.config)
-    payload = provider_login_openai_codex(
+    payload = provider_login_oauth(
         cfg,
         config_path=args.config,
+        provider=provider,
         access_token=str(args.access_token or ""),
         account_id=str(args.account_id or ""),
         set_model=bool(args.set_model),
-        keep_model=bool(args.keep_model),
-        interactive=not bool(args.no_interactive),
+        keep_model=bool(getattr(args, "keep_model", False)),
+        interactive=not bool(getattr(args, "no_interactive", False)),
     )
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
@@ -433,11 +455,8 @@ def cmd_provider_status(args: argparse.Namespace) -> int:
 
 def cmd_provider_logout(args: argparse.Namespace) -> int:
     provider = str(args.provider or "openai-codex").strip().lower().replace("_", "-")
-    if provider != "openai-codex":
-        _print_json({"ok": False, "error": f"unsupported_provider:{provider}"})
-        return 2
     cfg = load_config(args.config)
-    payload = provider_logout_openai_codex(cfg, config_path=args.config)
+    payload = provider_logout_oauth(cfg, config_path=args.config, provider=provider)
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
 
@@ -552,6 +571,31 @@ def cmd_heartbeat_trigger(args: argparse.Namespace) -> int:
         gateway_url=str(args.gateway_url or ""),
         token=str(args.token or ""),
         timeout=float(args.timeout),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_self_evolution_status(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = self_evolution_status(
+        cfg,
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_self_evolution_trigger(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = self_evolution_trigger(
+        cfg,
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
+        dry_run=bool(getattr(args, "dry_run", False)),
     )
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
@@ -1301,6 +1345,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--config", default=None, help="Path to config JSON/YAML")
+    parser.add_argument("--profile", default=None, help="Optional config profile overlay name")
     parser.add_argument("--version", action="store_true", help="Show ClawLite version")
     sub = parser.add_subparsers(dest="command", required=False)
 
@@ -1387,9 +1432,9 @@ def build_parser() -> argparse.ArgumentParser:
     provider_sub = p_provider.add_subparsers(dest="provider_command", required=True)
 
     p_provider_login = provider_sub.add_parser("login", help="Login and persist provider auth")
-    p_provider_login.add_argument("provider", choices=["openai-codex"])
-    p_provider_login.add_argument("--access-token", default="", help="Explicit Codex access token")
-    p_provider_login.add_argument("--account-id", default="", help="Optional OpenAI account/org id")
+    p_provider_login.add_argument("provider", choices=["openai-codex", "gemini-oauth", "qwen-oauth"])
+    p_provider_login.add_argument("--access-token", default="", help="Explicit OAuth access token")
+    p_provider_login.add_argument("--account-id", default="", help="Optional provider account/org id")
     p_provider_login.add_argument(
         "--set-model",
         action="store_true",
@@ -1408,7 +1453,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_provider_status.set_defaults(handler=cmd_provider_status)
 
     p_provider_logout = provider_sub.add_parser("logout", help="Clear provider auth from config")
-    p_provider_logout.add_argument("provider", nargs="?", default="openai-codex", choices=["openai-codex"])
+    p_provider_logout.add_argument("provider", nargs="?", default="openai-codex", choices=["openai-codex", "gemini-oauth", "qwen-oauth"])
     p_provider_logout.set_defaults(handler=cmd_provider_logout)
 
     p_provider_use = provider_sub.add_parser("use", help="Switch active provider/model and persist config")
@@ -1470,6 +1515,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_heartbeat_trigger.add_argument("--token", default="", help="Bearer token for control endpoint")
     p_heartbeat_trigger.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
     p_heartbeat_trigger.set_defaults(handler=cmd_heartbeat_trigger)
+
+    p_self_evolution = sub.add_parser("self-evolution", help="Self-evolution control commands")
+    self_evolution_sub = p_self_evolution.add_subparsers(dest="self_evolution_command", required=True)
+
+    p_self_evolution_status = self_evolution_sub.add_parser("status", help="Fetch self-evolution status from the gateway")
+    p_self_evolution_status.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_self_evolution_status.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_self_evolution_status.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_self_evolution_status.set_defaults(handler=cmd_self_evolution_status)
+
+    p_self_evolution_trigger = self_evolution_sub.add_parser("trigger", help="Trigger one self-evolution run via the gateway")
+    p_self_evolution_trigger.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_self_evolution_trigger.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_self_evolution_trigger.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_self_evolution_trigger.add_argument("--dry-run", action="store_true", help="Preview proposal without applying or committing")
+    p_self_evolution_trigger.set_defaults(handler=cmd_self_evolution_trigger)
 
     p_pairing = sub.add_parser("pairing", help="Manage pending pairing requests")
     pairing_sub = p_pairing.add_subparsers(dest="pairing_command", required=True)
@@ -1732,7 +1793,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 1
     try:
-        return int(handler(args) or 0)
+        with _temporary_cli_profile(getattr(args, "profile", None)):
+            return int(handler(args) or 0)
     except KeyboardInterrupt:
         _print_stderr("error: interrupted")
         return 130

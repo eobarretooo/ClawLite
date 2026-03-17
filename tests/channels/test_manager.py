@@ -264,6 +264,30 @@ class RecoveringChannel(FakeChannel):
         self._task = None
 
 
+def test_channel_manager_inbound_interceptor_can_short_circuit_bus_publish() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        manager = ChannelManager(bus=bus, engine=FakeEngine())
+        intercepted: list[str] = []
+
+        async def _interceptor(event: InboundEvent) -> bool:
+            intercepted.append(event.text)
+            return True
+
+        manager.set_inbound_interceptor(_interceptor)
+        await manager._on_channel_message(
+            "telegram:123",
+            "42",
+            "self_evolution:approve:evo-1",
+            {"channel": "telegram", "chat_id": "123"},
+        )
+
+        assert intercepted == ["self_evolution:approve:evo-1"]
+        assert bus.stats()["inbound_size"] == 0
+
+    asyncio.run(_scenario())
+
+
 def test_channel_manager_dispatches_inbound_to_engine_and_send() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()

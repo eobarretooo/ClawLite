@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable
 
 from clawlite.utils.logging import bind_event
@@ -139,6 +140,17 @@ async def _rollback_started_subsystems(*, started: list[tuple[str, Callable[[], 
             bind_event("gateway.lifecycle").error("subsystem rollback failed name={} error={}", stop_name, stop_exc)
 
 
+def _startup_timeout_seconds(cfg: Any, name: str) -> float:
+    gateway_cfg = getattr(cfg, "gateway", None)
+    default_timeout = float(getattr(gateway_cfg, "startup_timeout_default_s", 15.0) or 15.0)
+    timeout_map = {
+        "channels": float(getattr(gateway_cfg, "startup_timeout_channels_s", 30.0) or 30.0),
+        "autonomy": float(getattr(gateway_cfg, "startup_timeout_autonomy_s", 10.0) or 10.0),
+        "supervisor": float(getattr(gateway_cfg, "startup_timeout_supervisor_s", 5.0) or 5.0),
+    }
+    return max(0.1, float(timeout_map.get(name, default_timeout)))
+
+
 async def start_subsystems(
     *,
     cfg: Any,
@@ -185,7 +197,7 @@ async def start_subsystems(
             lifecycle.mark_component(name, running=False, error="disabled")
             continue
         try:
-            await start_fn()
+            await asyncio.wait_for(start_fn(), timeout=_startup_timeout_seconds(cfg, name))
             if name == "channels":
                 await _handle_channels_started(
                     runtime=runtime,
@@ -203,6 +215,22 @@ async def start_subsystems(
             lifecycle.mark_component(name, running=True)
             started.append((name, stop_fn))
             bind_event("gateway.lifecycle").info("subsystem started name={}", name)
+        except asyncio.TimeoutError:
+            lifecycle.mark_component(name, running=False, error="startup_timeout")
+            bind_event("gateway.lifecycle").warning(
+                "subsystem startup timed out name={} timeout={}s",
+                name,
+                _startup_timeout_seconds(cfg, name),
+            )
+            try:
+                await stop_fn()
+            except Exception as cleanup_exc:
+                bind_event("gateway.lifecycle").warning(
+                    "subsystem timeout cleanup failed name={} error={}",
+                    name,
+                    cleanup_exc,
+                )
+            continue
         except Exception as exc:
             lifecycle.mark_component(name, running=False, error=str(exc))
             lifecycle.startup_error = str(exc)
@@ -286,6 +314,7 @@ async def stop_subsystems(
 
 
 __all__ = [
+    "_startup_timeout_seconds",
     "start_subsystems",
     "stop_subsystems",
 ]

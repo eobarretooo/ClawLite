@@ -20,6 +20,7 @@ import clawlite.gateway.server as gateway_server
 from clawlite.bus.events import OutboundEvent
 from clawlite.channels.base import BaseChannel, ChannelCapabilities
 from clawlite.config.schema import AppConfig, SchedulerConfig
+from clawlite.core.engine import ProviderChunk
 from clawlite.core.memory import MemoryStore
 from clawlite.core.memory_monitor import MemoryMonitor, MemorySuggestion
 from clawlite.core.subagent import SubagentManager, SubagentRun
@@ -212,13 +213,18 @@ class FakeSelfEvolutionEngine:
         self.cooldown_s = float(cooldown_s)
         self._run_count = 0
         self._committed_count = 0
+        self._dry_run_count = 0
         self._last_outcome = ""
         self._last_error = ""
         self.log = SimpleNamespace(recent=lambda _n=10: [{"outcome": self._last_outcome}] if self._run_count else [])
 
-    async def run_once(self, *, force: bool = False) -> dict[str, object]:
+    async def run_once(self, *, force: bool = False, dry_run: bool = False) -> dict[str, object]:
         self._run_count += 1
-        self._last_outcome = "forced" if force else "no_gaps"
+        if dry_run:
+            self._dry_run_count += 1
+            self._last_outcome = "dry_run"
+        else:
+            self._last_outcome = "forced" if force else "no_gaps"
         self._last_error = ""
         return self.status()
 
@@ -227,6 +233,7 @@ class FakeSelfEvolutionEngine:
             "enabled": self.enabled,
             "run_count": self._run_count,
             "committed_count": self._committed_count,
+            "dry_run_count": self._dry_run_count,
             "last_outcome": self._last_outcome,
             "last_error": self._last_error,
             "cooldown_remaining_s": 0.0,
@@ -251,6 +258,7 @@ class _FakeTuningMemory:
         self.degrade_score = int(degrade_score)
         self.snapshot_calls = 0
         self.last_snapshot_tag = ""
+        self.compact_calls = 0
         self.tuning = {
             "degrading_streak": 0,
             "last_action": "",
@@ -336,6 +344,15 @@ class _FakeTuningMemory:
         self.last_snapshot_tag = str(tag or "")
         self.snapshot_calls += 1
         return f"v{self.snapshot_calls}"
+
+    async def compact(self) -> dict[str, object]:
+        self.compact_calls += 1
+        return {
+            "expired_records": 2,
+            "decayed_records": 3,
+            "consolidated_records": 4,
+            "consolidated_categories": {"context": 4},
+        }
 
 
 def _assert_connect_challenge(socket) -> dict[str, object]:
@@ -1111,6 +1128,103 @@ def test_build_runtime_heartbeat_interval_accepts_120_from_scheduler(tmp_path: P
     runtime = build_runtime(cfg)
 
     assert runtime.heartbeat.interval_seconds == 120
+
+
+def test_build_runtime_passes_session_retention_ttl(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=120),
+        agents={"defaults": {"session_retention_ttl_s": 7200}},
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+
+    assert getattr(runtime.engine.sessions, "session_retention_ttl_s", None) == 7200
+
+
+def test_build_runtime_uses_redis_bus_when_configured(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=120),
+        bus={"backend": "redis", "redis_url": "redis://localhost:6379/9", "redis_prefix": "clawlite:test"},
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+
+    assert runtime.bus.__class__.__name__ == "RedisMessageQueue"
+    stats = runtime.bus.stats()
+    assert stats["backend"] == "redis"
+    assert stats["redis_url"] == "redis://localhost:6379/9"
+    assert stats["redis_prefix"] == "clawlite:test"
+
+
+def test_build_runtime_exposes_observability_status(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        gateway_runtime_builder,
+        "configure_observability",
+        lambda **kwargs: {
+            "enabled": bool(kwargs.get("enabled")),
+            "configured": False,
+            "endpoint": str(kwargs.get("endpoint", "")),
+            "service_name": str(kwargs.get("service_name", "")),
+            "service_namespace": str(kwargs.get("service_namespace", "")),
+            "last_error": "otel-missing",
+        },
+    )
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=120),
+        observability={
+            "enabled": True,
+            "otlp_endpoint": "http://otel:4317",
+            "service_name": "clawlite-dev",
+            "service_namespace": "local",
+        },
+        channels={},
+    )
+    runtime = build_runtime(cfg)
+
+    assert runtime.telemetry == {
+        "enabled": True,
+        "configured": False,
+        "endpoint": "http://otel:4317",
+        "service_name": "clawlite-dev",
+        "service_namespace": "local",
+        "last_error": "otel-missing",
+    }
+
+
+def test_gateway_lifespan_connects_and_closes_redis_bus(tmp_path: Path, monkeypatch) -> None:
+    connect_calls: list[str] = []
+    close_calls: list[str] = []
+
+    async def _connect(self) -> None:
+        connect_calls.append(str(getattr(self, "_redis_url", "")))
+
+    async def _close(self) -> None:
+        close_calls.append(str(getattr(self, "_redis_url", "")))
+
+    monkeypatch.setattr(gateway_runtime_builder.RedisMessageQueue, "connect", _connect)
+    monkeypatch.setattr(gateway_runtime_builder.RedisMessageQueue, "close", _close)
+
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        bus={"backend": "redis", "redis_url": "redis://localhost:6379/7"},
+        gateway={"heartbeat": {"enabled": False}},
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app):
+        assert app.state.runtime.bus.__class__.__name__ == "RedisMessageQueue"
+
+    assert connect_calls == ["redis://localhost:6379/7"]
+    assert close_calls == ["redis://localhost:6379/7"]
 
 
 def test_build_runtime_passes_cron_concurrency_limit(tmp_path: Path) -> None:
@@ -2125,6 +2239,31 @@ def test_gateway_diagnostics_exposes_self_evolution_runner_when_enabled(tmp_path
         assert status_payload["enabled"] is True
         assert status_payload["status"]["run_count"] >= 1
         assert status_payload["runner"]["running"] is True
+
+
+def test_gateway_self_evolution_trigger_accepts_dry_run_payload(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "supervisor": {"enabled": False},
+            "autonomy": {"self_evolution_enabled": True},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.self_evolution = FakeSelfEvolutionEngine(enabled=True, cooldown_s=9999.0)
+    app.state.runtime.workspace.should_run = lambda: False
+
+    with TestClient(app) as client:
+        payload = client.post("/v1/self-evolution/trigger", json={"dry_run": True}).json()
+
+    assert payload["ok"] is True
+    assert payload["status"]["last_outcome"] == "dry_run"
+    assert payload["status"]["dry_run_count"] == 1
 
 
 def test_gateway_supervisor_recovers_crashed_subagent_maintenance_task(tmp_path: Path) -> None:
@@ -3274,6 +3413,32 @@ def test_run_heartbeat_contract_skips_on_heartbeat_ok() -> None:
     asyncio.run(_scenario())
 
 
+def test_run_heartbeat_prunes_expired_sessions_before_provider_call() -> None:
+    calls: list[tuple[str, int]] = []
+
+    class _Sessions:
+        def prune_expired(self) -> int:
+            calls.append(("prune", len(calls)))
+            return 2
+
+    class _Engine:
+        def __init__(self) -> None:
+            self.sessions = _Sessions()
+
+        async def run(self, *, session_id: str, user_text: str):
+            calls.append((session_id, len(user_text)))
+            return SimpleNamespace(text="HEARTBEAT_OK")
+
+    async def _scenario() -> None:
+        runtime = SimpleNamespace(engine=_Engine())
+        decision = await _run_heartbeat(runtime)
+        assert decision.reason == "heartbeat_ok"
+        assert calls[0] == ("prune", 0)
+        assert calls[1][0] == "heartbeat:system"
+
+    asyncio.run(_scenario())
+
+
 def test_run_heartbeat_contract_runs_on_actionable_output(tmp_path: Path) -> None:
     history_path = tmp_path / "memory.jsonl"
     history_path.write_text(
@@ -4294,6 +4459,78 @@ def test_gateway_ws_req_res_openclaw_compatibility_methods(tmp_path: Path) -> No
             }
 
 
+def test_gateway_ws_req_streams_chunks_before_final_response(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    async def _fake_stream_run(*, session_id: str, user_text: str):
+        assert session_id == "cli:req-stream"
+        assert user_text == "ping"
+        yield ProviderChunk(text="po", accumulated="po", done=False)
+        yield ProviderChunk(text="ng", accumulated="pong", done=True)
+
+    app.state.runtime.engine.stream_run = _fake_stream_run
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as socket:
+            _assert_connect_challenge(socket)
+            socket.send_json({"type": "req", "id": "c1", "method": "connect", "params": {}})
+            connect_payload = socket.receive_json()
+            assert connect_payload["ok"] is True
+
+            socket.send_json(
+                {
+                    "type": "req",
+                    "id": "m-stream",
+                    "method": "chat.send",
+                    "params": {"sessionId": "cli:req-stream", "text": "ping", "stream": True},
+                }
+            )
+            chunk_one = socket.receive_json()
+            chunk_two = socket.receive_json()
+            final_payload = socket.receive_json()
+
+    assert chunk_one == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m-stream",
+        "params": {
+            "session_id": "cli:req-stream",
+            "text": "po",
+            "accumulated": "po",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert chunk_two == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m-stream",
+        "params": {
+            "session_id": "cli:req-stream",
+            "text": "ng",
+            "accumulated": "pong",
+            "done": True,
+            "degraded": False,
+        },
+    }
+    assert final_payload == {
+        "type": "res",
+        "id": "m-stream",
+        "ok": True,
+        "result": {
+            "session_id": "cli:req-stream",
+            "text": "pong",
+            "model": "",
+        },
+    }
+
+
 def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
@@ -5131,6 +5368,52 @@ def test_gateway_tuning_loop_stage18_decision_snapshot_uses_layer_specific_tag_m
         last_entry = recent_actions[-1]
         assert last_entry["metadata"]["snapshot_tag"] == "quality-drift-decision-medium"
         assert last_entry["metadata"]["action_variant"] == "layer_decision_medium_v1:memory_snapshot:v2"
+
+
+def test_gateway_tuning_loop_stage18_outcome_compact_persists_compaction_metadata(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+            "autonomy": {
+                "tuning_loop_enabled": True,
+                "tuning_degrading_streak_threshold": 2,
+                "tuning_loop_cooldown_s": 0,
+            },
+        },
+        channels={},
+    )
+    cfg.gateway.autonomy.tuning_loop_interval_s = 1
+    app = create_app(cfg)
+    fake_memory = _FakeTuningMemory(degrade=True, weakest_layer="episodic", degrade_score=35)
+    app.state.runtime.engine.memory = fake_memory
+    app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 6.0
+        payload: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            payload = client.get("/v1/diagnostics").json()
+            ticks = int(payload["memory_quality_tuning"]["ticks"])
+            if ticks >= 1 and fake_memory.compact_calls >= 1:
+                break
+            time.sleep(0.05)
+
+        assert str(fake_memory.tuning.get("last_action", "") or "") == "memory_compact"
+        assert fake_memory.compact_calls >= 1
+        recent_actions = fake_memory.tuning.get("recent_actions", [])
+        assert recent_actions
+        last_entry = recent_actions[-1]
+        assert last_entry["metadata"]["expired_records"] == 2
+        assert last_entry["metadata"]["decayed_records"] == 3
+        assert last_entry["metadata"]["consolidated_records"] == 4
+        assert last_entry["metadata"]["consolidated_categories"] == {"context": 4}
+        assert last_entry["metadata"]["action_variant"] == "layer_outcome_high_v1:memory_compact:v2"
+        assert int(payload["memory_quality_tuning"]["last_action_metadata"]["consolidated_records"]) == 4
+        app.state.runtime.channels.send.assert_not_awaited()
 
 
 def test_gateway_tuning_loop_stage18_diagnostics_include_action_telemetry_maps(tmp_path: Path) -> None:

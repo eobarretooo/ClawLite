@@ -4,6 +4,12 @@ Default file: `~/.clawlite/config.json`
 
 Both snake_case and camelCase keys are accepted everywhere. Unknown keys are silently ignored.
 
+Profiles are layered on top of the base file. For example, `clawlite --config ./config.yaml --profile prod status` loads:
+
+1. `config.yaml`
+2. `config.prod.yaml` or `config.prod.json` when present beside the base file
+3. environment variables
+
 ## Quick start (minimum config)
 
 ```json
@@ -95,6 +101,10 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 |---|---|---|
 | `host` | `127.0.0.1` | Listen address |
 | `port` | `8787` | Listen port |
+| `startup_timeout_default_s` | `15.0` | Default startup timeout per subsystem |
+| `startup_timeout_channels_s` | `30.0` | Startup timeout for channel manager bootstrap |
+| `startup_timeout_autonomy_s` | `10.0` | Startup timeout for autonomy loop bootstrap |
+| `startup_timeout_supervisor_s` | `5.0` | Startup timeout for supervisor bootstrap |
 
 ### `gateway.auth`
 
@@ -139,8 +149,10 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 | `session_id` | `"autonomy:system"` | Session ID for autonomous runs |
 | `audit_export_path` | `""` | Path to export audit log |
 | `audit_max_entries` | `200` | Max audit log entries |
+| `self_evolution_branch_prefix` | `"self-evolution"` | Prefix used for isolated self-evolution git branches |
+| `self_evolution_require_approval` | `false` | Include approval-ready operator notice payloads for committed self-evolution runs |
 
-**Advanced tuning fields:** `tuning_loop_enabled`, `tuning_loop_interval_s`, `tuning_loop_timeout_s`, `tuning_loop_cooldown_s`, `tuning_degrading_streak_threshold`, `tuning_recent_actions_limit`, `tuning_error_backoff_s`, `self_evolution_enabled`, `self_evolution_cooldown_s`.
+**Advanced tuning fields:** `tuning_loop_enabled`, `tuning_loop_interval_s`, `tuning_loop_timeout_s`, `tuning_loop_cooldown_s`, `tuning_degrading_streak_threshold`, `tuning_recent_actions_limit`, `tuning_error_backoff_s`, `self_evolution_enabled`, `self_evolution_cooldown_s`, `self_evolution_branch_prefix`, `self_evolution_require_approval`.
 
 ---
 
@@ -181,6 +193,44 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 | `bot_token` | `""` | Bot OAuth token |
 | `app_token` | `""` | App-level token (for Socket Mode) |
 | `allow_from` | `[]` | Allowed user IDs |
+| `send_retry_attempts` | `3` | Max outbound retry attempts |
+| `send_retry_after_default_s` | `1.0` | Default retry delay when Slack omits `Retry-After` |
+| `socket_mode_enabled` | `true` | Start inbound Socket Mode worker when `app_token` is present |
+| `socket_backoff_base_s` | `1.0` | Base reconnect delay for Socket Mode |
+| `socket_backoff_max_s` | `30.0` | Max reconnect delay for Socket Mode |
+| `typing_enabled` | `true` | Enables the working-indicator lifecycle |
+| `working_indicator_enabled` | `true` | Adds/removes a reaction while a turn is running |
+| `working_indicator_emoji` | `"hourglass_flowing_sand"` | Emoji name used for the working indicator |
+
+### `channels.whatsapp`
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable WhatsApp channel |
+| `allow_from` | `[]` | Allowed sender ids |
+| `bridge_url` | `"ws://localhost:3001"` | Bridge URL normalized to HTTP `/send` and `/typing` |
+| `bridge_token` | `""` | Optional bearer token for the bridge |
+| `timeout_s` | `10.0` | Bridge HTTP timeout |
+| `webhook_path` | `"/api/webhooks/whatsapp"` | Gateway webhook path |
+| `webhook_secret` | `""` | Shared secret for inbound webhook auth |
+| `send_retry_attempts` | `1` | Max outbound retry attempts (set higher explicitly for flaky bridges) |
+| `send_retry_after_default_s` | `1.0` | Default retry delay for 429/5xx bridge responses |
+| `typing_enabled` | `true` | Enables bridge typing keepalive |
+| `typing_interval_s` | `4.0` | Seconds between `/typing` calls |
+
+### `channels.irc`
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable IRC channel |
+| `host` | `"irc.libera.chat"` | IRC server hostname |
+| `port` | `6697` | IRC server port |
+| `nick` | `"clawlite"` | IRC nick |
+| `username` | `"clawlite"` | IRC username |
+| `realname` | `"ClawLite"` | IRC realname / gecos |
+| `channels_to_join` | `[]` | Channels joined on startup |
+| `use_ssl` | `true` | Use TLS for the initial connection |
+| `connect_timeout_s` | `10.0` | Connect timeout in seconds |
 
 ### `channels.email`
 
