@@ -405,6 +405,29 @@ def test_self_evolution_no_gaps_respects_cooldown_and_force(tmp_path: Path, monk
     assert third["last_branch"] == ""
 
 
+def test_self_evolution_first_run_ignores_cooldown_when_monotonic_is_low(tmp_path: Path, monkeypatch) -> None:
+    project_root, source_root, _target_file, _original = _build_sample_self_evolution_project(tmp_path)
+    engine = SelfEvolutionEngine(
+        project_root=project_root,
+        source_root=source_root,
+        run_llm=None,
+        enabled=True,
+        cooldown_s=3600.0,
+        log_path=tmp_path / "evolution-log.json",
+    )
+    monkeypatch.setattr(self_evolution_module.SourceScanner, "scan", lambda self, max_gaps=20: [])
+    monkeypatch.setattr(self_evolution_module.SourceScanner, "scan_roadmap", lambda self, roadmap_path, max_items=5: [])
+    monkeypatch.setattr(self_evolution_module.SourceScanner, "scan_reference_gaps", lambda self, catalog_path, max_items=5: [])
+    monotonic_values = iter([30.0, 30.0, 31.0])
+    monkeypatch.setattr(engine, "_now_monotonic", lambda: next(monotonic_values))
+
+    status = asyncio.run(engine.run_once())
+
+    assert status["run_count"] == 1
+    assert status["last_outcome"] == "no_gaps"
+    assert status["cooldown_remaining_s"] == 3599.0
+
+
 def test_self_evolution_fails_closed_when_primary_checkout_is_dirty(tmp_path: Path) -> None:
     project_root, source_root, target_file, _original = _build_sample_self_evolution_project(tmp_path)
     target_file.write_text("def target():\n    return 'dirty'\n", encoding="utf-8")

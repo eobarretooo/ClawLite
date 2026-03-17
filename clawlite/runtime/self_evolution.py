@@ -654,7 +654,7 @@ class SelfEvolutionEngine:
         self._applicator = PatchApplicator(self.source_root)
 
         self._lock = asyncio.Lock()
-        self._last_run_at: float = 0.0
+        self._last_run_at: float | None = None
         self._run_count = 0
         self._committed_count = 0
         self._last_outcome = ""
@@ -664,6 +664,10 @@ class SelfEvolutionEngine:
     @staticmethod
     def _utc_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _now_monotonic() -> float:
+        return time.monotonic()
 
     def _create_git_sandbox(self, run_id: str) -> tuple[_GitSandbox | None, str]:
         dirty, detail = _git_is_dirty(self.project_root)
@@ -719,8 +723,12 @@ class SelfEvolutionEngine:
         if not self.enabled and not force:
             return self.status()
 
-        now = time.monotonic()
-        if not force and (now - self._last_run_at) < self.cooldown_s:
+        now = self._now_monotonic()
+        if (
+            not force
+            and self._last_run_at is not None
+            and (now - self._last_run_at) < self.cooldown_s
+        ):
             return self.status()
 
         if self._lock.locked():
@@ -732,7 +740,7 @@ class SelfEvolutionEngine:
     async def _do_run(self) -> dict[str, Any]:
         run_id = f"evo-{int(time.time() * 1000)}"
         record = EvolutionRecord(run_id=run_id, started_at=self._utc_iso())
-        self._last_run_at = time.monotonic()
+        self._last_run_at = self._now_monotonic()
         self._run_count += 1
         backups: dict[str, str] = {}
         sandbox: _GitSandbox | None = None
@@ -1004,9 +1012,12 @@ class SelfEvolutionEngine:
                 bind_event("self_evolution").warning("git rollback index failed: {}", exc)
 
     def status(self) -> dict[str, Any]:
-        cooldown_remaining = max(
-            0.0, self.cooldown_s - (time.monotonic() - self._last_run_at)
-        )
+        if self._last_run_at is None:
+            cooldown_remaining = 0.0
+        else:
+            cooldown_remaining = max(
+                0.0, self.cooldown_s - (self._now_monotonic() - self._last_run_at)
+            )
         return {
             "enabled": self.enabled,
             "run_count": self._run_count,
