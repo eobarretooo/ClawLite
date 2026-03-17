@@ -33,7 +33,7 @@ from clawlite.core.prompt import PromptBuilder
 from clawlite.core.skills import SkillsLoader
 from clawlite.providers import build_provider, detect_provider_name
 from clawlite.providers.catalog import default_provider_model, provider_profile
-from clawlite.providers.discovery import probe_local_provider_runtime
+from clawlite.providers.discovery import detect_local_runtime, probe_local_provider_runtime
 from clawlite.providers.hints import provider_telemetry_summary
 from clawlite.providers.reliability import is_quota_429_error
 from clawlite.scheduler.cron import CronService
@@ -1076,6 +1076,13 @@ def _provider_config(config: AppConfig) -> dict[str, Any]:
 
     return {
         "model": active_model,
+        "fallback_model": str(config.provider.fallback_model or "").strip(),
+        "retry_max_attempts": int(config.provider.retry_max_attempts),
+        "retry_initial_backoff_s": float(config.provider.retry_initial_backoff_s),
+        "retry_max_backoff_s": float(config.provider.retry_max_backoff_s),
+        "retry_jitter_s": float(config.provider.retry_jitter_s),
+        "circuit_failure_threshold": int(config.provider.circuit_failure_threshold),
+        "circuit_cooldown_s": float(config.provider.circuit_cooldown_s),
         "auth": {
             "providers": {
                 "openai_codex": {
@@ -1089,6 +1096,80 @@ def _provider_config(config: AppConfig) -> dict[str, Any]:
     }
 
 
+def _provider_probe_candidates(provider: Any) -> list[dict[str, str]]:
+    raw_candidates = getattr(provider, "_candidates", None)
+    rows: list[dict[str, str]] = []
+    if isinstance(raw_candidates, list) and raw_candidates:
+        for candidate in raw_candidates:
+            candidate_provider = getattr(candidate, "provider", None)
+            if candidate_provider is None:
+                continue
+            model_name = str(getattr(candidate, "model", "") or "").strip()
+            if not model_name:
+                get_default_model = getattr(candidate_provider, "get_default_model", None)
+                if callable(get_default_model):
+                    model_name = str(get_default_model() or "").strip()
+            base_url = str(getattr(candidate_provider, "base_url", "") or "").strip()
+            rows.append(
+                {
+                    "model": model_name,
+                    "base_url": base_url,
+                    "runtime": detect_local_runtime(base_url),
+                }
+            )
+        if rows:
+            return rows
+
+    provider_runtime = getattr(provider, "primary", provider)
+    get_default_model = getattr(provider, "get_default_model", None)
+    model_name = str(get_default_model() or "").strip() if callable(get_default_model) else ""
+    base_url = str(getattr(provider_runtime, "base_url", "") or "").strip()
+    return [
+        {
+            "model": model_name,
+            "base_url": base_url,
+            "runtime": detect_local_runtime(base_url),
+        }
+    ]
+
+
+def _validate_local_provider_runtime(provider: Any) -> None:
+    candidates = _provider_probe_candidates(provider)
+    local_candidates = [row for row in candidates if row["runtime"]]
+    if not local_candidates:
+        return
+
+    has_non_local_candidate = len(local_candidates) < len(candidates)
+    failures: list[dict[str, Any]] = []
+    successes = 0
+    for candidate in local_candidates:
+        payload = probe_local_provider_runtime(model=candidate["model"], base_url=candidate["base_url"])
+        if payload["checked"] and payload["ok"]:
+            successes += 1
+            continue
+        if payload["checked"]:
+            failures.append(payload)
+
+    if not failures:
+        return
+
+    can_continue = successes > 0 or has_non_local_candidate
+    for payload in failures:
+        bind_event("gateway.runtime").warning(
+            "local runtime probe failed model={} base_url={} error={} detail={} startup_continues={}",
+            payload.get("model", ""),
+            payload.get("base_url", ""),
+            payload.get("error", ""),
+            payload.get("detail", ""),
+            can_continue,
+        )
+
+    if can_continue:
+        return
+
+    raise RuntimeError(str(failures[0].get("error") or "provider_config_error:local_runtime_unavailable"))
+
+
 def build_runtime(config: AppConfig) -> RuntimeContainer:
     bind_event("gateway.runtime").info("building runtime workspace={} state={}", config.workspace_path, config.state_path)
     workspace = WorkspaceLoader(workspace_path=config.workspace_path)
@@ -1097,13 +1178,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     workspace_path = Path(config.workspace_path).expanduser().resolve()
 
     provider = build_provider(_provider_config(config))
-    provider_runtime = getattr(provider, "primary", provider)
-    local_runtime_probe = probe_local_provider_runtime(
-        model=provider.get_default_model(),
-        base_url=str(getattr(provider_runtime, "base_url", "") or ""),
-    )
-    if local_runtime_probe["checked"] and not local_runtime_probe["ok"]:
-        raise RuntimeError(str(local_runtime_probe["error"] or "provider_config_error:local_runtime_unavailable"))
+    _validate_local_provider_runtime(provider)
     cron = CronService(
         store_path=Path(config.state_path) / "cron_jobs.json",
         default_timezone=config.scheduler.timezone,

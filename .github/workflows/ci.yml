@@ -90,6 +90,29 @@ jobs:
           python -c "from clawlite.scheduler.cron import CronService; print('scheduler ok')"
           python -c "from clawlite.tools.registry import ToolRegistry; print('tools ok')"
 
+      - name: Smoke - CLI entrypoint and YAML config
+        run: |
+          clawlite --help >/dev/null
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import tempfile
+
+          tmpdir = pathlib.Path(tempfile.mkdtemp(prefix="clawlite-smoke-"))
+          config_path = tmpdir / "config.yaml"
+          config_path.write_text(
+              "\n".join(
+                  [
+                      f"workspace_path: {tmpdir / 'workspace'}",
+                      f"state_path: {tmpdir / 'state'}",
+                      "",
+                  ]
+              ),
+              encoding="utf-8",
+          )
+          subprocess.run(["clawlite", "--config", str(config_path), "status"], check=True)
+          PY
+
   autonomy-contract:
     name: Autonomy control contracts
     runs-on: ubuntu-latest

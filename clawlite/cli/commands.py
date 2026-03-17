@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,29 @@ from clawlite.workspace.loader import WorkspaceLoader
 
 def _print_json(payload: dict[str, Any]) -> None:
     stdout_json(payload)
+
+
+def _print_stderr(text: str) -> None:
+    sys.stderr.write(f"{text}\n")
+
+
+def _format_cli_error(exc: BaseException) -> str:
+    message = " ".join(str(exc).split()) or exc.__class__.__name__
+    hint = ""
+    lowered = message.lower()
+
+    if "pyyaml is required for yaml config files" in lowered or (
+        isinstance(exc, ModuleNotFoundError) and str(getattr(exc, "name", "") or "").strip().lower() == "yaml"
+    ):
+        hint = "install PyYAML or switch the config file to JSON: python -m pip install pyyaml"
+    elif "playwright" in lowered and (
+        "executable doesn't exist" in lowered or "looks like playwright was just installed" in lowered
+    ):
+        hint = "install the browser runtime once: python -m playwright install chromium"
+
+    if hint:
+        return f"error: {message}\nhint: {hint}"
+    return f"error: {message}"
 
 
 def _ensure_config_materialized(config_path: str | None) -> Any:
@@ -1707,4 +1731,11 @@ def main(argv: list[str] | None = None) -> int:
     if not callable(handler):
         parser.print_help()
         return 1
-    return int(handler(args) or 0)
+    try:
+        return int(handler(args) or 0)
+    except KeyboardInterrupt:
+        _print_stderr("error: interrupted")
+        return 130
+    except (ModuleNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        _print_stderr(_format_cli_error(exc))
+        return 2

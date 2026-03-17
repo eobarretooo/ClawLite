@@ -202,6 +202,8 @@ Runtime support is broader than wizard support. `custom`, `openai-codex`, `nvidi
 }
 ```
 
+`api_base` can point directly to Ollama (`http://127.0.0.1:11434/v1`) or to a reverse-proxied prefix that still ends in `/v1`, such as `https://llm.internal/ollama/v1`.
+
 ### OpenAI Codex OAuth
 
 ```json
@@ -249,10 +251,10 @@ Runtime support is broader than wizard support. `custom`, `openai-codex`, `nvidi
 
 ClawLite probes local runtimes at startup:
 
-- Ollama: checks `/api/tags` and verifies the requested model exists.
-- vLLM: checks `/health` and `/v1/models`.
+- Ollama: derives the runtime root from the configured base URL, preserves reverse-proxy prefixes, then checks `/api/tags` and `/api/show`.
+- vLLM: preserves reverse-proxy prefixes when checking `/health` and `/v1/models`.
 
-If the configured model is missing or the runtime is down, gateway startup fails fast with an explicit provider config error.
+If every local candidate is unavailable, gateway startup fails fast with an explicit provider config error. If a local primary is down but a non-local fallback exists, startup continues and the failover provider takes over at request time.
 
 ## Failover and Reliability
 
@@ -280,7 +282,7 @@ What you can persist in config today:
 }
 ```
 
-Current caveat: the live gateway runtime helper currently forwards `model`, `auth`, and `providers` into `build_provider()`, but not the top-level `provider.retry_*`, `provider.circuit_*`, or `provider.fallback_model` fields. In practice, the provider classes still use their built-in default retry/circuit settings, but provider-level failover config persisted in `provider.*` is not fully wired into the gateway path yet.
+The gateway runtime forwards these top-level `provider.*` settings into `build_provider()`, so retry, circuit-breaker, and `fallback_model` behavior match the persisted config.
 
 The CLI still lets you persist fallback intent:
 

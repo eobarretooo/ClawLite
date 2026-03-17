@@ -961,6 +961,104 @@ def test_gateway_runtime_rejects_local_provider_when_startup_probe_fails(tmp_pat
         build_runtime(cfg)
 
 
+def test_provider_config_forwards_failover_and_reliability_settings() -> None:
+    cfg = AppConfig(
+        provider={
+            "model": "openai/llama3.2",
+            "fallback_model": "anthropic/claude-3-5-haiku-latest",
+            "retry_max_attempts": 5,
+            "retry_initial_backoff_s": 1.25,
+            "retry_max_backoff_s": 9.0,
+            "retry_jitter_s": 0.0,
+            "circuit_failure_threshold": 7,
+            "circuit_cooldown_s": 0.0,
+        },
+        providers={
+            "openai": {"api_base": "http://127.0.0.1:11434"},
+            "anthropic": {"api_key": "sk-ant-test"},
+        },
+        channels={},
+    )
+
+    payload = gateway_server._provider_config(cfg)
+
+    assert payload["fallback_model"] == "anthropic/claude-3-5-haiku-latest"
+    assert payload["retry_max_attempts"] == 5
+    assert payload["retry_initial_backoff_s"] == 1.25
+    assert payload["retry_max_backoff_s"] == 9.0
+    assert payload["retry_jitter_s"] == 0.0
+    assert payload["circuit_failure_threshold"] == 7
+    assert payload["circuit_cooldown_s"] == 0.0
+
+
+def test_gateway_runtime_allows_remote_fallback_when_local_primary_probe_fails(tmp_path: Path, monkeypatch) -> None:
+    class _CandidateProvider:
+        def __init__(self, *, model: str, base_url: str = "") -> None:
+            self._model = model
+            self.base_url = base_url
+
+        def get_default_model(self) -> str:
+            return self._model
+
+        async def complete(self, *, messages, tools):
+            del messages, tools
+            return LLMResult(text="ok", model=self._model, tool_calls=[], metadata={})
+
+    class _FailoverProvider:
+        def __init__(self) -> None:
+            local = _CandidateProvider(model="openai/llama3.2", base_url="http://127.0.0.1:11434/v1")
+            remote = _CandidateProvider(model="anthropic/claude-3-5-haiku-latest", base_url="https://api.anthropic.com")
+            self._candidates = [
+                SimpleNamespace(provider=local, model=local.get_default_model()),
+                SimpleNamespace(provider=remote, model=remote.get_default_model()),
+            ]
+
+        def get_default_model(self) -> str:
+            return str(self._candidates[0].model)
+
+        async def complete(self, *, messages, tools):
+            del messages, tools
+            return LLMResult(text="ok", model=self.get_default_model(), tool_calls=[], metadata={})
+
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        provider={"model": "openai/llama3.2", "fallback_model": "anthropic/claude-3-5-haiku-latest"},
+        providers={
+            "openai": {"api_base": "http://127.0.0.1:11434/v1"},
+            "anthropic": {"api_key": "sk-ant-test"},
+        },
+        channels={},
+    )
+    failover_provider = _FailoverProvider()
+    probe_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(gateway_server, "build_provider", lambda config: failover_provider)
+    monkeypatch.setattr(
+        gateway_server,
+        "probe_local_provider_runtime",
+        lambda *, model, base_url, timeout_s=2.0: (
+            probe_calls.append((model, base_url))
+            or {
+                "checked": True,
+                "ok": False,
+                "runtime": "ollama",
+                "model": model,
+                "base_url": base_url,
+                "error": f"provider_config_error:ollama_unreachable:{base_url}",
+                "detail": "connection_refused",
+                "available_models": [],
+            }
+        ),
+    )
+
+    runtime = build_runtime(cfg)
+
+    assert runtime.engine.provider is failover_provider
+    assert probe_calls == [("openai/llama3.2", "http://127.0.0.1:11434/v1")]
+
+
 def test_gateway_runtime_disables_memory_monitor_when_proactive_false(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),

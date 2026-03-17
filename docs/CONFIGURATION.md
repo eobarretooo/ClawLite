@@ -85,6 +85,8 @@ Per-provider fields: `api_key`, `api_base`, `extra_headers` (dict).
 | `circuit_failure_threshold` | `3` | Failures before circuit opens |
 | `circuit_cooldown_s` | `30.0` | Circuit breaker cooldown |
 
+These settings are applied by the live gateway runtime. `fallback_model` is honored during provider construction, and startup only fails fast when every configured local runtime candidate is unavailable.
+
 ---
 
 ## `gateway`

@@ -199,6 +199,34 @@ def test_cli_configure_flow_compatibility_routes_to_onboarding_wizard(
     assert payload["flow"] == "quickstart"
 
 
+def test_cli_main_reports_runtime_errors_on_stderr(capsys, monkeypatch) -> None:
+    def _boom(_args) -> int:
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr("clawlite.cli.commands.cmd_status", _boom)
+
+    rc = main(["status"])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out == ""
+    assert "error: synthetic failure" in captured.err
+
+
+def test_cli_main_adds_yaml_install_hint(capsys, monkeypatch) -> None:
+    def _boom(_args) -> int:
+        raise RuntimeError("pyyaml is required for YAML config files")
+
+    monkeypatch.setattr("clawlite.cli.commands.cmd_status", _boom)
+
+    rc = main(["status"])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "hint:" in captured.err
+    assert "python -m pip install pyyaml" in captured.err
+
+
 def test_cli_skills_list_and_show(capsys) -> None:
     rc_list = main(["skills", "list"])
     assert rc_list == 0

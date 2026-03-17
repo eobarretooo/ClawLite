@@ -40,7 +40,11 @@ git clone https://github.com/eobarretooo/ClawLite.git
 cd ClawLite
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+
+# Optional: install Chromium if you plan to use the browser tool
+python3 -m playwright install chromium
 
 # 2. Configure (interactive wizard — sets provider, gateway, optional Telegram)
 clawlite configure
@@ -50,6 +54,8 @@ clawlite gateway
 ```
 
 Open **http://127.0.0.1:8787** → live dashboard with chat, automation, memory, and tools.
+
+If you pass `--config path.yaml`, YAML configs work out of the box. Browser automation needs the extra Playwright browser download shown above.
 
 ```bash
 # Or talk to the agent straight from the terminal
@@ -210,6 +216,8 @@ Anthropic · MiniMax · Xiaomi · Kimi Coding
 <summary><strong>Local runtimes</strong></summary>
 
 Ollama · vLLM
+
+Use a `/v1` base URL for local providers. Reverse-proxied prefixes such as `https://llm.internal/ollama/v1` also work.
 
 </details>
 

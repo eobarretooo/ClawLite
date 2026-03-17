@@ -29,6 +29,27 @@ def test_save_config_writes_valid_json_and_is_readable(tmp_path: Path) -> None:
     assert loaded.gateway.port == 8787
 
 
+def test_load_config_yaml_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "provider:",
+                "  model: openai/gpt-4.1-mini",
+                "gateway:",
+                "  port: 9999",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+    assert cfg.provider.model == "openai/gpt-4.1-mini"
+    assert cfg.agents.defaults.model == "openai/gpt-4.1-mini"
+    assert cfg.gateway.port == 9999
+
+
 def test_save_config_uses_atomic_replace_in_same_directory(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "config.json"
     calls: list[tuple[Path, Path]] = []

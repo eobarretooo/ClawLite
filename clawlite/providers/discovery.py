@@ -21,16 +21,29 @@ def _origin(base_url: str) -> str:
     return str(base_url or "").strip().rstrip("/")
 
 
+def _base_with_path(base_url: str) -> str:
+    parsed = urlparse(str(base_url or "").strip())
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path.rstrip("/")
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    return str(base_url or "").strip().rstrip("/")
+
+
+def _local_runtime_root(runtime: str, base_url: str) -> str:
+    candidate = _base_with_path(base_url)
+    runtime_name = str(runtime or "").strip().lower()
+    if runtime_name in {"ollama", "vllm"} and candidate.endswith("/v1"):
+        return candidate[:-3]
+    return candidate
+
+
 def normalize_local_runtime_base_url(runtime: str, base_url: str) -> str:
     candidate = str(base_url or "").strip().rstrip("/")
     if not candidate:
         return candidate
     runtime_name = str(runtime or "").strip().lower()
-    if runtime_name == "ollama":
-        root = _origin(candidate)
-        return f"{root}/v1"
-    if runtime_name == "vllm":
-        return candidate if candidate.endswith("/v1") else f"{candidate}/v1"
+    if runtime_name in {"ollama", "vllm"}:
+        return f"{_local_runtime_root(runtime_name, candidate)}/v1"
     return candidate
 
 
@@ -108,8 +121,8 @@ def probe_local_provider_runtime(*, model: str, base_url: str, timeout_s: float 
     try:
         with httpx.Client(timeout=max(0.5, float(timeout_s))) as client:
             if runtime == "ollama":
-                origin = _origin(base_url)
-                tags_response = client.get(_join_base(origin, "/api/tags"))
+                runtime_root = _local_runtime_root(runtime, base_url)
+                tags_response = client.get(_join_base(runtime_root, "/api/tags"))
                 if not tags_response.is_success:
                     payload["ok"] = False
                     payload["error"] = f"provider_config_error:ollama_unreachable:{base_url}"
@@ -124,7 +137,7 @@ def probe_local_provider_runtime(*, model: str, base_url: str, timeout_s: float 
                 if any(_model_matches(target_model, row) for row in available_models):
                     return payload
 
-                show_response = client.post(_join_base(origin, "/api/show"), json={"name": target_model})
+                show_response = client.post(_join_base(runtime_root, "/api/show"), json={"name": target_model})
                 if show_response.is_success:
                     return payload
 
@@ -133,15 +146,15 @@ def probe_local_provider_runtime(*, model: str, base_url: str, timeout_s: float 
                 payload["detail"] = f"http_status:{show_response.status_code}"
                 return payload
 
-            health_response = client.get(_join_base(_origin(base_url), "/health"))
+            runtime_root = _local_runtime_root(runtime, base_url)
+            health_response = client.get(_join_base(runtime_root, "/health"))
             if not health_response.is_success:
                 payload["ok"] = False
                 payload["error"] = f"provider_config_error:vllm_unreachable:{base_url}"
                 payload["detail"] = f"http_status:{health_response.status_code}"
                 return payload
 
-            models_path = "/models" if str(base_url or "").strip().rstrip("/").endswith("/v1") else "/v1/models"
-            models_response = client.get(_join_base(base_url, models_path))
+            models_response = client.get(_join_base(normalize_local_runtime_base_url(runtime, base_url), "/models"))
             if not models_response.is_success:
                 payload["ok"] = False
                 payload["error"] = f"provider_config_error:vllm_unreachable:{base_url}"
