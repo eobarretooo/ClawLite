@@ -5,8 +5,12 @@ from types import SimpleNamespace
 
 from clawlite.core.memory_retrieval import (
     build_progressive_retrieval_payload,
+    evaluate_retrieval_sufficiency,
+    query_coverage,
     refine_hits_with_llm,
+    retrieve_category_hits,
     retrieve_resource_hits,
+    rewrite_retrieval_query,
 )
 
 
@@ -98,3 +102,75 @@ def test_refine_hits_with_llm_parses_json_or_falls_back_to_plain_text() -> None:
 
     assert json_payload == {"answer": "Friday", "next_step_query": "rollback plan?"}
     assert plain_payload == {"answer": "Project alpha deploys on Friday.", "next_step_query": ""}
+
+
+def test_rewrite_retrieval_query_removes_stopwords_but_keeps_entities() -> None:
+    rewritten = rewrite_retrieval_query(
+        "what is the release checklist for alice",
+        compact_whitespace=lambda value: " ".join(str(value or "").split()),
+        extract_entities=lambda text: {"people": ["alice"]} if "alice" in text.lower() else {},
+        tokens=lambda text: [part.lower() for part in str(text or "").split()],
+        rewrite_stopwords={"what", "is", "the", "for"},
+    )
+
+    assert rewritten == "release checklist alice"
+
+
+def test_query_coverage_and_sufficiency_track_temporal_matches() -> None:
+    coverage = query_coverage(
+        "project alpha next week",
+        ["project alpha review monday"],
+        tokens=lambda text: [part.lower() for part in str(text or "").split()],
+        extract_entities=lambda text: {},
+        entity_match_score=lambda query_entities, memory_entities: 0.0,
+        query_has_temporal_intent=lambda text: "week" in str(text or "").lower(),
+        memory_has_temporal_markers=lambda text: "monday" in str(text or "").lower(),
+    )
+    sufficiency = evaluate_retrieval_sufficiency(
+        "project alpha next week",
+        ["project alpha review monday"],
+        stage="resource",
+        query_coverage_fn=lambda query, texts: coverage,
+        tokens=lambda text: [part.lower() for part in str(text or "").split()],
+        query_has_temporal_intent=lambda text: "week" in str(text or "").lower(),
+    )
+
+    assert coverage["temporal_match"] is True
+    assert sufficiency["sufficient"] is True
+    assert sufficiency["reason"] == "resource_temporal_match_sufficient"
+
+
+def test_retrieve_category_hits_prefers_category_with_stronger_signal() -> None:
+    rows = [
+        SimpleNamespace(
+            category="events",
+            text="release checklist for alice next monday",
+            memory_type="event",
+            happened_at="2026-03-17T00:00:00+00:00",
+            metadata={"reinforcement_count": 3},
+            source="session:a",
+        ),
+        SimpleNamespace(
+            category="ops",
+            text="build pipeline status",
+            memory_type="knowledge",
+            happened_at="",
+            metadata={},
+            source="session:b",
+        ),
+    ]
+
+    hits = retrieve_category_hits(
+        "release checklist alice next week",
+        rows,
+        limit=2,
+        tokens=lambda text: [part.lower() for part in str(text or "").split()],
+        extract_entities=lambda text: {"people": ["alice"]} if "alice" in str(text or "").lower() else {},
+        entity_match_score=lambda query_entities, memory_entities: 1.0 if query_entities == memory_entities and query_entities else 0.0,
+        query_has_temporal_intent=lambda text: "week" in str(text or "").lower(),
+        memory_has_temporal_markers=lambda text: "monday" in str(text or "").lower(),
+        salience_boost=lambda metadata: float(metadata.get("reinforcement_count", 0) or 0),
+    )
+
+    assert hits[0]["category"] == "events"
+    assert hits[0]["count"] == 1

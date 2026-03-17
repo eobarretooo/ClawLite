@@ -50,9 +50,13 @@ from clawlite.core.memory_policy import (
 )
 from clawlite.core.memory_retrieval import (
     build_progressive_retrieval_payload as _build_progressive_retrieval_payload_helper,
+    evaluate_retrieval_sufficiency as _evaluate_retrieval_sufficiency_helper,
     filter_records_to_categories as _filter_records_to_categories,
+    query_coverage as _query_coverage_helper,
     refine_hits_with_llm as _refine_hits_with_llm_helper,
+    retrieve_category_hits as _retrieve_category_hits_helper,
     retrieve_resource_hits as _retrieve_resource_hits_helper,
+    rewrite_retrieval_query as _rewrite_retrieval_query_helper,
 )
 from clawlite.core.memory_quality import (
     merge_quality_tuning_state as _merge_quality_tuning_state,
@@ -5130,154 +5134,48 @@ class MemoryStore:
 
     @classmethod
     def _rewrite_retrieval_query(cls, query: str) -> str:
-        raw = cls._compact_whitespace(query)
-        if not raw:
-            return ""
-        query_entities = cls._extract_entities(raw)
-        tokens = cls._tokens(raw)
-        if not tokens:
-            return raw
-
-        preserved = [token for token in tokens if token not in cls._RETRIEVAL_REWRITE_STOPWORDS]
-        rewritten = " ".join(preserved).strip() if preserved else raw
-
-        for values in query_entities.values():
-            for value in values:
-                clean_value = cls._compact_whitespace(value)
-                if clean_value and clean_value.lower() not in rewritten.lower():
-                    rewritten = f"{rewritten} {clean_value}".strip()
-
-        if not rewritten:
-            return raw
-        if len(rewritten) + 8 < len(raw):
-            return rewritten
-        return raw
+        return _rewrite_retrieval_query_helper(
+            query,
+            compact_whitespace=cls._compact_whitespace,
+            extract_entities=cls._extract_entities,
+            tokens=cls._tokens,
+            rewrite_stopwords=cls._RETRIEVAL_REWRITE_STOPWORDS,
+        )
 
     @classmethod
     def _query_coverage(cls, query: str, texts: list[str]) -> dict[str, Any]:
-        q_tokens = set(cls._tokens(query))
-        if not q_tokens:
-            return {"covered_tokens": [], "missing_tokens": [], "coverage_ratio": 0.0, "entity_score": 0.0, "temporal_match": False}
-
-        covered: set[str] = set()
-        best_entity_score = 0.0
-        temporal_match = False
-        query_entities = cls._extract_entities(query)
-        temporal_query = cls._query_has_temporal_intent(query)
-
-        for text in texts:
-            covered.update(q_tokens.intersection(cls._tokens(text)))
-            best_entity_score = max(best_entity_score, cls._entity_match_score(query_entities, cls._extract_entities(text)))
-            if temporal_query and cls._memory_has_temporal_markers(text):
-                temporal_match = True
-
-        coverage_ratio = float(len(covered)) / float(len(q_tokens)) if q_tokens else 0.0
-        missing_tokens = sorted(q_tokens.difference(covered))
-        return {
-            "covered_tokens": sorted(covered),
-            "missing_tokens": missing_tokens,
-            "coverage_ratio": round(max(0.0, min(1.0, coverage_ratio)), 6),
-            "entity_score": round(max(0.0, best_entity_score), 6),
-            "temporal_match": temporal_match,
-        }
+        return _query_coverage_helper(
+            query,
+            texts,
+            tokens=cls._tokens,
+            extract_entities=cls._extract_entities,
+            entity_match_score=cls._entity_match_score,
+            query_has_temporal_intent=cls._query_has_temporal_intent,
+            memory_has_temporal_markers=cls._memory_has_temporal_markers,
+        )
 
     def _evaluate_retrieval_sufficiency(self, query: str, texts: list[str], *, stage: str) -> dict[str, Any]:
-        if stage == "category":
-            has_signal = bool(texts)
-            return {
-                "stage": stage,
-                "sufficient": False,
-                "reason": "need_item_level_recall" if has_signal else "no_category_signal",
-                "covered_tokens": [],
-                "missing_tokens": sorted(set(self._tokens(query))),
-                "coverage_ratio": 0.0,
-                "entity_score": 0.0,
-                "temporal_match": False,
-            }
-
-        coverage = self._query_coverage(query, texts)
-        coverage_ratio = float(coverage["coverage_ratio"])
-        entity_score = float(coverage["entity_score"])
-        temporal_match = bool(coverage["temporal_match"])
-        temporal_query = self._query_has_temporal_intent(query)
-        sufficient = bool(
-            coverage_ratio >= 0.8
-            or entity_score >= 0.3
-            or (temporal_query and temporal_match and coverage_ratio >= 0.5)
+        return _evaluate_retrieval_sufficiency_helper(
+            query,
+            texts,
+            stage=stage,
+            query_coverage_fn=self._query_coverage,
+            tokens=self._tokens,
+            query_has_temporal_intent=self._query_has_temporal_intent,
         )
-        if not texts:
-            reason = f"no_{stage}_hits"
-        elif sufficient:
-            if coverage_ratio >= 0.8:
-                reason = f"{stage}_coverage_sufficient"
-            elif entity_score >= 0.3:
-                reason = f"{stage}_entity_match_sufficient"
-            else:
-                reason = f"{stage}_temporal_match_sufficient"
-        else:
-            reason = f"{stage}_coverage_incomplete"
-        coverage["stage"] = stage
-        coverage["sufficient"] = sufficient
-        coverage["reason"] = reason
-        return coverage
 
     def _retrieve_category_hits(self, query: str, records: list[MemoryRecord], *, limit: int) -> list[dict[str, Any]]:
-        q_tokens = set(self._tokens(query))
-        query_entities = self._extract_entities(query)
-        temporal_query = self._query_has_temporal_intent(query)
-        by_category: dict[str, dict[str, Any]] = {}
-
-        for row in records:
-            category = str(row.category or "context")
-            text_tokens = set(self._tokens(row.text))
-            overlap = len(q_tokens.intersection(text_tokens))
-            entity_score = self._entity_match_score(query_entities, self._extract_entities(row.text))
-            category_overlap = len(q_tokens.intersection(self._tokens(category))) * 0.35
-            type_overlap = len(q_tokens.intersection(self._tokens(row.memory_type))) * 0.25
-            temporal_bonus = 0.15 if temporal_query and (row.happened_at or self._memory_has_temporal_markers(row.text)) else 0.0
-            salience_bonus = self._salience_boost(row.metadata) * 0.5
-            score = float(overlap) + entity_score + category_overlap + type_overlap + temporal_bonus + salience_bonus
-            if score <= 0.0:
-                continue
-
-            bucket = by_category.setdefault(
-                category,
-                {
-                    "category": category,
-                    "score": 0.0,
-                    "count": 0,
-                    "sample_text": "",
-                    "memory_types": set(),
-                    "sources": set(),
-                    "top_score": 0.0,
-                },
-            )
-            bucket["score"] = float(bucket["score"]) + score
-            bucket["count"] = int(bucket["count"]) + 1
-            bucket["memory_types"].add(str(row.memory_type or "knowledge"))
-            bucket["sources"].add(str(row.source or "unknown"))
-            if score >= float(bucket["top_score"]):
-                bucket["top_score"] = score
-                bucket["sample_text"] = str(row.text or "").strip()[:160]
-
-        ranked = sorted(
-            by_category.values(),
-            key=lambda item: (float(item["score"]), int(item["count"]), str(item["category"])),
-            reverse=True,
+        return _retrieve_category_hits_helper(
+            query,
+            records,
+            limit=limit,
+            tokens=self._tokens,
+            extract_entities=self._extract_entities,
+            entity_match_score=self._entity_match_score,
+            query_has_temporal_intent=self._query_has_temporal_intent,
+            memory_has_temporal_markers=self._memory_has_temporal_markers,
+            salience_boost=self._salience_boost,
         )
-        out: list[dict[str, Any]] = []
-        for item in ranked[: max(1, limit)]:
-            out.append(
-                {
-                    "category": str(item["category"]),
-                    "score": round(float(item["score"]), 6),
-                    "count": int(item["count"]),
-                    "sample_text": str(item["sample_text"]),
-                    "memory_types": sorted(str(value) for value in item["memory_types"]),
-                    "sources": sorted(str(value) for value in item["sources"]),
-                }
-            )
-        return out
 
     @staticmethod
     def _filter_records_to_categories(records: list[MemoryRecord], categories: list[str]) -> list[MemoryRecord]:
