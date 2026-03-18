@@ -32,6 +32,8 @@ What it does:
 - if the existing checkout diverged from `origin/main`, it preserves that tree as `/root/ClawLite.backup.<timestamp>` and reclones cleanly
 - runs `scripts/install.sh` inside Ubuntu
 
+The wrapper now downloads the latest repository sync helper directly from GitHub before updating the checkout. That means even an older local copy of `install_termux_proot.sh` can recover from the historical `git pull --ff-only` failure mode as long as you rerun the one-shot `curl ... | bash` command from Termux.
+
 ## 3. Enter Ubuntu and configure
 
 ```bash
@@ -59,6 +61,20 @@ python3 -m playwright install chromium
 
 - If `python3 -m venv` fails, install `python3-venv` inside Ubuntu and rerun the installer.
 - If Playwright is not needed, skip the browser extra and the Chromium download.
+- If you see `fatal: Not possible to fast-forward, aborting.`, rerun the remote wrapper from Termux instead of an old local copy:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/install_termux_proot.sh | bash
+```
+
+- If you need a manual recovery inside Ubuntu, use the same sync helper directly:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/update_checkout.sh) \
+  https://github.com/eobarretooo/ClawLite.git \
+  /root/ClawLite \
+  main
+```
 - If you want to rerun the Ubuntu-side installer manually, use:
 
 ```bash

@@ -71,6 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/eobarretooo/ClawLite/main/scripts/i
 ```
 
 If an older `/root/ClawLite` checkout inside Ubuntu has diverged from `origin/main`, the wrapper now preserves it as a timestamped backup and reclones cleanly instead of failing on `git pull --ff-only`.
+The Termux wrapper also fetches the latest checkout-sync helper directly from GitHub, so rerunning the one-shot `curl ... | bash` path is the safest update path even when an older local wrapper script is stale.
 
 After that:
 
