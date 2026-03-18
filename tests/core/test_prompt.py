@@ -80,7 +80,7 @@ def test_prompt_builder_applies_token_budget_shaping_deterministically(
     assert "old-message" in out.history_summary
 
 
-def test_prompt_builder_preserves_soul_and_user_sections_under_workspace_pressure(
+def test_prompt_builder_preserves_soul_and_structured_user_profile_under_workspace_pressure(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "IDENTITY.md").write_text("I am ClawLite", encoding="utf-8")
@@ -104,10 +104,8 @@ def test_prompt_builder_preserves_soul_and_user_sections_under_workspace_pressur
     assert "## IDENTITY.md" in out.system_prompt
     assert "## SOUL.md" in out.system_prompt
     assert "Always stay direct and autonomous." in out.system_prompt
-    assert "## USER.md" in out.system_prompt
-    assert (
-        "Prefer concise answers and mention timezone if relevant." in out.system_prompt
-    )
+    assert "## USER.md" not in out.system_prompt
+    assert "Prefer concise answers and mention timezone if relevant." not in out.system_prompt
     assert "[Identity Guard]" in out.system_prompt
 
 
@@ -146,6 +144,20 @@ def test_prompt_builder_injects_structured_user_profile_hint(tmp_path: Path) -> 
     assert "- Preferred name: Ed" in out.system_prompt
     assert "- Timezone: America/Sao_Paulo" in out.system_prompt
     assert "- Preferences: concise updates, direct actions" in out.system_prompt
+
+
+def test_prompt_builder_omits_raw_default_user_profile_from_system_prompt(tmp_path: Path) -> None:
+    builder = PromptBuilder(tmp_path)
+    out = builder.build(
+        user_text="hello",
+        memory_snippets=[],
+        history=[],
+        skills_for_prompt=[],
+    )
+
+    assert "## USER.md" not in out.system_prompt
+    assert "Name: Owner" not in out.system_prompt
+    assert "(optional)" not in out.system_prompt
 
 
 def test_prompt_builder_injects_identity_first_when_identity_missing(
@@ -189,6 +201,29 @@ def test_prompt_builder_injects_identity_first_when_identity_empty(
     assert out.system_prompt.find("## SOUL.md") > out.system_prompt.find(
         "## IDENTITY.md"
     )
+
+
+def test_prompt_builder_replaces_legacy_identity_fallback_with_stable_identity(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "IDENTITY.md").write_text(
+        "# IDENTITY.md — Who Am I?\n\nFill this during the first real conversation, then refine it as identity signals become clear.",
+        encoding="utf-8",
+    )
+    (tmp_path / "SOUL.md").write_text("Be direct", encoding="utf-8")
+
+    builder = PromptBuilder(tmp_path)
+    out = builder.build(
+        user_text="hello",
+        memory_snippets=[],
+        history=[],
+        skills_for_prompt=[],
+    )
+
+    assert out.system_prompt.startswith("## IDENTITY.md")
+    assert "Fill this during the first real conversation" not in out.system_prompt
+    assert "## Name" in out.system_prompt
+    assert "ClawLite" in out.system_prompt
 
 
 def test_prompt_builder_adds_always_on_identity_guard_section(tmp_path: Path) -> None:

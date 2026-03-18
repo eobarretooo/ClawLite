@@ -2249,6 +2249,28 @@ def test_telegram_markdown_expands_inline_bullets_into_readable_lines() -> None:
     assert "&#8226; rodar testes" in rendered
 
 
+def test_telegram_markdown_expands_inline_numbered_list_into_readable_lines() -> None:
+    rendered = markdown_to_telegram_html(
+        "Passos: 1. abrir o arquivo 2. editar o trecho 3. rodar os testes"
+    )
+
+    assert "Passos:\n" in rendered
+    assert "1. abrir o arquivo" in rendered
+    assert "2. editar o trecho" in rendered
+    assert "3. rodar os testes" in rendered
+
+
+def test_telegram_markdown_formats_heading_and_table_into_clean_html() -> None:
+    rendered = markdown_to_telegram_html(
+        "# Resumo\n\n| Coluna | Valor |\n| --- | --- |\n| Nome | ClawLite |\n| Canal | Telegram |"
+    )
+
+    assert "<b>Resumo</b>" in rendered
+    assert "<pre><code>" in rendered
+    assert "Coluna  Valor" in rendered
+    assert "Nome    ClawLite" in rendered
+
+
 def test_telegram_module_import_does_not_call_setup_logging() -> None:
     source = Path(telegram_module.__file__).read_text(encoding="utf-8")
     assert "from clawlite.utils.logging import setup_logging" not in source

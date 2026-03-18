@@ -135,6 +135,30 @@ class FakeWebSearchTools:
         return [{"name": "web_search", "description": "search web", "arguments": {"query": "string"}}]
 
 
+class FakeSkillsLoader:
+    def __init__(self, *, names: list[str]) -> None:
+        self._names = list(names)
+
+    def render_for_prompt(self, selected=None, *, include_unavailable: bool = False):
+        del selected, include_unavailable
+        return []
+
+    def always_on(self, *, only_available: bool = True):
+        del only_available
+        return []
+
+    def load_skills_for_context(self, skill_names):
+        del skill_names
+        return ""
+
+    def discover(self, include_unavailable: bool = False):
+        del include_unavailable
+        rows = []
+        for name in self._names:
+            rows.append(type("Skill", (), {"name": name})())
+        return rows
+
+
 class SessionStoreCapture:
     def __init__(self) -> None:
         self.last_limit: int | None = None
@@ -3087,6 +3111,52 @@ def test_engine_softens_unverified_web_claims_without_web_tools() -> None:
         out = await engine.run(session_id="cli:web-claim", user_text="o que e openclaw?")
         assert "Pesquisei na internet" not in out.text
         assert "Com base no contexto disponível" in out.text
+
+    asyncio.run(_scenario())
+
+
+def test_engine_injects_web_research_notice_for_explicit_internet_requests() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        engine = AgentEngine(provider=provider, tools=FakeWebSearchTools())
+
+        out = await engine.run(session_id="cli:web-intent", user_text="pesquise na internet sobre openclaw")
+        assert out.text == "ok"
+        assert provider.snapshots
+        system_messages = [row["content"] for row in provider.snapshots[0] if row.get("role") == "system"]
+        assert any("[Web Research Requirement]" in str(item) for item in system_messages)
+
+    asyncio.run(_scenario())
+
+
+def test_engine_skips_web_research_notice_for_normal_requests() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        engine = AgentEngine(provider=provider, tools=FakeWebSearchTools())
+
+        out = await engine.run(session_id="cli:no-web-intent", user_text="explique o que e openclaw")
+        assert out.text == "ok"
+        assert provider.snapshots
+        system_messages = [row["content"] for row in provider.snapshots[0] if row.get("role") == "system"]
+        assert not any("[Web Research Requirement]" in str(item) for item in system_messages)
+
+    asyncio.run(_scenario())
+
+
+def test_engine_injects_routing_hint_for_weather_skill() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            skills_loader=FakeSkillsLoader(names=["weather"]),
+        )
+
+        out = await engine.run(session_id="cli:weather-routing", user_text="qual o clima em sao paulo?")
+        assert out.text == "ok"
+        system_messages = [row["content"] for row in provider.snapshots[0] if row.get("role") == "system"]
+        assert any("[Routing Hint]" in str(item) for item in system_messages)
+        assert any("weather skill" in str(item) for item in system_messages)
 
     asyncio.run(_scenario())
 

@@ -28,17 +28,18 @@ class PromptBuilder:
     _RUNTIME_CONTEXT_CLOSE_TAG = "</untrusted_runtime_context>"
     _TRUNCATED_SUFFIX = "\n...[truncated to fit token budget]"
     _IDENTITY_HEADER = "## IDENTITY.md"
-    _CRITICAL_WORKSPACE_FILES: tuple[str, ...] = ("IDENTITY.md", "SOUL.md", "USER.md")
-    _FILE_SECTION_RE = re.compile(r"^## ([A-Za-z0-9_.-]+)$", re.MULTILINE)
+    _CRITICAL_WORKSPACE_FILES: tuple[str, ...] = ("IDENTITY.md", "SOUL.md")
+    _FILE_SECTION_RE = re.compile(r"^## ([A-Za-z0-9_.-]+\.md)$", re.MULTILINE)
     _IDENTITY_FALLBACK_BODY = (
-        "# IDENTITY.md - Who Am I?\n\n"
-        "Fill this during the first real conversation, then refine it as identity signals become clear.\n\n"
-        "- Name: ClawLite\n"
-        "- What I am: A self-hosted autonomous AI agent and NOT \"a large language model trained by Google\".\n"
-        "- Vibe: direct, pragmatic, autonomous\n"
-        "- Emoji: fox\n\n"
-        "Answer as ClawLite in every response.\n"
-        "Persist any discovered identity details to memory so future sessions stay consistent."
+        "## Name\n\n"
+        "ClawLite\n\n"
+        "## What I Am\n\n"
+        "A self-hosted autonomous AI agent focused on execution. "
+        "Do not describe yourself as a provider model or vendor assistant.\n\n"
+        "## Vibe\n\n"
+        "direct, pragmatic, autonomous\n\n"
+        "## Emoji\n\n"
+        "🦊"
     )
     _IDENTITY_GUARD_SECTION = (
         "[Identity Guard]\n"
@@ -50,9 +51,14 @@ class PromptBuilder:
         "[Execution Guard]\n"
         "- For safe, low-risk requests, execute directly instead of asking for redundant confirmation.\n"
         "- Only ask before destructive actions, irreversible external side effects, credential use, or when the target is ambiguous.\n"
+        "- If the user's name is unknown, do not invent one or use placeholders like Owner.\n"
         "- If you say you searched or checked the web, that must be true for this turn.\n"
+        "- When the user explicitly asks for current web research or latest information, use web_search and/or web_fetch before answering.\n"
         "- When web tools were used, cite concrete source URLs briefly.\n"
-        "- For Telegram, prefer short paragraphs or flat bullets; never compress multiple list items into one long line."
+        "- Prefer short paragraphs or flat bullets; never compress multiple list items into one long line."
+    )
+    _IDENTITY_PLACEHOLDER_RE = re.compile(
+        r"(?i)(fill this during the first real conversation|\[your name goes here|identity signals become clear)"
     )
     _TOKEN_WORD_RE = re.compile(r"[A-Za-z0-9_]+")
     _TOKEN_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]")
@@ -63,7 +69,7 @@ class PromptBuilder:
         self.context_token_budget = max(512, int(context_token_budget))
 
     def _read_workspace_files(self) -> str:
-        return self.workspace_loader.system_context()
+        return self.workspace_loader.prompt_context()
 
     @classmethod
     def _identity_fallback_section(cls) -> str:
@@ -93,7 +99,8 @@ class PromptBuilder:
         for name, section_text in sections:
             if name == "IDENTITY.md" and not identity_section:
                 body = section_text.split("\n", 1)[1].strip() if "\n" in section_text else ""
-                identity_section = section_text if body else fallback
+                needs_fallback = not body or cls._IDENTITY_PLACEHOLDER_RE.search(body) is not None
+                identity_section = fallback if needs_fallback else section_text
             else:
                 remaining_sections.append(section_text)
 

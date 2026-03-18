@@ -59,17 +59,17 @@ If one of them is broken, ClawLite restores it from the built-in template and, w
 
 Prompt building is workspace-first.
 
-The runtime reads these files in order:
+The runtime reads these files into the raw system prompt in this order:
 
 1. `IDENTITY.md`
 2. `SOUL.md`
 3. `AGENTS.md`
 4. `TOOLS.md`
-5. `USER.md`
-6. `HEARTBEAT.md` if heartbeat context is enabled
-7. `BOOTSTRAP.md` only while bootstrap is still pending
+5. `HEARTBEAT.md` if heartbeat context is enabled
+6. `BOOTSTRAP.md` only while bootstrap is still pending
 
-`USER.md` is also parsed into a structured user-profile hint, so the assistant can adapt to timezone, language, preferences, and working style.
+`USER.md` is parsed separately into a structured user-profile hint, so the assistant can adapt to timezone, language, preferences, and working style without leaking raw placeholder text into the live system prompt.
+Legacy defaults such as `Owner` or `(optional)` are ignored at runtime.
 
 ### Red Lines
 
@@ -120,7 +120,7 @@ The workspace is meant to be edited.
 
 - Use `IDENTITY.md` for who the assistant is. Fill it during the first real conversation — include your name, vibe, emoji, purpose, and communication style. The file guides self-discovery rather than forcing {{placeholders}}.
 - Use `SOUL.md` for stable behavior and tone.
-- Use `USER.md` for the owner's preferences and context.
+- Use `USER.md` for the user's preferences and context. Leave unknown fields blank instead of writing placeholders.
 - Use `AGENTS.md` and `TOOLS.md` for repo-local or workspace-local operating rules. Remember that the Red Lines section is automatically re-injected after context compaction.
 - Use `HEARTBEAT.md` for periodic behavior.
 - Use `memory/MEMORY.md` for durable human-written notes that should stay close to the workspace.

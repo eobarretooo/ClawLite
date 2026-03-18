@@ -1,8 +1,8 @@
 # User Profile
 
 Name: {{user_name}}
-What to call them: (optional)
-Pronouns: (optional)
+What to call them:
+Pronouns:
 Timezone: {{user_timezone}}
 Context: {{user_context}}
 Preferences: {{user_preferences}}

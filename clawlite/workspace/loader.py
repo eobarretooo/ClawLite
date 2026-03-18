@@ -29,10 +29,10 @@ DEFAULT_VARS = {
     "assistant_creature": "fox",
     "assistant_vibe": "direct, pragmatic, autonomous",
     "assistant_backstory": "An autonomous personal assistant focused on execution.",
-    "user_name": "Owner",
-    "user_timezone": "UTC",
-    "user_context": "Personal operations and software projects",
-    "user_preferences": "Clear answers, direct actions, concise updates",
+    "user_name": "",
+    "user_timezone": "",
+    "user_context": "",
+    "user_preferences": "",
 }
 
 
@@ -511,6 +511,21 @@ class WorkspaceLoader:
     def system_context(self, *, include_heartbeat: bool = True, include_bootstrap: bool = True) -> str:
         self.ensure_runtime_files()
         files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md"]
+        if include_heartbeat:
+            files.append("HEARTBEAT.md")
+        if include_bootstrap and self.should_run_bootstrap():
+            files.append("BOOTSTRAP.md")
+
+        docs = self.read(files)
+        ordered_files = [name for name in files if name in docs]
+        parts = [f"## {name}\n{docs[name]}" for name in ordered_files]
+        return "\n\n".join(parts).strip()
+
+    def prompt_context(self, *, include_heartbeat: bool = True, include_bootstrap: bool = True) -> str:
+        self.ensure_runtime_files()
+        # USER.md is parsed separately into a structured profile hint so raw placeholders
+        # do not leak into the live system prompt.
+        files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md"]
         if include_heartbeat:
             files.append("HEARTBEAT.md")
         if include_bootstrap and self.should_run_bootstrap():

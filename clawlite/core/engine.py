@@ -338,6 +338,32 @@ class AgentEngine:
         r")\b",
         re.IGNORECASE,
     )
+    _WEB_RESEARCH_REQUEST_RE = re.compile(
+        r"(?:"
+        r"\b(?:pesquis(?:a|e|ar)|busc(?:a|e|ar)|procura(?:r)?|veja|olha|olhe|confira)\b.*\b(?:internet|web|online|site|sites|fonte|fontes)\b"
+        r"|"
+        r"\b(?:search|look\s+up|check|find|research|browse)\b.*\b(?:internet|web|online|source|sources|site|sites)\b"
+        r")",
+        re.IGNORECASE,
+    )
+    _UP_TO_DATE_REQUEST_RE = re.compile(
+        r"\b(?:latest|current|recent|today|news|up[- ]to[- ]date|recente|recentes|atual|atualizado|hoje|not[ií]cias)\b",
+        re.IGNORECASE,
+    )
+    _WEB_RESEARCH_SYSTEM_NOTICE = (
+        "[Web Research Requirement]\n"
+        "- The user explicitly asked for current web research or up-to-date information.\n"
+        "- Use web_search and/or web_fetch before making factual claims.\n"
+        "- If the web tools fail or return incomplete results, say that clearly instead of guessing."
+    )
+    _WEATHER_REQUEST_RE = re.compile(r"\b(?:weather|forecast|temperature|clima|tempo|previs[aã]o)\b", re.IGNORECASE)
+    _SUMMARIZE_REQUEST_RE = re.compile(
+        r"\b(?:summari[sz]e|summary|resuma|resumir|sumarize|sumarizar)\b",
+        re.IGNORECASE,
+    )
+    _GITHUB_REQUEST_RE = re.compile(r"\b(?:github|pull request|prs?\b|issues?\b|workflows?)\b", re.IGNORECASE)
+    _DOCKER_REQUEST_RE = re.compile(r"\b(?:docker|compose|container(?:es)?|image(?:ns)?)\b", re.IGNORECASE)
+    _ROUTING_HINT_HEADER = "[Routing Hint]"
 
     def __init__(
         self,
@@ -2220,6 +2246,69 @@ class AgentEngine:
             updated = cls._append_web_sources(updated, sources)
         return updated
 
+    @classmethod
+    def _message_requests_web_research(cls, user_text: str) -> bool:
+        compact = " ".join(str(user_text or "").split()).strip()
+        if not compact:
+            return False
+        return bool(
+            cls._WEB_RESEARCH_REQUEST_RE.search(compact)
+            or cls._UP_TO_DATE_REQUEST_RE.search(compact)
+        )
+
+    @classmethod
+    def _web_research_notice_for_turn(cls, *, user_text: str, tool_names: set[str]) -> str:
+        if not cls._message_requests_web_research(user_text):
+            return ""
+        if not tool_names.intersection(cls._WEB_TOOL_NAMES):
+            return ""
+        return cls._WEB_RESEARCH_SYSTEM_NOTICE
+
+    @classmethod
+    def _routing_notice_for_turn(
+        cls,
+        *,
+        user_text: str,
+        tool_names: set[str],
+        skill_names: set[str],
+    ) -> str:
+        compact = " ".join(str(user_text or "").split()).strip()
+        if not compact:
+            return ""
+
+        lines: list[str] = []
+        if cls._message_requests_web_research(compact):
+            if "web_search" in tool_names:
+                lines.append("- Start with web_search to find current sources before answering.")
+            if "web_fetch" in tool_names:
+                lines.append("- Use web_fetch on the strongest sources before making concrete claims.")
+            if "web-search" in skill_names:
+                lines.append("- Relevant skill available: web-search.")
+            if "summarize" in skill_names:
+                lines.append("- If the user wants synthesis after reading sources, use the summarize skill.")
+        if cls._WEATHER_REQUEST_RE.search(compact) and "weather" in skill_names:
+            lines.append("- This looks like a weather request; prefer the weather skill.")
+        if cls._SUMMARIZE_REQUEST_RE.search(compact) and "summarize" in skill_names:
+            lines.append("- This looks like a summary request; prefer the summarize skill.")
+        if cls._GITHUB_REQUEST_RE.search(compact):
+            if "github" in skill_names:
+                lines.append("- This looks like a GitHub workflow request; prefer the github skill.")
+            elif "github-issues" in skill_names or "gh-issues" in skill_names:
+                lines.append("- Relevant GitHub issue skill is available; use it instead of guessing issue state.")
+        if cls._DOCKER_REQUEST_RE.search(compact) and "docker" in skill_names:
+            lines.append("- This looks like a Docker task; prefer the docker skill for concrete actions.")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for line in lines:
+            if line in seen:
+                continue
+            seen.add(line)
+            deduped.append(line)
+        if not deduped:
+            return ""
+        return "\n".join([cls._ROUTING_HINT_HEADER, *deduped])
+
     def _stop_requested(self, *, session_id: str, stop_event: asyncio.Event | None) -> bool:
         if stop_event is not None and stop_event.is_set():
             return True
@@ -2394,6 +2483,13 @@ class AgentEngine:
         skills = self.skills_loader.render_for_prompt()
         always_names = [item.name for item in self.skills_loader.always_on()]
         skills_context = self.skills_loader.load_skills_for_context(always_names)
+        tool_schema = self.tools.schema()
+        available_tool_names = self._tool_schema_names(tool_schema)
+        available_skill_names = {
+            str(item.name or "").strip().lower()
+            for item in self.skills_loader.discover(include_unavailable=False)
+            if str(item.name or "").strip()
+        }
 
         prompt = self.prompt_builder.build(
             user_text=user_text,
@@ -2427,6 +2523,19 @@ class AgentEngine:
         profile_hint = await self._memory_profile_hint()
         if profile_hint:
             messages.append({"role": "system", "content": profile_hint})
+        web_notice = self._web_research_notice_for_turn(
+            user_text=user_text,
+            tool_names=available_tool_names,
+        )
+        if web_notice:
+            messages.append({"role": "system", "content": web_notice})
+        routing_notice = self._routing_notice_for_turn(
+            user_text=user_text,
+            tool_names=available_tool_names,
+            skill_names=available_skill_names,
+        )
+        if routing_notice:
+            messages.append({"role": "system", "content": routing_notice})
         if prompt.history_messages:
             messages.extend(prompt.history_messages)
         if prompt.runtime_context:
@@ -2487,7 +2596,6 @@ class AgentEngine:
                 limit=budget.max_progress_events or 1,
             )
             try:
-                tool_schema = self.tools.schema()
                 step = await self._complete_provider(
                     messages=messages,
                     tools=tool_schema,
@@ -2533,7 +2641,6 @@ class AgentEngine:
 
             if step.tool_calls:
                 run_log.debug("tool calls requested iteration={} count={}", iteration, len(step.tool_calls))
-                available_tool_names = self._tool_schema_names(tool_schema)
                 if self.loop_detection.enabled:
                     plan_signature = self._provider_plan_signature(
                         step.text or "",

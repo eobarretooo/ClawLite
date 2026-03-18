@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import time
+import unicodedata
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,12 +138,71 @@ def split_message(text: str, max_len: int = MAX_MESSAGE_LEN) -> list[str]:
     return parts
 
 
-def _normalize_telegram_markdown(text: str) -> str:
-    normalized = str(text or "").replace("\r\n", "\n").strip()
-    if not normalized:
-        return ""
+def _strip_markdown_inline(text: str) -> str:
+    clean = str(text or "")
+    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", clean)
+    clean = re.sub(r"__(.+?)__", r"\1", clean)
+    clean = re.sub(r"~~(.+?)~~", r"\1", clean)
+    clean = re.sub(r"`([^`]+)`", r"\1", clean)
+    return clean.strip()
 
-    normalized = re.sub(r":\s+-\s+", ":\n- ", normalized)
+
+def _render_table_box(table_lines: list[str]) -> str:
+    def display_width(value: str) -> int:
+        return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in value)
+
+    rows: list[list[str]] = []
+    has_separator = False
+    for line in table_lines:
+        cells = [_strip_markdown_inline(cell) for cell in line.strip().strip("|").split("|")]
+        if all(re.match(r"^:?-+:?$", cell) for cell in cells if cell):
+            has_separator = True
+            continue
+        rows.append(cells)
+    if not rows or not has_separator:
+        return "\n".join(table_lines)
+
+    ncols = max(len(row) for row in rows)
+    for row in rows:
+        row.extend([""] * (ncols - len(row)))
+    widths = [max(display_width(row[idx]) for row in rows) for idx in range(ncols)]
+
+    def draw_row(cells: list[str]) -> str:
+        return "  ".join(f"{cell}{' ' * (width - display_width(cell))}" for cell, width in zip(cells, widths))
+
+    out = [draw_row(rows[0])]
+    out.append("  ".join("─" * width for width in widths))
+    for row in rows[1:]:
+        out.append(draw_row(row))
+    return "\n".join(out)
+
+
+def _expand_inline_markdown_tables(text: str) -> str:
+    lines = str(text or "").split("\n")
+    rebuilt: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        if re.match(r"^\s*\|.+\|\s*$", lines[idx]):
+            block: list[str] = []
+            while idx < len(lines) and re.match(r"^\s*\|.+\|\s*$", lines[idx]):
+                block.append(lines[idx])
+                idx += 1
+            box = _render_table_box(block)
+            if box != "\n".join(block):
+                rebuilt.append(f"```\n{box}\n```")
+            else:
+                rebuilt.extend(block)
+            continue
+        rebuilt.append(lines[idx])
+        idx += 1
+    return "\n".join(rebuilt)
+
+
+def _expand_inline_list_runs(text: str) -> str:
+    normalized = str(text or "")
+    normalized = re.sub(r":\s+(\d+\.\s+)", r":\n\1", normalized)
+    normalized = re.sub(r":\s+([-*]\s+)", r":\n\1", normalized)
+
     lines: list[str] = []
     for raw_line in normalized.split("\n"):
         line = raw_line.rstrip()
@@ -155,8 +215,25 @@ def _normalize_telegram_markdown(text: str) -> str:
                 for item in items:
                     lines.append(f"{indent}{bullet} {item}")
                 continue
+        numbered_parts = re.split(r"\s+(?=(?:\d+)\.\s+)", stripped)
+        if len(numbered_parts) > 1 and all(re.match(r"^\d+\.\s+\S", part) for part in numbered_parts[1:]):
+            head = numbered_parts[0].strip()
+            if head:
+                lines.append(f"{indent}{head}")
+            for item in numbered_parts[1:] if head else numbered_parts:
+                lines.append(f"{indent}{item.strip()}")
+            continue
         lines.append(line)
-    normalized = "\n".join(lines)
+    return "\n".join(lines)
+
+
+def _normalize_telegram_markdown(text: str) -> str:
+    normalized = str(text or "").replace("\r\n", "\n").strip()
+    if not normalized:
+        return ""
+
+    normalized = _expand_inline_markdown_tables(normalized)
+    normalized = _expand_inline_list_runs(normalized)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized
 
@@ -195,7 +272,13 @@ def markdown_to_telegram_html(text: str) -> str:
         return token
 
     text = re.sub(r"`([^`]+)`", save_inline_code, text)
-    text = re.sub(r"^#{1,6}\s+(.+)$", r"\1", text, flags=re.MULTILINE)
+    def save_heading(match: re.Match[str]) -> str:
+        token = _reserve_token("HD")
+        heading = html.escape(match.group(1).strip(), quote=False)
+        token_map[token] = f"<b>{heading}</b>"
+        return token
+
+    text = re.sub(r"^#{1,6}\s+(.+)$", save_heading, text, flags=re.MULTILINE)
     text = re.sub(r"^>\s*(.*)$", r"\1", text, flags=re.MULTILINE)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)

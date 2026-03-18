@@ -49,10 +49,35 @@ def test_workspace_loader_exposes_structured_user_profile_prompt(tmp_path: Path)
     profile = loader.user_profile()
     prompt = loader.user_profile_prompt()
 
-    assert profile.timezone == "UTC"
+    assert profile.name == ""
+    assert profile.timezone == ""
     assert "[Structured User Profile]" in prompt
-    assert "- Timezone: UTC" in prompt
-    assert "- Preferences: Clear answers, direct actions, concise updates" in prompt
+    assert "Owner" not in prompt
+    assert "(optional)" not in prompt
+    assert "- Working style:" in prompt
+
+
+def test_user_profile_parser_strips_legacy_template_defaults() -> None:
+    profile = parse_user_profile_markdown(
+        """
+        # User Profile
+
+        Name: Owner
+        What to call them: (optional)
+        Pronouns: (optional)
+        Timezone: UTC
+        Context: Personal operations and software projects
+        Preferences: Clear answers, direct actions, concise updates
+        """,
+        source_path="/tmp/USER.md",
+    )
+
+    assert profile.name == ""
+    assert profile.preferred_name == ""
+    assert profile.pronouns == ""
+    assert profile.timezone == ""
+    assert profile.context == ""
+    assert profile.preferences == []
 
 
 def test_identity_enforcer_rewrites_provider_intro_and_flags_residual_vendor_contamination(tmp_path: Path) -> None:

@@ -76,6 +76,7 @@ What it supports:
 - Reaction forwarding and inline keyboard callbacks.
 - Inline approval/review buttons for approval-gated tools and self-evolution review.
 - Telegram-specific message actions through the `message` tool: reply, edit, delete, react, and create topic.
+- Outbound markdown cleanup for inline lists, headings, and simple pipe tables before Telegram HTML rendering.
 
 Important config keys:
 
@@ -138,6 +139,7 @@ Notes:
 - If `transcription_api_key` is empty, Telegram transcription falls back to `GROQ_API_KEY`.
 - `group_overrides` can override policy per chat and per topic.
 - Inline keyboards are also used for operator review flows such as approval-gated tools and self-evolution review.
+- The renderer normalizes “flat” inline lists like `Passos: 1. ... 2. ...` into readable multi-line output before send/edit.
 
 `group_overrides` example:
 
