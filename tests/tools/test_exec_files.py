@@ -76,6 +76,44 @@ def test_exec_tool_path_append(tmp_path: Path) -> None:
     asyncio.run(_scenario())
 
 
+def test_exec_tool_env_overrides(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        out = await ExecTool(workspace_path=tmp_path, restrict_to_workspace=True).run(
+            {"command": 'python3 -c "import os; print(os.getenv(\'SKILL_TOKEN\', \'\'))"', "env": {"SKILL_TOKEN": "abc123"}},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=0" in out
+        assert "abc123" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_supports_cwd_override(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        subdir = tmp_path / "nested"
+        subdir.mkdir(parents=True, exist_ok=True)
+        out = await ExecTool().run(
+            {"command": 'python3 -c "import os; print(os.getcwd())"', "cwd": str(subdir)},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=0" in out
+        assert str(subdir) in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_restrict_to_workspace_blocks_cwd_outside_workspace(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        outside = tmp_path.parent
+        out = await ExecTool(workspace_path=tmp_path, restrict_to_workspace=True).run(
+            {"command": 'python3 -c "print(1)"', "cwd": str(outside)},
+            ToolContext(session_id="s"),
+        )
+        assert "blocked_by_workspace_guard:cwd_outside_workspace" in out
+
+    asyncio.run(_scenario())
+
+
 def test_exec_tool_restrict_to_workspace_blocks_outside_path(tmp_path: Path) -> None:
     async def _scenario() -> None:
         out = await ExecTool(workspace_path=tmp_path, restrict_to_workspace=True).run(

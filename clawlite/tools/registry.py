@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
+import shlex
 import time
 from typing import Any
 
@@ -70,6 +72,8 @@ class ToolResultCache:
 
 
 class ToolRegistry:
+    _APPROVAL_REQUEST_LIMIT = 256
+
     def __init__(
         self,
         *,
@@ -80,27 +84,43 @@ class ToolRegistry:
         self._safety = safety or ToolSafetyPolicyConfig()
         self._default_timeout_s = max(0.1, float(default_timeout_s))
         self._cache = ToolResultCache()
+        self._approval_ttl_s = max(1.0, float(getattr(self._safety, "approval_grant_ttl_s", 900.0) or 900.0))
+        self._approval_grants: dict[str, float] = {}
+        self._approval_requests: dict[str, dict[str, Any]] = {}
+        self._approval_request_order: list[str] = []
 
     @staticmethod
     def _apply_layer(
         *,
         target_risky_tools: list[str],
+        target_risky_specifiers: list[str],
+        target_approval_specifiers: list[str],
+        target_approval_channels: list[str],
         target_blocked_channels: list[str],
         target_allowed_channels: list[str],
         layer: Any,
-    ) -> tuple[list[str], list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
         risky_tools = target_risky_tools
+        risky_specifiers = target_risky_specifiers
+        approval_specifiers = target_approval_specifiers
+        approval_channels = target_approval_channels
         blocked_channels = target_blocked_channels
         allowed_channels = target_allowed_channels
         if layer is None:
-            return risky_tools, blocked_channels, allowed_channels
+            return risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels
         if layer.risky_tools is not None:
             risky_tools = list(layer.risky_tools)
+        if layer.risky_specifiers is not None:
+            risky_specifiers = list(layer.risky_specifiers)
+        if layer.approval_specifiers is not None:
+            approval_specifiers = list(layer.approval_specifiers)
+        if layer.approval_channels is not None:
+            approval_channels = list(layer.approval_channels)
         if layer.blocked_channels is not None:
             blocked_channels = list(layer.blocked_channels)
         if layer.allowed_channels is not None:
             allowed_channels = list(layer.allowed_channels)
-        return risky_tools, blocked_channels, allowed_channels
+        return risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels
 
     @staticmethod
     def _derive_agent_from_session(session_id: str) -> str:
@@ -112,19 +132,30 @@ class ToolRegistry:
             return ""
         return parts[1].strip()
 
-    def _resolve_effective_safety(self, *, session_id: str, channel: str) -> tuple[str, list[str], list[str], list[str]]:
+    def _resolve_effective_safety(
+        self,
+        *,
+        session_id: str,
+        channel: str,
+    ) -> tuple[str, list[str], list[str], list[str], list[str], list[str], list[str]]:
         resolved_channel = str(channel or "").strip().lower() or self._derive_channel_from_session(session_id)
         resolved_agent = self._derive_agent_from_session(session_id)
 
         risky_tools = list(self._safety.risky_tools)
+        risky_specifiers = list(self._safety.risky_specifiers)
+        approval_specifiers = list(self._safety.approval_specifiers)
+        approval_channels = list(self._safety.approval_channels)
         blocked_channels = list(self._safety.blocked_channels)
         allowed_channels = list(self._safety.allowed_channels)
 
         selected_profile = str(self._safety.profile or "").strip().lower()
         if selected_profile:
             profile_layer = self._safety.profiles.get(selected_profile)
-            risky_tools, blocked_channels, allowed_channels = self._apply_layer(
+            risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels = self._apply_layer(
                 target_risky_tools=risky_tools,
+                target_risky_specifiers=risky_specifiers,
+                target_approval_specifiers=approval_specifiers,
+                target_approval_channels=approval_channels,
                 target_blocked_channels=blocked_channels,
                 target_allowed_channels=allowed_channels,
                 layer=profile_layer,
@@ -132,8 +163,11 @@ class ToolRegistry:
 
         if resolved_agent:
             agent_layer = self._safety.by_agent.get(resolved_agent)
-            risky_tools, blocked_channels, allowed_channels = self._apply_layer(
+            risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels = self._apply_layer(
                 target_risky_tools=risky_tools,
+                target_risky_specifiers=risky_specifiers,
+                target_approval_specifiers=approval_specifiers,
+                target_approval_channels=approval_channels,
                 target_blocked_channels=blocked_channels,
                 target_allowed_channels=allowed_channels,
                 layer=agent_layer,
@@ -141,26 +175,429 @@ class ToolRegistry:
 
         if resolved_channel:
             channel_layer = self._safety.by_channel.get(resolved_channel)
-            risky_tools, blocked_channels, allowed_channels = self._apply_layer(
+            risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels = self._apply_layer(
                 target_risky_tools=risky_tools,
+                target_risky_specifiers=risky_specifiers,
+                target_approval_specifiers=approval_specifiers,
+                target_approval_channels=approval_channels,
                 target_blocked_channels=blocked_channels,
                 target_allowed_channels=allowed_channels,
                 layer=channel_layer,
             )
 
-        return resolved_channel, risky_tools, blocked_channels, allowed_channels
+        return (
+            resolved_channel,
+            risky_tools,
+            risky_specifiers,
+            approval_specifiers,
+            approval_channels,
+            blocked_channels,
+            allowed_channels,
+        )
 
     @staticmethod
-    def _is_blocked_by_safety(*, tool_name: str, channel: str, risky_tools: list[str], blocked_channels: list[str], allowed_channels: list[str]) -> bool:
+    def _normalize_specifier_fragment(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        normalized = re.sub(r"[^a-z0-9]+", "-", text)
+        return normalized.strip("-")
+
+    @classmethod
+    def _command_specifier(cls, raw_command: Any) -> str:
+        command = str(raw_command or "").strip()
+        if not command:
+            return ""
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            return ""
+        if not argv:
+            return ""
+        raw_binary = str(argv[0] or "").strip().strip("\"'")
+        if not raw_binary:
+            return ""
+        parts = [part for part in re.split(r"[\\/]", raw_binary) if part]
+        return cls._normalize_specifier_fragment(parts[-1] if parts else raw_binary)
+
+    @classmethod
+    def _derive_tool_specifiers(cls, *, tool_name: str, arguments: dict[str, Any]) -> list[str]:
         normalized_tool = str(tool_name or "").strip().lower()
-        if normalized_tool not in risky_tools:
+        if not normalized_tool:
+            return []
+        out: list[str] = [normalized_tool]
+        seen = set(out)
+
+        def _add(fragment: Any) -> None:
+            normalized = cls._normalize_specifier_fragment(fragment)
+            if not normalized:
+                return
+            candidate = f"{normalized_tool}:{normalized}"
+            if candidate in seen:
+                return
+            seen.add(candidate)
+            out.append(candidate)
+
+        for key in ("action", "operation", "method", "mode"):
+            _add(arguments.get(key))
+
+        if normalized_tool == "run_skill":
+            _add(arguments.get("name"))
+        elif normalized_tool == "exec":
+            _add(cls._command_specifier(arguments.get("command")))
+
+        return out
+
+    @staticmethod
+    def _matches_specifier_rule(*, specifier: str, rule: str) -> bool:
+        normalized_specifier = str(specifier or "").strip().lower()
+        normalized_rule = str(rule or "").strip().lower()
+        if not normalized_specifier or not normalized_rule:
             return False
+        if normalized_specifier == normalized_rule:
+            return True
+        if normalized_rule.endswith(":*"):
+            prefix = normalized_rule[:-2]
+            return normalized_specifier == prefix or normalized_specifier.startswith(f"{prefix}:")
+        return False
+
+    @classmethod
+    def _matched_specifier_rules(cls, *, tool_name: str, arguments: dict[str, Any], rules: list[str]) -> list[str]:
+        if not rules:
+            return []
+        matched: list[str] = []
+        for rule in rules:
+            if any(cls._matches_specifier_rule(specifier=item, rule=rule) for item in cls._derive_tool_specifiers(tool_name=tool_name, arguments=arguments)):
+                matched.append(rule)
+        return matched
+
+    @classmethod
+    def _is_risky_by_safety(
+        cls,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        risky_tools: list[str],
+        risky_specifiers: list[str],
+    ) -> bool:
+        normalized_tool = str(tool_name or "").strip().lower()
+        if normalized_tool in risky_tools:
+            return True
+        return bool(cls._matched_specifier_rules(tool_name=tool_name, arguments=arguments, rules=risky_specifiers))
+
+    @staticmethod
+    def _is_channel_blocked(*, channel: str, blocked_channels: list[str], allowed_channels: list[str]) -> bool:
         normalized_channel = str(channel or "").strip().lower()
         if not normalized_channel:
             return False
         if normalized_channel in allowed_channels:
             return False
         return normalized_channel in blocked_channels
+
+    @staticmethod
+    def _approval_grant_key(*, session_id: str, channel: str, rule: str) -> str:
+        return "::".join(
+            [
+                str(session_id or "").strip(),
+                str(channel or "").strip().lower(),
+                str(rule or "").strip().lower(),
+            ]
+        )
+
+    def _prune_approval_state(self) -> None:
+        now = time.monotonic()
+        expired_grants = [key for key, expires_at in self._approval_grants.items() if expires_at <= now]
+        for key in expired_grants:
+            self._approval_grants.pop(key, None)
+
+        expired_requests: list[str] = []
+        for request_id, payload in self._approval_requests.items():
+            expires_at = float(payload.get("expires_at_monotonic", 0.0) or 0.0)
+            if expires_at and expires_at <= now:
+                expired_requests.append(request_id)
+        for request_id in expired_requests:
+            self._approval_requests.pop(request_id, None)
+        if expired_requests:
+            expired_set = set(expired_requests)
+            self._approval_request_order = [item for item in self._approval_request_order if item not in expired_set]
+
+    @staticmethod
+    def _arguments_preview(arguments: dict[str, Any], *, max_chars: int = 240) -> str:
+        try:
+            preview = json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            preview = str(arguments)
+        preview = str(preview or "").strip()
+        if len(preview) <= max_chars:
+            return preview
+        return preview[: max_chars - 3] + "..."
+
+    def _approval_request_id(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_id: str,
+        channel: str,
+        matched_rules: list[str],
+    ) -> str:
+        raw = json.dumps(
+            {
+                "tool": str(tool_name or "").strip().lower(),
+                "arguments": arguments,
+                "session_id": str(session_id or "").strip(),
+                "channel": str(channel or "").strip().lower(),
+                "rules": sorted(str(item or "").strip().lower() for item in matched_rules if str(item or "").strip()),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+        return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+    def _register_approval_request(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_id: str,
+        channel: str,
+        user_id: str,
+        safety: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._prune_approval_state()
+        matched_rules = [
+            str(item or "").strip().lower()
+            for item in safety.get("matched_approval_specifiers", []) or []
+            if str(item or "").strip()
+        ]
+        if not matched_rules:
+            return {}
+        resolved_channel = str(safety.get("resolved_channel") or channel or "").strip().lower()
+        request_id = self._approval_request_id(
+            tool_name=tool_name,
+            arguments=arguments,
+            session_id=session_id,
+            channel=resolved_channel,
+            matched_rules=matched_rules,
+        )
+        existing = self._approval_requests.get(request_id)
+        if existing is not None and str(existing.get("status", "pending") or "pending").strip().lower() == "pending":
+            return dict(existing)
+        payload = {
+            "request_id": request_id,
+            "tool": str(tool_name or "").strip().lower(),
+            "session_id": str(session_id or "").strip(),
+            "channel": resolved_channel,
+            "user_id": str(user_id or "").strip(),
+            "derived_specifiers": list(safety.get("derived_specifiers", []) or []),
+            "matched_approval_specifiers": matched_rules,
+            "approval_reason": str(safety.get("approval_reason", "") or "").strip(),
+            "arguments_preview": self._arguments_preview(arguments),
+            "status": "pending",
+            "created_at_monotonic": time.monotonic(),
+            "expires_at_monotonic": time.monotonic() + self._approval_ttl_s,
+            "notified_count": 0,
+            "actor": "",
+            "note": "",
+        }
+        self._approval_requests[request_id] = payload
+        self._approval_request_order.append(request_id)
+        if len(self._approval_request_order) > self._APPROVAL_REQUEST_LIMIT:
+            evict = self._approval_request_order.pop(0)
+            self._approval_requests.pop(evict, None)
+        return dict(payload)
+
+    def _has_approval_grant(
+        self,
+        *,
+        session_id: str,
+        channel: str,
+        matched_rules: list[str],
+    ) -> bool:
+        self._prune_approval_state()
+        normalized_channel = str(channel or "").strip().lower()
+        if not normalized_channel or not matched_rules:
+            return False
+        now = time.monotonic()
+        for rule in matched_rules:
+            key = self._approval_grant_key(session_id=session_id, channel=normalized_channel, rule=rule)
+            if float(self._approval_grants.get(key, 0.0) or 0.0) <= now:
+                return False
+        return True
+
+    def consume_pending_approval_requests(
+        self,
+        *,
+        session_id: str,
+        channel: str = "",
+    ) -> list[dict[str, Any]]:
+        self._prune_approval_state()
+        resolved_channel = str(channel or "").strip().lower() or self._derive_channel_from_session(session_id)
+        out: list[dict[str, Any]] = []
+        for request_id in self._approval_request_order:
+            payload = self._approval_requests.get(request_id)
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("status", "") or "").strip().lower() != "pending":
+                continue
+            if str(payload.get("session_id", "") or "").strip() != str(session_id or "").strip():
+                continue
+            payload_channel = str(payload.get("channel", "") or "").strip().lower()
+            if resolved_channel and payload_channel and payload_channel != resolved_channel:
+                continue
+            if int(payload.get("notified_count", 0) or 0) > 0:
+                continue
+            payload["notified_count"] = int(payload.get("notified_count", 0) or 0) + 1
+            out.append(dict(payload))
+        return out
+
+    def review_approval_request(
+        self,
+        request_id: str,
+        *,
+        decision: str,
+        actor: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        self._prune_approval_state()
+        normalized_request_id = str(request_id or "").strip()
+        normalized_decision = str(decision or "").strip().lower()
+        if normalized_decision not in {"approved", "rejected"}:
+            return {"ok": False, "error": "invalid_review_decision"}
+        payload = self._approval_requests.get(normalized_request_id)
+        if payload is None:
+            return {"ok": False, "error": "approval_request_not_found"}
+        status = str(payload.get("status", "pending") or "pending").strip().lower()
+        if status != "pending":
+            return {
+                "ok": True,
+                "changed": False,
+                "status": status,
+                "request_id": normalized_request_id,
+                "tool": str(payload.get("tool", "") or "").strip(),
+                "channel": str(payload.get("channel", "") or "").strip(),
+                "session_id": str(payload.get("session_id", "") or "").strip(),
+            }
+
+        payload["status"] = normalized_decision
+        payload["actor"] = str(actor or "").strip()
+        payload["note"] = str(note or "").strip()
+        payload["reviewed_at_monotonic"] = time.monotonic()
+        if normalized_decision == "approved":
+            expires_at = time.monotonic() + self._approval_ttl_s
+            for rule in payload.get("matched_approval_specifiers", []) or []:
+                key = self._approval_grant_key(
+                    session_id=str(payload.get("session_id", "") or "").strip(),
+                    channel=str(payload.get("channel", "") or "").strip().lower(),
+                    rule=str(rule or "").strip().lower(),
+                )
+                self._approval_grants[key] = expires_at
+            payload["grant_expires_at_monotonic"] = expires_at
+
+        return {
+            "ok": True,
+            "changed": True,
+            "status": normalized_decision,
+            "request_id": normalized_request_id,
+            "tool": str(payload.get("tool", "") or "").strip(),
+            "channel": str(payload.get("channel", "") or "").strip(),
+            "session_id": str(payload.get("session_id", "") or "").strip(),
+            "matched_approval_specifiers": list(payload.get("matched_approval_specifiers", []) or []),
+            "grant_ttl_s": self._approval_ttl_s if normalized_decision == "approved" else 0.0,
+        }
+
+    def safety_decision(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        *,
+        session_id: str,
+        channel: str = "",
+    ) -> dict[str, Any]:
+        safe_arguments = dict(arguments or {})
+        resolved_channel, risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels = self._resolve_effective_safety(
+            session_id=session_id,
+            channel=channel,
+        )
+        derived_specifiers = self._derive_tool_specifiers(tool_name=name, arguments=safe_arguments)
+        matched_specifiers = self._matched_specifier_rules(tool_name=name, arguments=safe_arguments, rules=risky_specifiers)
+        matched_approval_specifiers = self._matched_specifier_rules(
+            tool_name=name,
+            arguments=safe_arguments,
+            rules=approval_specifiers,
+        )
+        approval_granted = False
+        if matched_approval_specifiers:
+            approval_granted = self._has_approval_grant(
+                session_id=session_id,
+                channel=resolved_channel,
+                matched_rules=matched_approval_specifiers,
+            )
+        matched_tool = str(name or "").strip().lower() in risky_tools
+        is_risky = matched_tool or bool(matched_specifiers)
+        has_channel_restrictions = bool(allowed_channels or blocked_channels)
+        blocked = False
+        block_reason = ""
+        if self._safety.enabled and is_risky and has_channel_restrictions:
+            if not resolved_channel:
+                blocked = True
+                block_reason = "unknown_channel"
+            elif self._is_channel_blocked(
+                channel=resolved_channel,
+                blocked_channels=blocked_channels,
+                allowed_channels=allowed_channels,
+            ):
+                blocked = True
+                block_reason = f"channel:{resolved_channel}"
+
+        approval_required = False
+        approval_reason = ""
+        has_approval_channel_rules = bool(approval_channels)
+        if (
+            not blocked
+            and self._safety.enabled
+            and matched_approval_specifiers
+            and has_approval_channel_rules
+            and not approval_granted
+        ):
+            if not resolved_channel:
+                approval_required = True
+                approval_reason = "unknown_channel"
+            elif resolved_channel not in allowed_channels and resolved_channel in approval_channels:
+                approval_required = True
+                approval_reason = f"channel:{resolved_channel}"
+
+        decision = "allow"
+        if blocked:
+            decision = "block"
+        elif approval_required:
+            decision = "approval"
+
+        return {
+            "tool": str(name or "").strip(),
+            "session_id": session_id,
+            "requested_channel": str(channel or "").strip().lower(),
+            "resolved_channel": resolved_channel,
+            "derived_specifiers": derived_specifiers,
+            "risky": is_risky,
+            "approval_required": approval_required,
+            "approval_granted": approval_granted,
+            "blocked": blocked,
+            "decision": decision,
+            "block_reason": block_reason,
+            "approval_reason": approval_reason,
+            "matched_tool": matched_tool,
+            "matched_specifiers": matched_specifiers,
+            "matched_approval_specifiers": matched_approval_specifiers,
+            "risky_tools": risky_tools,
+            "risky_specifiers": risky_specifiers,
+            "approval_specifiers": approval_specifiers,
+            "approval_channels": approval_channels,
+            "blocked_channels": blocked_channels,
+            "allowed_channels": allowed_channels,
+            "safety_enabled": bool(self._safety.enabled),
+        }
 
     @staticmethod
     def _derive_channel_from_session(session_id: str) -> str:
@@ -398,23 +835,30 @@ class ToolRegistry:
             raise ToolError(name, "not_found", recoverable=False)
         validated_arguments = self._validate_arguments(tool, arguments)
 
-        resolved_channel, risky_tools, blocked_channels, allowed_channels = self._resolve_effective_safety(
+        resolved_channel, risky_tools, risky_specifiers, approval_specifiers, approval_channels, blocked_channels, allowed_channels = self._resolve_effective_safety(
             session_id=session_id,
             channel=channel,
         )
-        normalized_tool = str(name or "").strip().lower()
-        has_channel_restrictions = bool(allowed_channels or blocked_channels)
-
-        if not resolved_channel and self._safety.enabled and normalized_tool in risky_tools and has_channel_restrictions:
-            raise RuntimeError(f"tool_blocked_by_safety_policy:{name}:unknown")
-        if self._safety.enabled and self._is_blocked_by_safety(
-            tool_name=name,
-            channel=resolved_channel,
-            risky_tools=risky_tools,
-            blocked_channels=blocked_channels,
-            allowed_channels=allowed_channels,
-        ):
-            raise RuntimeError(f"tool_blocked_by_safety_policy:{name}:{resolved_channel}")
+        safety = self.safety_decision(
+            name,
+            validated_arguments,
+            session_id=session_id,
+            channel=channel,
+        )
+        if bool(safety.get("blocked", False)):
+            reason_channel = str(safety.get("resolved_channel") or "").strip() or "unknown"
+            raise RuntimeError(f"tool_blocked_by_safety_policy:{name}:{reason_channel}")
+        if bool(safety.get("approval_required", False)):
+            self._register_approval_request(
+                tool_name=name,
+                arguments=validated_arguments,
+                session_id=session_id,
+                channel=resolved_channel or channel,
+                user_id=user_id,
+                safety=safety,
+            )
+            reason_channel = str(safety.get("resolved_channel") or "").strip() or "unknown"
+            raise RuntimeError(f"tool_requires_approval:{name}:{reason_channel}")
 
         ctx = ToolContext(session_id=session_id, channel=resolved_channel, user_id=user_id)
 

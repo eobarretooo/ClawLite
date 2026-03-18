@@ -31,6 +31,7 @@ from clawlite.gateway.discord_thread_binding import (
     handle_discord_thread_binding_inbound_action,
 )
 from clawlite.gateway.self_evolution_approval import handle_self_evolution_inbound_action
+from clawlite.gateway.tool_approval import handle_tool_approval_inbound_action
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatService
 from clawlite.session.store import SessionStore
@@ -579,6 +580,13 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     )
 
     async def _channel_inbound_interceptor(event) -> bool:
+        handled = await handle_tool_approval_inbound_action(
+            event,
+            tools=tools,
+            channels=channels,
+        )
+        if handled:
+            return True
         handled = await handle_self_evolution_inbound_action(
             event,
             self_evolution=self_evolution,

@@ -1683,6 +1683,31 @@ def test_engine_surfaces_tool_safety_block_as_safe_tool_result() -> None:
     asyncio.run(_scenario())
 
 
+def test_engine_surfaces_tool_approval_requirement_as_safe_tool_result() -> None:
+    async def _scenario() -> None:
+        provider = FakeBlockedToolProvider()
+        registry = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                approval_specifiers=["exec"],
+                approval_channels=["telegram"],
+                blocked_channels=[],
+                allowed_channels=[],
+            )
+        )
+        registry.register(ExecNoopTool())
+        engine = AgentEngine(provider=provider, tools=registry)
+
+        out = await engine.run(session_id="telegram:9001", user_text="run")
+        assert out.text == "done"
+        assert provider.calls == 2
+        tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
+        assert len(tool_rows) == 1
+        content = str(tool_rows[0].get("content", ""))
+        assert "tool_error:exec:tool_requires_approval:exec:telegram" in content
+
+    asyncio.run(_scenario())
 def test_engine_passes_max_tokens_and_temperature_when_supported() -> None:
     async def _scenario() -> None:
         provider = FakeProviderWithSamplingCapture()

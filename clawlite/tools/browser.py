@@ -4,8 +4,12 @@ import base64
 import os
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
+from clawlite.tools.web import _ip_literal
+from clawlite.tools.web import _matches_rules
+from clawlite.tools.web import _resolve_ips_async
 
 
 class BrowserTool(Tool):
@@ -16,10 +20,22 @@ class BrowserTool(Tool):
         "evaluate (run JavaScript), close."
     )
 
-    def __init__(self, *, headless: bool = True, timeout_ms: int = 20_000, screenshot_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        headless: bool = True,
+        timeout_ms: int = 20_000,
+        screenshot_dir: str | None = None,
+        allowlist: list[str] | None = None,
+        denylist: list[str] | None = None,
+        block_private_addresses: bool = True,
+    ) -> None:
         self.headless = bool(headless)
         self.timeout_ms = max(1000, int(timeout_ms or 20_000))
         self.screenshot_dir = screenshot_dir
+        self.allowlist = [str(item).strip().lower() for item in (allowlist or []) if str(item).strip()]
+        self.denylist = [str(item).strip().lower() for item in (denylist or []) if str(item).strip()]
+        self.block_private_addresses = bool(block_private_addresses)
         self._playwright: Any = None
         self._browser: Any = None
         self._page: Any = None
@@ -79,6 +95,27 @@ class BrowserTool(Tool):
             self._page.set_default_timeout(self.timeout_ms)
         return self._page
 
+    async def _validate_target(self, raw_url: str) -> None:
+        parsed = urlparse(str(raw_url or "").strip())
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("only http/https URLs are supported")
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            raise ValueError("missing host")
+
+        ip_literal = _ip_literal(host)
+        ips = [ip_literal] if ip_literal is not None else await _resolve_ips_async(host)
+
+        if _matches_rules(host=host, ips=ips, rules=self.denylist):
+            raise ValueError("target host denied by policy")
+        if self.allowlist and not _matches_rules(host=host, ips=ips, rules=self.allowlist):
+            raise ValueError("target host is not in allowlist")
+
+        if self.block_private_addresses:
+            for ip in ips:
+                if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                    raise ValueError("target resolves to private or local address")
+
     async def _close_runtime(self) -> None:
         page = self._page
         browser = self._browser
@@ -102,6 +139,7 @@ class BrowserTool(Tool):
                 url = str(arguments.get("url", "") or "").strip()
                 if not url:
                     return "error: url is required"
+                await self._validate_target(url)
                 page = await self._ensure_page()
                 response = await page.goto(
                     url,

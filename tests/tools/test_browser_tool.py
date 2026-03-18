@@ -156,3 +156,41 @@ async def test_browser_tool_returns_setup_hint_and_cleans_playwright_on_launch_f
     assert tool._playwright is None
     assert tool._browser is None
     assert tool._page is None
+
+
+@pytest.mark.asyncio
+async def test_browser_tool_blocks_private_or_local_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_runtime = FakePlaywrightRuntime(FakeChromium())
+    _install_fake_playwright(monkeypatch, [first_runtime])
+
+    tool = BrowserTool()
+    result = await tool.run({"action": "navigate", "url": "http://127.0.0.1:8080"}, ToolContext(session_id="browser:test"))
+
+    assert result == "browser_error: target resolves to private or local address"
+    assert tool._playwright is None
+    assert tool._browser is None
+    assert tool._page is None
+
+
+@pytest.mark.asyncio
+async def test_browser_tool_respects_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = FakePlaywrightRuntime(FakeChromium())
+    _install_fake_playwright(monkeypatch, [runtime])
+
+    async def _fake_resolve(host: str):
+        if host == "example.com":
+            return []
+        return []
+
+    monkeypatch.setattr("clawlite.tools.browser._resolve_ips_async", _fake_resolve)
+
+    tool = BrowserTool(allowlist=["example.com"])
+    blocked = await tool.run({"action": "navigate", "url": "https://other.example.org"}, ToolContext(session_id="browser:test"))
+    assert blocked == "browser_error: target host is not in allowlist"
+
+    allowed = await tool.run({"action": "navigate", "url": "https://example.com"}, ToolContext(session_id="browser:test"))
+    assert allowed == "[200] Example\n\nBody text"

@@ -879,11 +879,16 @@ class DiscordChannelConfig(Base):
     ignore_other_mentions: bool = False
     reply_to_mode: str = "all"
     slash_isolated_sessions: bool = True
+    status: str = ""
+    activity: str = ""
+    activity_type: int = 4
+    activity_url: str = ""
     guilds: dict[str, dict[str, Any]] = Field(default_factory=dict)
     thread_bindings_enabled: bool = True
     thread_binding_state_path: str = ""
     thread_binding_idle_timeout_s: float = 0.0
     thread_binding_max_age_s: float = 0.0
+    auto_presence: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("allow_from", mode="before")
     @classmethod
@@ -928,6 +933,19 @@ class DiscordChannelConfig(Base):
             return "all"
         return mode
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _parse_status(cls, v: Any) -> str:
+        status = str(v or "").strip().lower()
+        if status not in {"", "online", "idle", "dnd", "invisible"}:
+            return ""
+        return status
+
+    @field_validator("activity", "activity_url", mode="before")
+    @classmethod
+    def _strip_optional_text(cls, v: Any) -> str:
+        return str(v or "").strip()
+
     @field_validator("timeout_s", mode="before")
     @classmethod
     def _min_timeout(cls, v: Any) -> float:
@@ -939,6 +957,19 @@ class DiscordChannelConfig(Base):
     def _min_intents(cls, v: Any) -> int:
         v = v if v not in (None, "") else 37377
         return max(0, int(v))
+
+    @field_validator("activity_type", mode="before")
+    @classmethod
+    def _activity_type_range(cls, v: Any) -> int:
+        v = v if v not in (None, "") else 4
+        return min(5, max(0, int(v)))
+
+    @field_validator("auto_presence", mode="before")
+    @classmethod
+    def _normalize_auto_presence(cls, v: Any) -> dict[str, Any]:
+        if not isinstance(v, dict):
+            return {}
+        return dict(v)
 
     @field_validator("gateway_backoff_base_s", mode="before")
     @classmethod
@@ -1532,10 +1563,21 @@ class ToolLoopDetectionConfig(Base):
 
 class ToolSafetyLayerConfig(Base):
     risky_tools: list[str] | None = None
+    risky_specifiers: list[str] | None = None
+    approval_specifiers: list[str] | None = None
+    approval_channels: list[str] | None = None
     blocked_channels: list[str] | None = None
     allowed_channels: list[str] | None = None
 
-    @field_validator("risky_tools", "blocked_channels", "allowed_channels", mode="before")
+    @field_validator(
+        "risky_tools",
+        "risky_specifiers",
+        "approval_specifiers",
+        "approval_channels",
+        "blocked_channels",
+        "allowed_channels",
+        mode="before",
+    )
     @classmethod
     def _parse_optional_list(cls, v: Any) -> list[str] | None:
         if v is None:
@@ -1548,8 +1590,12 @@ class ToolSafetyLayerConfig(Base):
 class ToolSafetyPolicyConfig(Base):
     enabled: bool = True
     risky_tools: list[str] = Field(
-        default_factory=lambda: ["exec", "run_skill", "web_fetch", "web_search", "mcp"]
+        default_factory=lambda: ["browser", "exec", "run_skill", "web_fetch", "web_search", "mcp"]
     )
+    risky_specifiers: list[str] = Field(default_factory=list)
+    approval_specifiers: list[str] = Field(default_factory=list)
+    approval_channels: list[str] = Field(default_factory=list)
+    approval_grant_ttl_s: float = 900.0
     blocked_channels: list[str] = Field(default_factory=list)
     allowed_channels: list[str] = Field(default_factory=list)
     profile: str = ""
@@ -1571,12 +1617,26 @@ class ToolSafetyPolicyConfig(Base):
             data["by_channel"] = data["channels"]
         return data
 
-    @field_validator("risky_tools", "blocked_channels", "allowed_channels", mode="before")
+    @field_validator(
+        "risky_tools",
+        "risky_specifiers",
+        "approval_specifiers",
+        "approval_channels",
+        "blocked_channels",
+        "allowed_channels",
+        mode="before",
+    )
     @classmethod
     def _parse_names(cls, v: Any) -> list[str]:
         if not isinstance(v, list):
             return []
         return [str(item).strip().lower() for item in v if str(item).strip()]
+
+    @field_validator("approval_grant_ttl_s", mode="before")
+    @classmethod
+    def _min_approval_ttl(cls, v: Any) -> float:
+        v = v if v not in (None, "") else 900.0
+        return max(1.0, float(v))
 
     @field_validator("profile", mode="before")
     @classmethod

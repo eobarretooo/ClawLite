@@ -143,14 +143,25 @@ class SkillTool(Tool):
             return ""
         return shlex.join(argv)
 
-    async def _run_command_via_exec_tool(self, *, spec_name: str, argv: list[str], timeout: float, ctx: ToolContext) -> str:
+    async def _run_command_via_exec_tool(
+        self,
+        *,
+        spec_name: str,
+        argv: list[str],
+        timeout: float,
+        ctx: ToolContext,
+        env_overrides: dict[str, str] | None = None,
+    ) -> str:
         command = self._join_command(argv)
         if not command:
             raise ValueError("empty command")
+        tool_arguments: dict[str, Any] = {"command": command, "timeout": timeout}
+        if env_overrides:
+            tool_arguments["env"] = dict(env_overrides)
         try:
             return await self.registry.execute(
                 "exec",
-                {"command": command, "timeout": timeout},
+                tool_arguments,
                 session_id=ctx.session_id,
                 channel=ctx.channel,
                 user_id=ctx.user_id,
@@ -159,6 +170,8 @@ class SkillTool(Tool):
             error = str(exc)
             if error.startswith("tool_blocked_by_safety_policy:exec:"):
                 return f"skill_blocked:{spec_name}:{error}"
+            if error.startswith("tool_requires_approval:exec:"):
+                return f"skill_requires_approval:{spec_name}:{error}"
             raise
 
     @staticmethod
@@ -252,6 +265,8 @@ class SkillTool(Tool):
             message = str(exc or "").strip() or failure_reason
             if message.startswith("tool_blocked_by_safety_policy:web_fetch:"):
                 raise RuntimeError(message) from exc
+            if message.startswith("tool_requires_approval:web_fetch:"):
+                raise RuntimeError(message) from exc
             raise RuntimeError(f"{failure_reason}:{message}") from exc
 
         try:
@@ -290,7 +305,11 @@ class SkillTool(Tool):
             )
         except RuntimeError as exc:
             reason = str(exc or "").strip() or "weather_fetch_failed"
-            if reason == "weather_fetch_unavailable" or reason.startswith("tool_blocked_by_safety_policy:web_fetch:"):
+            if (
+                reason == "weather_fetch_unavailable"
+                or reason.startswith("tool_blocked_by_safety_policy:web_fetch:")
+                or reason.startswith("tool_requires_approval:web_fetch:")
+            ):
                 return f"skill_blocked:{spec_name}:{reason}"
             wttr_payload = {"ok": False, "error": {"message": reason}}
 
@@ -374,8 +393,18 @@ class SkillTool(Tool):
 
         return {}
 
-    async def _precheck_github_auth(self, *, spec_name: str, timeout: float, ctx: ToolContext) -> str | None:
+    async def _precheck_github_auth(
+        self,
+        *,
+        spec_name: str,
+        timeout: float,
+        ctx: ToolContext,
+        env_overrides: dict[str, str] | None = None,
+    ) -> str | None:
+        resolved_env = env_overrides or {}
         if os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN"):
+            return None
+        if resolved_env.get("GH_TOKEN") or resolved_env.get("GITHUB_TOKEN"):
             return None
         if self.registry.get("exec") is None:
             return None
@@ -384,6 +413,7 @@ class SkillTool(Tool):
             argv=["gh", "auth", "status"],
             timeout=min(timeout, 15.0),
             ctx=ctx,
+            env_overrides=resolved_env,
         )
         if result.startswith(f"skill_blocked:{spec_name}:"):
             return result
@@ -782,6 +812,7 @@ class SkillTool(Tool):
         *,
         spec_name: str,
         timeout: float,
+        env_overrides: dict[str, str],
     ) -> str:
         if self.registry.get("exec") is None:
             return f"skill_blocked:{spec_name}:exec_tool_not_registered"
@@ -797,6 +828,7 @@ class SkillTool(Tool):
                 argv=["gh", "issue", *extra_args],
                 timeout=timeout,
                 ctx=ctx,
+                env_overrides=env_overrides,
             )
 
         action = self._gh_value(payload, arguments, "action").lower() or "guide"
@@ -883,12 +915,31 @@ class SkillTool(Tool):
         else:
             raise ValueError("action must be one of: guide, list, view, comment, create")
 
-        auth_error = await self._precheck_github_auth(spec_name=spec_name, timeout=timeout, ctx=ctx)
+        auth_error = await self._precheck_github_auth(
+            spec_name=spec_name,
+            timeout=timeout,
+            ctx=ctx,
+            env_overrides=env_overrides,
+        )
         if auth_error is not None:
             return auth_error
-        return await self._run_command_via_exec_tool(spec_name=spec_name, argv=argv, timeout=timeout, ctx=ctx)
+        return await self._run_command_via_exec_tool(
+            spec_name=spec_name,
+            argv=argv,
+            timeout=timeout,
+            ctx=ctx,
+            env_overrides=env_overrides,
+        )
 
-    async def _dispatch_script(self, script_name: str, arguments: dict[str, Any], ctx: ToolContext, *, spec_name: str) -> str:
+    async def _dispatch_script(
+        self,
+        script_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolContext,
+        *,
+        spec_name: str,
+        env_overrides: dict[str, str] | None = None,
+    ) -> str:
         if script_name == "weather":
             return await self._run_weather(arguments, ctx, spec_name=spec_name)
         if script_name == "summarize":
@@ -902,7 +953,13 @@ class SkillTool(Tool):
         if script_name == "coding_agent":
             return await self._run_coding_agent(arguments, ctx)
         if script_name == "gh_issues":
-            return await self._run_gh_issues(arguments, ctx, spec_name=spec_name, timeout=self._timeout_value(arguments))
+            return await self._run_gh_issues(
+                arguments,
+                ctx,
+                spec_name=spec_name,
+                timeout=self._timeout_value(arguments),
+                env_overrides=env_overrides or {},
+            )
 
         target_tool = self.registry.get(script_name)
         if target_tool is not None and script_name != self.name:
@@ -918,6 +975,8 @@ class SkillTool(Tool):
             except RuntimeError as exc:
                 if str(exc).startswith(f"tool_blocked_by_safety_policy:{script_name}:"):
                     return f"skill_blocked:{spec_name}:{exc}"
+                if str(exc).startswith(f"tool_requires_approval:{script_name}:"):
+                    return f"skill_requires_approval:{spec_name}:{exc}"
                 raise
 
         return f"skill_script_unavailable:{script_name}"
@@ -947,21 +1006,39 @@ class SkillTool(Tool):
             return f"skill_blocked:{spec.name}:memory_policy:{reason}"
 
         timeout = self._timeout_value(arguments)
+        env_overrides = self.loader.resolved_env_overrides(spec)
 
         if spec.execution_kind == "command":
             argv = [*spec.execution_argv, *extra_args]
             if spec.execution_argv and spec.execution_argv[0] == "gh":
-                auth_error = await self._precheck_github_auth(spec_name=spec.name, timeout=timeout, ctx=ctx)
+                auth_error = await self._precheck_github_auth(
+                    spec_name=spec.name,
+                    timeout=timeout,
+                    ctx=ctx,
+                    env_overrides=env_overrides,
+                )
                 if auth_error is not None:
                     return auth_error
             log.info("running skill command skill={}", spec.name)
             if self.registry.get("exec") is not None:
-                return await self._run_command_via_exec_tool(spec_name=spec.name, argv=argv, timeout=timeout, ctx=ctx)
+                return await self._run_command_via_exec_tool(
+                    spec_name=spec.name,
+                    argv=argv,
+                    timeout=timeout,
+                    ctx=ctx,
+                    env_overrides=env_overrides,
+                )
             return f"skill_blocked:{spec.name}:exec_tool_not_registered"
 
         if spec.execution_kind == "script":
             log.info("running skill script skill={} script={}", spec.name, spec.execution_target)
-            return await self._dispatch_script(spec.execution_target, arguments, ctx, spec_name=spec.name)
+            return await self._dispatch_script(
+                spec.execution_target,
+                arguments,
+                ctx,
+                spec_name=spec.name,
+                env_overrides=env_overrides,
+            )
 
         if spec.execution_kind == "invalid":
             details = ", ".join(spec.contract_issues)

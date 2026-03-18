@@ -111,9 +111,13 @@ Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
 - `v0.7.0-beta.0` is out, and it closes robustness phases 1-7 plus the full `plano.md` milestone on the beta track.
 - `main` is now focused on soak-testing, documentation polish, and the next roadmap items rather than another large hardening pass.
 - Local-provider startup, cron/jobs boundaries, browser lifecycle, skill networking policy, and Telegram runtime internals are hardened on `main`.
-- The current Discord parity slice now includes DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated native slash-command sessions, deferred interaction replies, persistent `/focus` / `/unfocus` bindings, and automatic idle/max-age expiry for stale Discord focus bindings.
+- The current Discord parity slice now includes DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated native slash-command sessions, deferred interaction replies, static presence plus `auto_presence`, persistent `/focus` / `/unfocus` bindings, native `/discord-presence` controls, and automatic idle/max-age expiry for stale Discord focus bindings.
 - The biggest runtime monoliths were split by responsibility: `clawlite/gateway/server.py` is down to about `3.3k` lines and `clawlite/core/memory.py` to about `4.4k`.
 - Packaging is now split into extras: base install stays leaner, while `.[browser]`, `.[telegram]`, and `.[media]` enable optional runtimes.
+- Skills now honor OpenClaw-style `skills.entries.<skill>` overrides for `enabled`, `env`, and `apiKey`, including profile overlays such as `config.prod.yaml`.
+- Builtin skills can now be gated with `skills.allowBundled` without blocking workspace or marketplace overrides.
+- Tool safety now supports granular specifiers such as `browser:evaluate`, `run_skill:github`, and `exec:git`, plus approval mode via `approval_specifiers` / `approval_channels`, with `tool:*` wildcards for channel-specific policy.
+- Approval-gated tool calls now surface interactive approve/reject controls in Telegram and Discord, backed by temporary per-session grants so the operator can approve and then retry the request safely.
 - Phase 7 is complete on `main`: `self_evolution` now uses provider-direct proposal, pre-apply patch policy, isolated git worktree branches, configurable branch prefixes, and Telegram/Discord approval callbacks that record human review state while staying disabled by default.
 - Gateway startup now uses per-subsystem timeouts, so a slow channel transport no longer blocks the whole control plane from coming up.
 - OAuth-backed free-tier cloud setup now includes `gemini-oauth` and `qwen-oauth` alongside `openai-codex`.
@@ -243,11 +247,15 @@ Live chat · sessions view · automation controls (cron, recovery, channels) · 
 | Media | `pdf` `tts` |
 | Integrations | `cron` `mcp` `message` `discord_admin` |
 
+`exec` now accepts per-call `cwd` / `workdir` and `env` overrides while preserving workspace guards.
+`browser.navigate` now follows the same host policy model as `web_fetch` for allowlist, denylist, and private-address blocking.
+The default tool safety baseline now treats `browser` as risky alongside `exec`, `run_skill`, and `web_fetch`.
+
 **🎯 Skills (25+)**
 
 `web-search` · `memory` · `coding-agent` · `summarize` · `github` · `notion` · `obsidian` · `spotify` · `docker` · `jira` · `linear` · `trello` · `1password` · `apple-notes` · `weather` · `tmux` · `model-usage` · `healthcheck` · `skill-creator` · and more
 
-Skill lifecycle: `enable` / `disable` · `pin` / `unpin` · `pin-version` / `clear-version` · `fallback_hint` for unavailable skills
+Skill lifecycle: `enable` / `disable` · `pin` / `unpin` · `pin-version` / `clear-version` · `install` / `update` / `sync` / `remove` for managed marketplace skills · `fallback_hint` for unavailable skills
 
 ---
 
@@ -460,6 +468,15 @@ clawlite skills enable/disable <name>  # toggle skill
 clawlite skills pin/unpin <name>       # always-include / unpin
 clawlite skills pin-version <name> <version>  # lock to specific version
 clawlite skills clear-version <name>   # remove version pin
+clawlite skills install <slug>         # install managed skill into ~/.clawlite/marketplace
+clawlite skills update <name>          # update one managed marketplace skill
+clawlite skills search <query>         # search ClawHub for managed skills
+clawlite skills managed                # inspect locally discovered marketplace skills
+clawlite skills sync                   # update managed marketplace skills via ClawHub
+clawlite skills remove <name>          # remove managed marketplace skill
+clawlite tools safety browser --session-id telegram:1 --channel telegram --args-json '{"action":"evaluate"}'
+clawlite tools catalog --include-schema
+clawlite tools show bash
 
 # Channel controls
 clawlite telegram status / refresh / offset-commit <n>

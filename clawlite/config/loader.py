@@ -214,18 +214,27 @@ def _validate_config_keys(config: dict[str, Any]) -> None:
         raise RuntimeError(f"invalid config keys: {formatted}")
 
 
-def load_config(
+def load_raw_config_payload(
     path: str | Path | None = None,
     *,
-    strict: bool | None = None,
     profile: str | None = None,
-) -> AppConfig:
+) -> dict[str, Any]:
     target = Path(path) if path else DEFAULT_CONFIG_PATH
     resolved_profile = _normalize_profile_name(profile if profile is not None else os.getenv("CLAWLITE_PROFILE", ""))
     file_cfg = _migrate_config(_read_file(target))
     if resolved_profile:
         profile_cfg = _migrate_config(_read_file(_profile_path(target, resolved_profile)))
         file_cfg = _deep_merge(file_cfg, profile_cfg)
+    return file_cfg
+
+
+def load_config(
+    path: str | Path | None = None,
+    *,
+    strict: bool | None = None,
+    profile: str | None = None,
+) -> AppConfig:
+    file_cfg = load_raw_config_payload(path, profile=profile)
     merged = _deep_merge(file_cfg, _env_overrides(include_model=path is None))
     strict_mode = strict if strict is not None else _strict_mode_enabled()
     if strict_mode:

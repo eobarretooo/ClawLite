@@ -213,6 +213,12 @@ Notes:
 | `skills unpin <name>` | Unpins a skill in local state | `clawlite skills unpin summarize` |
 | `skills pin-version <name> <version>` | Locks a skill to a specific version string | `clawlite skills pin-version github 2026.03` |
 | `skills clear-version <name>` | Removes the local version pin for a skill | `clawlite skills clear-version github` |
+| `skills search <query>` | Searches ClawHub for managed skills | `clawlite skills search "discord moderation"` |
+| `skills install <slug>` | Installs a managed skill into `~/.clawlite/marketplace` | `clawlite skills install jira-helper` |
+| `skills update <name>` | Updates one managed skill by folder slug or skill name via ClawHub | `clawlite skills update jira-helper` |
+| `skills managed` | Lists managed marketplace skills discovered locally | `clawlite skills managed` |
+| `skills sync` | Updates all managed marketplace skills via ClawHub | `clawlite skills sync` |
+| `skills remove <name>` | Removes one managed marketplace skill | `clawlite skills remove jira-helper` |
 
 Skill discovery includes:
 
@@ -221,6 +227,19 @@ Skill discovery includes:
 - marketplace skills under `~/.clawlite/marketplace/skills`
 
 The local skill state is stored in `~/.clawlite/state/skills-state.json`.
+
+`skills managed` includes the managed folder `slug` and resolved runtime `status`. `skills update` resolves either the slug or the discovered skill name before invoking ClawHub.
+
+## Tools Commands
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `tools safety <tool>` | Previews the effective safety policy for one tool call | `clawlite tools safety browser --session-id telegram:1 --channel telegram --args-json '{"action":"evaluate"}'` |
+| `tools catalog` | Fetches the live gateway tool catalog | `clawlite tools catalog --include-schema --group runtime` |
+| `tools show <name>` | Shows one live tool entry, resolving aliases like `bash -> exec` | `clawlite tools show bash` |
+
+`tools safety` does not run the tool. It shows the resolved channel, derived specifiers, matched risky rules, matched approval rules, and a final `decision` of `allow`, `approval`, or `block`.
+`tools catalog` and `tools show` call the gateway catalog endpoint and accept `--gateway-url`, `--token`, and `--timeout`.
 
 ## Common Operator Workflow
 

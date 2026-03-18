@@ -563,6 +563,170 @@ def test_skills_loader_supports_openclaw_primary_env_and_config_requirements(tmp
     assert available.missing == []
 
 
+def test_skills_loader_uses_skill_entries_api_key_for_primary_env(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "entries": {
+                        "discord": {
+                            "apiKey": "injected-gh-token",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_CONFIG", str(config_path))
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    skill_dir = tmp_path / "discord"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: discord\n"
+        "description: discord skill\n"
+        'metadata: {"openclaw":{"primaryEnv":"GH_TOKEN"}}\n'
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    row = loader.get("discord")
+    assert row is not None
+    assert row.available is True
+    assert row.primary_env == "GH_TOKEN"
+    assert loader.resolved_env_overrides(row) == {"GH_TOKEN": "injected-gh-token"}
+
+
+def test_skills_loader_applies_profiled_skill_entries(tmp_path: Path, monkeypatch) -> None:
+    base_path = tmp_path / "config.yaml"
+    base_path.write_text("skills:\n  entries: {}\n", encoding="utf-8")
+    (tmp_path / "config.prod.yaml").write_text(
+        "\n".join(
+            [
+                "skills:",
+                "  entries:",
+                "    release-helper:",
+                "      apiKey: profiled-token",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_CONFIG", str(base_path))
+    monkeypatch.setenv("CLAWLITE_PROFILE", "prod")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    skill_dir = tmp_path / "release-helper"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: release-helper\n"
+        "description: release helper\n"
+        'metadata: {"openclaw":{"primaryEnv":"GH_TOKEN"}}\n'
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    row = loader.get("release-helper")
+    assert row is not None
+    assert row.available is True
+    assert loader.resolved_env_overrides(row) == {"GH_TOKEN": "profiled-token"}
+
+
+def test_skills_loader_respects_config_entry_disable(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "entries": {
+                        "disabled-skill": {
+                            "enabled": False,
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_CONFIG", str(config_path))
+
+    skill_dir = tmp_path / "disabled-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: disabled-skill\n"
+        "description: disabled by config\n"
+        "command: echo ok\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path)
+    row = loader.get("disabled-skill")
+    assert row is not None
+    assert row.available is True
+    assert row.enabled is False
+
+
+def test_skills_loader_applies_bundled_allowlist_without_blocking_workspace_override(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "allowBundled": ["allowed-skill"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAWLITE_CONFIG", str(config_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    builtin = tmp_path / "builtin"
+    (builtin / "blocked-skill").mkdir(parents=True, exist_ok=True)
+    (builtin / "allowed-skill").mkdir(parents=True, exist_ok=True)
+    (builtin / "blocked-skill" / "SKILL.md").write_text(
+        "---\nname: blocked-skill\ndescription: blocked bundled skill\ncommand: echo blocked\n---\nbody\n",
+        encoding="utf-8",
+    )
+    (builtin / "allowed-skill" / "SKILL.md").write_text(
+        "---\nname: allowed-skill\ndescription: allowed bundled skill\ncommand: echo allowed\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=builtin)
+    blocked = loader.get("blocked-skill")
+    allowed = loader.get("allowed-skill")
+    assert blocked is not None
+    assert blocked.available is False
+    assert "policy:bundled_not_allowed" in blocked.missing
+    assert allowed is not None
+    assert allowed.available is True
+
+    workspace_override = tmp_path / ".clawlite" / "workspace" / "skills" / "blocked-skill"
+    workspace_override.mkdir(parents=True, exist_ok=True)
+    (workspace_override / "SKILL.md").write_text(
+        "---\nname: blocked-skill\ndescription: workspace override\ncommand: echo workspace\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    override_loader = SkillsLoader(builtin_root=builtin)
+    override_row = override_loader.get("blocked-skill")
+    assert override_row is not None
+    assert override_row.source == "workspace"
+    assert override_row.available is True
+
+
 def test_skills_loader_normalizes_requirement_schema_and_reports_invalid_env_names(tmp_path: Path) -> None:
     skill_dir = tmp_path / "schema"
     skill_dir.mkdir(parents=True, exist_ok=True)

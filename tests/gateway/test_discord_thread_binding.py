@@ -213,3 +213,95 @@ def test_handle_discord_thread_binding_refreshes_transport() -> None:
         assert "gateway_restarted: True" in str(sent[0]["text"])
 
     asyncio.run(_scenario())
+
+
+def test_handle_discord_thread_binding_reports_presence_status() -> None:
+    async def _scenario() -> None:
+        replies: list[dict[str, object]] = []
+
+        class _DiscordChannel:
+            def operator_status(self):
+                return {
+                    "auto_presence_enabled": True,
+                    "presence_last_state": "healthy",
+                    "presence_status": "idle",
+                    "presence_activity": "Focus time",
+                    "auto_presence_task_state": "running",
+                    "presence_last_error": "",
+                }
+
+            async def reply_interaction(self, **kwargs):
+                replies.append(dict(kwargs))
+                return "msg-2"
+
+        class _Channels:
+            async def send(self, *, channel: str, target: str, text: str, metadata=None) -> str:
+                raise AssertionError("interaction reply should be used")
+
+            def get_channel(self, name: str):
+                assert name == "discord"
+                return _DiscordChannel()
+
+        handled = await handle_discord_thread_binding_inbound_action(
+            InboundEvent(
+                channel="discord",
+                session_id="discord:guild:guild-1:channel:chan-1",
+                user_id="user-1",
+                text="/discord-presence",
+                metadata={
+                    "channel_id": "chan-1",
+                    "interaction_id": "inter-2",
+                    "interaction_token": "tok-2",
+                },
+            ),
+            channels=_Channels(),
+        )
+
+        assert handled is True
+        assert "Discord presence status" in str(replies[0]["text"])
+        assert "auto_presence_enabled: True" in str(replies[0]["text"])
+
+    asyncio.run(_scenario())
+
+
+def test_handle_discord_thread_binding_refreshes_presence() -> None:
+    async def _scenario() -> None:
+        sent: list[dict[str, object]] = []
+
+        class _DiscordChannel:
+            async def operator_refresh_presence(self):
+                return {
+                    "ok": True,
+                    "sent": True,
+                    "reason": "updated",
+                    "status": {
+                        "presence_last_state": "healthy",
+                        "presence_last_error": "",
+                    },
+                }
+
+        class _Channels:
+            async def send(self, *, channel: str, target: str, text: str, metadata=None) -> str:
+                sent.append({"channel": channel, "target": target, "text": text})
+                return "ok"
+
+            def get_channel(self, name: str):
+                assert name == "discord"
+                return _DiscordChannel()
+
+        handled = await handle_discord_thread_binding_inbound_action(
+            InboundEvent(
+                channel="discord",
+                session_id="discord:guild:guild-1:channel:chan-1",
+                user_id="user-1",
+                text="/discord-presence-refresh",
+                metadata={"channel_id": "chan-1"},
+            ),
+            channels=_Channels(),
+        )
+
+        assert handled is True
+        assert "Discord presence refresh completed" in str(sent[0]["text"])
+        assert "sent: True" in str(sent[0]["text"])
+
+    asyncio.run(_scenario())

@@ -76,6 +76,32 @@ Per-provider fields: `api_key`, `api_base`, `extra_headers` (dict).
 
 ---
 
+## `skills`
+
+Skill config is read from the raw config payload, so `skills.entries` can carry per-skill overrides even though the typed runtime schema does not model every custom field yet.
+
+```yaml
+skills:
+  entries:
+    gh-issues:
+      enabled: true
+      apiKey: ghp_example_token
+    env-skill:
+      env:
+        CUSTOM_TOKEN: secret-value
+```
+
+Supported fields:
+
+| Field | Description |
+|---|---|
+| `allowBundled` | Optional allowlist for builtin skills only; workspace and marketplace skills stay eligible |
+| `entries.<skill>.enabled` | Disable a skill without editing the skill itself |
+| `entries.<skill>.env` | Inject host env vars into `command` skills when the variable is not already set |
+| `entries.<skill>.apiKey` | Convenience field for skills declaring `metadata.openclaw.primaryEnv` |
+
+---
+
 ## `provider` (advanced LiteLLM settings)
 
 | Field | Default | Description |
@@ -184,6 +210,11 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 | `token` | `""` | Bot token |
 | `allow_from` | `[]` | Allowed user/guild IDs |
 | `typing_enabled` | `true` | Send typing indicators |
+| `status` | `""` | Optional static Discord presence status: `online`, `idle`, `dnd`, or `invisible` |
+| `activity` | `""` | Optional Discord activity text |
+| `activity_type` | `4` | Discord activity type (`0-5`); `4` is custom status |
+| `activity_url` | `""` | Optional streaming URL when `activity_type=1` |
+| `auto_presence` | `{}` | Optional auto-presence loop config (`enabled`, `interval_s`, `min_update_interval_s`, `healthy_text`, `degraded_text`, `exhausted_text`) |
 
 ### `channels.slack`
 
@@ -300,6 +331,43 @@ Each server under `tools.mcp.servers`:
   }
 }
 ```
+
+## `tools.safety`
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Enables runtime tool safety enforcement |
+| `risky_tools` | `["browser","exec","run_skill","web_fetch","web_search","mcp"]` | Whole-tool risky baseline |
+| `risky_specifiers` | `[]` | Granular risky operations like `browser:evaluate` or `run_skill:github` |
+| `approval_specifiers` | `[]` | Tool/specifier rules that should require approval instead of running immediately |
+| `approval_channels` | `[]` | Channels where approval-gated rules should pause/fail closed |
+| `approval_grant_ttl_s` | `900.0` | Lifetime in seconds for a temporary grant after an operator approves a tool request |
+| `blocked_channels` | `[]` | Channels where risky entries are blocked |
+| `allowed_channels` | `[]` | Channels that can still use risky entries even when blocked elsewhere |
+| `profile` | `""` | Active safety profile |
+| `profiles` | `{}` | Named overrides for risky lists and channel gates |
+| `by_agent` | `{}` | Per-agent overrides |
+| `by_channel` | `{}` | Per-channel overrides |
+
+Example:
+
+```json
+{
+  "tools": {
+    "safety": {
+      "risky_tools": ["exec"],
+      "risky_specifiers": ["browser:evaluate", "run_skill:github", "exec:git"],
+      "approval_specifiers": ["browser", "web_fetch"],
+      "approval_channels": ["telegram", "discord"],
+      "approval_grant_ttl_s": 600,
+      "blocked_channels": ["telegram", "discord"],
+      "allowed_channels": ["cli"]
+    }
+  }
+}
+```
+
+`risky_tools` blocks the whole tool. `risky_specifiers` is more precise and supports `tool:*` wildcards. `approval_specifiers` uses the same matcher, but returns an approval-required result instead of running immediately. On Telegram and Discord, those requests now surface native approve/reject controls, and approval grants only apply to the same session/channel/specifier for `approval_grant_ttl_s` seconds.
 
 ---
 

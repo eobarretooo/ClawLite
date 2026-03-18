@@ -44,6 +44,7 @@ class ExecTool(Tool):
         "vol",
     }
     _SHELL_META_RE = re.compile(r"(^|[^\\])(?:\|\||&&|[|<>;`])")
+    _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
     def __init__(
         self,
@@ -86,6 +87,12 @@ class ExecTool(Tool):
                 "timeout": {"type": "number", "default": self.timeout_seconds},
                 "max_output_chars": {"type": "integer", "default": self.max_output_chars},
                 "maxOutputChars": {"type": "integer"},
+                "cwd": {"type": "string"},
+                "workdir": {"type": "string"},
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                },
             },
             "required": ["command"],
         }
@@ -145,6 +152,44 @@ class ExecTool(Tool):
             except re.error:
                 continue
         return False
+
+    @classmethod
+    def _normalize_env_overrides(cls, raw: object) -> tuple[dict[str, str], str | None]:
+        if raw is None:
+            return {}, None
+        if not isinstance(raw, dict):
+            return {}, "invalid_env_overrides"
+        overrides: dict[str, str] = {}
+        for key, value in raw.items():
+            env_key = str(key or "").strip()
+            if not cls._ENV_NAME_RE.fullmatch(env_key):
+                return {}, f"invalid_env_name:{env_key or 'empty'}"
+            env_value = str(value or "")
+            if "\x00" in env_value or "\n" in env_value or "\r" in env_value:
+                return {}, f"invalid_env_value:{env_key}"
+            overrides[env_key] = env_value
+        return overrides, None
+
+    def _resolve_cwd(self, raw: object) -> tuple[Path | None, str | None]:
+        text = str(raw or "").strip()
+        if not text:
+            if self.restrict_to_workspace:
+                return self.workspace_path, None
+            return None, None
+
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            base = self.workspace_path if self.restrict_to_workspace else Path.cwd().resolve()
+            candidate = base / candidate
+        try:
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None, f"invalid_cwd:{text}"
+        if not resolved.exists() or not resolved.is_dir():
+            return None, f"invalid_cwd:{text}"
+        if self.restrict_to_workspace and resolved != self.workspace_path and self.workspace_path not in resolved.parents:
+            return None, f"blocked_by_workspace_guard:cwd_outside_workspace:{text}"
+        return resolved, None
 
     def _guard_command(self, command: str, argv: list[str], cwd: Path) -> str | None:
         cmd = command.strip()
@@ -267,13 +312,22 @@ class ExecTool(Tool):
         except ValueError:
             log.warning("invalid command syntax blocked")
             return "exit=-1\nstdout=\nstderr=invalid_command_syntax"
-        cwd_path = self.workspace_path if self.restrict_to_workspace else Path.cwd().resolve()
+        resolved_cwd, cwd_error = self._resolve_cwd(arguments.get("cwd", arguments.get("workdir")))
+        if cwd_error:
+            log.warning("command blocked by invalid cwd error={}", cwd_error)
+            return f"exit=-1\nstdout=\nstderr={cwd_error}"
+        cwd_path = resolved_cwd if resolved_cwd is not None else Path.cwd().resolve()
         guard_error = self._guard_command(command, argv, cwd_path)
         if guard_error:
             log.warning("command blocked by workspace guard error={}", guard_error)
             return f"exit=-1\nstdout=\nstderr={guard_error}"
 
         env = os.environ.copy()
+        env_overrides, env_error = self._normalize_env_overrides(arguments.get("env"))
+        if env_error:
+            log.warning("command blocked by invalid env overrides error={}", env_error)
+            return f"exit=-1\nstdout=\nstderr={env_error}"
+        env.update(env_overrides)
         if self.path_append:
             current = env.get("PATH", "")
             env["PATH"] = f"{current}{os.pathsep}{self.path_append}" if current else self.path_append
@@ -296,7 +350,7 @@ class ExecTool(Tool):
             else None
         )
 
-        cwd = str(self.workspace_path) if self.restrict_to_workspace else None
+        cwd = str(cwd_path) if resolved_cwd is not None else None
 
         try:
             if use_shell_wrapper and shell_path:

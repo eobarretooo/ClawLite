@@ -262,6 +262,17 @@ def test_channels_config_supports_discord_policy_and_guild_allowlists() -> None:
                     "ignoreOtherMentions": True,
                     "replyToMode": "first",
                     "slashIsolatedSessions": False,
+                    "status": "idle",
+                    "activity": "Focus time",
+                    "activityType": 4,
+                    "autoPresence": {
+                        "enabled": True,
+                        "intervalS": 45,
+                        "minUpdateIntervalS": 20,
+                        "healthyText": "online",
+                        "degradedText": "warming up",
+                        "exhaustedText": "offline",
+                    },
                     "threadBindingsEnabled": True,
                     "threadBindingStatePath": " /tmp/discord-bindings.json ",
                     "threadBindingIdleTimeoutS": 900,
@@ -292,6 +303,11 @@ def test_channels_config_supports_discord_policy_and_guild_allowlists() -> None:
     assert cfg.channels.discord.ignore_other_mentions is True
     assert cfg.channels.discord.reply_to_mode == "first"
     assert cfg.channels.discord.slash_isolated_sessions is False
+    assert cfg.channels.discord.status == "idle"
+    assert cfg.channels.discord.activity == "Focus time"
+    assert cfg.channels.discord.activity_type == 4
+    assert cfg.channels.discord.auto_presence["enabled"] is True
+    assert cfg.channels.discord.auto_presence["intervalS"] == 45
     assert cfg.channels.discord.thread_bindings_enabled is True
     assert cfg.channels.discord.thread_binding_state_path == "/tmp/discord-bindings.json"
     assert cfg.channels.discord.thread_binding_idle_timeout_s == 900.0

@@ -310,6 +310,72 @@ def test_channel_manager_dispatches_inbound_to_engine_and_send() -> None:
     asyncio.run(_scenario())
 
 
+def test_channel_manager_appends_tool_approval_notice_metadata() -> None:
+    async def _scenario() -> None:
+        class ApprovalRegistry:
+            def __init__(self) -> None:
+                self._consumed = False
+
+            def consume_pending_approval_requests(self, *, session_id: str, channel: str = "") -> list[dict[str, Any]]:
+                assert session_id == "telegram:123"
+                assert channel == "telegram"
+                if self._consumed:
+                    return []
+                self._consumed = True
+                return [
+                    {
+                        "request_id": "req-1",
+                        "tool": "exec",
+                        "channel": "telegram",
+                        "matched_approval_specifiers": ["exec:git"],
+                    }
+                ]
+
+        class ApprovalEngine(FakeEngine):
+            def __init__(self) -> None:
+                self.tools = ApprovalRegistry()
+
+            async def run(
+                self,
+                *,
+                session_id: str,
+                user_text: str,
+                channel: str | None = None,
+                chat_id: str | None = None,
+                progress_hook=None,
+                stop_event=None,
+            ):
+                del session_id, user_text, channel, chat_id, progress_hook, stop_event
+                return _Result(text="I need approval to run that tool.")
+
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=ApprovalEngine())
+        mgr.register("telegram", FakeChannel)
+        await mgr.start({"channels": {"telegram": {"enabled": True}}})
+
+        fake = mgr._channels["telegram"]
+        await fake.emit(
+            session_id="telegram:123",
+            user_id="u1",
+            text="run git status",
+            metadata={"channel": "telegram", "chat_id": "123"},
+        )
+
+        await asyncio.sleep(0.1)
+        assert fake.sent
+        target, text, metadata = fake.sent[0]
+        assert target == "123"
+        assert "Tool approval is required" in text
+        assert metadata["approval_required"] is True
+        assert metadata["approval_kind"] == "tool"
+        assert metadata["_telegram_inline_keyboard"][0][0]["callback_data"] == "tool_approval:approve:req-1"
+        assert metadata["_telegram_inline_keyboard"][0][1]["callback_data"] == "tool_approval:reject:req-1"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
 def test_channel_manager_progress_delivery_policy() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()

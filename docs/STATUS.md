@@ -8,6 +8,8 @@ ClawLite is a **local-first autonomous agent runtime** in active hardening. Robu
 
 Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, proposes patches through the provider directly instead of the full agent loop, rejects unsafe proposals before apply, routes operator notices through the real gateway notice path, commits only inside isolated git worktree branches, and now supports configurable branch prefixes plus Telegram/Discord approval callbacks that persist review state. It remains disabled by default.
 
+The current OpenClaw parity track is active on `main`. The latest slice adds interactive Telegram/Discord approval controls for approval-gated tool calls, backed by temporary per-session grants instead of silent auto-resume.
+
 > **🤖 AI-built · Solo dev** — Every commit is written by Claude (AI), with the author supervising direction. No team.
 
 ## Current Baseline
@@ -18,6 +20,7 @@ Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, pro
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **190 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, and `docs/DOCKER.md` now ship in-tree as the first parity slice, using `ref/nanobot` ergonomics and `ref/openclaw` security/runtime patterns where they fit
+- Discord parity now includes approval callbacks for gated tools plus static/auto presence with native `/discord-presence` operator controls
 - Discord parity slice 1 is now in the working tree: DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, persisted `/focus` bindings, and automatic idle/max-age expiry for stale Discord bindings
 
 ## Robustness Milestone Progress

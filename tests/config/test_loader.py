@@ -354,7 +354,11 @@ def test_load_config_tools_flags(tmp_path: Path) -> None:
 def test_load_config_tools_safety_defaults(tmp_path: Path) -> None:
     cfg = load_config(tmp_path / "missing.json")
     assert cfg.tools.safety.enabled is True
-    assert cfg.tools.safety.risky_tools == ["exec", "run_skill", "web_fetch", "web_search", "mcp"]
+    assert cfg.tools.safety.risky_tools == ["browser", "exec", "run_skill", "web_fetch", "web_search", "mcp"]
+    assert cfg.tools.safety.risky_specifiers == []
+    assert cfg.tools.safety.approval_specifiers == []
+    assert cfg.tools.safety.approval_channels == []
+    assert cfg.tools.safety.approval_grant_ttl_s == 900.0
     assert cfg.tools.safety.blocked_channels == []
     assert cfg.tools.safety.allowed_channels == []
 
@@ -368,6 +372,10 @@ def test_load_config_tools_safety_custom_and_camel_case(tmp_path: Path) -> None:
                     "safety": {
                         "enabled": True,
                         "riskyTools": ["exec", "mcp"],
+                        "riskySpecifiers": ["browser:evaluate", "run_skill:github"],
+                        "approvalSpecifiers": ["browser", "exec:git"],
+                        "approvalChannels": ["discord"],
+                        "approvalGrantTtlS": 1800,
                         "blockedChannels": ["telegram", "slack"],
                         "allowed_channels": ["telegram"],
                     }
@@ -380,6 +388,10 @@ def test_load_config_tools_safety_custom_and_camel_case(tmp_path: Path) -> None:
     cfg = load_config(path)
     assert cfg.tools.safety.enabled is True
     assert cfg.tools.safety.risky_tools == ["exec", "mcp"]
+    assert cfg.tools.safety.risky_specifiers == ["browser:evaluate", "run_skill:github"]
+    assert cfg.tools.safety.approval_specifiers == ["browser", "exec:git"]
+    assert cfg.tools.safety.approval_channels == ["discord"]
+    assert cfg.tools.safety.approval_grant_ttl_s == 1800.0
     assert cfg.tools.safety.blocked_channels == ["telegram", "slack"]
     assert cfg.tools.safety.allowed_channels == ["telegram"]
 
@@ -395,6 +407,9 @@ def test_load_config_tools_safety_layered_parsing_and_normalization(tmp_path: Pa
                         "profiles": {
                             " TeamA ": {
                                 "riskyTools": [" Exec ", "", "MCP"],
+                                "riskySpecifiers": [" Browser:Evaluate ", "", "run_skill:GitHub"],
+                                "approvalSpecifiers": [" Browser ", "exec:Git "],
+                                "approvalChannels": [" Discord ", ""],
                                 "blocked_channels": [" Telegram ", ""],
                                 "allowedChannels": [" cli ", ""],
                             }
@@ -402,11 +417,16 @@ def test_load_config_tools_safety_layered_parsing_and_normalization(tmp_path: Pa
                         "agents": {
                             " Agent-1 ": {
                                 "risky_tools": ["run_skill"],
+                                "riskySpecifiers": ["exec:Git"],
+                                "approvalSpecifiers": ["run_skill:github"],
+                                "approvalChannels": ["telegram"],
                                 "blockedChannels": ["Slack"],
                             }
                         },
                         "byChannel": {
                             " TELEGRAM ": {
+                                "riskySpecifiers": ["browser:*"],
+                                "approvalChannels": ["telegram"],
                                 "allowed_channels": ["Telegram"],
                             }
                         },
@@ -420,11 +440,19 @@ def test_load_config_tools_safety_layered_parsing_and_normalization(tmp_path: Pa
     cfg = load_config(path)
     assert cfg.tools.safety.profile == "teama"
     assert cfg.tools.safety.profiles["teama"].risky_tools == ["exec", "mcp"]
+    assert cfg.tools.safety.profiles["teama"].risky_specifiers == ["browser:evaluate", "run_skill:github"]
+    assert cfg.tools.safety.profiles["teama"].approval_specifiers == ["browser", "exec:git"]
+    assert cfg.tools.safety.profiles["teama"].approval_channels == ["discord"]
     assert cfg.tools.safety.profiles["teama"].blocked_channels == ["telegram"]
     assert cfg.tools.safety.profiles["teama"].allowed_channels == ["cli"]
     assert cfg.tools.safety.by_agent["agent-1"].risky_tools == ["run_skill"]
+    assert cfg.tools.safety.by_agent["agent-1"].risky_specifiers == ["exec:git"]
+    assert cfg.tools.safety.by_agent["agent-1"].approval_specifiers == ["run_skill:github"]
+    assert cfg.tools.safety.by_agent["agent-1"].approval_channels == ["telegram"]
     assert cfg.tools.safety.by_agent["agent-1"].blocked_channels == ["slack"]
     assert cfg.tools.safety.by_agent["agent-1"].allowed_channels is None
+    assert cfg.tools.safety.by_channel["telegram"].risky_specifiers == ["browser:*"]
+    assert cfg.tools.safety.by_channel["telegram"].approval_channels == ["telegram"]
     assert cfg.tools.safety.by_channel["telegram"].allowed_channels == ["telegram"]
 
 

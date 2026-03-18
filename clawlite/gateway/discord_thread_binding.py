@@ -10,11 +10,15 @@ def _extract_action(event: InboundEvent) -> tuple[str, str]:
         return ("", "")
     metadata = event.metadata if isinstance(event.metadata, dict) else {}
     command_name = str(metadata.get("command_name", "") or "").strip().lower()
-    if command_name in {"focus", "unfocus", "discord-status", "discord-refresh"}:
+    if command_name in {"focus", "unfocus", "discord-status", "discord-refresh", "discord-presence", "discord-presence-refresh"}:
         if command_name == "discord-status":
             return ("status", "")
         if command_name == "discord-refresh":
             return ("refresh", "")
+        if command_name == "discord-presence":
+            return ("presence", "")
+        if command_name == "discord-presence-refresh":
+            return ("presence_refresh", "")
         if command_name == "unfocus":
             return ("unfocus", "")
         options = metadata.get("command_options")
@@ -36,6 +40,10 @@ def _extract_action(event: InboundEvent) -> tuple[str, str]:
         return ("status", "")
     if lowered == "/discord-refresh":
         return ("refresh", "")
+    if lowered == "/discord-presence":
+        return ("presence", "")
+    if lowered == "/discord-presence-refresh":
+        return ("presence_refresh", "")
     if lowered == "/unfocus":
         return ("unfocus", "")
     if lowered.startswith("/focus"):
@@ -153,6 +161,62 @@ async def handle_discord_thread_binding_inbound_action(
             last_error = str(result.get("last_error", "") or "").strip()
         if not last_error:
             last_error = str(status.get("last_error", "") or "").strip()
+        if last_error:
+            lines.append(f"- last_error: {last_error}")
+        await _reply_discord(
+            channels=channels,
+            event=event,
+            text="\n".join(lines),
+        )
+        return True
+
+    if action == "presence":
+        status_fn = getattr(channel, "operator_status", None)
+        if not callable(status_fn):
+            await _reply_discord(
+                channels=channels,
+                event=event,
+                text="Discord presence status is not available on this runtime.",
+            )
+            return True
+        status = status_fn()
+        lines = [
+            "Discord presence status",
+            f"- auto_presence_enabled: {bool(status.get('auto_presence_enabled', False))}",
+            f"- presence_state: {status.get('presence_last_state', 'unknown')}",
+            f"- static_status: {status.get('presence_status', '') or '-'}",
+            f"- static_activity: {status.get('presence_activity', '') or '-'}",
+            f"- auto_presence_task: {status.get('auto_presence_task_state', 'unknown')}",
+        ]
+        last_error = str(status.get("presence_last_error", "") or "").strip()
+        if last_error:
+            lines.append(f"- last_error: {last_error}")
+        await _reply_discord(
+            channels=channels,
+            event=event,
+            text="\n".join(lines),
+        )
+        return True
+
+    if action == "presence_refresh":
+        refresh_presence_fn = getattr(channel, "operator_refresh_presence", None)
+        if not callable(refresh_presence_fn):
+            await _reply_discord(
+                channels=channels,
+                event=event,
+                text="Discord presence refresh is not available on this runtime.",
+            )
+            return True
+        result = await refresh_presence_fn()
+        status = result.get("status", {}) if isinstance(result, dict) else {}
+        lines = [
+            "Discord presence refresh completed",
+            f"- ok: {bool(result.get('ok', False)) if isinstance(result, dict) else False}",
+            f"- sent: {bool(result.get('sent', False)) if isinstance(result, dict) else False}",
+            f"- reason: {str(result.get('reason', '') or '-') if isinstance(result, dict) else '-'}",
+            f"- state: {status.get('presence_last_state', 'unknown')}",
+        ]
+        last_error = str(status.get("presence_last_error", "") or "").strip()
         if last_error:
             lines.append(f"- last_error: {last_error}")
         await _reply_discord(

@@ -23,6 +23,15 @@ ClawLite uses markdown skills (`SKILL.md`) with automatic discovery.
 metadata: {"clawlite":{"requires":{"bins":["gh"],"env":["GITHUB_TOKEN"]},"os":["linux","darwin"]}}
 ```
 
+OpenClaw-style runtime keys are also recognized inside `metadata.openclaw`, including:
+
+- `primaryEnv`
+- `skillKey`
+- `requires.bins`
+- `requires.env`
+- `requires.config`
+- `requires.anyBins`
+
 ## Duplicate policy
 
 When two skills have the same `name`, resolution is deterministic:
@@ -50,9 +59,20 @@ When two skills have the same `name`, resolution is deterministic:
 clawlite skills list
 clawlite skills list --all
 clawlite skills show cron
+clawlite skills search "discord"
+clawlite skills install jira-helper
+clawlite skills update jira-helper
+clawlite skills managed
+clawlite skills sync
+clawlite skills remove jira-helper
 ```
 
 `skills list --all` includes unavailable skills in the current environment and shows missing requirements.
+`skills show` and `skills check` also surface the resolved `skill_key` and `primary_env` used for `skills.entries`.
+`skills managed` shows only the marketplace-local skills currently discovered under `~/.clawlite/marketplace/skills`, including the managed folder `slug`, resolved runtime `status`, and description.
+
+Managed installs use the marketplace root: `~/.clawlite/marketplace/skills`.
+`skills update <name>` resolves either the managed folder slug or the discovered skill name before calling `clawhub update <slug>`.
 
 ## Real skill execution (tool)
 
@@ -69,6 +89,40 @@ Flow:
 1. resolve skill by name
 2. validate availability (`bins/env/os`)
 3. execute mapped `command` or `script`
+
+If the underlying tool policy requires approval, command-backed or tool-backed skills return `skill_requires_approval:<skill>:...`. On Telegram and Discord, the runtime now surfaces native approve/reject controls for the blocked tool request; after approval, retry the original skill call in the same session.
+
+## Config overrides
+
+ClawLite also reads `skills.entries.<skillKey>` from the active config payload. This follows the same file/profile precedence as the main config loader:
+
+1. base config file
+2. `config.<profile>.yaml|json`
+3. env vars
+
+Supported fields today:
+
+- `enabled: false` to disable the skill
+- `env` to inject per-skill environment variables into `command` skills
+- `apiKey` as a convenience for skills that declare `metadata.openclaw.primaryEnv`
+- `allowBundled` to restrict builtin skills without affecting workspace or marketplace overrides
+
+Example:
+
+```yaml
+skills:
+  allowBundled:
+    - gh-issues
+  entries:
+    gh-issues:
+      enabled: true
+      apiKey: ghp_example_token
+    env-skill:
+      env:
+        CUSTOM_TOKEN: secret-value
+```
+
+Like `openclaw`, injected env keys are only applied when the variable is not already set in the host process.
 
 ## Runtime summary format
 

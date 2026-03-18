@@ -23,7 +23,9 @@ _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _SOURCE_PRIORITY = {"builtin": 10, "marketplace": 20, "workspace": 30}
 _ACTIVE_CONFIG_CACHE: dict[str, object] = {
     "path": "",
+    "profile": "",
     "mtime_ns": -1,
+    "profile_mtime_ns": -1,
     "payload": {},
 }
 
@@ -197,29 +199,43 @@ def _coerce_env_names(value: object) -> tuple[list[str], list[str]]:
 
 
 def _resolve_active_config_payload() -> dict[str, object]:
-    from clawlite.config.loader import DEFAULT_CONFIG_PATH, _migrate_config, _read_file
+    from clawlite.config.loader import DEFAULT_CONFIG_PATH, _normalize_profile_name, _profile_path, load_raw_config_payload
 
     raw_path = os.getenv("CLAWLITE_CONFIG", "").strip()
     path = Path(raw_path).expanduser() if raw_path else DEFAULT_CONFIG_PATH
+    try:
+        profile = _normalize_profile_name(os.getenv("CLAWLITE_PROFILE", ""))
+    except RuntimeError:
+        profile = ""
     try:
         stat = path.stat()
         mtime_ns = int(stat.st_mtime_ns)
     except OSError:
         mtime_ns = -1
+    profile_mtime_ns = -1
+    if profile:
+        try:
+            profile_mtime_ns = int(_profile_path(path, profile).stat().st_mtime_ns)
+        except OSError:
+            profile_mtime_ns = -1
     cache_path = str(path)
     if (
         str(_ACTIVE_CONFIG_CACHE.get("path", "")) == cache_path
+        and str(_ACTIVE_CONFIG_CACHE.get("profile", "")) == profile
         and int(_ACTIVE_CONFIG_CACHE.get("mtime_ns", -2) or -2) == mtime_ns
+        and int(_ACTIVE_CONFIG_CACHE.get("profile_mtime_ns", -2) or -2) == profile_mtime_ns
     ):
         cached_payload = _ACTIVE_CONFIG_CACHE.get("payload", {})
         return dict(cached_payload) if isinstance(cached_payload, dict) else {}
     try:
-        payload = _migrate_config(_read_file(path))
+        payload = load_raw_config_payload(path, profile=profile or None)
     except Exception:
         payload = {}
     normalized = dict(payload) if isinstance(payload, dict) else {}
     _ACTIVE_CONFIG_CACHE["path"] = cache_path
+    _ACTIVE_CONFIG_CACHE["profile"] = profile
     _ACTIVE_CONFIG_CACHE["mtime_ns"] = mtime_ns
+    _ACTIVE_CONFIG_CACHE["profile_mtime_ns"] = profile_mtime_ns
     _ACTIVE_CONFIG_CACHE["payload"] = dict(normalized)
     return normalized
 
@@ -241,6 +257,97 @@ def _config_value_present(config: object, dotted_path: str) -> bool:
     if isinstance(current, (list, tuple, set)):
         return bool(current)
     return True
+
+
+def _extract_skill_entries(config: object) -> dict[str, object]:
+    if not isinstance(config, Mapping):
+        return {}
+    skills = config.get("skills")
+    if not isinstance(skills, Mapping):
+        return {}
+    entries = skills.get("entries")
+    return dict(entries) if isinstance(entries, Mapping) else {}
+
+
+def _bundled_allowlist() -> set[str] | None:
+    config = _resolve_active_config_payload()
+    if not isinstance(config, Mapping):
+        return None
+    skills = config.get("skills")
+    if not isinstance(skills, Mapping):
+        return None
+    raw = skills.get("allowBundled", skills.get("allow_bundled"))
+    rows, _issues = _coerce_list(raw)
+    if not rows:
+        return None
+    return {str(item).strip().lower() for item in rows if str(item).strip()}
+
+
+def _bundled_skill_allowed(skill_key: str, source: str) -> bool:
+    if str(source or "").strip().lower() != "builtin":
+        return True
+    allowlist = _bundled_allowlist()
+    if allowlist is None:
+        return True
+    return str(skill_key or "").strip().lower() in allowlist
+
+
+def _skill_entry_payload(skill_key: str) -> dict[str, object]:
+    entries = _extract_skill_entries(_resolve_active_config_payload())
+    wanted = str(skill_key or "").strip()
+    if not wanted:
+        return {}
+    exact = entries.get(wanted)
+    if isinstance(exact, Mapping):
+        return dict(exact)
+    lowered = wanted.lower()
+    for key, value in entries.items():
+        if str(key or "").strip().lower() != lowered or not isinstance(value, Mapping):
+            continue
+        return dict(value)
+    return {}
+
+
+def _skill_entry_enabled(skill_key: str) -> bool | None:
+    payload = _skill_entry_payload(skill_key)
+    if "enabled" not in payload:
+        return None
+    return _to_bool(payload.get("enabled"))
+
+
+def _resolve_skill_entry_api_key(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, Mapping):
+        return ""
+    source = str(value.get("source", "") or "").strip().lower()
+    env_id = str(value.get("id", "") or "").strip()
+    if source == "env" and _ENV_NAME_RE.fullmatch(env_id):
+        return str(os.getenv(env_id, "") or "").strip()
+    return ""
+
+
+def _skill_entry_env_overrides(skill_key: str, primary_env: str = "") -> dict[str, str]:
+    payload = _skill_entry_payload(skill_key)
+    overrides: dict[str, str] = {}
+
+    raw_env = payload.get("env")
+    if isinstance(raw_env, Mapping):
+        for key, value in raw_env.items():
+            env_key = str(key or "").strip()
+            if not _ENV_NAME_RE.fullmatch(env_key):
+                continue
+            if os.getenv(env_key):
+                continue
+            overrides[env_key] = str(value or "")
+
+    primary = str(primary_env or "").strip()
+    if primary and _ENV_NAME_RE.fullmatch(primary) and not os.getenv(primary) and primary not in overrides:
+        resolved_api_key = _resolve_skill_entry_api_key(payload.get("apiKey", payload.get("api_key")))
+        if resolved_api_key:
+            overrides[primary] = resolved_api_key
+
+    return overrides
 
 
 def _extract_runtime_metadata(meta: dict[str, object]) -> tuple[dict[str, object], list[str]]:
@@ -355,8 +462,9 @@ def _extract_requirement_map(meta: dict[str, object]) -> tuple[dict[str, list[st
     return out, unique_issues
 
 
-def _missing_requirements(requirements: dict[str, list[str]]) -> list[str]:
+def _missing_requirements(requirements: dict[str, list[str]], *, env_overrides: Mapping[str, str] | None = None) -> list[str]:
     missing: list[str] = []
+    resolved_env = env_overrides or {}
     for binary in requirements["bins"]:
         if shutil.which(binary) is None:
             missing.append(f"bin:{binary}")
@@ -364,6 +472,11 @@ def _missing_requirements(requirements: dict[str, list[str]]) -> list[str]:
     if any_bins and not any(shutil.which(binary) is not None for binary in any_bins):
         missing.append(f"any_bin:{'|'.join(any_bins)}")
     for env_key in requirements["env"]:
+        if os.getenv(env_key):
+            continue
+        override_value = resolved_env.get(env_key)
+        if str(override_value or "").strip():
+            continue
         if not os.getenv(env_key):
             missing.append(f"env:{env_key}")
     config_payload = _resolve_active_config_payload()
@@ -443,6 +556,8 @@ class SkillSpec:
     execution_target: str
     execution_argv: list[str]
     contract_issues: list[str]
+    skill_key: str = ""
+    primary_env: str = ""
     fallback_hint: str = ""
     version_pin: str = ""
 
@@ -584,10 +699,14 @@ class SkillsLoader:
         return tuple(signature)
 
     def _refresh_runtime_status(self, spec: SkillSpec) -> SkillSpec:
-        missing = _missing_requirements(spec.requirements)
+        env_overrides = _skill_entry_env_overrides(spec.skill_key or spec.name, spec.primary_env)
+        missing = _missing_requirements(spec.requirements, env_overrides=env_overrides)
+        if not _bundled_skill_allowed(spec.skill_key or spec.name, spec.source):
+            missing = [*missing, "policy:bundled_not_allowed"]
         available = (not missing) and (not spec.contract_issues)
         entry_state = self._entry_state(spec.name)
-        enabled = bool(entry_state.get("enabled", True))
+        config_enabled = _skill_entry_enabled(spec.skill_key or spec.name)
+        enabled = bool(entry_state.get("enabled", True)) and (True if config_enabled is None else bool(config_enabled))
         pinned = bool(entry_state.get("pinned", False))
         version_pin = str(entry_state.get("version_pin", "") or "").strip()
         if (
@@ -857,10 +976,29 @@ class SkillsLoader:
             return None
 
         req_map, req_issues = _extract_requirement_map(meta)
-        missing = _missing_requirements(req_map)
+        runtime_meta, _runtime_issues = _extract_runtime_metadata(meta)
+        skill_key = name
+        primary_env = ""
+        if runtime_meta:
+            raw_skill_key = str(runtime_meta.get("skillKey", runtime_meta.get("skill_key", "")) or "").strip()
+            if raw_skill_key:
+                skill_key = raw_skill_key
+            primary_env_rows, primary_env_issues = _coerce_env_names(
+                runtime_meta.get("primaryEnv", runtime_meta.get("primary_env"))
+            )
+            if primary_env_rows:
+                primary_env = primary_env_rows[0]
+            req_issues.extend(primary_env_issues)
+        missing = _missing_requirements(req_map, env_overrides=_skill_entry_env_overrides(skill_key, primary_env))
+        if not _bundled_skill_allowed(skill_key, source):
+            missing = [*missing, "policy:bundled_not_allowed"]
         execution_kind, execution_target, execution_argv, contract_issues = _build_execution_contract(meta)
         metadata_as_text = {key: _serialize_frontmatter_value(value) for key, value in meta.items()}
         version = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+        all_contract_issues: list[str] = []
+        for issue in [*req_issues, *contract_issues]:
+            if issue not in all_contract_issues:
+                all_contract_issues.append(issue)
 
         return SkillSpec(
             name=name,
@@ -883,7 +1021,9 @@ class SkillsLoader:
             execution_kind=execution_kind,
             execution_target=execution_target,
             execution_argv=execution_argv,
-            contract_issues=[*req_issues, *contract_issues],
+            contract_issues=all_contract_issues,
+            skill_key=skill_key,
+            primary_env=primary_env,
             fallback_hint=fallback_hint,
         )
 
@@ -1072,6 +1212,8 @@ class SkillsLoader:
 
             skill_row: dict[str, object] = {
                 "name": row.name,
+                "skill_key": row.skill_key or row.name,
+                "primary_env": row.primary_env,
                 "available": row.available,
                 "enabled": row.enabled,
                 "pinned": row.pinned,
@@ -1139,6 +1281,12 @@ class SkillsLoader:
         if row is None:
             return None
         return self._refresh_runtime_status(row)
+
+    def resolved_env_overrides(self, spec_or_name: SkillSpec | str) -> dict[str, str]:
+        spec = spec_or_name if isinstance(spec_or_name, SkillSpec) else self.get(str(spec_or_name))
+        if spec is None:
+            return {}
+        return _skill_entry_env_overrides(spec.skill_key or spec.name, spec.primary_env)
 
     def build_skills_summary(self) -> str:
         """Return XML summary of all available skills (name + description only).

@@ -42,6 +42,18 @@ class RunSkillLikeTool(Tool):
         return f"skill={arguments.get('name', '')}"
 
 
+class BrowserLikeTool(Tool):
+    name = "browser"
+    description = "browser"
+
+    def args_schema(self) -> dict:
+        return {"type": "object", "properties": {"action": {"type": "string"}}}
+
+    async def run(self, arguments: dict, ctx: ToolContext) -> str:
+        del arguments, ctx
+        return "ok"
+
+
 class StrictSchemaTool(Tool):
     name = "strict"
     description = "strict schema validation"
@@ -265,6 +277,75 @@ def test_tool_registry_default_safety_allows_run_skill_for_telegram() -> None:
     asyncio.run(_scenario())
 
 
+def test_tool_registry_default_safety_marks_browser_as_risky() -> None:
+    policy = ToolSafetyPolicyConfig()
+    assert "browser" in policy.risky_tools
+
+
+def test_tool_registry_blocks_operation_specific_browser_specifier() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                risky_specifiers=["browser:evaluate"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(BrowserLikeTool())
+        out = await reg.execute("browser", {"action": "navigate"}, session_id="telegram:1", channel="telegram", user_id="1")
+        assert out == "ok"
+        try:
+            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected operation-specific safety policy block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:browser:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_blocks_wildcard_browser_specifier() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                risky_specifiers=["browser:*"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute("browser", {"action": "click"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected wildcard safety policy block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:browser:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_blocks_browser_when_configured_for_channel() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["browser"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute("browser", {"action": "navigate"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected safety policy block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:browser:telegram"
+
+    asyncio.run(_scenario())
+
+
 def test_tool_registry_blocks_run_skill_for_telegram_when_explicitly_configured() -> None:
     async def _scenario() -> None:
         reg = ToolRegistry(
@@ -281,6 +362,52 @@ def test_tool_registry_blocks_run_skill_for_telegram_when_explicitly_configured(
             raise AssertionError("expected safety policy block")
         except RuntimeError as exc:
             assert str(exc) == "tool_blocked_by_safety_policy:run_skill:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_blocks_run_skill_name_specifier_for_telegram() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                risky_specifiers=["run_skill:github"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(RunSkillLikeTool())
+        out = await reg.execute("run_skill", {"name": "echo"}, session_id="telegram:1", channel="telegram", user_id="1")
+        assert out == "skill=echo"
+        try:
+            await reg.execute("run_skill", {"name": "github"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected skill-specific safety policy block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:run_skill:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_blocks_exec_binary_specifier_for_telegram() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                risky_specifiers=["exec:git"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(ExecLikeTool())
+        out = await reg.execute("exec", {"command": "python script.py"}, session_id="telegram:1", channel="telegram", user_id="1")
+        assert out == "channel=telegram;user=1"
+        try:
+            await reg.execute("exec", {"command": "git status"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected command-specific safety policy block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:exec:telegram"
 
     asyncio.run(_scenario())
 
@@ -304,6 +431,191 @@ def test_tool_registry_layered_profile_override_changes_effective_risky_tools() 
         reg.register(ExecLikeTool())
         out = await reg.execute("exec", {"command": "id"}, session_id="telegram:1", channel="telegram", user_id="1")
         assert out == "channel=telegram;user=1"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_layered_channel_override_can_clear_risky_specifiers() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                risky_specifiers=["browser:evaluate"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+                by_channel={
+                    "telegram": ToolSafetyLayerConfig(
+                        risky_specifiers=[],
+                    )
+                },
+            )
+        )
+        reg.register(BrowserLikeTool())
+        out = await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="1")
+        assert out == "ok"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_safety_decision_reports_matched_specifiers() -> None:
+    reg = ToolRegistry(
+        safety=ToolSafetyPolicyConfig(
+            enabled=True,
+            risky_tools=[],
+            risky_specifiers=["browser:evaluate"],
+            blocked_channels=["telegram"],
+            allowed_channels=[],
+        )
+    )
+
+    payload = reg.safety_decision(
+        "browser",
+        {"action": "evaluate"},
+        session_id="telegram:1",
+        channel="telegram",
+    )
+
+    assert payload["risky"] is True
+    assert payload["blocked"] is True
+    assert payload["resolved_channel"] == "telegram"
+    assert payload["derived_specifiers"] == ["browser", "browser:evaluate"]
+    assert payload["matched_specifiers"] == ["browser:evaluate"]
+    assert payload["block_reason"] == "channel:telegram"
+
+
+def test_tool_registry_safety_decision_reports_approval_requirement() -> None:
+    reg = ToolRegistry(
+        safety=ToolSafetyPolicyConfig(
+            enabled=True,
+            risky_tools=[],
+            risky_specifiers=[],
+            approval_specifiers=["browser:evaluate"],
+            approval_channels=["telegram"],
+            blocked_channels=[],
+            allowed_channels=[],
+        )
+    )
+
+    payload = reg.safety_decision(
+        "browser",
+        {"action": "evaluate"},
+        session_id="telegram:1",
+        channel="telegram",
+    )
+
+    assert payload["risky"] is False
+    assert payload["approval_required"] is True
+    assert payload["blocked"] is False
+    assert payload["decision"] == "approval"
+    assert payload["matched_approval_specifiers"] == ["browser:evaluate"]
+    assert payload["approval_reason"] == "channel:telegram"
+
+
+def test_tool_registry_execute_requires_approval_when_configured() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                approval_specifiers=["browser:evaluate"],
+                approval_channels=["telegram"],
+                blocked_channels=[],
+                allowed_channels=[],
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected approval requirement")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_requires_approval:browser:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_block_precedes_approval_when_both_match() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=["browser"],
+                approval_specifiers=["browser:evaluate"],
+                approval_channels=["telegram"],
+                blocked_channels=["telegram"],
+                allowed_channels=[],
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="1")
+            raise AssertionError("expected hard block")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_blocked_by_safety_policy:browser:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_approval_request_grant_allows_retry() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                approval_specifiers=["browser:evaluate"],
+                approval_channels=["telegram"],
+                blocked_channels=[],
+                allowed_channels=[],
+                approval_grant_ttl_s=300,
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+            raise AssertionError("expected approval requirement")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_requires_approval:browser:telegram"
+
+        pending = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(pending) == 1
+        assert pending[0]["tool"] == "browser"
+        assert pending[0]["matched_approval_specifiers"] == ["browser:evaluate"]
+
+        review = reg.review_approval_request(
+            pending[0]["request_id"],
+            decision="approved",
+            actor="telegram:7",
+        )
+        assert review["ok"] is True
+        assert review["status"] == "approved"
+
+        out = await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+        assert out == "ok"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_consume_pending_approval_requests_is_one_shot() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                approval_specifiers=["browser:evaluate"],
+                approval_channels=["telegram"],
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+            raise AssertionError("expected approval requirement")
+        except RuntimeError:
+            pass
+
+        first = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        second = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(first) == 1
+        assert second == []
 
     asyncio.run(_scenario())
 

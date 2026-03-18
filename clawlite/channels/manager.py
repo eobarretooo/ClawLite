@@ -29,6 +29,7 @@ from clawlite.channels.signal import SignalChannel
 from clawlite.channels.slack import SlackChannel
 from clawlite.channels.telegram import TelegramChannel
 from clawlite.channels.whatsapp import WhatsAppChannel
+from clawlite.gateway.tool_approval import build_tool_approval_metadata, build_tool_approval_notice
 from clawlite.utils.logging import bind_event, setup_logging
 
 
@@ -1825,6 +1826,7 @@ class ChannelManager:
             }
         )
         suppress_final_reply = False
+        pending_tool_approvals: list[dict[str, Any]] = []
         try:
             try:
                 result = await self.engine.run(
@@ -1864,6 +1866,10 @@ class ChannelManager:
                 )
                 if (event.channel, target) in sent_targets:
                     suppress_final_reply = True
+                pending_tool_approvals = self._consume_pending_tool_approval_requests(
+                    session_id=event.session_id,
+                    channel=event.channel,
+                )
                 if activity_channel is not None and activity_chat_id:
                     await self._stop_dispatch_typing(
                         channel=activity_channel,
@@ -1872,21 +1878,36 @@ class ChannelManager:
                     )
 
             if suppress_final_reply:
+                if pending_tool_approvals:
+                    await self._publish_and_send(
+                        event=OutboundEvent(
+                            channel=event.channel,
+                            session_id=event.session_id,
+                            target=target,
+                            text=build_tool_approval_notice(pending_tool_approvals),
+                            metadata=build_tool_approval_metadata(pending_tool_approvals)
+                            | self._strip_interaction_metadata(reply_metadata),
+                        )
+                    )
                 bind_event("channel.dispatch", session=event.session_id, channel=event.channel).debug(
                     "dispatch final reply suppressed target={} reason=already_sent_in_turn",
                     target,
                 )
                 return
 
+            final_text = result.text
+            final_metadata: dict[str, Any] = {"model": getattr(result, "model", "")} | response_metadata | reply_metadata
+            if pending_tool_approvals:
+                final_text = build_tool_approval_notice(pending_tool_approvals, base_text=final_text)
+                final_metadata = final_metadata | build_tool_approval_metadata(pending_tool_approvals)
+
             await self._publish_and_send(
                 event=OutboundEvent(
                     channel=event.channel,
                     session_id=event.session_id,
                     target=target,
-                    text=result.text,
-                    metadata={"model": getattr(result, "model", "")}
-                    | response_metadata
-                    | reply_metadata,
+                    text=final_text,
+                    metadata=final_metadata,
                 )
             )
         finally:
@@ -2205,6 +2226,37 @@ class ChannelManager:
         clean.pop("message_reference_id", None)
         clean.pop("_reply_to_mode", None)
         return clean
+
+    @staticmethod
+    def _strip_interaction_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        clean = dict(metadata)
+        clean.pop("interaction_id", None)
+        clean.pop("interaction_token", None)
+        clean.pop("discord_ephemeral", None)
+        clean.pop("ephemeral", None)
+        return clean
+
+    def _consume_pending_tool_approval_requests(
+        self,
+        *,
+        session_id: str,
+        channel: str,
+    ) -> list[dict[str, Any]]:
+        registry = getattr(self.engine, "tools", None)
+        consume_fn = getattr(registry, "consume_pending_approval_requests", None)
+        if not callable(consume_fn):
+            return []
+        try:
+            payload = consume_fn(session_id=session_id, channel=channel)
+        except Exception as exc:
+            bind_event("channel.dispatch", session=session_id, channel=channel).warning(
+                "tool approval lookup failed error={}",
+                exc,
+            )
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, dict)]
 
     def _response_metadata_from_event(self, event: InboundEvent) -> dict[str, Any]:
         if str(event.channel or "").strip().lower() != "discord":

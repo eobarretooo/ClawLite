@@ -74,6 +74,7 @@ What it supports:
 - Typing keepalive during long turns.
 - Voice/audio transcription through a Groq-compatible OpenAI endpoint.
 - Reaction forwarding and inline keyboard callbacks.
+- Inline approval/review buttons for approval-gated tools and self-evolution review.
 - Telegram-specific message actions through the `message` tool: reply, edit, delete, react, and create topic.
 
 Important config keys:
@@ -136,6 +137,7 @@ Notes:
 - Webhook mode only becomes active when both `webhook_url` and `webhook_secret` are present and Telegram webhook registration succeeds. Otherwise ClawLite falls back to polling.
 - If `transcription_api_key` is empty, Telegram transcription falls back to `GROQ_API_KEY`.
 - `group_overrides` can override policy per chat and per topic.
+- Inline keyboards are also used for operator review flows such as approval-gated tools and self-evolution review.
 
 `group_overrides` example:
 
@@ -186,6 +188,8 @@ Important config keys:
 - `group_policy`
 - `allow_bots`
 - `require_mention`, `ignore_other_mentions`
+- `status`, `activity`, `activity_type`, `activity_url`
+- `auto_presence`
 - `guilds`
 - `reply_to_mode`, `slash_isolated_sessions`
 - `thread_bindings_enabled`, `thread_binding_state_path`
@@ -211,6 +215,17 @@ Example config:
       "dm_policy": "allowlist",
       "group_policy": "allowlist",
       "allow_bots": "mentions",
+      "status": "idle",
+      "activity": "Focus time",
+      "activity_type": 4,
+      "auto_presence": {
+        "enabled": true,
+        "interval_s": 30,
+        "min_update_interval_s": 15,
+        "healthy_text": "all systems nominal",
+        "degraded_text": "warming up",
+        "exhausted_text": "offline"
+      },
       "reply_to_mode": "first",
       "slash_isolated_sessions": true,
       "thread_bindings_enabled": true,
@@ -258,6 +273,9 @@ Notes:
 - Bound Discord channels keep replying to the live thread/channel while reusing the focused session key for engine context. The original route is preserved in metadata as `discord_source_session_key`.
 - Automatic replies to inbound Discord messages still route back to the originating `channel_id` and preserve native reply references when Discord provides a `message_id`. Use `reply_to_mode=off|first|all` to control whether ClawLite replies to every Discord chunk, only the first outbound message in a turn, or never attaches a native reply reference.
 - When inbound traffic arrived via a Discord interaction, normal agent replies now reuse the deferred interaction response path instead of always posting a second channel message.
+- Approval-gated tool calls and self-evolution reviews now reuse Discord buttons/components so operators can approve or reject directly from the same conversation flow.
+- Static presence is now supported with `status` plus optional `activity` / `activity_type` / `activity_url`, following the same basic contract documented by OpenClaw.
+- `auto_presence` is now available as a lightweight runtime loop. It maps healthy Discord transport to `online`, degraded transport to `idle`, and unavailable/exhausted transport to `dnd`, with optional custom text overrides. It only pushes `op 3` presence updates when the effective state changes or the minimum update interval allows it.
 - If you want the agent to build or reorganize a server, the bot also needs Discord permissions like `View Channels`, `Send Messages`, `Manage Channels`, and `Manage Roles`.
 - Server-building requests are now handled through the `discord_admin` tool, which can list guilds/channels/roles, create roles, create channels/categories, and apply a full layout template.
 
@@ -275,9 +293,11 @@ Operator commands:
 ```text
 /discord-status
 /discord-refresh
+/discord-presence
+/discord-presence-refresh
 ```
 
-These are also intercepted before the agent loop. `discord-status` returns the live transport/policy snapshot for the running Discord channel instance, and `discord-refresh` triggers the same transport restart path exposed by the operator surface.
+These are also intercepted before the agent loop. `discord-status` returns the live transport/policy snapshot for the running Discord channel instance, `discord-refresh` triggers the same transport restart path exposed by the operator surface, `discord-presence` shows the effective static/auto presence state, and `discord-presence-refresh` forces an immediate `op 3` status update when the gateway is connected.
 
 ## Email
 

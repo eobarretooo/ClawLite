@@ -50,6 +50,32 @@ class FakeExecStatusTool(Tool):
         return self.responses.get(command, f"exit=0\nstdout={command}\nstderr=")
 
 
+class FakeExecCaptureTool(Tool):
+    name = "exec"
+    description = "fake exec with captured env overrides"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def args_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "env": {"type": "object"},
+            },
+        }
+
+    async def run(self, arguments: dict, ctx: ToolContext) -> str:
+        del ctx
+        self.calls.append(dict(arguments))
+        payload = arguments.get("env", {})
+        env_value = ""
+        if isinstance(payload, dict):
+            env_value = str(payload.get("GH_TOKEN", payload.get("CUSTOM_TOKEN", "")) or "")
+        return f"exit=0\nstdout={env_value}\nstderr="
+
+
 class FakeWebFetchPayloadTool(Tool):
     name = "web_fetch"
     description = "fake web fetch"
@@ -387,6 +413,35 @@ def test_run_skill_returns_skill_blocked_when_registry_blocks_exec_unknown_chann
     asyncio.run(_scenario())
 
 
+def test_run_skill_returns_skill_requires_approval_when_registry_requires_exec_approval(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "echo-skill",
+        "name: echo-skill\ndescription: echo\ncommand: echo",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                risky_tools=[],
+                approval_specifiers=["exec:echo"],
+                approval_channels=["telegram"],
+                blocked_channels=[],
+                allowed_channels=[],
+            )
+        )
+        reg.register(FakeExecTool())
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "echo-skill", "args": ["hello"]},
+            ToolContext(session_id="telegram:skill", channel="telegram", user_id="42"),
+        )
+        assert out == "skill_requires_approval:echo-skill:tool_requires_approval:exec:telegram"
+
+    asyncio.run(_scenario())
+
+
 def test_run_skill_command_uses_exec_tool_in_cli_context(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,
@@ -423,6 +478,45 @@ def test_run_skill_command_prefix_dispatches_multiword_binding(tmp_path: Path) -
             ToolContext(session_id="cli:gh-issues", channel="cli", user_id="11"),
         )
         assert out == "exec:gh issue list --repo openclaw/openclaw --limit 5:cli:11"
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_command_injects_skill_entry_env_overrides(tmp_path: Path, monkeypatch) -> None:
+    _write_skill(
+        tmp_path,
+        "env-skill",
+        'name: env-skill\ndescription: env skill\ncommand: echo\nmetadata: {"openclaw":{"primaryEnv":"CUSTOM_TOKEN"}}',
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "entries": {
+                        "env-skill": {
+                            "apiKey": "skill-secret",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def _scenario() -> None:
+        monkeypatch.setenv("CLAWLITE_CONFIG", str(config_path))
+        monkeypatch.delenv("CUSTOM_TOKEN", raising=False)
+        reg = ToolRegistry()
+        exec_tool = FakeExecCaptureTool()
+        reg.register(exec_tool)
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "env-skill", "input": "hello"},
+            ToolContext(session_id="cli:env-skill", channel="cli", user_id="7"),
+        )
+        assert out == "exit=0\nstdout=skill-secret\nstderr="
+        assert exec_tool.calls[0]["env"] == {"CUSTOM_TOKEN": "skill-secret"}
 
     asyncio.run(_scenario())
 
@@ -488,6 +582,56 @@ def test_run_skill_gh_issues_structured_list_dispatches_gh_issue(tmp_path: Path,
             ToolContext(session_id="cli:gh-issues", channel="cli", user_id="11"),
         )
         assert out == "exit=0\nstdout=list ok\nstderr="
+
+    asyncio.run(_scenario())
+
+
+def test_run_skill_gh_issues_uses_skill_entry_api_key_for_auth(tmp_path: Path, monkeypatch) -> None:
+    _write_skill(
+        tmp_path,
+        "gh-issues",
+        'name: gh-issues\ndescription: gh issue helper\nscript: gh_issues\nmetadata: {"openclaw":{"primaryEnv":"GH_TOKEN"}}',
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "entries": {
+                        "gh-issues": {
+                            "apiKey": "skill-gh-token",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def _scenario() -> None:
+        monkeypatch.setenv("CLAWLITE_CONFIG", str(config_path))
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        reg = ToolRegistry()
+        exec_tool = FakeExecCaptureTool()
+        reg.register(exec_tool)
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {
+                "name": "gh-issues",
+                "tool_arguments": {
+                    "action": "list",
+                    "repo": "openclaw/openclaw",
+                    "state": "open",
+                    "limit": 5,
+                },
+            },
+            ToolContext(session_id="cli:gh-issues", channel="cli", user_id="11"),
+        )
+        assert out == "exit=0\nstdout=skill-gh-token\nstderr="
+        assert len(exec_tool.calls) == 1
+        assert exec_tool.calls[0]["command"] == "gh issue list --repo openclaw/openclaw --state open --limit 5"
+        assert exec_tool.calls[0]["env"] == {"GH_TOKEN": "skill-gh-token"}
 
     asyncio.run(_scenario())
 
@@ -773,6 +917,32 @@ def test_run_skill_weather_respects_web_fetch_channel_safety_policy(tmp_path: Pa
     asyncio.run(_scenario())
 
 
+def test_run_skill_weather_reports_web_fetch_approval_requirement(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "weather",
+        "name: weather\ndescription: weather\nscript: weather",
+    )
+
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                approval_specifiers=["web_fetch"],
+                approval_channels=["telegram"],
+                blocked_channels=[],
+                allowed_channels=[],
+            )
+        )
+        reg.register(FakeWebFetchPayloadTool())
+        tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg)
+        out = await tool.run(
+            {"name": "weather", "location": "Lisbon"},
+            ToolContext(session_id="telegram:weather", channel="telegram", user_id="42"),
+        )
+        assert out == "skill_blocked:weather:tool_requires_approval:web_fetch:telegram"
+
+    asyncio.run(_scenario())
 def test_run_skill_coding_agent_wraps_sessions_spawn(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,

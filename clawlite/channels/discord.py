@@ -180,6 +180,48 @@ class DiscordChannel(BaseChannel):
                 config.get("slashIsolatedSessions", True),
             )
         )
+        self.presence_status = str(config.get("status", "") or "").strip().lower()
+        self.presence_activity = str(config.get("activity", "") or "").strip()
+        self.presence_activity_type = min(
+            5,
+            max(0, int(config.get("activity_type", config.get("activityType", 4)) or 4)),
+        )
+        self.presence_activity_url = str(config.get("activity_url", config.get("activityUrl", "")) or "").strip()
+        auto_presence_raw = config.get("auto_presence", config.get("autoPresence", {}))
+        if not isinstance(auto_presence_raw, dict):
+            auto_presence_raw = {}
+        self.auto_presence_enabled = bool(
+            auto_presence_raw.get("enabled", auto_presence_raw.get("enabled", False))
+        )
+        self.auto_presence_interval_s = max(
+            5.0,
+            float(
+                auto_presence_raw.get(
+                    "interval_s",
+                    auto_presence_raw.get("intervalS", 30.0),
+                )
+                or 30.0
+            ),
+        )
+        self.auto_presence_min_update_interval_s = max(
+            1.0,
+            float(
+                auto_presence_raw.get(
+                    "min_update_interval_s",
+                    auto_presence_raw.get("minUpdateIntervalS", 15.0),
+                )
+                or 15.0
+            ),
+        )
+        self.auto_presence_healthy_text = str(
+            auto_presence_raw.get("healthy_text", auto_presence_raw.get("healthyText", "")) or ""
+        ).strip()
+        self.auto_presence_degraded_text = str(
+            auto_presence_raw.get("degraded_text", auto_presence_raw.get("degradedText", "")) or ""
+        ).strip()
+        self.auto_presence_exhausted_text = str(
+            auto_presence_raw.get("exhausted_text", auto_presence_raw.get("exhaustedText", "")) or ""
+        ).strip()
         self.guilds = self._normalize_guild_policies(
             config.get("guilds", config.get("guilds", {}))
         )
@@ -229,6 +271,7 @@ class DiscordChannel(BaseChannel):
         self._ws: Any | None = None
         self._gateway_task: asyncio.Task[Any] | None = None
         self._heartbeat_task: asyncio.Task[Any] | None = None
+        self._auto_presence_task: asyncio.Task[Any] | None = None
         self._typing_tasks: dict[str, asyncio.Task[Any]] = {}
         self._dm_channel_ids: dict[str, str] = {}
         self._sequence: int | None = None
@@ -241,6 +284,10 @@ class DiscordChannel(BaseChannel):
         self._thread_bindings: dict[str, dict[str, str]] = {}
         self._thread_bindings_lock = asyncio.Lock()
         self._thread_bindings_loaded = False
+        self._presence_last_payload_signature = ""
+        self._presence_last_sent_at = 0.0
+        self._presence_last_error = ""
+        self._presence_last_state = ""
 
     @staticmethod
     def _normalize_allow_from(raw: Any) -> list[str]:
@@ -917,6 +964,10 @@ class DiscordChannel(BaseChannel):
             self._gateway_task is None or self._gateway_task.done()
         ):
             self._gateway_task = asyncio.create_task(self._gateway_runner())
+        if self.auto_presence_enabled and (
+            self._auto_presence_task is None or self._auto_presence_task.done()
+        ):
+            self._auto_presence_task = asyncio.create_task(self._auto_presence_loop())
 
     async def stop(self) -> None:
         self._running = False
@@ -924,6 +975,8 @@ class DiscordChannel(BaseChannel):
         self._gateway_task = None
         await cancel_task(self._heartbeat_task)
         self._heartbeat_task = None
+        await cancel_task(self._auto_presence_task)
+        self._auto_presence_task = None
         for task in list(self._typing_tasks.values()):
             await cancel_task(task)
         self._typing_tasks.clear()
@@ -1297,9 +1350,13 @@ class DiscordChannel(BaseChannel):
             app = payload.get("application")
             if isinstance(app, dict):
                 self._application_id = str(app.get("id", "") or "").strip()
+            if self.auto_presence_enabled:
+                await self._update_presence(force=True)
             return True
 
         if event_type == "RESUMED":
+            if self.auto_presence_enabled:
+                await self._update_presence(force=True)
             return True
 
         if event_type == "MESSAGE_CREATE":
@@ -1326,18 +1383,22 @@ class DiscordChannel(BaseChannel):
         await ws.send(json.dumps(payload))
 
     async def _identify(self) -> None:
+        identify_payload: dict[str, Any] = {
+            "token": self.token,
+            "intents": self.gateway_intents,
+            "properties": {
+                "os": "clawlite",
+                "browser": "clawlite",
+                "device": "clawlite",
+            },
+        }
+        presence = self._presence_payload()
+        if presence is not None:
+            identify_payload["presence"] = presence
         await self._send_ws_json(
             {
                 "op": 2,
-                "d": {
-                    "token": self.token,
-                    "intents": self.gateway_intents,
-                    "properties": {
-                        "os": "clawlite",
-                        "browser": "clawlite",
-                        "device": "clawlite",
-                    },
-                },
+                "d": identify_payload,
             }
         )
 
@@ -2093,6 +2154,19 @@ class DiscordChannel(BaseChannel):
             "allow_bots": self.allow_bots,
             "reply_to_mode": self.reply_to_mode,
             "slash_isolated_sessions": self.slash_isolated_sessions,
+            "presence_status": self.presence_status,
+            "presence_activity": self.presence_activity,
+            "presence_activity_type": self.presence_activity_type,
+            "presence_activity_url": self.presence_activity_url,
+            "auto_presence_enabled": self.auto_presence_enabled,
+            "auto_presence_interval_s": self.auto_presence_interval_s,
+            "auto_presence_min_update_interval_s": self.auto_presence_min_update_interval_s,
+            "auto_presence_task_state": self._task_state(self._auto_presence_task),
+            "auto_presence_healthy_text": self.auto_presence_healthy_text,
+            "auto_presence_degraded_text": self.auto_presence_degraded_text,
+            "auto_presence_exhausted_text": self.auto_presence_exhausted_text,
+            "presence_last_state": self._presence_last_state,
+            "presence_last_error": self._presence_last_error,
             "guild_allowlist_count": len(self.guilds),
             "policy_allowed_count": self._policy_allowed_count,
             "policy_blocked_count": self._policy_blocked_count,
@@ -2103,6 +2177,134 @@ class DiscordChannel(BaseChannel):
             "thread_binding_count": len(self._thread_bindings),
             "hints": hints,
         }
+
+    def _build_presence_payload(
+        self,
+        *,
+        status: str,
+        activity: str = "",
+        activity_type: int = 4,
+        activity_url: str = "",
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        normalized_activity = str(activity or "").strip()
+        normalized_activity_url = str(activity_url or "").strip()
+        if not normalized_status and not normalized_activity:
+            return None
+        payload: dict[str, Any] = {
+            "status": normalized_status or "online",
+            "since": 0,
+            "afk": False,
+            "activities": [],
+        }
+        if not normalized_activity:
+            return payload
+
+        normalized_type = min(5, max(0, int(activity_type or 0)))
+        activity_payload: dict[str, Any] = {"type": normalized_type}
+        if normalized_type == 4:
+            activity_payload["name"] = "Custom Status"
+            activity_payload["state"] = normalized_activity
+        else:
+            activity_payload["name"] = normalized_activity
+            if normalized_type == 1 and normalized_activity_url:
+                activity_payload["url"] = normalized_activity_url
+        payload["activities"] = [activity_payload]
+        return payload
+
+    def _derive_auto_presence(self) -> tuple[str, dict[str, Any] | None]:
+        if not self.auto_presence_enabled:
+            return ("disabled", None)
+        gateway_task_state = self._task_state(self._gateway_task)
+        if self._ws is None or not self._running or gateway_task_state != "running":
+            state = "exhausted"
+            text = self.auto_presence_exhausted_text or self.presence_activity
+            return (
+                state,
+                self._build_presence_payload(
+                    status="dnd",
+                    activity=text,
+                    activity_type=4 if text and self.auto_presence_exhausted_text else self.presence_activity_type,
+                    activity_url="" if self.auto_presence_exhausted_text else self.presence_activity_url,
+                ),
+            )
+        if self._last_error or not self._session_id:
+            state = "degraded"
+            text = self.auto_presence_degraded_text or self.presence_activity
+            return (
+                state,
+                self._build_presence_payload(
+                    status="idle",
+                    activity=text,
+                    activity_type=4 if text and self.auto_presence_degraded_text else self.presence_activity_type,
+                    activity_url="" if self.auto_presence_degraded_text else self.presence_activity_url,
+                ),
+            )
+        state = "healthy"
+        text = self.auto_presence_healthy_text or self.presence_activity
+        return (
+            state,
+            self._build_presence_payload(
+                status="online",
+                activity=text,
+                activity_type=4 if text and self.auto_presence_healthy_text else self.presence_activity_type,
+                activity_url="" if self.auto_presence_healthy_text else self.presence_activity_url,
+            ),
+        )
+
+    def _presence_payload(self) -> dict[str, Any] | None:
+        if self.auto_presence_enabled:
+            state, payload = self._derive_auto_presence()
+            self._presence_last_state = state
+            return payload
+        self._presence_last_state = "static"
+        return self._build_presence_payload(
+            status=self.presence_status,
+            activity=self.presence_activity,
+            activity_type=self.presence_activity_type,
+            activity_url=self.presence_activity_url,
+        )
+
+    async def _update_presence(self, *, force: bool = False) -> dict[str, Any]:
+        payload = self._presence_payload()
+        if payload is None:
+            return {"ok": False, "sent": False, "reason": "presence_not_configured"}
+        ws = self._ws
+        if ws is None:
+            return {"ok": False, "sent": False, "reason": "discord_gateway_unavailable"}
+        signature = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        now = time.monotonic()
+        if not force:
+            if signature == self._presence_last_payload_signature:
+                return {"ok": True, "sent": False, "reason": "unchanged"}
+            if (now - self._presence_last_sent_at) < self.auto_presence_min_update_interval_s:
+                return {"ok": True, "sent": False, "reason": "min_interval"}
+        try:
+            await self._send_ws_json({"op": 3, "d": payload})
+        except Exception as exc:
+            self._presence_last_error = str(exc)
+            self._last_error = str(exc)
+            return {"ok": False, "sent": False, "reason": "send_failed", "error": str(exc)}
+        self._presence_last_payload_signature = signature
+        self._presence_last_sent_at = now
+        self._presence_last_error = ""
+        return {"ok": True, "sent": True, "reason": "updated", "state": self._presence_last_state}
+
+    async def _auto_presence_loop(self) -> None:
+        while self._running:
+            try:
+                if self._ws is not None:
+                    await self._update_presence(force=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._presence_last_error = str(exc)
+                self._last_error = str(exc)
+            await asyncio.sleep(max(1.0, self.auto_presence_interval_s))
+
+    async def operator_refresh_presence(self) -> dict[str, Any]:
+        result = await self._update_presence(force=True)
+        return result | {"status": self.operator_status()}
 
     async def operator_refresh_transport(self) -> dict[str, Any]:
         was_running = bool(self._running)

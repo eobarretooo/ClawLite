@@ -652,7 +652,14 @@ def test_discord_allow_bots_mentions_requires_bot_mention() -> None:
 
 
 def test_discord_operator_status_reports_gateway_state() -> None:
-    channel = DiscordChannel(config={"token": "bot-token"})
+    channel = DiscordChannel(
+        config={
+            "token": "bot-token",
+            "status": "idle",
+            "activity": "Focus time",
+            "activityType": 4,
+        }
+    )
     channel._running = True
     channel._session_id = "sess-1"
     channel._resume_url = "wss://resume.example"
@@ -666,6 +673,117 @@ def test_discord_operator_status_reports_gateway_state() -> None:
     assert payload["resume_url"] == "wss://resume.example"
     assert payload["sequence"] == 42
     assert payload["bot_user_id"] == "bot-1"
+    assert payload["presence_status"] == "idle"
+    assert payload["presence_activity"] == "Focus time"
+    assert payload["presence_activity_type"] == 4
+
+
+def test_discord_identify_includes_presence_payload_when_configured() -> None:
+    sent: list[dict[str, Any]] = []
+
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "status": "dnd",
+                "activity": "Live coding",
+                "activityType": 1,
+                "activityUrl": "https://twitch.tv/openclaw",
+            }
+        )
+
+        async def _fake_send(payload: dict[str, Any]) -> None:
+            sent.append(payload)
+
+        channel._send_ws_json = _fake_send  # type: ignore[method-assign]
+        await channel._identify()
+
+    asyncio.run(_scenario())
+
+    assert sent
+    payload = sent[0]["d"]
+    assert payload["presence"]["status"] == "dnd"
+    assert payload["presence"]["activities"][0]["type"] == 1
+    assert payload["presence"]["activities"][0]["name"] == "Live coding"
+    assert payload["presence"]["activities"][0]["url"] == "https://twitch.tv/openclaw"
+
+
+def test_discord_identify_includes_auto_presence_payload_when_enabled() -> None:
+    sent: list[dict[str, Any]] = []
+
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "activity": "Focus time",
+                "autoPresence": {
+                    "enabled": True,
+                    "healthyText": "all systems nominal",
+                },
+            }
+        )
+        channel._running = True
+        channel._ws = object()
+        channel._session_id = "sess-1"
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+
+        async def _fake_send(payload: dict[str, Any]) -> None:
+            sent.append(payload)
+
+        channel._send_ws_json = _fake_send  # type: ignore[method-assign]
+        await channel._identify()
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+    assert sent
+    payload = sent[0]["d"]["presence"]
+    assert payload["status"] == "online"
+    assert payload["activities"][0]["type"] == 4
+    assert payload["activities"][0]["state"] == "all systems nominal"
+
+
+def test_discord_operator_refresh_presence_sends_status_update() -> None:
+    sent: list[dict[str, Any]] = []
+
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "activity": "Focus time",
+                "autoPresence": {
+                    "enabled": True,
+                    "healthyText": "all systems nominal",
+                },
+            }
+        )
+        channel._running = True
+        channel._ws = object()
+        channel._session_id = "sess-1"
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+
+        async def _fake_send(payload: dict[str, Any]) -> None:
+            sent.append(payload)
+
+        channel._send_ws_json = _fake_send  # type: ignore[method-assign]
+        result = await channel.operator_refresh_presence()
+        assert result["ok"] is True
+        assert result["sent"] is True
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+    assert sent
+    assert sent[0]["op"] == 3
+    assert sent[0]["d"]["status"] == "online"
 
 
 def test_discord_operator_refresh_transport_resets_gateway_state() -> None:

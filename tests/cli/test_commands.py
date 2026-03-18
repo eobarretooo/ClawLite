@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -238,6 +239,8 @@ def test_cli_skills_list_and_show(capsys) -> None:
     assert "enabled" in cron
     assert "pinned" in cron
     assert "version" in cron
+    assert "skill_key" in cron
+    assert "primary_env" in cron
 
     rc_show = main(["skills", "show", "cron"])
     assert rc_show == 0
@@ -248,6 +251,8 @@ def test_cli_skills_list_and_show(capsys) -> None:
     assert "enabled" in one
     assert "pinned" in one
     assert "version" in one
+    assert "skill_key" in one
+    assert "primary_env" in one
 
 
 def test_cli_skills_check_returns_diagnostics_report(capsys) -> None:
@@ -317,6 +322,320 @@ def test_cli_skills_enable_disable_and_pin_unpin(tmp_path: Path, capsys) -> None
     assert unpinned["ok"] is True
     assert unpinned["action"] == "unpin"
     assert unpinned["pinned"] is False
+
+
+def test_cli_skills_install_update_and_sync_use_marketplace_root(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls: list[list[str]] = []
+    managed_skill = tmp_path / ".clawlite" / "marketplace" / "skills" / "jira-helper"
+    managed_skill.mkdir(parents=True, exist_ok=True)
+    (managed_skill / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: marketplace skill\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    def _fake_which(name: str) -> str | None:
+        return "/usr/bin/npx" if name == "npx" else None
+
+    def _fake_run(command: list[str], capture_output: bool, text: bool):
+        assert capture_output is True
+        assert text is True
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", _fake_which)
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    rc_install = main(["skills", "install", "jira-helper"])
+    assert rc_install == 0
+    install_payload = json.loads(capsys.readouterr().out)
+    assert install_payload["ok"] is True
+    assert install_payload["action"] == "install"
+    assert install_payload["slug"] == "jira-helper"
+    assert install_payload["managed_root"].endswith(".clawlite/marketplace")
+    assert install_payload["skills_root"].endswith(".clawlite/marketplace/skills")
+
+    rc_update = main(["skills", "update", "Jira Helper"])
+    assert rc_update == 0
+    update_payload = json.loads(capsys.readouterr().out)
+    assert update_payload["ok"] is True
+    assert update_payload["action"] == "update"
+    assert update_payload["slug"] == "jira-helper"
+    assert update_payload["name"] == "Jira Helper"
+
+    rc_sync = main(["skills", "sync"])
+    assert rc_sync == 0
+    sync_payload = json.loads(capsys.readouterr().out)
+    assert sync_payload["ok"] is True
+    assert sync_payload["action"] == "sync"
+
+    assert calls[0][-2:] == ["--workdir", str(tmp_path / ".clawlite" / "marketplace")]
+    assert calls[1][3:5] == ["update", "jira-helper"]
+    assert calls[2][3:5] == ["update", "--all"]
+
+
+def test_cli_skills_search_uses_clawhub(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls: list[list[str]] = []
+
+    def _fake_which(name: str) -> str | None:
+        return "/usr/bin/npx" if name == "npx" else None
+
+    def _fake_run(command: list[str], capture_output: bool, text: bool):
+        assert capture_output is True
+        assert text is True
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="search ok\n", stderr="")
+
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", _fake_which)
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    rc = main(["skills", "search", "discord", "--limit", "3"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "search"
+    assert payload["query"] == "discord"
+    assert payload["limit"] == 3
+    assert calls[0][3:7] == ["search", "discord", "--limit", "3"]
+
+
+def test_cli_skills_managed_lists_marketplace_entries(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    market_skill = tmp_path / ".clawlite" / "marketplace" / "skills" / "market-echo"
+    market_skill.mkdir(parents=True, exist_ok=True)
+    (market_skill / "SKILL.md").write_text(
+        "---\nname: market-echo\ndescription: marketplace skill\ncommand: echo hi\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["skills", "managed"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "managed"
+    assert payload["count"] == 1
+    assert payload["skills"][0]["slug"] == "market-echo"
+    assert payload["skills"][0]["name"] == "market-echo"
+    assert payload["skills"][0]["description"] == "marketplace skill"
+    assert payload["skills"][0]["status"] == "ready"
+    assert payload["skills_root"].endswith(".clawlite/marketplace/skills")
+
+
+def test_cli_skills_remove_resolves_marketplace_skill_by_name(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".clawlite" / "marketplace" / "skills" / "managed-folder"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: Managed Skill\n---\n", encoding="utf-8")
+
+    rc = main(["skills", "remove", "Managed Skill"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "remove"
+    assert payload["slug"] == "managed-folder"
+    assert payload["name"] == "Managed Skill"
+    assert not skill_dir.exists()
+
+
+def test_cli_tools_safety_preview_reports_effective_policy(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "safety": {
+                        "enabled": True,
+                        "risky_tools": [],
+                        "risky_specifiers": ["browser:evaluate"],
+                        "blocked_channels": ["telegram"],
+                        "allowed_channels": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "tools",
+            "safety",
+            "browser",
+            "--session-id",
+            "telegram:1",
+            "--channel",
+            "telegram",
+            "--args-json",
+            '{"action":"evaluate"}',
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "tools_safety_preview"
+    assert payload["blocked"] is True
+    assert payload["matched_specifiers"] == ["browser:evaluate"]
+    assert payload["derived_specifiers"] == ["browser", "browser:evaluate"]
+
+
+def test_cli_tools_safety_preview_reports_approval_mode(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "safety": {
+                        "enabled": True,
+                        "risky_tools": [],
+                        "approval_specifiers": ["browser:evaluate"],
+                        "approval_channels": ["telegram"],
+                        "blocked_channels": [],
+                        "allowed_channels": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "tools",
+            "safety",
+            "browser",
+            "--session-id",
+            "telegram:1",
+            "--channel",
+            "telegram",
+            "--args-json",
+            '{"action":"evaluate"}',
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["decision"] == "approval"
+    assert payload["approval_required"] is True
+    assert payload["matched_approval_specifiers"] == ["browser:evaluate"]
+
+
+def test_cli_tools_safety_preview_rejects_invalid_json(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "tools",
+            "safety",
+            "browser",
+            "--args-json",
+            '{"action"',
+        ]
+    )
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"].startswith("invalid_arguments_json:")
+
+
+def test_cli_tools_catalog_uses_gateway_endpoint(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    def _fake_fetch(*, gateway_url: str, include_schema: bool = False, timeout: float = 3.0, token: str = ""):
+        assert gateway_url == "http://127.0.0.1:8787"
+        assert include_schema is True
+        assert timeout == 5.0
+        assert token == "tok"
+        return {
+            "ok": True,
+            "groups": [
+                {"id": "runtime", "label": "Runtime", "tools": [{"id": "exec", "description": "run shell"}]},
+                {"id": "web", "label": "Web", "tools": [{"id": "web_fetch", "description": "fetch web"}]},
+            ],
+            "tool_count": 2,
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.fetch_gateway_tools_catalog", _fake_fetch)
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "tools",
+            "catalog",
+            "--include-schema",
+            "--timeout",
+            "5",
+            "--token",
+            "tok",
+            "--group",
+            "runtime",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "tools_catalog"
+    assert payload["group_filter"] == "runtime"
+    assert payload["tool_count"] == 1
+    assert payload["groups"][0]["id"] == "runtime"
+
+
+def test_cli_tools_show_returns_one_tool_entry(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    def _fake_fetch(*, gateway_url: str, include_schema: bool = False, timeout: float = 3.0, token: str = ""):
+        assert include_schema is True
+        return {
+            "ok": True,
+            "base_url": "http://127.0.0.1:8787",
+            "endpoint": "/v1/tools/catalog",
+            "aliases": {"bash": "exec"},
+            "groups": [
+                {"id": "runtime", "label": "Runtime", "tools": [{"id": "exec", "description": "run shell"}]},
+            ],
+            "schema": [
+                {"name": "exec", "description": "run shell", "parameters": {"type": "object"}},
+            ],
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.fetch_gateway_tools_catalog", _fake_fetch)
+
+    rc = main(["--config", str(config_path), "tools", "show", "bash"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "tools_show"
+    assert payload["requested_name"] == "bash"
+    assert payload["resolved_name"] == "exec"
+    assert payload["alias_of"] == "exec"
+    assert payload["group"]["id"] == "runtime"
+    assert payload["schema"]["name"] == "exec"
+
+
+def test_cli_tools_show_returns_not_found(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "clawlite.cli.commands.fetch_gateway_tools_catalog",
+        lambda **_: {"ok": True, "aliases": {}, "groups": [], "schema": [], "base_url": "http://127.0.0.1:8787", "endpoint": "/v1/tools/catalog"},
+    )
+
+    rc = main(["--config", str(config_path), "tools", "show", "ghost"])
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"] == "tool_not_found:ghost"
 
 
 def test_cli_status_and_version(tmp_path: Path, capsys) -> None:

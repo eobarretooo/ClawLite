@@ -2333,6 +2333,65 @@ def fetch_gateway_diagnostics(*, gateway_url: str, timeout: float = 3.0, token: 
     return out
 
 
+def fetch_gateway_tools_catalog(
+    *,
+    gateway_url: str,
+    include_schema: bool = False,
+    timeout: float = 3.0,
+    token: str = "",
+) -> dict[str, Any]:
+    base = gateway_url.strip().rstrip("/")
+    if not base:
+        raise RuntimeError("gateway_url_required")
+
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    params: dict[str, str] = {}
+    if include_schema:
+        params["include_schema"] = "true"
+
+    client_timeout = max(0.1, float(timeout))
+    endpoint = "/v1/tools/catalog"
+    url = f"{base}{endpoint}"
+    try:
+        with httpx.Client(timeout=client_timeout, headers=headers) as client:
+            response = client.get(url, params=params)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "base_url": base,
+            "endpoint": endpoint,
+            "status_code": 0,
+            "error": str(exc),
+            "error_type": exc.__class__.__name__,
+        }
+
+    try:
+        parsed: Any = response.json()
+    except Exception:
+        parsed = response.text
+
+    if response.is_success and isinstance(parsed, dict):
+        payload = dict(parsed)
+        payload["ok"] = True
+        payload["base_url"] = base
+        payload["endpoint"] = endpoint
+        payload["status_code"] = int(response.status_code)
+        return payload
+
+    error = _response_error_detail(response) or "tools_catalog_failed"
+    return {
+        "ok": False,
+        "base_url": base,
+        "endpoint": endpoint,
+        "status_code": int(response.status_code),
+        "error": error,
+        "body": parsed,
+    }
+
+
 def memory_eval_snapshot(config: AppConfig, limit: int = 5) -> dict[str, Any]:
     del config
     top_k = max(1, int(limit or 1))

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
+import shutil
+import subprocess
 import sys
 import webbrowser
 from contextlib import contextmanager
@@ -43,6 +46,7 @@ from clawlite.cli.ops import telegram_offset_reset
 from clawlite.cli.ops import telegram_offset_sync
 from clawlite.cli.ops import telegram_refresh
 from clawlite.cli.ops import telegram_status
+from clawlite.cli.ops import fetch_gateway_tools_catalog
 from clawlite.cli.ops import provider_clear_auth
 from clawlite.cli.ops import provider_live_probe
 from clawlite.cli.ops import provider_recover
@@ -65,6 +69,7 @@ from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import save_config
 from clawlite.core.skills import SkillsLoader
 from clawlite.scheduler.cron import CronService
+from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logger import stdout_json
 from clawlite.utils.logger import stdout_text
 from clawlite.workspace.loader import WorkspaceLoader
@@ -145,6 +150,38 @@ def _skills_loader_for_args(args: argparse.Namespace) -> SkillsLoader:
         cfg = load_config(config_path)
         return SkillsLoader(state_path=Path(cfg.state_path) / "skills-state.json")
     return SkillsLoader()
+
+
+def _skills_managed_root(loader: SkillsLoader) -> Path:
+    return loader.roots[2].parent
+
+
+def _run_clawhub_command(loader: SkillsLoader, *action_args: str) -> tuple[int, dict[str, Any]]:
+    managed_root = _skills_managed_root(loader)
+    skills_root = managed_root / "skills"
+    npx_path = shutil.which("npx")
+    if not npx_path:
+        return 1, {
+            "ok": False,
+            "error": "skills_manager_requires_npx",
+            "managed_root": str(managed_root),
+            "skills_root": str(skills_root),
+        }
+
+    managed_root.mkdir(parents=True, exist_ok=True)
+    command = [npx_path, "--yes", "clawhub@latest", *action_args, "--workdir", str(managed_root)]
+    completed = subprocess.run(command, capture_output=True, text=True)
+    payload = {
+        "ok": completed.returncode == 0,
+        "command": command,
+        "managed_root": str(managed_root),
+        "skills_root": str(skills_root),
+        "stdout": str(completed.stdout or "").strip(),
+        "stderr": str(completed.stderr or "").strip(),
+    }
+    if completed.returncode != 0:
+        payload["error"] = "skills_manager_command_failed"
+    return completed.returncode, payload
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -903,6 +940,119 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
     return 0 if ok else 2
 
 
+def cmd_tools_safety(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    raw_arguments = str(args.args_json or "{}").strip() or "{}"
+    try:
+        arguments = json.loads(raw_arguments)
+    except json.JSONDecodeError as exc:
+        _print_json({"ok": False, "error": f"invalid_arguments_json:{exc.msg}"})
+        return 1
+    if not isinstance(arguments, dict):
+        _print_json({"ok": False, "error": "invalid_arguments_json:expected_object"})
+        return 1
+
+    registry = ToolRegistry(safety=config.tools.safety)
+    payload = registry.safety_decision(
+        args.tool,
+        arguments,
+        session_id=str(args.session_id or ""),
+        channel=str(args.channel or ""),
+    )
+    payload["ok"] = True
+    payload["action"] = "tools_safety_preview"
+    _print_json(payload)
+    return 0
+
+
+def cmd_tools_catalog(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    gateway_url = str(args.gateway_url or "").strip()
+    if not gateway_url:
+        gateway_url = f"http://{config.gateway.host}:{int(config.gateway.port)}"
+    payload = fetch_gateway_tools_catalog(
+        gateway_url=gateway_url,
+        include_schema=bool(args.include_schema),
+        timeout=float(args.timeout),
+        token=str(args.token or ""),
+    )
+    if payload.get("ok", False) and args.group:
+        wanted = str(args.group or "").strip().lower()
+        payload["groups"] = [
+            row for row in list(payload.get("groups", []) or [])
+            if str(row.get("id", "") or "").strip().lower() == wanted
+        ]
+        payload["tool_count"] = sum(len(list(row.get("tools", []) or [])) for row in payload["groups"])
+        payload["group_filter"] = wanted
+    payload["action"] = "tools_catalog"
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_tools_show(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    gateway_url = str(args.gateway_url or "").strip()
+    if not gateway_url:
+        gateway_url = f"http://{config.gateway.host}:{int(config.gateway.port)}"
+    catalog = fetch_gateway_tools_catalog(
+        gateway_url=gateway_url,
+        include_schema=True,
+        timeout=float(args.timeout),
+        token=str(args.token or ""),
+    )
+    if not catalog.get("ok", False):
+        catalog["action"] = "tools_show"
+        _print_json(catalog)
+        return 2
+
+    needle = str(args.name or "").strip()
+    aliases = dict(catalog.get("aliases", {}) or {})
+    resolved_name = aliases.get(needle, needle)
+    schema_rows = list(catalog.get("schema", []) or [])
+    selected_schema = next((row for row in schema_rows if str(row.get("name", "") or "") == resolved_name), None)
+    group_id = ""
+    group_label = ""
+    description = ""
+    for group in list(catalog.get("groups", []) or []):
+        for tool in list(group.get("tools", []) or []):
+            if str(tool.get("id", "") or "") != resolved_name:
+                continue
+            group_id = str(group.get("id", "") or "")
+            group_label = str(group.get("label", "") or "")
+            description = str(tool.get("description", "") or "")
+            break
+        if group_id:
+            break
+
+    if selected_schema is None and not group_id:
+        _print_json(
+            {
+                "ok": False,
+                "action": "tools_show",
+                "error": f"tool_not_found:{needle}",
+                "requested_name": needle,
+                "base_url": catalog.get("base_url", ""),
+                "endpoint": catalog.get("endpoint", ""),
+            }
+        )
+        return 1
+
+    payload = {
+        "ok": True,
+        "action": "tools_show",
+        "requested_name": needle,
+        "resolved_name": resolved_name,
+        "alias_of": resolved_name if resolved_name != needle else "",
+        "group": {"id": group_id, "label": group_label} if group_id else {},
+        "description": description or str((selected_schema or {}).get("description", "") or ""),
+        "schema": selected_schema or {},
+        "base_url": catalog.get("base_url", ""),
+        "endpoint": catalog.get("endpoint", ""),
+    }
+    _print_json(payload)
+    return 0
+
+
 def cmd_diagnostics(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     config_path = str(args.config) if args.config else str(DEFAULT_CONFIG_PATH)
@@ -1208,6 +1358,8 @@ def cmd_skills_list(args: argparse.Namespace) -> int:
         "skills": [
             {
                 "name": row.name,
+                "skill_key": row.skill_key or row.name,
+                "primary_env": row.primary_env,
                 "description": row.description,
                 "always": row.always,
                 "source": row.source,
@@ -1236,6 +1388,8 @@ def cmd_skills_show(args: argparse.Namespace) -> int:
     _print_json(
         {
             "name": row.name,
+            "skill_key": row.skill_key or row.name,
+            "primary_env": row.primary_env,
             "description": row.description,
             "always": row.always,
             "source": row.source,
@@ -1268,6 +1422,7 @@ def _skills_lifecycle_payload(action: str, row: Any) -> dict[str, Any]:
         "ok": True,
         "action": action,
         "name": row.name,
+        "skill_key": row.skill_key or row.name,
         "enabled": row.enabled,
         "pinned": row.pinned,
         "version_pin": row.version_pin,
@@ -1276,6 +1431,43 @@ def _skills_lifecycle_payload(action: str, row: Any) -> dict[str, Any]:
         "source": row.source,
         "path": str(row.path),
     }
+
+
+def _managed_skill_slug(row: Any) -> str:
+    try:
+        return str(Path(row.path).parent.name).strip()
+    except Exception:
+        return ""
+
+
+def _managed_skill_status(row: Any) -> str:
+    if not bool(getattr(row, "enabled", True)):
+        return "disabled"
+    if not bool(getattr(row, "available", True)):
+        return "missing_requirements"
+    return "ready"
+
+
+def _resolve_managed_skill(loader: SkillsLoader, raw_name: str) -> tuple[Any | None, str, Path]:
+    needle = str(raw_name or "").strip().lower()
+    managed_root = _skills_managed_root(loader)
+    fallback = managed_root / "skills" / str(raw_name or "").strip()
+    if not needle:
+        return None, "", fallback
+
+    rows = [row for row in loader.discover(include_unavailable=True) if row.source == "marketplace"]
+    for row in rows:
+        slug = _managed_skill_slug(row)
+        candidates = {
+            slug.lower(),
+            str(getattr(row, "name", "") or "").strip().lower(),
+            str(getattr(row, "skill_key", "") or "").strip().lower(),
+        }
+        if needle not in candidates:
+            continue
+        resolved_slug = slug or str(raw_name or "").strip()
+        return row, resolved_slug, managed_root / "skills" / resolved_slug
+    return None, "", fallback
 
 
 def cmd_skills_enable(args: argparse.Namespace) -> int:
@@ -1335,6 +1527,111 @@ def cmd_skills_clear_version(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": f"skill_not_found:{args.name}"})
         return 1
     _print_json(_skills_lifecycle_payload("clear_version", row))
+    return 0
+
+
+def cmd_skills_install(args: argparse.Namespace) -> int:
+    loader = _skills_loader_for_args(args)
+    rc, payload = _run_clawhub_command(loader, "install", args.slug)
+    payload["action"] = "install"
+    payload["slug"] = args.slug
+    _print_json(payload)
+    return rc
+
+
+def cmd_skills_update(args: argparse.Namespace) -> int:
+    loader = _skills_loader_for_args(args)
+    row, slug, _target = _resolve_managed_skill(loader, args.name)
+    resolved_slug = slug or str(args.name).strip()
+    rc, payload = _run_clawhub_command(loader, "update", resolved_slug)
+    payload["action"] = "update"
+    payload["slug"] = resolved_slug
+    if row is not None:
+        payload["name"] = row.name
+        payload["skill_key"] = row.skill_key or row.name
+    _print_json(payload)
+    return rc
+
+
+def cmd_skills_sync(args: argparse.Namespace) -> int:
+    loader = _skills_loader_for_args(args)
+    rc, payload = _run_clawhub_command(loader, "update", "--all")
+    payload["action"] = "sync"
+    _print_json(payload)
+    return rc
+
+
+def cmd_skills_search(args: argparse.Namespace) -> int:
+    loader = _skills_loader_for_args(args)
+    rc, payload = _run_clawhub_command(loader, "search", args.query, "--limit", str(max(1, int(args.limit or 5))))
+    payload["action"] = "search"
+    payload["query"] = args.query
+    payload["limit"] = max(1, int(args.limit or 5))
+    _print_json(payload)
+    return rc
+
+
+def cmd_skills_managed(args: argparse.Namespace) -> int:
+    loader = _skills_loader_for_args(args)
+    rows = [row for row in loader.discover(include_unavailable=True) if row.source == "marketplace"]
+    managed_root = _skills_managed_root(loader)
+    _print_json(
+        {
+            "ok": True,
+            "action": "managed",
+            "managed_root": str(managed_root),
+            "skills_root": str(managed_root / "skills"),
+            "count": len(rows),
+            "skills": [
+                {
+                    "slug": _managed_skill_slug(row),
+                    "name": row.name,
+                    "skill_key": row.skill_key or row.name,
+                    "primary_env": row.primary_env,
+                    "description": row.description,
+                    "available": row.available,
+                    "enabled": row.enabled,
+                    "pinned": row.pinned,
+                    "status": _managed_skill_status(row),
+                    "version": row.version,
+                    "version_pin": row.version_pin,
+                    "missing": row.missing,
+                    "homepage": row.homepage,
+                    "fallback_hint": row.fallback_hint,
+                    "path": str(row.path),
+                }
+                for row in rows
+            ],
+        }
+    )
+    return 0
+
+
+def cmd_skills_remove(args: argparse.Namespace) -> int:
+    loader = _skills_loader_for_args(args)
+    managed_root = _skills_managed_root(loader)
+    row, slug, target = _resolve_managed_skill(loader, args.name)
+    if row is None or not target.exists():
+        _print_json(
+            {
+                "ok": False,
+                "error": f"managed_skill_not_found:{args.name}",
+                "managed_root": str(managed_root),
+            }
+        )
+        return 1
+    shutil.rmtree(target)
+    _print_json(
+        {
+            "ok": True,
+            "action": "remove",
+            "name": row.name,
+            "skill_key": row.skill_key or row.name,
+            "slug": slug,
+            "removed_path": str(target),
+            "managed_root": str(managed_root),
+        }
+    )
     return 0
 
 
@@ -1427,6 +1724,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate_preflight.add_argument("--provider-live", action="store_true", help="Run live provider connectivity probe")
     p_validate_preflight.add_argument("--telegram-live", action="store_true", help="Run live Telegram token probe")
     p_validate_preflight.set_defaults(handler=cmd_validate_preflight)
+
+    p_tools = sub.add_parser("tools", help="Inspect tool policy and behavior")
+    tools_sub = p_tools.add_subparsers(dest="tools_command", required=True)
+
+    p_tools_safety = tools_sub.add_parser("safety", help="Preview effective tool safety for one call")
+    p_tools_safety.add_argument("tool")
+    p_tools_safety.add_argument("--session-id", default="")
+    p_tools_safety.add_argument("--channel", default="")
+    p_tools_safety.add_argument("--args-json", default="{}")
+    p_tools_safety.set_defaults(handler=cmd_tools_safety)
+
+    p_tools_catalog = tools_sub.add_parser("catalog", help="Fetch the live gateway tools catalog")
+    p_tools_catalog.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_tools_catalog.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_tools_catalog.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_tools_catalog.add_argument("--include-schema", action="store_true", help="Include JSON schema rows in the catalog response")
+    p_tools_catalog.add_argument("--group", default="", help="Optional group filter, e.g. runtime or web")
+    p_tools_catalog.set_defaults(handler=cmd_tools_catalog)
+
+    p_tools_show = tools_sub.add_parser("show", help="Show one live tool entry from the gateway catalog")
+    p_tools_show.add_argument("name")
+    p_tools_show.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_tools_show.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_tools_show.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_tools_show.set_defaults(handler=cmd_tools_show)
 
     p_provider = sub.add_parser("provider", help="Provider auth lifecycle commands")
     provider_sub = p_provider.add_subparsers(dest="provider_command", required=True)
@@ -1778,6 +2100,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_skills_clear_version = skills_sub.add_parser("clear-version", help="Remove version pin for a skill")
     p_skills_clear_version.add_argument("name")
     p_skills_clear_version.set_defaults(handler=cmd_skills_clear_version)
+
+    p_skills_install = skills_sub.add_parser("install", help="Install a managed skill into the marketplace root")
+    p_skills_install.add_argument("slug")
+    p_skills_install.set_defaults(handler=cmd_skills_install)
+
+    p_skills_update = skills_sub.add_parser("update", help="Update one managed skill through ClawHub")
+    p_skills_update.add_argument("name")
+    p_skills_update.set_defaults(handler=cmd_skills_update)
+
+    p_skills_search = skills_sub.add_parser("search", help="Search ClawHub for managed skills")
+    p_skills_search.add_argument("query")
+    p_skills_search.add_argument("--limit", type=int, default=5)
+    p_skills_search.set_defaults(handler=cmd_skills_search)
+
+    p_skills_managed = skills_sub.add_parser("managed", help="List managed marketplace skills discovered locally")
+    p_skills_managed.set_defaults(handler=cmd_skills_managed)
+
+    p_skills_sync = skills_sub.add_parser("sync", help="Update managed marketplace skills with ClawHub")
+    p_skills_sync.set_defaults(handler=cmd_skills_sync)
+
+    p_skills_remove = skills_sub.add_parser("remove", help="Remove a managed skill from the marketplace root")
+    p_skills_remove.add_argument("name")
+    p_skills_remove.set_defaults(handler=cmd_skills_remove)
 
     return parser
 

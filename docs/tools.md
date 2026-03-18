@@ -74,7 +74,11 @@ The runtime-level tool config lives under `tools` in `~/.clawlite/config.json`:
     },
     "safety": {
       "enabled": true,
-      "risky_tools": ["exec", "run_skill", "web_fetch", "web_search", "mcp"],
+      "risky_tools": ["browser", "exec", "run_skill", "web_fetch", "web_search", "mcp"],
+      "risky_specifiers": [],
+      "approval_specifiers": [],
+      "approval_channels": [],
+      "approval_grant_ttl_s": 900.0,
       "blocked_channels": [],
       "allowed_channels": [],
       "profile": "",
@@ -89,10 +93,52 @@ The runtime-level tool config lives under `tools` in `~/.clawlite/config.json`:
 Important behavior:
 
 - `restrict_to_workspace` applies to file tools, `exec`, `process`, and `apply_patch`.
-- `tools.safety` can block risky tools per channel or per agent.
+- `tools.safety` can allow, require approval, or block tools/specifiers per channel or per agent.
 - `exec` has deny-pattern guards even when workspace restriction is off.
 - `web_fetch` blocks private and local targets by default.
 - `mcp` only allows `http` and `https`, and it denies private/local addresses unless explicitly allowed.
+
+Example granular policy:
+
+```json
+{
+  "tools": {
+    "safety": {
+      "enabled": true,
+      "risky_tools": ["exec"],
+      "risky_specifiers": ["browser:evaluate", "run_skill:github", "exec:git"],
+      "approval_specifiers": ["browser", "web_fetch"],
+      "approval_channels": ["telegram", "discord"],
+      "approval_grant_ttl_s": 600,
+      "blocked_channels": ["telegram", "discord"],
+      "allowed_channels": ["cli"]
+    }
+  }
+}
+```
+
+Specifier rules are lowercase and support `tool:*` wildcards. Common derived forms include:
+
+- `browser:navigate`, `browser:evaluate`
+- `run_skill:github`, `run_skill:weather`
+- `exec:git`, `exec:python`
+
+You can preview the effective decision locally without running the tool:
+
+```bash
+clawlite tools safety browser --session-id telegram:1 --channel telegram --args-json '{"action":"evaluate"}'
+```
+
+The preview returns a `decision` of `allow`, `approval`, or `block`.
+
+On live Telegram and Discord turns, approval-gated tool calls now attach native approve/reject controls to the reply. Approving creates a temporary grant scoped to the same session, channel, and matched safety specifier; the operator then retries the original request manually.
+
+For live catalog inspection through the gateway:
+
+```bash
+clawlite tools catalog --include-schema
+clawlite tools show bash
+```
 
 ## Files
 
@@ -121,7 +167,7 @@ Useful arguments:
 
 Useful arguments:
 
-- `exec`: `command`, `timeout`, `max_output_chars`
+- `exec`: `command`, `timeout`, `max_output_chars`, optional `cwd` / `workdir`, optional `env`
 - `process`: `action`, `session_id`, `command`, `data`, `offset`, `limit`, `timeout`
 
 `process.action` supports `start`, `list`, `poll`, `log`, `write`, `kill`, `remove`, and `clear`.
@@ -233,6 +279,12 @@ Run a command:
 {"name":"exec","arguments":{"command":"python -m pytest tests -q","timeout":120}}
 ```
 
+Run a command from a specific working directory:
+
+```json
+{"name":"exec","arguments":{"command":"python -m pytest tests -q","cwd":"./workspace","timeout":120}}
+```
+
 Start and poll a background process:
 
 ```json
@@ -276,6 +328,8 @@ Call an MCP tool:
 ## browser
 
 Control a headless Chromium browser via Playwright. Actions: `navigate`, `click`, `fill`, `screenshot`, `evaluate`, `close`.
+
+`navigate` now applies the same basic host policy model as `web_fetch`: only `http` / `https`, optional allowlist / denylist, and private-address blocking by default.
 
 Install with `pip install -e ".[browser]"`, then run `python -m playwright install chromium` once.
 
