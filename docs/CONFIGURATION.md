@@ -357,8 +357,8 @@ Example:
   "tools": {
     "safety": {
       "risky_tools": ["exec"],
-      "risky_specifiers": ["browser:evaluate", "run_skill:github", "exec:git"],
-      "approval_specifiers": ["browser", "web_fetch"],
+      "risky_specifiers": ["browser:evaluate", "run_skill:github", "exec:git", "exec:shell"],
+      "approval_specifiers": ["browser", "web_fetch", "exec:env-key:git-ssh-command"],
       "approval_channels": ["telegram", "discord"],
       "approval_grant_ttl_s": 600,
       "blocked_channels": ["telegram", "discord"],
@@ -368,7 +368,7 @@ Example:
 }
 ```
 
-`risky_tools` blocks the whole tool. `risky_specifiers` is more precise and supports `tool:*` wildcards. `approval_specifiers` uses the same matcher, but returns an approval-required result instead of running immediately. On Telegram and Discord, those requests now surface native approve/reject controls, and approval grants only apply to the same session/channel/specifier for `approval_grant_ttl_s` seconds.
+`risky_tools` blocks the whole tool. `risky_specifiers` is more precise and supports `tool:*` wildcards. `approval_specifiers` uses the same matcher, but returns an approval-required result instead of running immediately. On Telegram and Discord, those requests now surface native approve/reject controls, and approval grants only apply to the same session/channel/specifier for `approval_grant_ttl_s` seconds. For `exec`, derived specifiers include the resolved command token (`exec:git`, `exec:cmd:git`), shell-wrapper usage (`exec:shell` / `exec:shell-meta`), env override keys (`exec:env-key:git-ssh-command`), and explicit cwd overrides (`exec:cwd`).
 
 ---
 

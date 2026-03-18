@@ -88,6 +88,18 @@ def test_exec_tool_env_overrides(tmp_path: Path) -> None:
     asyncio.run(_scenario())
 
 
+def test_exec_tool_blocks_dangerous_env_overrides() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": 'python3 -c "print(1)"', "env": {"GIT_SSH_COMMAND": "ssh -i /tmp/key"}},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:env_override:GIT_SSH_COMMAND" in out
+
+    asyncio.run(_scenario())
+
+
 def test_exec_tool_supports_cwd_override(tmp_path: Path) -> None:
     async def _scenario() -> None:
         subdir = tmp_path / "nested"

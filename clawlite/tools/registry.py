@@ -73,6 +73,8 @@ class ToolResultCache:
 
 
 class ToolRegistry:
+    _EXEC_SHELL_META_RE = re.compile(r"(^|[^\\])(?:\|\||&&|[|<>;`])")
+
     _APPROVAL_REQUEST_LIMIT = 256
 
     def __init__(
@@ -222,6 +224,29 @@ class ToolRegistry:
         return cls._normalize_specifier_fragment(parts[-1] if parts else raw_binary)
 
     @classmethod
+    def _exec_needs_shell_wrapper(cls, raw_command: Any) -> bool:
+        command = str(raw_command or "")
+        if not command.strip():
+            return False
+        if cls._EXEC_SHELL_META_RE.search(command):
+            return True
+        return "$(" in command
+
+    @classmethod
+    def _exec_env_key_fragments(cls, raw_env: Any) -> list[str]:
+        if not isinstance(raw_env, dict):
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for key in sorted(raw_env.keys(), key=lambda item: str(item or "").strip().lower()):
+            normalized = cls._normalize_specifier_fragment(key)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+        return out
+
+    @classmethod
     def _url_host_fragment(cls, raw_url: Any) -> str:
         value = str(raw_url or "").strip()
         if not value:
@@ -262,7 +287,21 @@ class ToolRegistry:
         if normalized_tool == "run_skill":
             _add(arguments.get("name"))
         elif normalized_tool == "exec":
-            _add(cls._command_specifier(arguments.get("command")))
+            command_fragment = cls._command_specifier(arguments.get("command"))
+            if command_fragment:
+                _add(command_fragment)
+                _add_direct(f"{normalized_tool}:cmd")
+                _add_direct(f"{normalized_tool}:cmd:{command_fragment}")
+            if cls._exec_needs_shell_wrapper(arguments.get("command")):
+                _add_direct(f"{normalized_tool}:shell")
+                _add_direct(f"{normalized_tool}:shell-meta")
+            env_fragments = cls._exec_env_key_fragments(arguments.get("env"))
+            if env_fragments:
+                _add_direct(f"{normalized_tool}:env")
+                for fragment in env_fragments:
+                    _add_direct(f"{normalized_tool}:env-key:{fragment}")
+            if str(arguments.get("cwd", arguments.get("workdir")) or "").strip():
+                _add_direct(f"{normalized_tool}:cwd")
         elif normalized_tool == "web_fetch":
             host_fragment = cls._url_host_fragment(arguments.get("url"))
             if host_fragment:

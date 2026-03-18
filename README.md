@@ -122,11 +122,11 @@ Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
 - Packaging is now split into extras: base install stays leaner, while `.[browser]`, `.[telegram]`, and `.[media]` enable optional runtimes.
 - Skills now honor OpenClaw-style `skills.entries.<skill>` overrides for `enabled`, `env`, and `apiKey`, including profile overlays such as `config.prod.yaml`.
 - Builtin skills can now be gated with `skills.allowBundled` without blocking workspace or marketplace overrides.
-- Tool safety now supports granular specifiers such as `browser:evaluate`, `run_skill:github`, and `exec:git`, plus approval mode via `approval_specifiers` / `approval_channels`, with `tool:*` wildcards for channel-specific policy.
+- Tool safety now supports granular specifiers such as `browser:evaluate`, `run_skill:github`, `exec:git`, `exec:shell`, and `exec:env-key:git-ssh-command`, plus approval mode via `approval_specifiers` / `approval_channels`, with `tool:*` wildcards for channel-specific policy.
 - Tool safety now also derives host-aware rules for `web_fetch` and `browser:navigate`, so operator policy can target specific destinations such as `web_fetch:host:example-com` instead of only whole-tool approvals.
 - Approval-gated tool calls now surface interactive approve/reject controls in Telegram and Discord, backed by temporary request-bound grants so the operator can approve and then retry only that reviewed call safely.
 - Operators can now review those pending tool approvals from the gateway or CLI with `clawlite tools approvals|approve|reject`, and revoke active temporary grants explicitly with `clawlite tools revoke-grant`.
-- Skills now include a dedicated `clawlite skills doctor` view that turns deterministic diagnostics into actionable remediation hints for missing env vars, binaries, config keys, and bundled-skill policy blocks.
+- Skills now include a dedicated `clawlite skills doctor` view that turns deterministic diagnostics into actionable remediation hints for missing env vars, binaries, config keys, and bundled-skill policy blocks, with optional `--status` / `--source` filters for operator triage.
 - Managed skills now expose richer local lifecycle state in the CLI, including aggregate `status_counts` plus resolved marketplace state after `install`, `update`, `sync`, and `remove`.
 - Phase 7 is complete on `main`: `self_evolution` now uses provider-direct proposal, pre-apply patch policy, isolated git worktree branches, configurable branch prefixes, and Telegram/Discord approval callbacks that record human review state while staying disabled by default.
 - Gateway startup now uses per-subsystem timeouts, so a slow channel transport no longer blocks the whole control plane from coming up.
@@ -503,6 +503,7 @@ clawlite skills list [--all]           # list skills
 clawlite skills show <name>            # show skill detail
 clawlite skills check                  # diagnostics (missing deps, fallback hints)
 clawlite skills doctor                 # actionable remediation hints for broken skills
+clawlite skills doctor --status missing_requirements --source builtin
 clawlite skills enable/disable <name>  # toggle skill
 clawlite skills pin/unpin <name>       # always-include / unpin
 clawlite skills pin-version <name> <version>  # lock to specific version

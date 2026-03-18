@@ -208,7 +208,7 @@ Notes:
 | `skills list --all` | Includes unavailable skills | `clawlite skills list --all` |
 | `skills show <name>` | Prints one skill body and metadata | `clawlite skills show summarize` |
 | `skills check` | Emits the aggregated diagnostics report | `clawlite skills check` |
-| `skills doctor` | Turns diagnostics into actionable remediation hints | `clawlite skills doctor` |
+| `skills doctor` | Turns diagnostics into actionable remediation hints, with optional status/source filters | `clawlite skills doctor --status missing_requirements --source builtin` |
 | `skills enable <name>` | Enables a skill in local state | `clawlite skills enable github` |
 | `skills disable <name>` | Disables a skill in local state | `clawlite skills disable github` |
 | `skills pin <name>` | Pins a skill in local state | `clawlite skills pin summarize` |
@@ -230,7 +230,7 @@ Skill discovery includes:
 
 The local skill state is stored in `~/.clawlite/state/skills-state.json`.
 
-`skills managed` includes the managed folder `slug`, resolved runtime `status`, and a hint when the skill is blocked or missing requirements, plus global `status_counts` for the full managed inventory. `skills update` resolves either the slug or the discovered skill name before invoking ClawHub, and successful `install`/`update`/`sync` calls now echo the resolved local marketplace state. `skills doctor` focuses on broken or blocked skills by default and includes remediation hints for missing env vars, binaries, config keys, invalid contracts, and `skills.allowBundled` policy blocks.
+`skills managed` includes the managed folder `slug`, resolved runtime `status`, and a hint when the skill is blocked or missing requirements, plus global `status_counts` for the full managed inventory. `skills update` resolves either the slug or the discovered skill name before invoking ClawHub, and successful `install`/`update`/`sync` calls now echo the resolved local marketplace state. `skills doctor` focuses on broken or blocked skills by default and includes remediation hints for missing env vars, binaries, config keys, invalid contracts, and `skills.allowBundled` policy blocks. It also accepts `--status` and `--source` for operator triage when only one slice of the inventory matters.
 
 ## Tools Commands
 
@@ -244,7 +244,7 @@ The local skill state is stored in `~/.clawlite/state/skills-state.json`.
 | `tools catalog` | Fetches the live gateway tool catalog | `clawlite tools catalog --include-schema --group runtime` |
 | `tools show <name>` | Shows one live tool entry, resolving aliases like `bash -> exec` | `clawlite tools show bash` |
 
-`tools safety` does not run the tool. It shows the resolved channel, derived specifiers, matched risky rules, matched approval rules, and a final `decision` of `allow`, `approval`, or `block`.
+`tools safety` does not run the tool. It shows the resolved channel, derived specifiers, matched risky rules, matched approval rules, and a final `decision` of `allow`, `approval`, or `block`. For `exec`, the preview now also exposes derived specifiers such as `exec:shell`, `exec:env-key:...`, and `exec:cwd`.
 `tools approvals`, `tools approve`, `tools reject`, and `tools revoke-grant` use the live gateway control surface and accept the same `--gateway-url`, `--token`, and `--timeout` flags as `tools catalog`.
 `tools catalog` and `tools show` call the gateway catalog endpoint and accept `--gateway-url`, `--token`, and `--timeout`.
 

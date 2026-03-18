@@ -26,7 +26,15 @@ class ExecLikeTool(Tool):
     description = "exec"
 
     def args_schema(self) -> dict:
-        return {"type": "object", "properties": {"command": {"type": "string"}}}
+        return {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "cwd": {"type": "string"},
+                "workdir": {"type": "string"},
+                "env": {"type": "object"},
+            },
+        }
 
     async def run(self, arguments: dict, ctx: ToolContext) -> str:
         return f"channel={ctx.channel};user={ctx.user_id}"
@@ -415,6 +423,78 @@ def test_tool_registry_blocks_exec_binary_specifier_for_telegram() -> None:
             raise AssertionError("expected command-specific safety policy block")
         except RuntimeError as exc:
             assert str(exc) == "tool_blocked_by_safety_policy:exec:telegram"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_derives_exec_shell_env_and_cwd_specifiers() -> None:
+    reg = ToolRegistry(
+        safety=ToolSafetyPolicyConfig(
+            enabled=True,
+            risky_tools=[],
+            risky_specifiers=["exec:shell", "exec:env-key:git-ssh-command", "exec:cwd"],
+            blocked_channels=["telegram"],
+            allowed_channels=[],
+        )
+    )
+
+    payload = reg.safety_decision(
+        "exec",
+        {
+            "command": 'git status && echo ok',
+            "env": {"GIT_SSH_COMMAND": "ssh -i /tmp/key"},
+            "cwd": "./repo",
+        },
+        session_id="telegram:1",
+        channel="telegram",
+    )
+
+    assert payload["derived_specifiers"] == [
+        "exec",
+        "exec:git",
+        "exec:cmd",
+        "exec:cmd:git",
+        "exec:shell",
+        "exec:shell-meta",
+        "exec:env",
+        "exec:env-key:git-ssh-command",
+        "exec:cwd",
+    ]
+    assert payload["matched_specifiers"] == [
+        "exec:shell",
+        "exec:env-key:git-ssh-command",
+        "exec:cwd",
+    ]
+    assert payload["blocked"] is True
+
+
+def test_tool_registry_exec_can_require_approval_for_specific_env_key() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                approval_specifiers=["exec:env-key:git-ssh-command"],
+                approval_channels=["telegram"],
+                approval_grant_ttl_s=300,
+            )
+        )
+        reg.register(ExecLikeTool())
+
+        try:
+            await reg.execute(
+                "exec",
+                {"command": "git status", "env": {"GIT_SSH_COMMAND": "ssh -i /tmp/key"}},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="7",
+            )
+            raise AssertionError("expected approval requirement")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_requires_approval:exec:telegram"
+
+        pending = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(pending) == 1
+        assert pending[0]["matched_approval_specifiers"] == ["exec:env-key:git-ssh-command"]
 
     asyncio.run(_scenario())
 

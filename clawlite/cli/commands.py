@@ -1571,6 +1571,8 @@ def cmd_skills_doctor(args: argparse.Namespace) -> int:
     loader = _skills_loader_for_args(args)
     diagnostics = loader.diagnostics_report()
     rows = list(diagnostics.get("skills", []) or [])
+    wanted_status = str(getattr(args, "status", "") or "").strip().lower()
+    wanted_source = str(getattr(args, "source", "") or "").strip().lower()
     doctor_rows: list[dict[str, Any]] = []
     status_counts: dict[str, int] = {
         "ready": 0,
@@ -1592,7 +1594,7 @@ def cmd_skills_doctor(args: argparse.Namespace) -> int:
             "name": row.get("name", ""),
             "skill_key": row.get("skill_key", ""),
             "primary_env": row.get("primary_env", ""),
-            "source": row.get("source", ""),
+            "source": str(row.get("source", "") or ""),
             "status": status,
             "enabled": bool(row.get("enabled", True)),
             "available": bool(row.get("available", False)),
@@ -1603,7 +1605,12 @@ def cmd_skills_doctor(args: argparse.Namespace) -> int:
         }
         if row.get("fallback_hint"):
             doctor_row["fallback_hint"] = row.get("fallback_hint")
-        if bool(args.all) or status not in {"ready", "disabled"}:
+        source_name = str(doctor_row.get("source", "") or "").strip().lower()
+        if wanted_status and status != wanted_status:
+            continue
+        if wanted_source and source_name != wanted_source:
+            continue
+        if bool(args.all) or wanted_status or wanted_source or status not in {"ready", "disabled"}:
             doctor_rows.append(doctor_row)
 
     blocking = status_counts.get("missing_requirements", 0) + status_counts.get("policy_blocked", 0) + status_counts.get("invalid_contract", 0)
@@ -1613,6 +1620,9 @@ def cmd_skills_doctor(args: argparse.Namespace) -> int:
         "summary": diagnostics.get("summary", {}),
         "watcher": diagnostics.get("watcher", {}),
         "status_counts": status_counts,
+        "status_filter": wanted_status,
+        "source_filter": wanted_source,
+        "count": len(doctor_rows),
         "recommendations": recommendations,
         "skills": doctor_rows,
     }
@@ -2390,6 +2400,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_skills_doctor = skills_sub.add_parser("doctor", help="Emit actionable remediation hints for skill availability issues")
     p_skills_doctor.add_argument("--all", action="store_true", help="Include ready and disabled skills in the report")
+    p_skills_doctor.add_argument(
+        "--status",
+        choices=["ready", "missing_requirements", "policy_blocked", "disabled", "invalid_contract", "unavailable"],
+        default="",
+        help="Optional status filter for the doctor output",
+    )
+    p_skills_doctor.add_argument(
+        "--source",
+        choices=["builtin", "workspace", "marketplace"],
+        default="",
+        help="Optional source filter for the doctor output",
+    )
     p_skills_doctor.set_defaults(handler=cmd_skills_doctor)
 
     p_skills_enable = skills_sub.add_parser("enable", help="Enable one skill in the local state")

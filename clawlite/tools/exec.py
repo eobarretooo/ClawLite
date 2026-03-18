@@ -45,6 +45,25 @@ class ExecTool(Tool):
     }
     _SHELL_META_RE = re.compile(r"(^|[^\\])(?:\|\||&&|[|<>;`])")
     _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _BLOCKED_ENV_OVERRIDE_EXACT = {
+        "BROWSER",
+        "EDITOR",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_SSH_COMMAND",
+        "NODE_OPTIONS",
+        "PAGER",
+        "PATH",
+        "PS4",
+        "RUBYOPT",
+        "SHELLOPTS",
+        "VISUAL",
+    }
+    _BLOCKED_ENV_OVERRIDE_PREFIXES = (
+        "DYLD_",
+        "GIT_CONFIG_",
+        "LD_",
+        "NPM_CONFIG_",
+    )
 
     def __init__(
         self,
@@ -164,6 +183,11 @@ class ExecTool(Tool):
             env_key = str(key or "").strip()
             if not cls._ENV_NAME_RE.fullmatch(env_key):
                 return {}, f"invalid_env_name:{env_key or 'empty'}"
+            upper_key = env_key.upper()
+            if upper_key in cls._BLOCKED_ENV_OVERRIDE_EXACT or any(
+                upper_key.startswith(prefix) for prefix in cls._BLOCKED_ENV_OVERRIDE_PREFIXES
+            ):
+                return {}, f"blocked_by_policy:env_override:{env_key}"
             env_value = str(value or "")
             if "\x00" in env_value or "\n" in env_value or "\r" in env_value:
                 return {}, f"invalid_env_value:{env_key}"

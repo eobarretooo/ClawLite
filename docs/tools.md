@@ -106,8 +106,8 @@ Example granular policy:
     "safety": {
       "enabled": true,
       "risky_tools": ["exec"],
-      "risky_specifiers": ["browser:evaluate", "run_skill:github", "exec:git"],
-      "approval_specifiers": ["browser", "web_fetch"],
+      "risky_specifiers": ["browser:evaluate", "run_skill:github", "exec:git", "exec:shell"],
+      "approval_specifiers": ["browser", "web_fetch", "exec:env-key:git-ssh-command"],
       "approval_channels": ["telegram", "discord"],
       "approval_grant_ttl_s": 600,
       "blocked_channels": ["telegram", "discord"],
@@ -123,7 +123,10 @@ Specifier rules are lowercase and support `tool:*` wildcards. Common derived for
 - `browser:navigate:host:example-com`
 - `web_fetch:host:example-com`
 - `run_skill:github`, `run_skill:weather`
-- `exec:git`, `exec:python`
+- `exec:git`, `exec:cmd:git`
+- `exec:shell`, `exec:shell-meta`
+- `exec:env`, `exec:env-key:git-ssh-command`
+- `exec:cwd`
 
 You can preview the effective decision locally without running the tool:
 
@@ -133,6 +136,8 @@ clawlite tools safety browser --session-id telegram:1 --channel telegram --args-
 ```
 
 The preview returns a `decision` of `allow`, `approval`, or `block`.
+
+For `exec`, ClawLite now also derives approval-friendly specifiers from shell meta syntax, env override keys, and explicit cwd overrides. That lets operators write tighter rules such as `exec:shell` or `exec:env-key:git-ssh-command` instead of approving every `exec` call. The runtime also rejects dangerous env override pivots like `PATH`, `NODE_OPTIONS`, `DYLD_*`, `LD_*`, `GIT_CONFIG_*`, and `GIT_SSH_COMMAND`.
 
 On live Telegram and Discord turns, approval-gated tool calls now attach native approve/reject controls to the reply. Approving creates a temporary grant scoped to the reviewed request fingerprint plus the same session, channel, and matched safety specifier; the operator then retries the original request manually.
 

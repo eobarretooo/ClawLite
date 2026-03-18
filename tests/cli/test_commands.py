@@ -843,6 +843,57 @@ def test_cli_skills_doctor_reports_actionable_hints(tmp_path: Path, capsys, monk
     assert "GH_TOKEN" in payload["skills"][0]["hint"]
 
 
+def test_cli_skills_doctor_supports_status_and_source_filters(tmp_path: Path, capsys, monkeypatch) -> None:
+    builtin_root = tmp_path / "builtin"
+    github_dir = builtin_root / "github"
+    github_dir.mkdir(parents=True, exist_ok=True)
+    (github_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: github\n"
+        "description: GitHub skill\n"
+        "script: github\n"
+        "metadata:\n"
+        "  clawlite:\n"
+        "    primaryEnv: GH_TOKEN\n"
+        "    requires:\n"
+        "      env: [GH_TOKEN]\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    marketplace_root = tmp_path / ".clawlite" / "marketplace" / "skills" / "jira-helper"
+    marketplace_root.mkdir(parents=True, exist_ok=True)
+    (marketplace_root / "SKILL.md").write_text(
+        "---\n"
+        "name: jira-helper\n"
+        "description: Jira helper\n"
+        "script: jira\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "clawlite.cli.commands.SkillsLoader",
+        lambda state_path=None: SkillsLoader(
+            builtin_root=builtin_root,
+            state_path=state_path,
+        ),
+    )
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    rc = main(["--config", str(config_path), "skills", "doctor", "--status", "missing_requirements", "--source", "builtin"])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "skills_doctor"
+    assert payload["status_filter"] == "missing_requirements"
+    assert payload["source_filter"] == "builtin"
+    assert payload["count"] == 1
+    assert [row["name"] for row in payload["skills"]] == ["github"]
+
+
 def test_cli_status_and_version(tmp_path: Path, capsys) -> None:
     config_path = tmp_path / "config.json"
     state_path = tmp_path / "state"
