@@ -27,6 +27,9 @@ from clawlite.runtime import (
 )
 from clawlite.runtime.telemetry import configure_observability
 from clawlite.gateway.autonomy_notice import send_autonomy_notice
+from clawlite.gateway.discord_thread_binding import (
+    handle_discord_thread_binding_inbound_action,
+)
 from clawlite.gateway.self_evolution_approval import handle_self_evolution_inbound_action
 from clawlite.scheduler.cron import CronService
 from clawlite.scheduler.heartbeat import HeartbeatService
@@ -576,9 +579,15 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     )
 
     async def _channel_inbound_interceptor(event) -> bool:
-        return await handle_self_evolution_inbound_action(
+        handled = await handle_self_evolution_inbound_action(
             event,
             self_evolution=self_evolution,
+            channels=channels,
+        )
+        if handled:
+            return True
+        return await handle_discord_thread_binding_inbound_action(
+            event,
             channels=channels,
         )
 

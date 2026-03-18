@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -316,12 +317,13 @@ def test_discord_gateway_loop_identifies_and_emits_message() -> None:
         assert channel._ws.sent[0]["op"] == 2
         assert len(emitted) == 1
         session_id, user_id, text, metadata = emitted[0]
-        assert session_id == "discord:123"
+        assert session_id == "discord:guild:456:channel:123"
         assert user_id == "user-1"
         assert text == "hello from discord"
         assert metadata["channel"] == "discord"
         assert metadata["channel_id"] == "123"
         assert metadata["guild_id"] == "456"
+        assert metadata["session_key"] == "discord:guild:456:channel:123"
         start_typing.assert_awaited_once_with("123")
         stop_typing.assert_awaited_once_with("123")
 
@@ -387,6 +389,264 @@ def test_discord_message_create_filters_self_and_acl() -> None:
         assert len(emitted) == 1
         assert emitted[0][2] == "[attachments: image.png]"
         assert emitted[0][3]["attachments"][0]["filename"] == "image.png"
+
+    asyncio.run(_scenario())
+
+
+def test_discord_dm_policy_disabled_blocks_private_message() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={"token": "bot-token", "dm_policy": "disabled"},
+            on_message=_on_message,
+        )
+
+        with patch.object(channel, "_start_typing", AsyncMock()):
+            with patch.object(channel, "_stop_typing", AsyncMock()):
+                await channel._handle_message_create(
+                    {
+                        "id": "m1",
+                        "channel_id": "dm-1",
+                        "content": "hello",
+                        "attachments": [],
+                        "author": {"id": "u-1", "username": "alice", "bot": False},
+                    }
+                )
+
+        assert emitted == []
+        status = channel.operator_status()
+        assert status["policy_blocked_count"] == 1
+        assert status["policy_allowed_count"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_discord_group_policy_mention_requires_bot_mention() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={"token": "bot-token", "group_policy": "mention"},
+            on_message=_on_message,
+        )
+        channel._bot_user_id = "bot-1"
+
+        with patch.object(channel, "_start_typing", AsyncMock()):
+            with patch.object(channel, "_stop_typing", AsyncMock()):
+                await channel._handle_message_create(
+                    {
+                        "id": "m1",
+                        "channel_id": "123",
+                        "guild_id": "456",
+                        "content": "no mention",
+                        "attachments": [],
+                        "author": {"id": "u-1", "username": "alice", "bot": False},
+                        "mentions": [],
+                    }
+                )
+                await channel._handle_message_create(
+                    {
+                        "id": "m2",
+                        "channel_id": "123",
+                        "guild_id": "456",
+                        "content": "<@bot-1> hello",
+                        "attachments": [],
+                        "author": {"id": "u-1", "username": "alice", "bot": False},
+                        "mentions": [{"id": "bot-1"}],
+                    }
+                )
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "discord:guild:456:channel:123"
+        status = channel.operator_status()
+        assert status["policy_blocked_count"] == 1
+        assert status["policy_allowed_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_discord_group_policy_allowlist_honors_guild_channel_and_role_rules() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "group_policy": "allowlist",
+                "guilds": {
+                    "guild-1": {
+                        "channels": {
+                            "chan-1": {"allow": True, "roles": ["role-1"]},
+                        }
+                    }
+                },
+            },
+            on_message=_on_message,
+        )
+
+        with patch.object(channel, "_start_typing", AsyncMock()):
+            with patch.object(channel, "_stop_typing", AsyncMock()):
+                await channel._handle_message_create(
+                    {
+                        "id": "m1",
+                        "channel_id": "chan-2",
+                        "guild_id": "guild-1",
+                        "content": "wrong channel",
+                        "attachments": [],
+                        "author": {"id": "u-1", "username": "alice", "bot": False},
+                        "member": {"roles": ["role-1"]},
+                    }
+                )
+                await channel._handle_message_create(
+                    {
+                        "id": "m2",
+                        "channel_id": "chan-1",
+                        "guild_id": "guild-1",
+                        "content": "wrong role",
+                        "attachments": [],
+                        "author": {"id": "u-2", "username": "bob", "bot": False},
+                        "member": {"roles": ["role-2"]},
+                    }
+                )
+                await channel._handle_message_create(
+                    {
+                        "id": "m3",
+                        "channel_id": "chan-1",
+                        "guild_id": "guild-1",
+                        "content": "allowed",
+                        "attachments": [],
+                        "author": {"id": "u-3", "username": "carol", "bot": False},
+                        "member": {"roles": ["role-1"]},
+                    }
+                )
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "discord:guild:guild-1:channel:chan-1"
+        status = channel.operator_status()
+        assert status["policy_blocked_count"] == 2
+        assert status["policy_allowed_count"] == 1
+
+    asyncio.run(_scenario())
+
+
+def test_discord_interaction_honors_allowlisted_guild_channel_without_mention() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append(
+            {
+                "session_id": session_id,
+                "user_id": user_id,
+                "text": text,
+                "metadata": metadata,
+            }
+        )
+
+    ch = DiscordChannel(
+        config={
+            "token": "tok",
+            "group_policy": "allowlist",
+            "guilds": {"guild-1": {"channels": {"chan-1": {"allow": True}}}},
+        },
+        on_message=_on_message,
+    )
+    ch._running = True
+    payload = {
+        "op": 0,
+        "t": "INTERACTION_CREATE",
+        "s": 2,
+        "d": {
+            "id": "inter002",
+            "token": "tok2",
+            "type": 3,
+            "guild_id": "guild-1",
+            "channel_id": "chan-1",
+            "member": {"roles": [], "user": {"id": "u1", "username": "bob"}},
+            "data": {"custom_id": "confirm_action", "component_type": 2},
+            "message": {"id": "msg001"},
+        },
+    }
+
+    async def _scenario():
+        await ch._handle_gateway_payload(payload)
+
+    asyncio.run(_scenario())
+
+    assert emitted[0]["session_id"] == "discord:guild:guild-1:channel:chan-1"
+    assert emitted[0]["metadata"]["session_key"] == "discord:guild:guild-1:channel:chan-1"
+    assert emitted[0]["metadata"]["guild_id"] == "guild-1"
+
+
+def test_discord_allow_bots_mentions_requires_bot_mention() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={"token": "bot-token", "allow_bots": "mentions"},
+            on_message=_on_message,
+        )
+        channel._bot_user_id = "bot-1"
+
+        with patch.object(channel, "_start_typing", AsyncMock()):
+            with patch.object(channel, "_stop_typing", AsyncMock()):
+                await channel._handle_message_create(
+                    {
+                        "id": "m1",
+                        "channel_id": "123",
+                        "guild_id": "456",
+                        "content": "hello",
+                        "attachments": [],
+                        "author": {"id": "other-bot", "username": "helper", "bot": True},
+                        "mentions": [],
+                    }
+                )
+                await channel._handle_message_create(
+                    {
+                        "id": "m2",
+                        "channel_id": "123",
+                        "guild_id": "456",
+                        "content": "<@bot-1> hello",
+                        "attachments": [],
+                        "author": {"id": "other-bot", "username": "helper", "bot": True},
+                        "mentions": [{"id": "bot-1"}],
+                    }
+                )
+
+        assert len(emitted) == 1
+        assert emitted[0][0] == "discord:guild:456:channel:123"
 
     asyncio.run(_scenario())
 
@@ -507,7 +767,7 @@ async def test_gateway_handles_reaction_add_event():
     assert result is True
     assert len(received) == 1
     session_id, user_id, text, metadata = received[0]
-    assert session_id == "discord:chan-1"
+    assert session_id == "discord:guild:guild-1:channel:chan-1"
     assert user_id == "user-1"
     assert text == "[reaction: 👍]"
     assert metadata["event_type"] == "reaction_add"
@@ -637,6 +897,7 @@ def test_discord_handle_interaction_create_slash_emits_message() -> None:
             "type": 2,
             "application_id": "app001",
             "channel_id": "chan001",
+            "guild_id": "guild-1",
             "user": {"id": "user001", "username": "alice"},
             "data": {"id": "cmd001", "name": "ping", "options": []},
         },
@@ -648,11 +909,13 @@ def test_discord_handle_interaction_create_slash_emits_message() -> None:
     asyncio.run(_scenario())
 
     assert len(emitted) == 1
+    assert emitted[0]["session_id"] == "discord:guild:guild-1:channel:chan001:slash:user001"
     meta = emitted[0]["metadata"]
     assert meta["update_kind"] == "slash_command"
     assert meta["command_name"] == "ping"
     assert meta["interaction_id"] == "inter001"
     assert meta["interaction_token"] == "intertoken"
+    assert meta["session_key"] == "discord:guild:guild-1:channel:chan001:slash:user001"
 
 
 def test_discord_handle_interaction_create_button_emits_message() -> None:
@@ -687,6 +950,39 @@ def test_discord_handle_interaction_create_button_emits_message() -> None:
 
     assert emitted[0]["metadata"]["update_kind"] == "button_click"
     assert emitted[0]["metadata"]["custom_id"] == "confirm_action"
+
+
+def test_discord_handle_interaction_create_slash_can_disable_isolated_sessions() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append({"session_id": session_id, "user_id": user_id, "text": text, "metadata": metadata})
+
+    ch = DiscordChannel(
+        config={"token": "tok", "slash_isolated_sessions": False},
+        on_message=_on_message,
+    )
+    ch._running = True
+    ch._bot_user_id = "bot123"
+
+    payload = {
+        "id": "inter003",
+        "token": "intertoken-3",
+        "type": 2,
+        "application_id": "app001",
+        "channel_id": "chan001",
+        "guild_id": "guild-1",
+        "user": {"id": "user001", "username": "alice"},
+        "data": {"id": "cmd001", "name": "ping", "options": []},
+    }
+
+    async def _scenario():
+        await ch._handle_interaction_create(payload)
+
+    asyncio.run(_scenario())
+
+    assert emitted[0]["session_id"] == "discord:guild:guild-1:channel:chan001"
+    assert emitted[0]["metadata"]["session_key"] == "discord:guild:guild-1:channel:chan001"
 
 
 def test_discord_register_slash_command_posts_correct_payload() -> None:
@@ -899,6 +1195,61 @@ def test_discord_send_streaming_edits_message_in_place() -> None:
     assert patches[-1][2]["content"] == "Hello world!"
 
 
+def test_discord_send_interaction_reply_uses_original_response_path() -> None:
+    replies: list[dict[str, Any]] = []
+
+    async def _fake_reply_interaction(
+        *,
+        interaction_id: str,
+        interaction_token: str,
+        text: str,
+        components: list[dict[str, Any]] | None = None,
+        embeds: list[dict[str, Any]] | None = None,
+        ephemeral: bool = False,
+    ) -> str:
+        replies.append(
+            {
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "text": text,
+                "components": list(components or []),
+                "embeds": list(embeds or []),
+                "ephemeral": ephemeral,
+            }
+        )
+        return "original-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with patch.object(ch, "reply_interaction", side_effect=_fake_reply_interaction):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Hello from slash",
+                metadata={
+                    "interaction_id": "inter-1",
+                    "interaction_token": "tok-1",
+                    "discord_ephemeral": True,
+                    "discord_components": [{"type": 1, "components": []}],
+                },
+            )
+        )
+
+    assert out == "discord:interaction:original-1"
+    assert replies == [
+        {
+            "interaction_id": "inter-1",
+            "interaction_token": "tok-1",
+            "text": "Hello from slash",
+            "components": [{"type": 1, "components": []}],
+            "embeds": [],
+            "ephemeral": True,
+        }
+    ]
+
+
 def test_discord_placeholder_waveform_is_base64() -> None:
     """_generate_placeholder_waveform() returns valid base64 of 256 bytes."""
     import base64
@@ -906,3 +1257,234 @@ def test_discord_placeholder_waveform_is_base64() -> None:
     wf = ch._generate_placeholder_waveform()
     decoded = base64.b64decode(wf)
     assert len(decoded) == 256
+
+
+def test_discord_thread_binding_persists_and_routes_inbound_messages(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+        state_path = tmp_path / "discord-thread-bindings.json"
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "thread_binding_state_path": str(state_path),
+            },
+            on_message=_on_message,
+        )
+        await channel.bind_thread(
+            channel_id="thread-1",
+            session_id="discord:guild:guild-main:channel:chan-main",
+            actor="discord:u-1",
+            guild_id="guild-1",
+            source_session_id="discord:guild:guild-1:channel:thread-1",
+        )
+
+        with patch.object(channel, "_start_typing", AsyncMock()):
+            with patch.object(channel, "_stop_typing", AsyncMock()):
+                await channel._handle_message_create(
+                    {
+                        "id": "m-thread-1",
+                        "channel_id": "thread-1",
+                        "guild_id": "guild-1",
+                        "content": "thread hello",
+                        "attachments": [],
+                        "author": {"id": "u-1", "username": "alice", "bot": False},
+                    }
+                )
+
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "discord:guild:guild-main:channel:chan-main"
+        assert user_id == "u-1"
+        assert text == "thread hello"
+        assert metadata["session_key"] == "discord:guild:guild-main:channel:chan-main"
+        assert metadata["discord_binding_active"] is True
+        assert metadata["discord_binding_channel_id"] == "thread-1"
+        assert metadata["discord_source_session_key"] == "discord:guild:guild-1:channel:thread-1"
+        assert state_path.exists()
+
+        restored = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "thread_binding_state_path": str(state_path),
+            }
+        )
+        await restored.start()
+        binding = restored.resolve_bound_session("thread-1")
+        await restored.stop()
+
+        assert binding is not None
+        assert binding["session_id"] == "discord:guild:guild-main:channel:chan-main"
+        assert binding["bound_by"] == "discord:u-1"
+
+    asyncio.run(_scenario())
+
+
+def test_discord_interaction_uses_bound_session_key() -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(config={"token": "bot-token"}, on_message=_on_message)
+        await channel.bind_thread(
+            channel_id="thread-chan-1",
+            session_id="discord:guild:guild-main:channel:chan-main",
+            actor="discord:u-1",
+            guild_id="guild-main",
+            source_session_id="discord:guild:guild-main:channel:thread-chan-1",
+        )
+
+        with patch.object(channel, "_ack_interaction", AsyncMock()):
+            await channel._handle_interaction_create(
+                {
+                    "id": "interaction-1",
+                    "token": "token-1",
+                    "type": 2,
+                    "channel_id": "thread-chan-1",
+                    "guild_id": "guild-main",
+                    "data": {
+                        "name": "focus",
+                        "options": [{"name": "session", "value": "discord:guild:guild-main:channel:chan-main"}],
+                    },
+                    "member": {
+                        "roles": [],
+                        "user": {"id": "u-1", "username": "alice", "bot": False},
+                    },
+                }
+            )
+
+        assert len(emitted) == 1
+        session_id, user_id, text, metadata = emitted[0]
+        assert session_id == "discord:guild:guild-main:channel:chan-main"
+        assert user_id == "u-1"
+        assert text == "/focus session=discord:guild:guild-main:channel:chan-main"
+        assert metadata["discord_binding_active"] is True
+        assert metadata["discord_binding_channel_id"] == "thread-chan-1"
+        assert metadata["session_key"] == "discord:guild:guild-main:channel:chan-main"
+
+    asyncio.run(_scenario())
+
+
+def test_discord_thread_binding_idle_timeout_releases_stale_focus(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+        state_path = tmp_path / "discord-thread-bindings.json"
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "thread_binding_state_path": str(state_path),
+                "thread_binding_idle_timeout_s": 60,
+            },
+            on_message=_on_message,
+        )
+        await channel.bind_thread(
+            channel_id="thread-1",
+            session_id="discord:guild:guild-main:channel:chan-main",
+            actor="discord:u-1",
+            guild_id="guild-1",
+            source_session_id="discord:guild:guild-1:channel:thread-1",
+        )
+        channel._thread_bindings["thread-1"]["updated_at"] = "2000-01-01T00:00:00+00:00"
+
+        with patch.object(channel, "_start_typing", AsyncMock()):
+            with patch.object(channel, "_stop_typing", AsyncMock()):
+                await channel._handle_message_create(
+                    {
+                        "id": "m-thread-1",
+                        "channel_id": "thread-1",
+                        "guild_id": "guild-1",
+                        "content": "thread hello",
+                        "attachments": [],
+                        "author": {"id": "u-1", "username": "alice", "bot": False},
+                    }
+                )
+
+        assert len(emitted) == 1
+        session_id, _, _, metadata = emitted[0]
+        assert session_id == "discord:guild:guild-1:channel:thread-1"
+        assert metadata["session_key"] == "discord:guild:guild-1:channel:thread-1"
+        assert metadata["discord_binding_expired"] == "idle_timeout"
+        assert metadata.get("discord_binding_active") is None
+        assert channel.resolve_bound_session("thread-1") is None
+
+    asyncio.run(_scenario())
+
+
+def test_discord_thread_binding_max_age_releases_stale_focus(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+        state_path = tmp_path / "discord-thread-bindings.json"
+
+        async def _on_message(
+            session_id: str,
+            user_id: str,
+            text: str,
+            metadata: dict[str, Any],
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "thread_binding_state_path": str(state_path),
+                "thread_binding_max_age_s": 60,
+            },
+            on_message=_on_message,
+        )
+        await channel.bind_thread(
+            channel_id="thread-1",
+            session_id="discord:guild:guild-main:channel:chan-main",
+            actor="discord:u-1",
+            guild_id="guild-1",
+            source_session_id="discord:guild:guild-1:channel:thread-1",
+        )
+        channel._thread_bindings["thread-1"]["bound_at"] = "2000-01-01T00:00:00+00:00"
+        channel._thread_bindings["thread-1"]["updated_at"] = "2000-01-01T00:00:00+00:00"
+
+        with patch.object(channel, "_ack_interaction", AsyncMock()):
+            await channel._handle_interaction_create(
+                {
+                    "id": "interaction-1",
+                    "token": "token-1",
+                    "type": 2,
+                    "channel_id": "thread-1",
+                    "guild_id": "guild-1",
+                    "data": {"name": "ping", "options": []},
+                    "member": {
+                        "roles": [],
+                        "user": {"id": "u-1", "username": "alice", "bot": False},
+                    },
+                }
+            )
+
+        assert len(emitted) == 1
+        session_id, _, _, metadata = emitted[0]
+        assert session_id == "discord:guild:guild-1:channel:thread-1:slash:u-1"
+        assert metadata["discord_binding_expired"] == "max_age"
+        assert channel.resolve_bound_session("thread-1") is None
+
+    asyncio.run(_scenario())

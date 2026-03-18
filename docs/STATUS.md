@@ -1,10 +1,10 @@
 # ClawLite Status
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 ## Summary
 
-ClawLite is a **local-first autonomous agent runtime** in active hardening. Robustness phases 1–7 and the main maintainability plan are complete in the current working tree; remaining work is release polish, packaging/tagging, and heavier operational smoke coverage.
+ClawLite is a **local-first autonomous agent runtime** in active hardening. Robustness phases 1–7 and the main maintainability plan are complete in the current working tree; remaining work is release polish, packaging/tagging, heavier operational smoke coverage, and the new parity track for Docker, Discord, tools, and skills.
 
 Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, proposes patches through the provider directly instead of the full agent loop, rejects unsafe proposals before apply, routes operator notices through the real gateway notice path, commits only inside isolated git worktree branches, and now supports configurable branch prefixes plus Telegram/Discord approval callbacks that persist review state. It remains disabled by default.
 
@@ -17,6 +17,8 @@ Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, pro
 - Full suite: `python -m pytest tests/ -q --tb=short` → **1561 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **190 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
+- Docker: official `Dockerfile`, `docker-compose.yml`, and `docs/DOCKER.md` now ship in-tree as the first parity slice, using `ref/nanobot` ergonomics and `ref/openclaw` security/runtime patterns where they fit
+- Discord parity slice 1 is now in the working tree: DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, persisted `/focus` bindings, and automatic idle/max-age expiry for stale Discord bindings
 
 ## Robustness Milestone Progress
 
@@ -57,7 +59,7 @@ Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, pro
 | Channel | Status |
 |---------|--------|
 | **Telegram** | ✅ Complete — polling + webhook, reactions, topics, reply keyboards, streaming, offset safety, pairing, dedupe, circuit breaker |
-| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming, embeds, threads, attachments |
+| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming, embeds, threads, attachments, focus bindings |
 | **Email** | 🟡 Usable — IMAP inbound + SMTP outbound |
 | **WhatsApp** | 🟡 Usable — webhook inbound, outbound retry, bridge typing keepalive |
 | **Slack** | 🟡 Usable — Socket Mode inbound, outbound retry, reversible working indicator |
@@ -102,6 +104,11 @@ clawlite validate config
 
 - Behavioral parity reference: `ref/openclaw`
 - Autonomy/reliability reference: `ref/nanobot`
+
+## Next Major Track
+
+- Current slice: Discord policy/routing parity, reply-mode control, isolated slash sessions, persisted `/focus` bindings, and automatic idle/max-age expiry
+- Next slice: tools and skills parity after the Discord milestone is committed
 
 ## Delivery Policy
 

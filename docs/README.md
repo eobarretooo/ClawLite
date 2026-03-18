@@ -10,6 +10,7 @@ Start here if you are setting up ClawLite from GitHub and want the current opera
 - [Autonomy Plan](./AUTONOMY_PLAN.md) - phased plan for robustness and 24/7 autonomy
 - [Runbook](./RUNBOOK.md) - operator validation and incident flow
 - [Releasing](./RELEASING.md) - tag and release workflow
+- [Docker](./DOCKER.md) - official container setup and compose flow
 
 ## Core Reference
 
@@ -23,6 +24,7 @@ Start here if you are setting up ClawLite from GitHub and want the current opera
 ## Additional Reference
 
 - [Quickstart](./QUICKSTART.md)
+- [Docker](./DOCKER.md)
 - [Termux + proot-distro Ubuntu](./TERMUX_PROOT_UBUNTU.md)
 - [Architecture](./ARCHITECTURE.md)
 - [Configuration](./CONFIGURATION.md)

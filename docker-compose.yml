@@ -1,0 +1,47 @@
+x-clawlite-common: &clawlite-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      CLAWLITE_PIP_EXTRAS: "${CLAWLITE_PIP_EXTRAS:-telegram,media,observability}"
+      CLAWLITE_INSTALL_BROWSER: "${CLAWLITE_INSTALL_BROWSER:-}"
+  environment:
+    PYTHONUNBUFFERED: "1"
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - ${HOME:-.}/.clawlite:/root/.clawlite
+
+services:
+  clawlite-gateway:
+    <<: *clawlite-common
+    container_name: clawlite-gateway
+    command: ["gateway", "--host", "0.0.0.0", "--port", "8787"]
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  clawlite-cli:
+    <<: *clawlite-common
+    container_name: clawlite-cli
+    profiles:
+      - cli
+    network_mode: "service:clawlite-gateway"
+    depends_on:
+      clawlite-gateway:
+        condition: service_started
+    stdin_open: true
+    tty: true
+    command: ["status"]
+

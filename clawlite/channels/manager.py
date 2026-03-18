@@ -1333,6 +1333,30 @@ class ChannelManager:
                     thread = thread_id.strip()
                     return f"{chat_id.strip()}:{thread}" if thread else chat_id.strip()
                 return raw.strip()
+        if channel_name == "discord":
+            if raw.startswith("discord:dm:"):
+                payload = raw[len("discord:dm:") :].strip()
+                if payload.endswith(":slash"):
+                    payload = payload[: -len(":slash")].strip()
+                return f"user:{payload}" if payload else ""
+            if raw.startswith("discord:guild:"):
+                payload = raw[len("discord:guild:") :].strip()
+                if ":channel:" in payload:
+                    _, _, channel_payload = payload.partition(":channel:")
+                    if ":slash:" in channel_payload:
+                        channel_payload, _, _ = channel_payload.partition(":slash:")
+                    if ":thread:" in channel_payload:
+                        _, _, thread_id = channel_payload.partition(":thread:")
+                        thread = thread_id.strip()
+                        return f"channel:{thread}" if thread else ""
+                    clean_channel = channel_payload.strip()
+                    return f"channel:{clean_channel}" if clean_channel else ""
+            if raw.startswith("discord:channel:"):
+                payload = raw[len("discord:channel:") :].strip()
+                return f"channel:{payload}" if payload else ""
+            if raw.startswith("discord:thread:"):
+                payload = raw[len("discord:thread:") :].strip()
+                return f"channel:{payload}" if payload else ""
         if ":" in raw:
             return raw.split(":", 1)[1].strip()
         return raw
@@ -1395,7 +1419,15 @@ class ChannelManager:
             await self.bus.publish_outbound(attempt_event)
             self._inc_delivery(channel=event.channel, key="attempts")
             try:
-                send_result = await channel.send(target=event.target, text=event.text, metadata=event.metadata)
+                send_result = await channel.send(
+                    target=event.target,
+                    text=event.text,
+                    metadata=self._prepare_outbound_metadata(
+                        channel_name=event.channel,
+                        target=event.target,
+                        metadata=event.metadata,
+                    ),
+                )
                 self._inc_delivery(channel=event.channel, key="success")
                 self._inc_delivery(channel=event.channel, key="delivery_confirmed")
                 self._remember_delivery_idempotency(idempotency_key)
@@ -1723,6 +1755,7 @@ class ChannelManager:
                 pass
 
         target = self._target_from_event(event)
+        response_metadata = self._response_metadata_from_event(event)
         reply_metadata = self._reply_metadata_from_event(event)
         text = f"Stopped {cancelled} active task(s); cancelled {cancelled_subagents} subagent run(s)."
         await self._publish_and_send(
@@ -1736,6 +1769,7 @@ class ChannelManager:
                     "cancelled_tasks": cancelled,
                     "cancelled_subagents": cancelled_subagents,
                 }
+                | response_metadata
                 | reply_metadata,
             )
         )
@@ -1743,6 +1777,7 @@ class ChannelManager:
     async def _dispatch_event(self, event: InboundEvent) -> None:
         bind_event("channel.dispatch", session=event.session_id, channel=event.channel).debug("dispatch processing target={}", event.user_id)
         target = self._target_from_event(event)
+        response_metadata = self._response_metadata_from_event(event)
         reply_metadata = self._reply_metadata_from_event(event)
         activity_channel, activity_chat_id, activity_thread_id = self._dispatch_typing_context(event)
         if activity_channel is not None and activity_chat_id:
@@ -1775,69 +1810,87 @@ class ChannelManager:
                     session_id=event.session_id,
                     target=target,
                     text=message,
-                    metadata=metadata | reply_metadata,
+                    metadata=metadata | response_metadata | reply_metadata,
                 )
             )
 
-        dispatch_token = self._dispatch_context.set({"session_id": event.session_id, "sent_targets": set()})
+        dispatch_token = self._dispatch_context.set(
+            {
+                "session_id": event.session_id,
+                "channel": event.channel,
+                "target": target,
+                "response_metadata": dict(response_metadata),
+                "sent_targets": set(),
+                "reply_targets": set(),
+            }
+        )
         suppress_final_reply = False
         try:
-            result = await self.engine.run(
-                session_id=event.session_id,
-                user_text=event.text,
-                channel=event.channel,
-                chat_id=target,
-                progress_hook=_progress_hook,
-                stop_event=self.bus.stop_event(event.session_id),
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            bind_event("channel.dispatch", session=event.session_id, channel=event.channel).error("dispatch engine failed error={}", exc)
+            try:
+                result = await self.engine.run(
+                    session_id=event.session_id,
+                    user_text=event.text,
+                    channel=event.channel,
+                    chat_id=target,
+                    progress_hook=_progress_hook,
+                    stop_event=self.bus.stop_event(event.session_id),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                bind_event("channel.dispatch", session=event.session_id, channel=event.channel).error("dispatch engine failed error={}", exc)
+                await self._publish_and_send(
+                    event=OutboundEvent(
+                        channel=event.channel,
+                        session_id=event.session_id,
+                        target=target,
+                        text=self._ENGINE_ERROR_FALLBACK_TEXT,
+                        metadata={
+                            "_error": "dispatch_engine_exception",
+                            "error_type": type(exc).__name__,
+                        }
+                        | response_metadata
+                        | reply_metadata,
+                    )
+                )
+                return
+            finally:
+                self.bus.clear_stop(event.session_id)
+                dispatch_context = self._dispatch_context.get()
+                sent_targets = (
+                    dispatch_context.get("sent_targets", set())
+                    if isinstance(dispatch_context, dict)
+                    else set()
+                )
+                if (event.channel, target) in sent_targets:
+                    suppress_final_reply = True
+                if activity_channel is not None and activity_chat_id:
+                    await self._stop_dispatch_typing(
+                        channel=activity_channel,
+                        chat_id=activity_chat_id,
+                        message_thread_id=activity_thread_id,
+                    )
+
+            if suppress_final_reply:
+                bind_event("channel.dispatch", session=event.session_id, channel=event.channel).debug(
+                    "dispatch final reply suppressed target={} reason=already_sent_in_turn",
+                    target,
+                )
+                return
+
             await self._publish_and_send(
                 event=OutboundEvent(
                     channel=event.channel,
                     session_id=event.session_id,
                     target=target,
-                    text=self._ENGINE_ERROR_FALLBACK_TEXT,
-                    metadata={
-                        "_error": "dispatch_engine_exception",
-                        "error_type": type(exc).__name__,
-                    }
+                    text=result.text,
+                    metadata={"model": getattr(result, "model", "")}
+                    | response_metadata
                     | reply_metadata,
                 )
             )
-            return
         finally:
-            self.bus.clear_stop(event.session_id)
-            dispatch_context = self._dispatch_context.get()
-            sent_targets = dispatch_context.get("sent_targets", set()) if isinstance(dispatch_context, dict) else set()
-            if (event.channel, target) in sent_targets:
-                suppress_final_reply = True
             self._dispatch_context.reset(dispatch_token)
-            if activity_channel is not None and activity_chat_id:
-                await self._stop_dispatch_typing(
-                    channel=activity_channel,
-                    chat_id=activity_chat_id,
-                    message_thread_id=activity_thread_id,
-                )
-
-        if suppress_final_reply:
-            bind_event("channel.dispatch", session=event.session_id, channel=event.channel).debug(
-                "dispatch final reply suppressed target={} reason=already_sent_in_turn",
-                target,
-            )
-            return
-
-        await self._publish_and_send(
-            event=OutboundEvent(
-                channel=event.channel,
-                session_id=event.session_id,
-                target=target,
-                text=result.text,
-                metadata={"model": getattr(result, "model", "")} | reply_metadata,
-            )
-        )
 
     async def _dispatch_loop(self) -> None:
         while True:
@@ -2039,7 +2092,22 @@ class ChannelManager:
                 bind_event("channel.lifecycle", channel=name).error("channel enabled but not registered")
                 continue
             bind_event("channel.lifecycle", channel=name).info("channel enabled")
-            channel = cls(config=row, on_message=self._on_channel_message)
+            channel_config = dict(row)
+            if (
+                name == "discord"
+                and state_root is not None
+                and not str(
+                    channel_config.get(
+                        "thread_binding_state_path",
+                        channel_config.get("threadBindingStatePath", ""),
+                    )
+                    or ""
+                ).strip()
+            ):
+                channel_config["thread_binding_state_path"] = str(
+                    state_root / "channels" / "discord-thread-bindings.json"
+                )
+            channel = cls(config=channel_config, on_message=self._on_channel_message)
             self._channels[name] = channel
             await channel.start()
             bind_event("channel.lifecycle", channel=name).info("channel started")
@@ -2096,7 +2164,12 @@ class ChannelManager:
         instance = self._channels.get(channel)
         if instance is None:
             raise KeyError(f"channel_not_available:{channel}")
-        response = await instance.send(target=target, text=text, metadata=metadata or {})
+        payload_metadata = self._prepare_outbound_metadata(
+            channel_name=str(channel),
+            target=str(target),
+            metadata=metadata or {},
+        )
+        response = await instance.send(target=target, text=text, metadata=payload_metadata)
         dispatch_context = self._dispatch_context.get()
         if isinstance(dispatch_context, dict):
             sent_targets = dispatch_context.get("sent_targets")
@@ -2119,14 +2192,104 @@ class ChannelManager:
         return target
 
     @staticmethod
-    def _reply_metadata_from_event(event: InboundEvent) -> dict[str, Any]:
+    def _normalize_reply_to_mode(raw: Any) -> str:
+        mode = str(raw or "all").strip().lower()
+        if mode not in {"off", "first", "all"}:
+            return "all"
+        return mode
+
+    @staticmethod
+    def _strip_reply_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        clean = dict(metadata)
+        clean.pop("reply_to_message_id", None)
+        clean.pop("message_reference_id", None)
+        clean.pop("_reply_to_mode", None)
+        return clean
+
+    def _response_metadata_from_event(self, event: InboundEvent) -> dict[str, Any]:
+        if str(event.channel or "").strip().lower() != "discord":
+            return {}
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        interaction_id = str(metadata.get("interaction_id", "") or "").strip()
+        interaction_token = str(metadata.get("interaction_token", "") or "").strip()
+        if not interaction_id or not interaction_token:
+            return {}
+        response_metadata = {
+            "interaction_id": interaction_id,
+            "interaction_token": interaction_token,
+        }
+        if "discord_ephemeral" in metadata:
+            response_metadata["discord_ephemeral"] = bool(metadata.get("discord_ephemeral"))
+        if "ephemeral" in metadata:
+            response_metadata["ephemeral"] = bool(metadata.get("ephemeral"))
+        return response_metadata
+
+    def _prepare_outbound_metadata(
+        self,
+        *,
+        channel_name: str,
+        target: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        prepared = dict(metadata or {})
+        dispatch_context = self._dispatch_context.get()
+        if isinstance(dispatch_context, dict):
+            response_metadata = dispatch_context.get("response_metadata")
+            if (
+                str(dispatch_context.get("channel", "") or "").strip().lower()
+                == str(channel_name or "").strip().lower()
+                and str(dispatch_context.get("target", "") or "").strip() == str(target or "").strip()
+                and isinstance(response_metadata, dict)
+            ):
+                for key, value in response_metadata.items():
+                    prepared.setdefault(str(key), value)
+
+        if str(channel_name or "").strip().lower() != "discord":
+            return prepared
+
+        reply_to_message_id = str(
+            prepared.get("reply_to_message_id", prepared.get("message_reference_id", ""))
+            or ""
+        ).strip()
+        if not reply_to_message_id:
+            return prepared
+
+        if str(prepared.get("interaction_token", "") or "").strip():
+            return self._strip_reply_metadata(prepared)
+
+        channel = self._channels.get("discord")
+        mode = self._normalize_reply_to_mode(
+            prepared.get("_reply_to_mode", getattr(channel, "reply_to_mode", "all"))
+        )
+        if mode == "off":
+            return self._strip_reply_metadata(prepared)
+        if mode == "all":
+            return prepared
+
+        if not isinstance(dispatch_context, dict):
+            return prepared
+        reply_targets = dispatch_context.get("reply_targets")
+        if not isinstance(reply_targets, set):
+            reply_targets = set()
+            dispatch_context["reply_targets"] = reply_targets
+        key = (str(channel_name), str(target))
+        if key in reply_targets:
+            return self._strip_reply_metadata(prepared)
+        reply_targets.add(key)
+        return prepared
+
+    def _reply_metadata_from_event(self, event: InboundEvent) -> dict[str, Any]:
         if str(event.channel or "").strip().lower() != "discord":
             return {}
         metadata = event.metadata if isinstance(event.metadata, dict) else {}
         message_id = str(metadata.get("message_id", "") or "").strip()
         if not message_id:
             return {}
-        return {"reply_to_message_id": message_id}
+        channel = self._channels.get("discord")
+        mode = self._normalize_reply_to_mode(getattr(channel, "reply_to_mode", "all"))
+        if mode == "off":
+            return {}
+        return {"reply_to_message_id": message_id, "_reply_to_mode": mode}
 
     @staticmethod
     def _target_from_event(event: InboundEvent) -> str:

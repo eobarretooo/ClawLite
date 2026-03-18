@@ -5,6 +5,8 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -27,6 +29,43 @@ DISCORD_VOICE_WAVEFORM_SAMPLES = 256
 class _DiscordSendTarget:
     kind: str
     value: str
+
+
+@dataclass(slots=True, frozen=True)
+class _DiscordGuildChannelPolicy:
+    allow: bool = True
+    require_mention: bool | None = None
+    ignore_other_mentions: bool | None = None
+    users: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class _DiscordGuildPolicy:
+    slug: str = ""
+    require_mention: bool | None = None
+    ignore_other_mentions: bool | None = None
+    users: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    channels: dict[str, _DiscordGuildChannelPolicy] | None = None
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_utc_timestamp(raw: str) -> datetime | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class DiscordChannel(BaseChannel):
@@ -114,6 +153,74 @@ class DiscordChannel(BaseChannel):
         self.allow_from = self._normalize_allow_from(
             config.get("allow_from", config.get("allowFrom", []))
         )
+        self.dm_policy = self._normalize_dm_policy(
+            config.get("dm_policy", config.get("dmPolicy", "open"))
+        )
+        self.group_policy = self._normalize_group_policy(
+            config.get("group_policy", config.get("groupPolicy", "open"))
+        )
+        self.allow_bots = self._normalize_allow_bots(
+            config.get("allow_bots", config.get("allowBots", False))
+        )
+        self.require_mention = bool(
+            config.get("require_mention", config.get("requireMention", False))
+        )
+        self.ignore_other_mentions = bool(
+            config.get(
+                "ignore_other_mentions",
+                config.get("ignoreOtherMentions", False),
+            )
+        )
+        self.reply_to_mode = self._normalize_reply_to_mode(
+            config.get("reply_to_mode", config.get("replyToMode", "all"))
+        )
+        self.slash_isolated_sessions = bool(
+            config.get(
+                "slash_isolated_sessions",
+                config.get("slashIsolatedSessions", True),
+            )
+        )
+        self.guilds = self._normalize_guild_policies(
+            config.get("guilds", config.get("guilds", {}))
+        )
+        self.thread_bindings_enabled = bool(
+            config.get(
+                "thread_bindings_enabled",
+                config.get("threadBindingsEnabled", True),
+            )
+        )
+        thread_binding_state_path_raw = str(
+            config.get(
+                "thread_binding_state_path",
+                config.get("threadBindingStatePath", ""),
+            )
+            or ""
+        ).strip()
+        self.thread_binding_state_path = (
+            Path(thread_binding_state_path_raw).expanduser()
+            if thread_binding_state_path_raw
+            else None
+        )
+        self.thread_binding_idle_timeout_s = max(
+            0.0,
+            float(
+                config.get(
+                    "thread_binding_idle_timeout_s",
+                    config.get("threadBindingIdleTimeoutS", 0.0),
+                )
+                or 0.0
+            ),
+        )
+        self.thread_binding_max_age_s = max(
+            0.0,
+            float(
+                config.get(
+                    "thread_binding_max_age_s",
+                    config.get("threadBindingMaxAgeS", 0.0),
+                )
+                or 0.0
+            ),
+        )
         self._headers = {
             "Authorization": f"Bot {self.token}",
             "Content-Type": "application/json",
@@ -129,6 +236,11 @@ class DiscordChannel(BaseChannel):
         self._resume_url: str = ""
         self._bot_user_id: str = ""
         self._application_id: str = ""
+        self._policy_allowed_count: int = 0
+        self._policy_blocked_count: int = 0
+        self._thread_bindings: dict[str, dict[str, str]] = {}
+        self._thread_bindings_lock = asyncio.Lock()
+        self._thread_bindings_loaded = False
 
     @staticmethod
     def _normalize_allow_from(raw: Any) -> list[str]:
@@ -141,16 +253,147 @@ class DiscordChannel(BaseChannel):
                 values.append(value)
         return values
 
-    def _is_allowed_sender(self, *, user_id: str, username: str = "") -> bool:
-        if not self.allow_from:
-            return True
+    @staticmethod
+    def _normalize_dm_policy(raw: Any) -> str:
+        policy = str(raw or "open").strip().lower()
+        if policy not in {"open", "allowlist", "disabled"}:
+            return "open"
+        return policy
+
+    @staticmethod
+    def _normalize_group_policy(raw: Any) -> str:
+        policy = str(raw or "open").strip().lower()
+        if policy not in {"open", "mention", "allowlist", "disabled"}:
+            return "open"
+        return policy
+
+    @staticmethod
+    def _normalize_allow_bots(raw: Any) -> str:
+        if isinstance(raw, bool):
+            return "all" if raw else "disabled"
+        value = str(raw or "disabled").strip().lower()
+        if value in {"all", "true", "yes", "on", "open"}:
+            return "all"
+        if value in {"mentions", "mention"}:
+            return "mentions"
+        return "disabled"
+
+    @staticmethod
+    def _normalize_reply_to_mode(raw: Any) -> str:
+        mode = str(raw or "all").strip().lower()
+        if mode not in {"off", "first", "all"}:
+            return "all"
+        return mode
+
+    @staticmethod
+    def _normalize_string_list(raw: Any) -> tuple[str, ...]:
+        if not isinstance(raw, list):
+            return ()
+        values: list[str] = []
+        for item in raw:
+            value = str(item or "").strip()
+            if value:
+                values.append(value)
+        return tuple(values)
+
+    @classmethod
+    def _normalize_guild_policies(
+        cls, raw: Any
+    ) -> dict[str, _DiscordGuildPolicy]:
+        if not isinstance(raw, dict):
+            return {}
+        policies: dict[str, _DiscordGuildPolicy] = {}
+        for guild_id, value in raw.items():
+            if not isinstance(value, dict):
+                continue
+            clean_guild_id = str(guild_id or "").strip()
+            if not clean_guild_id:
+                continue
+            channel_rules_raw = value.get("channels", {})
+            channel_rules: dict[str, _DiscordGuildChannelPolicy] = {}
+            if isinstance(channel_rules_raw, dict):
+                for channel_id, channel_value in channel_rules_raw.items():
+                    clean_channel_id = str(channel_id or "").strip()
+                    if not clean_channel_id:
+                        continue
+                    if isinstance(channel_value, bool):
+                        channel_rules[clean_channel_id] = _DiscordGuildChannelPolicy(
+                            allow=bool(channel_value)
+                        )
+                        continue
+                    if not isinstance(channel_value, dict):
+                        continue
+                    channel_rules[clean_channel_id] = _DiscordGuildChannelPolicy(
+                        allow=bool(channel_value.get("allow", True)),
+                        require_mention=channel_value.get(
+                            "require_mention",
+                            channel_value.get("requireMention"),
+                        ),
+                        ignore_other_mentions=channel_value.get(
+                            "ignore_other_mentions",
+                            channel_value.get("ignoreOtherMentions"),
+                        ),
+                        users=cls._normalize_string_list(channel_value.get("users", [])),
+                        roles=cls._normalize_string_list(channel_value.get("roles", [])),
+                    )
+            policies[clean_guild_id] = _DiscordGuildPolicy(
+                slug=str(value.get("slug", "") or "").strip(),
+                require_mention=value.get(
+                    "require_mention",
+                    value.get("requireMention"),
+                ),
+                ignore_other_mentions=value.get(
+                    "ignore_other_mentions",
+                    value.get("ignoreOtherMentions"),
+                ),
+                users=cls._normalize_string_list(value.get("users", [])),
+                roles=cls._normalize_string_list(value.get("roles", [])),
+                channels=channel_rules,
+            )
+        return policies
+
+    @staticmethod
+    def _sender_candidates(*, user_id: Any, username: str = "") -> set[str]:
         candidates = {str(user_id or "").strip()}
         normalized_username = str(username or "").strip().lstrip("@")
         if normalized_username:
             candidates.add(normalized_username)
             candidates.add(f"@{normalized_username}")
+        return {item for item in candidates if item}
+
+    def _is_allowed_sender(self, *, user_id: str, username: str = "") -> bool:
+        if not self.allow_from:
+            return True
+        candidates = self._sender_candidates(user_id=user_id, username=username)
         allowed = {item.strip() for item in self.allow_from if str(item or "").strip()}
         return any(candidate in allowed for candidate in candidates)
+
+    @staticmethod
+    def _matches_sender_entries(
+        *,
+        user_id: str,
+        username: str,
+        allowed_entries: tuple[str, ...] | list[str],
+    ) -> bool:
+        allowed = {item.strip() for item in allowed_entries if str(item or "").strip()}
+        if not allowed:
+            return False
+        candidates = DiscordChannel._sender_candidates(
+            user_id=user_id,
+            username=username,
+        )
+        return any(candidate in allowed for candidate in candidates)
+
+    @staticmethod
+    def _matches_role_entries(
+        *,
+        role_ids: tuple[str, ...] | list[str],
+        allowed_entries: tuple[str, ...] | list[str],
+    ) -> bool:
+        allowed = {item.strip() for item in allowed_entries if str(item or "").strip()}
+        if not allowed:
+            return False
+        return any(str(role_id or "").strip() in allowed for role_id in role_ids)
 
     @staticmethod
     def _looks_like_snowflake(value: str) -> bool:
@@ -237,6 +480,430 @@ class DiscordChannel(BaseChannel):
                     return body_retry_after
         return self.send_retry_after_default_s
 
+    def _guild_policy(self, guild_id: str) -> _DiscordGuildPolicy | None:
+        return self.guilds.get(str(guild_id or "").strip())
+
+    def _load_thread_bindings(self) -> dict[str, dict[str, str]]:
+        path = self.thread_binding_state_path
+        if path is None or not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._last_error = str(exc)
+            return {}
+        items = raw.get("items", []) if isinstance(raw, dict) else []
+        bindings: dict[str, dict[str, str]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            channel_id = str(item.get("channel_id", "") or "").strip()
+            session_id = str(item.get("session_id", "") or "").strip()
+            if not channel_id or not session_id:
+                continue
+            bindings[channel_id] = {
+                "session_id": session_id,
+                "guild_id": str(item.get("guild_id", "") or "").strip(),
+                "source_session_id": str(item.get("source_session_id", "") or "").strip(),
+                "bound_by": str(item.get("bound_by", "") or "").strip(),
+                "bound_at": str(item.get("bound_at", "") or "").strip(),
+                "updated_at": str(item.get("updated_at", "") or "").strip(),
+            }
+        return bindings
+
+    def _write_thread_bindings(self, bindings: dict[str, dict[str, str]]) -> None:
+        path = self.thread_binding_state_path
+        if path is None:
+            return
+        if not bindings:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        items: list[dict[str, str]] = []
+        for channel_id, row in sorted(bindings.items()):
+            payload = dict(row)
+            payload["channel_id"] = channel_id
+            items.append(payload)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "updated_at": _utc_now(),
+                    "items": items,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        tmp_path.replace(path)
+
+    async def _ensure_thread_bindings_loaded(self) -> None:
+        if self._thread_bindings_loaded:
+            return
+        async with self._thread_bindings_lock:
+            if self._thread_bindings_loaded:
+                return
+            self._thread_bindings = await asyncio.to_thread(self._load_thread_bindings)
+            self._thread_bindings_loaded = True
+
+    def resolve_bound_session(self, channel_id: str) -> dict[str, str] | None:
+        binding = self._thread_bindings.get(str(channel_id or "").strip())
+        if not isinstance(binding, dict):
+            return None
+        if self._binding_expiration_reason(binding) is not None:
+            return None
+        return dict(binding)
+
+    def _binding_expiration_reason(self, binding: dict[str, str]) -> str | None:
+        now = datetime.now(timezone.utc)
+        if self.thread_binding_max_age_s > 0.0:
+            bound_at = _parse_utc_timestamp(str(binding.get("bound_at", "") or ""))
+            if bound_at is not None:
+                age_s = max(0.0, (now - bound_at).total_seconds())
+                if age_s >= self.thread_binding_max_age_s:
+                    return "max_age"
+        if self.thread_binding_idle_timeout_s > 0.0:
+            updated_at = _parse_utc_timestamp(
+                str(binding.get("updated_at") or binding.get("bound_at") or "")
+            )
+            if updated_at is not None:
+                idle_s = max(0.0, (now - updated_at).total_seconds())
+                if idle_s >= self.thread_binding_idle_timeout_s:
+                    return "idle_timeout"
+        return None
+
+    async def _prune_expired_thread_binding(
+        self,
+        channel_id: str,
+        binding: dict[str, str],
+    ) -> str | None:
+        reason = self._binding_expiration_reason(binding)
+        if reason is None:
+            return None
+        async with self._thread_bindings_lock:
+            current = self._thread_bindings.get(channel_id)
+            if current != binding:
+                if not isinstance(current, dict):
+                    return reason
+                return self._binding_expiration_reason(current)
+            self._thread_bindings.pop(channel_id, None)
+            if self.thread_binding_state_path is not None:
+                await asyncio.to_thread(
+                    self._write_thread_bindings,
+                    dict(self._thread_bindings),
+                )
+        return reason
+
+    async def bind_thread(
+        self,
+        *,
+        channel_id: str,
+        session_id: str,
+        actor: str = "",
+        guild_id: str = "",
+        source_session_id: str = "",
+    ) -> dict[str, Any]:
+        clean_channel_id = str(channel_id or "").strip()
+        clean_session_id = str(session_id or "").strip()
+        if not clean_channel_id:
+            return {"ok": False, "error": "discord_thread_binding_channel_required"}
+        if not clean_session_id:
+            return {"ok": False, "error": "discord_thread_binding_session_required"}
+        if not self.thread_bindings_enabled:
+            return {"ok": False, "error": "discord_thread_bindings_disabled"}
+        await self._ensure_thread_bindings_loaded()
+        async with self._thread_bindings_lock:
+            now = _utc_now()
+            previous = dict(self._thread_bindings.get(clean_channel_id, {}))
+            entry = {
+                "session_id": clean_session_id,
+                "guild_id": str(guild_id or "").strip(),
+                "source_session_id": str(source_session_id or "").strip(),
+                "bound_by": str(actor or "").strip(),
+                "bound_at": str(previous.get("bound_at", "") or now),
+                "updated_at": now,
+            }
+            changed = previous != entry
+            self._thread_bindings[clean_channel_id] = entry
+            if self.thread_binding_state_path is not None:
+                await asyncio.to_thread(
+                    self._write_thread_bindings,
+                    dict(self._thread_bindings),
+                )
+        return {
+            "ok": True,
+            "changed": changed,
+            "channel_id": clean_channel_id,
+            "session_id": clean_session_id,
+            "binding": dict(entry),
+        }
+
+    async def unbind_thread(self, *, channel_id: str) -> dict[str, Any]:
+        clean_channel_id = str(channel_id or "").strip()
+        if not clean_channel_id:
+            return {"ok": False, "error": "discord_thread_binding_channel_required"}
+        await self._ensure_thread_bindings_loaded()
+        async with self._thread_bindings_lock:
+            previous = self._thread_bindings.pop(clean_channel_id, None)
+            if self.thread_binding_state_path is not None:
+                await asyncio.to_thread(
+                    self._write_thread_bindings,
+                    dict(self._thread_bindings),
+                )
+        return {
+            "ok": True,
+            "changed": previous is not None,
+            "channel_id": clean_channel_id,
+            "binding": dict(previous) if isinstance(previous, dict) else {},
+        }
+
+    async def _apply_bound_session(
+        self,
+        *,
+        channel_id: str,
+        fallback_session_id: str,
+        metadata: dict[str, Any],
+    ) -> str:
+        if not self.thread_bindings_enabled:
+            return fallback_session_id
+        clean_channel_id = str(channel_id or "").strip()
+        await self._ensure_thread_bindings_loaded()
+        binding = self._thread_bindings.get(clean_channel_id)
+        if not isinstance(binding, dict):
+            return fallback_session_id
+        expiration_reason = await self._prune_expired_thread_binding(
+            clean_channel_id,
+            dict(binding),
+        )
+        if expiration_reason is not None:
+            metadata["discord_binding_expired"] = expiration_reason
+            return fallback_session_id
+        bound_session_id = str(binding.get("session_id", "") or "").strip()
+        if not bound_session_id:
+            return fallback_session_id
+        now = _utc_now()
+        if str(binding.get("updated_at", "") or "") != now:
+            async with self._thread_bindings_lock:
+                current = self._thread_bindings.get(clean_channel_id)
+                if isinstance(current, dict):
+                    updated_binding = dict(current)
+                    updated_binding["updated_at"] = now
+                    self._thread_bindings[clean_channel_id] = updated_binding
+                    if self.thread_binding_state_path is not None:
+                        await asyncio.to_thread(
+                            self._write_thread_bindings,
+                            dict(self._thread_bindings),
+                        )
+                    binding = updated_binding
+        metadata["discord_binding_active"] = True
+        metadata["discord_binding_channel_id"] = clean_channel_id
+        metadata["discord_source_session_key"] = fallback_session_id
+        metadata["discord_bound_session_key"] = bound_session_id
+        bound_by = str(binding.get("bound_by", "") or "").strip()
+        if bound_by:
+            metadata["discord_bound_by"] = bound_by
+        bound_at = str(binding.get("bound_at", "") or "").strip()
+        if bound_at:
+            metadata["discord_bound_at"] = bound_at
+        return bound_session_id
+
+    @staticmethod
+    def _role_ids_from_payload(payload: dict[str, Any]) -> tuple[str, ...]:
+        member = payload.get("member")
+        if not isinstance(member, dict):
+            return ()
+        roles = member.get("roles")
+        if not isinstance(roles, list):
+            return ()
+        normalized: list[str] = []
+        for item in roles:
+            value = str(item or "").strip()
+            if value:
+                normalized.append(value)
+        return tuple(normalized)
+
+    def _message_mentions_bot(self, payload: dict[str, Any]) -> bool:
+        bot_user_id = str(self._bot_user_id or "").strip()
+        if not bot_user_id:
+            return False
+        content = str(payload.get("content", "") or "")
+        if f"<@{bot_user_id}>" in content or f"<@!{bot_user_id}>" in content:
+            return True
+        mentions = payload.get("mentions")
+        if isinstance(mentions, list):
+            for mention in mentions:
+                if not isinstance(mention, dict):
+                    continue
+                if str(mention.get("id", "") or "").strip() == bot_user_id:
+                    return True
+        referenced_message = payload.get("referenced_message")
+        if isinstance(referenced_message, dict):
+            author = referenced_message.get("author")
+            if isinstance(author, dict):
+                if str(author.get("id", "") or "").strip() == bot_user_id:
+                    return True
+        return False
+
+    def _message_mentions_others(self, payload: dict[str, Any]) -> bool:
+        bot_user_id = str(self._bot_user_id or "").strip()
+        mentions = payload.get("mentions")
+        if isinstance(mentions, list):
+            for mention in mentions:
+                if not isinstance(mention, dict):
+                    continue
+                mentioned_id = str(mention.get("id", "") or "").strip()
+                if mentioned_id and mentioned_id != bot_user_id:
+                    return True
+        mention_roles = payload.get("mention_roles")
+        if isinstance(mention_roles, list):
+            if any(str(item or "").strip() for item in mention_roles):
+                return True
+        return bool(payload.get("mention_everyone"))
+
+    @staticmethod
+    def _derive_session_id(
+        *,
+        channel_id: str,
+        guild_id: str,
+        user_id: str,
+    ) -> str:
+        clean_channel_id = str(channel_id or "").strip()
+        clean_guild_id = str(guild_id or "").strip()
+        clean_user_id = str(user_id or "").strip()
+        if clean_guild_id:
+            return f"discord:guild:{clean_guild_id}:channel:{clean_channel_id}"
+        dm_scope = clean_user_id or clean_channel_id
+        return f"discord:dm:{dm_scope}"
+
+    def _derive_interaction_session_id(
+        self,
+        *,
+        channel_id: str,
+        guild_id: str,
+        user_id: str,
+        interaction_type: int,
+    ) -> str:
+        base_session_id = self._derive_session_id(
+            channel_id=channel_id,
+            guild_id=guild_id,
+            user_id=user_id,
+        )
+        if interaction_type != 2 or not self.slash_isolated_sessions:
+            return base_session_id
+        clean_channel_id = str(channel_id or "").strip()
+        clean_guild_id = str(guild_id or "").strip()
+        clean_user_id = str(user_id or "").strip()
+        if clean_guild_id and clean_channel_id and clean_user_id:
+            return (
+                f"discord:guild:{clean_guild_id}:channel:{clean_channel_id}:slash:{clean_user_id}"
+            )
+        if clean_user_id:
+            return f"discord:dm:{clean_user_id}:slash"
+        return base_session_id
+
+    def _is_payload_authorized(
+        self,
+        *,
+        payload: dict[str, Any],
+        user_id: str,
+        username: str,
+        role_ids: tuple[str, ...] = (),
+        author_is_bot: bool = False,
+        ignore_mention_policy: bool = False,
+    ) -> bool:
+        guild_id = str(payload.get("guild_id", "") or "").strip()
+
+        if author_is_bot:
+            if self.allow_bots == "disabled":
+                return False
+            if self.allow_bots == "mentions" and not self._message_mentions_bot(payload):
+                return False
+
+        if self.allow_from and not self._is_allowed_sender(
+            user_id=user_id,
+            username=username,
+        ):
+            return False
+
+        if not guild_id:
+            if self.dm_policy == "disabled":
+                return False
+            if self.dm_policy == "allowlist" and not self._is_allowed_sender(
+                user_id=user_id,
+                username=username,
+            ):
+                return False
+            return True
+
+        if self.group_policy == "disabled":
+            return False
+
+        guild_policy = self._guild_policy(guild_id)
+        if self.group_policy == "allowlist" and guild_policy is None:
+            return False
+
+        channel_id = str(payload.get("channel_id", "") or "").strip()
+        channel_policy: _DiscordGuildChannelPolicy | None = None
+        if guild_policy is not None:
+            channel_map = guild_policy.channels or {}
+            if channel_map:
+                channel_policy = channel_map.get(channel_id)
+                if channel_policy is None:
+                    return False
+                if not channel_policy.allow:
+                    return False
+            effective_users = (
+                channel_policy.users
+                if channel_policy is not None and channel_policy.users
+                else guild_policy.users
+            )
+            effective_roles = (
+                channel_policy.roles
+                if channel_policy is not None and channel_policy.roles
+                else guild_policy.roles
+            )
+            if effective_users or effective_roles:
+                if not (
+                    self._matches_sender_entries(
+                        user_id=user_id,
+                        username=username,
+                        allowed_entries=effective_users,
+                    )
+                    or self._matches_role_entries(
+                        role_ids=role_ids,
+                        allowed_entries=effective_roles,
+                    )
+                ):
+                    return False
+
+        if ignore_mention_policy:
+            return True
+
+        require_mention = self.require_mention or self.group_policy == "mention"
+        ignore_other_mentions = self.ignore_other_mentions
+        if guild_policy is not None:
+            if guild_policy.require_mention is not None:
+                require_mention = bool(guild_policy.require_mention)
+            if guild_policy.ignore_other_mentions is not None:
+                ignore_other_mentions = bool(guild_policy.ignore_other_mentions)
+        if channel_policy is not None:
+            if channel_policy.require_mention is not None:
+                require_mention = bool(channel_policy.require_mention)
+            if channel_policy.ignore_other_mentions is not None:
+                ignore_other_mentions = bool(channel_policy.ignore_other_mentions)
+
+        mentioned_bot = self._message_mentions_bot(payload)
+        if require_mention and not mentioned_bot:
+            return False
+        if ignore_other_mentions and not mentioned_bot and self._message_mentions_others(payload):
+            return False
+        return True
+
     async def start(self) -> None:
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -244,6 +911,8 @@ class DiscordChannel(BaseChannel):
                 headers=self._headers,
             )
         self._running = True
+        if self.thread_bindings_enabled:
+            await self._ensure_thread_bindings_loaded()
         if self.on_message is not None and (
             self._gateway_task is None or self._gateway_task.done()
         ):
@@ -345,6 +1014,8 @@ class DiscordChannel(BaseChannel):
 
         payload: dict[str, Any] = {"content": str(text or "")}
         metadata_payload = dict(metadata or {})
+        interaction_id = str(metadata_payload.get("interaction_id", "") or "").strip()
+        interaction_token = str(metadata_payload.get("interaction_token", "") or "").strip()
         reply_to_message_id = str(
             metadata_payload.get(
                 "reply_to_message_id",
@@ -382,6 +1053,24 @@ class DiscordChannel(BaseChannel):
                 "allow_multiselect": bool(raw_poll.get("allow_multiselect", False)),
                 "layout_type": 1,
             }
+
+        if interaction_token and self._application_id:
+            reply_id = await self.reply_interaction(
+                interaction_id=interaction_id,
+                interaction_token=interaction_token,
+                text=str(text or ""),
+                components=payload.get("components"),
+                embeds=payload.get("embeds"),
+                ephemeral=bool(
+                    metadata_payload.get(
+                        "discord_ephemeral",
+                        metadata_payload.get("ephemeral", False),
+                    )
+                ),
+            )
+            if reply_id:
+                return f"discord:interaction:{reply_id}"
+            raise RuntimeError("discord_interaction_reply_failed")
 
         channel_id = ""
         try:
@@ -719,9 +1408,8 @@ class DiscordChannel(BaseChannel):
         author_id = str(author.get("id", "") or "").strip()
         if not author_id:
             return
-        if bool(author.get("bot")) or (
-            self._bot_user_id and author_id == self._bot_user_id
-        ):
+        author_is_bot = bool(author.get("bot"))
+        if self._bot_user_id and author_id == self._bot_user_id:
             return
 
         channel_id = str(payload.get("channel_id", "") or "").strip()
@@ -729,8 +1417,16 @@ class DiscordChannel(BaseChannel):
             return
 
         username = str(author.get("username", "") or "").strip()
-        if not self._is_allowed_sender(user_id=author_id, username=username):
+        if not self._is_payload_authorized(
+            payload=payload,
+            user_id=author_id,
+            username=username,
+            role_ids=self._role_ids_from_payload(payload),
+            author_is_bot=author_is_bot,
+        ):
+            self._policy_blocked_count += 1
             return
+        self._policy_allowed_count += 1
 
         attachments = self._normalize_attachment_rows(payload.get("attachments"))
         content = str(payload.get("content", "") or "").strip()
@@ -775,8 +1471,19 @@ class DiscordChannel(BaseChannel):
 
         await self._start_typing(channel_id)
         try:
+            session_id = self._derive_session_id(
+                channel_id=channel_id,
+                guild_id=metadata["guild_id"],
+                user_id=author_id,
+            )
+            session_id = await self._apply_bound_session(
+                channel_id=channel_id,
+                fallback_session_id=session_id,
+                metadata=metadata,
+            )
+            metadata["session_key"] = session_id
             await self.emit(
-                session_id=f"discord:{channel_id}",
+                session_id=session_id,
                 user_id=author_id,
                 text=text,
                 metadata=metadata,
@@ -792,24 +1499,49 @@ class DiscordChannel(BaseChannel):
         channel_id = str(payload.get("channel_id", "") or "").strip()
         if not channel_id:
             return
-        if not self._is_allowed_sender(user_id=user_id):
+        member = payload.get("member")
+        member_user = member.get("user") if isinstance(member, dict) else None
+        username = ""
+        if isinstance(member_user, dict):
+            username = str(member_user.get("username", "") or "").strip()
+        if not self._is_payload_authorized(
+            payload=payload,
+            user_id=user_id,
+            username=username,
+            role_ids=self._role_ids_from_payload(payload),
+            author_is_bot=False,
+        ):
+            self._policy_blocked_count += 1
             return
+        self._policy_allowed_count += 1
         emoji_data = payload.get("emoji") or {}
         emoji_name = str(emoji_data.get("name", "") or "").strip()
         emoji_id = str(emoji_data.get("id", "") or "").strip()
         emoji_str = f"{emoji_name}:{emoji_id}" if emoji_id else emoji_name
         if not emoji_str:
             return
+        guild_id = str(payload.get("guild_id", "") or "").strip()
         metadata = {
             "channel": "discord",
             "channel_id": channel_id,
-            "guild_id": str(payload.get("guild_id", "") or "").strip(),
+            "guild_id": guild_id,
             "message_id": str(payload.get("message_id", "") or "").strip(),
             "event_type": "reaction_add",
             "emoji": emoji_str,
         }
+        session_id = self._derive_session_id(
+            channel_id=channel_id,
+            guild_id=guild_id,
+            user_id=user_id,
+        )
+        session_id = await self._apply_bound_session(
+            channel_id=channel_id,
+            fallback_session_id=session_id,
+            metadata=metadata,
+        )
+        metadata["session_key"] = session_id
         await self.emit(
-            session_id=f"discord:{channel_id}",
+            session_id=session_id,
             user_id=user_id,
             text=f"[reaction: {emoji_str}]",
             metadata=metadata,
@@ -833,6 +1565,26 @@ class DiscordChannel(BaseChannel):
         # ACK the interaction immediately (type 5 = deferred channel message)
         asyncio.create_task(self._ack_interaction(interaction_id, interaction_token))
 
+        if not self._is_payload_authorized(
+            payload=payload,
+            user_id=user_id,
+            username=username,
+            role_ids=self._role_ids_from_payload(payload),
+            author_is_bot=bool(user.get("bot")),
+            ignore_mention_policy=True,
+        ):
+            self._policy_blocked_count += 1
+            return
+        self._policy_allowed_count += 1
+
+        guild_id = str(payload.get("guild_id", "") or "").strip()
+        session_id = self._derive_interaction_session_id(
+            channel_id=channel_id,
+            guild_id=guild_id,
+            user_id=user_id,
+            interaction_type=interaction_type,
+        )
+
         if interaction_type == 2:
             # APPLICATION_COMMAND (slash command)
             command_name = str(data.get("name", "") or "").strip()
@@ -852,9 +1604,17 @@ class DiscordChannel(BaseChannel):
                 "user_id": user_id,
                 "username": username,
                 "text": text,
+                "guild_id": guild_id,
+                "session_key": session_id,
             }
+            session_id = await self._apply_bound_session(
+                channel_id=channel_id,
+                fallback_session_id=session_id,
+                metadata=metadata,
+            )
+            metadata["session_key"] = session_id
             await self.emit(
-                session_id=f"discord:{channel_id}",
+                session_id=session_id,
                 user_id=user_id,
                 text=text,
                 metadata=metadata,
@@ -879,9 +1639,17 @@ class DiscordChannel(BaseChannel):
                 "user_id": user_id,
                 "username": username,
                 "text": text,
+                "guild_id": guild_id,
+                "session_key": session_id,
             }
+            session_id = await self._apply_bound_session(
+                channel_id=channel_id,
+                fallback_session_id=session_id,
+                metadata=metadata,
+            )
+            metadata["session_key"] = session_id
             await self.emit(
-                session_id=f"discord:{channel_id}",
+                session_id=session_id,
                 user_id=user_id,
                 text=text,
                 metadata=metadata,
@@ -1320,6 +2088,19 @@ class DiscordChannel(BaseChannel):
             "dm_cache_size": len(self._dm_channel_ids),
             "typing_tasks": len(self._typing_tasks),
             "last_error": str(self._last_error or ""),
+            "dm_policy": self.dm_policy,
+            "group_policy": self.group_policy,
+            "allow_bots": self.allow_bots,
+            "reply_to_mode": self.reply_to_mode,
+            "slash_isolated_sessions": self.slash_isolated_sessions,
+            "guild_allowlist_count": len(self.guilds),
+            "policy_allowed_count": self._policy_allowed_count,
+            "policy_blocked_count": self._policy_blocked_count,
+            "thread_bindings_enabled": self.thread_bindings_enabled,
+            "thread_binding_state_path": str(self.thread_binding_state_path or ""),
+            "thread_binding_idle_timeout_s": self.thread_binding_idle_timeout_s,
+            "thread_binding_max_age_s": self.thread_binding_max_age_s,
+            "thread_binding_count": len(self._thread_bindings),
             "hints": hints,
         }
 

@@ -196,6 +196,7 @@ class FakeChannel(BaseChannel):
         self.sent: list[tuple[str, str, dict[str, Any]]] = []
         self.fail_first_n = max(0, int(config.get("fail_first_n", 0) or 0))
         self._send_attempts = 0
+        self.reply_to_mode = str(config.get("reply_to_mode", "all") or "all")
 
     async def start(self) -> None:
         self._running = True
@@ -592,6 +593,27 @@ def test_channel_manager_target_from_session_id_parses_telegram_private_thread_f
     assert target == "42:7"
 
 
+def test_channel_manager_target_from_session_id_parses_discord_guild_format() -> None:
+    target = ChannelManager._target_from_session_id(
+        "discord",
+        "discord:guild:456:channel:123",
+    )
+    assert target == "channel:123"
+
+
+def test_channel_manager_target_from_session_id_parses_discord_dm_format() -> None:
+    target = ChannelManager._target_from_session_id("discord", "discord:dm:746561804100042812")
+    assert target == "user:746561804100042812"
+
+
+def test_channel_manager_target_from_session_id_parses_discord_guild_slash_format() -> None:
+    target = ChannelManager._target_from_session_id(
+        "discord",
+        "discord:guild:456:channel:123:slash:999",
+    )
+    assert target == "channel:123"
+
+
 def test_channel_manager_dispatch_uses_discord_channel_id_and_reply_metadata() -> None:
     async def _scenario() -> None:
         bus = MessageQueue()
@@ -615,6 +637,104 @@ def test_channel_manager_dispatch_uses_discord_channel_id_and_reply_metadata() -
         assert discord.sent
         assert discord.sent[0][0] == "112233445566778899"
         assert discord.sent[0][2]["reply_to_message_id"] == "998877665544332211"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_dispatch_honors_discord_reply_to_mode_off() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("discord", FakeChannel)
+        await mgr.start({"channels": {"discord": {"enabled": True, "reply_to_mode": "off"}}})
+
+        discord = mgr._channels["discord"]
+        await discord.emit(
+            session_id="discord:746561804100042812",
+            user_id="owner-user",
+            text="hello",
+            metadata={
+                "channel": "discord",
+                "channel_id": "112233445566778899",
+                "message_id": "998877665544332211",
+            },
+        )
+        await asyncio.sleep(0.1)
+
+        assert discord.sent
+        assert "reply_to_message_id" not in discord.sent[0][2]
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_dispatch_honors_discord_reply_to_mode_first() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=ProgressEngine())
+        mgr.register("discord", FakeChannel)
+        await mgr.start(
+            {
+                "channels": {
+                    "send_progress": True,
+                    "send_tool_hints": False,
+                    "discord": {
+                        "enabled": True,
+                        "reply_to_mode": "first",
+                    },
+                }
+            }
+        )
+
+        discord = mgr._channels["discord"]
+        await discord.emit(
+            session_id="discord:746561804100042812",
+            user_id="owner-user",
+            text="hello",
+            metadata={
+                "channel": "discord",
+                "channel_id": "112233445566778899",
+                "message_id": "998877665544332211",
+            },
+        )
+        await asyncio.sleep(0.1)
+
+        assert len(discord.sent) >= 2
+        assert discord.sent[0][2]["reply_to_message_id"] == "998877665544332211"
+        assert all("reply_to_message_id" not in row[2] for row in discord.sent[1:])
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_dispatch_carries_discord_interaction_reply_context() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=FakeEngine())
+        mgr.register("discord", FakeChannel)
+        await mgr.start({"channels": {"discord": {"enabled": True}}})
+
+        discord = mgr._channels["discord"]
+        await discord.emit(
+            session_id="discord:guild:guild-1:channel:112233445566778899:slash:owner-user",
+            user_id="owner-user",
+            text="/ping",
+            metadata={
+                "channel": "discord",
+                "channel_id": "112233445566778899",
+                "interaction_id": "inter-1",
+                "interaction_token": "tok-1",
+            },
+        )
+        await asyncio.sleep(0.1)
+
+        assert discord.sent
+        assert discord.sent[0][2]["interaction_id"] == "inter-1"
+        assert discord.sent[0][2]["interaction_token"] == "tok-1"
 
         await mgr.stop()
 

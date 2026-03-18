@@ -663,6 +663,8 @@ If `gateway.diagnostics.enabled=false`, returns `404` with `{"error":"diagnostic
 
 For Telegram, `signals` may also include safe-offset reliability fields such as `offset_next`, `offset_watermark_update_id`, `offset_highest_completed_update_id`, `offset_pending_count`, and `offset_min_pending_update_id`, plus additive counters like `offset_safe_advance_count`, `polling_stale_update_skip_count`, `webhook_stale_update_skip_count`, `media_download_count`, `media_download_error_count`, `media_transcription_count`, and `media_transcription_error_count`.
 
+For Discord, the nested channel `status` payload may also include policy and focus-binding fields such as `dm_policy`, `group_policy`, `allow_bots`, `reply_to_mode`, `slash_isolated_sessions`, `guild_allowlist_count`, `policy_allowed_count`, `policy_blocked_count`, `thread_bindings_enabled`, `thread_binding_state_path`, `thread_binding_idle_timeout_s`, `thread_binding_max_age_s`, and `thread_binding_count`.
+
 `channels_delivery` is additive and includes manager-level delivery counters with this shape:
 
 - `total`: aggregate counters (`attempts`, `success`, `failures`, `dead_lettered`, `replayed`, `channel_unavailable`, `policy_dropped`, `delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`)

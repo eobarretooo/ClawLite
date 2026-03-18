@@ -867,11 +867,23 @@ class DiscordChannelConfig(Base):
     api_base: str = "https://discord.com/api/v10"
     timeout_s: float = 10.0
     gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
-    gateway_intents: int = 37377
+    gateway_intents: int = 46593
     gateway_backoff_base_s: float = 2.0
     gateway_backoff_max_s: float = 30.0
     typing_enabled: bool = True
     typing_interval_s: float = 8.0
+    dm_policy: str = "open"
+    group_policy: str = "open"
+    allow_bots: str = "disabled"
+    require_mention: bool = False
+    ignore_other_mentions: bool = False
+    reply_to_mode: str = "all"
+    slash_isolated_sessions: bool = True
+    guilds: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    thread_bindings_enabled: bool = True
+    thread_binding_state_path: str = ""
+    thread_binding_idle_timeout_s: float = 0.0
+    thread_binding_max_age_s: float = 0.0
 
     @field_validator("allow_from", mode="before")
     @classmethod
@@ -879,6 +891,42 @@ class DiscordChannelConfig(Base):
         if not isinstance(v, list):
             return []
         return [str(item).strip() for item in v if str(item).strip()]
+
+    @field_validator("dm_policy", mode="before")
+    @classmethod
+    def _parse_dm_policy(cls, v: Any) -> str:
+        policy = str(v or "open").strip().lower()
+        if policy not in {"open", "allowlist", "disabled"}:
+            return "open"
+        return policy
+
+    @field_validator("group_policy", mode="before")
+    @classmethod
+    def _parse_group_policy(cls, v: Any) -> str:
+        policy = str(v or "open").strip().lower()
+        if policy not in {"open", "mention", "allowlist", "disabled"}:
+            return "open"
+        return policy
+
+    @field_validator("allow_bots", mode="before")
+    @classmethod
+    def _parse_allow_bots(cls, v: Any) -> str:
+        if isinstance(v, bool):
+            return "all" if v else "disabled"
+        policy = str(v or "disabled").strip().lower()
+        if policy in {"true", "yes", "on", "open"}:
+            return "all"
+        if policy in {"mentions", "mention"}:
+            return "mentions"
+        return "disabled"
+
+    @field_validator("reply_to_mode", mode="before")
+    @classmethod
+    def _parse_reply_to_mode(cls, v: Any) -> str:
+        mode = str(v or "all").strip().lower()
+        if mode not in {"off", "first", "all"}:
+            return "all"
+        return mode
 
     @field_validator("timeout_s", mode="before")
     @classmethod
@@ -910,6 +958,31 @@ class DiscordChannelConfig(Base):
         v = v if v not in (None, "") else 8.0
         return max(0.5, float(v))
 
+    @field_validator("thread_binding_idle_timeout_s", "thread_binding_max_age_s", mode="before")
+    @classmethod
+    def _min_thread_binding_timeout(cls, v: Any) -> float:
+        v = v if v not in (None, "") else 0.0
+        return max(0.0, float(v))
+
+    @field_validator("thread_binding_state_path", mode="before")
+    @classmethod
+    def _normalize_thread_binding_state_path(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+    @field_validator("guilds", mode="before")
+    @classmethod
+    def _parse_guilds(cls, v: Any) -> dict[str, dict[str, Any]]:
+        if not isinstance(v, dict):
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for key, value in v.items():
+            if not isinstance(value, dict):
+                continue
+            cleaned_key = str(key or "").strip()
+            if cleaned_key:
+                out[cleaned_key] = dict(value)
+        return out
+
     @model_validator(mode="before")
     @classmethod
     def _handle_aliases(cls, data: Any) -> Any:
@@ -918,6 +991,18 @@ class DiscordChannelConfig(Base):
         data = dict(data)
         if "allow_from" not in data and "allowFrom" in data:
             data["allow_from"] = data["allowFrom"]
+        if "reply_to_mode" not in data and "replyToMode" in data:
+            data["reply_to_mode"] = data["replyToMode"]
+        if "slash_isolated_sessions" not in data and "slashIsolatedSessions" in data:
+            data["slash_isolated_sessions"] = data["slashIsolatedSessions"]
+        if "thread_bindings_enabled" not in data and "threadBindingsEnabled" in data:
+            data["thread_bindings_enabled"] = data["threadBindingsEnabled"]
+        if "thread_binding_state_path" not in data and "threadBindingStatePath" in data:
+            data["thread_binding_state_path"] = data["threadBindingStatePath"]
+        if "thread_binding_idle_timeout_s" not in data and "threadBindingIdleTimeoutS" in data:
+            data["thread_binding_idle_timeout_s"] = data["threadBindingIdleTimeoutS"]
+        if "thread_binding_max_age_s" not in data and "threadBindingMaxAgeS" in data:
+            data["thread_binding_max_age_s"] = data["threadBindingMaxAgeS"]
         return data
 
 

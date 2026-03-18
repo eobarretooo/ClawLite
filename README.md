@@ -85,6 +85,25 @@ Full walkthrough: [`docs/TERMUX_PROOT_UBUNTU.md`](docs/TERMUX_PROOT_UBUNTU.md)
 clawlite run "hello — what can you do?"
 ```
 
+### Docker quickstart
+
+ClawLite now ships an official Docker path:
+
+```bash
+docker compose build
+docker compose run --rm clawlite-cli configure --flow quickstart
+docker compose up -d clawlite-gateway
+```
+
+This persists state in `~/.clawlite`, exposes the dashboard on `http://127.0.0.1:8787`, and includes a CLI sidecar for one-shot commands like:
+
+```bash
+docker compose run --rm clawlite-cli status
+docker compose run --rm clawlite-cli run "summarize the latest session"
+```
+
+Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
+
 ---
 
 ## 📈 Current Status
@@ -92,6 +111,7 @@ clawlite run "hello — what can you do?"
 - `v0.7.0-beta.0` is out, and it closes robustness phases 1-7 plus the full `plano.md` milestone on the beta track.
 - `main` is now focused on soak-testing, documentation polish, and the next roadmap items rather than another large hardening pass.
 - Local-provider startup, cron/jobs boundaries, browser lifecycle, skill networking policy, and Telegram runtime internals are hardened on `main`.
+- The current Discord parity slice now includes DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated native slash-command sessions, deferred interaction replies, persistent `/focus` / `/unfocus` bindings, and automatic idle/max-age expiry for stale Discord focus bindings.
 - The biggest runtime monoliths were split by responsibility: `clawlite/gateway/server.py` is down to about `3.3k` lines and `clawlite/core/memory.py` to about `4.4k`.
 - Packaging is now split into extras: base install stays leaner, while `.[browser]`, `.[telegram]`, and `.[media]` enable optional runtimes.
 - Phase 7 is complete on `main`: `self_evolution` now uses provider-direct proposal, pre-apply patch policy, isolated git worktree branches, configurable branch prefixes, and Telegram/Discord approval callbacks that record human review state while staying disabled by default.
@@ -100,6 +120,7 @@ clawlite run "hello — what can you do?"
 - Runtime scale-out and observability are now in place as opt-in surfaces: Redis bus backend, OTLP telemetry hooks, session TTL, history compaction, `sqlite-vec`, and `memory_compact`.
 - Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1561 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `190 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
 - Tracking docs: [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROBUSTNESS_SCORECARD.md`](docs/ROBUSTNESS_SCORECARD.md).
+- The next major execution track is the OpenClaw parity push for Docker, Discord, tools, and skills.
 
 ---
 
@@ -457,6 +478,7 @@ clawlite supervisor recover --component heartbeat
 | Doc | Contents |
 |-----|----------|
 | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) | Detailed setup walkthrough |
+| [`docs/DOCKER.md`](docs/DOCKER.md) | Official container build + compose flow |
 | [`docs/TERMUX_PROOT_UBUNTU.md`](docs/TERMUX_PROOT_UBUNTU.md) | Android setup with Termux + `proot-distro` Ubuntu |
 | [`docs/API.md`](docs/API.md) | Gateway HTTP + WebSocket API reference |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Operational commands and diagnostics |

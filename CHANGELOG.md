@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- official Docker foundation with `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and host-mounted `~/.clawlite` runtime state
+- persisted Discord focus bindings with `/focus` / `/unfocus`, routed through the inbound interceptor before the agent loop
+
+### Changed
+- refreshed README/docs status snapshot to point at the new Docker path and the active parity track
+- Discord policy/routing parity slice now includes DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session keys, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, and persisted thread/channel bindings with idle/max-age expiry
+- Discord operator flows now include native `/discord-status` and `/discord-refresh` commands handled before the agent loop
+
 ## [v0.7.0-beta.0] - 2026-03-17
 
 ### Phase 7 — Advanced memory and self-improvement (`main`, 2026-03-17)

@@ -17,7 +17,7 @@ Quickstart note: `clawlite configure --flow quickstart` only offers Telegram. Di
 | Channel | Inbound | Outbound | Status | Notes |
 | --- | --- | --- | --- | --- |
 | Telegram | Yes | Yes | Most complete | Polling and webhook, pairing, reactions, topics, typing keepalive, voice/audio transcription |
-| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), embeds, thread creation, attachment download |
+| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), embeds, thread creation, attachment download, focus bindings |
 | Email | Yes | Yes | Usable | IMAP polling inbound plus SMTP replies |
 | WhatsApp | Yes | Yes | Usable | Inbound webhook, outbound retry, bridge typing keepalive |
 | Slack | Yes | Yes | Usable | Socket Mode inbound, outbound `chat.postMessage`, reversible working indicator |
@@ -182,6 +182,14 @@ Important config keys:
 - `gateway_backoff_base_s`, `gateway_backoff_max_s`
 - `typing_enabled`, `typing_interval_s`
 - `allow_from`
+- `dm_policy`
+- `group_policy`
+- `allow_bots`
+- `require_mention`, `ignore_other_mentions`
+- `guilds`
+- `reply_to_mode`, `slash_isolated_sessions`
+- `thread_bindings_enabled`, `thread_binding_state_path`
+- `thread_binding_idle_timeout_s`, `thread_binding_max_age_s`
 
 Example config:
 
@@ -194,12 +202,32 @@ Example config:
       "api_base": "https://discord.com/api/v10",
       "timeout_s": 10.0,
       "gateway_url": "wss://gateway.discord.gg/?v=10&encoding=json",
-      "gateway_intents": 37377,
+      "gateway_intents": 46593,
       "gateway_backoff_base_s": 2.0,
       "gateway_backoff_max_s": 30.0,
       "typing_enabled": true,
       "typing_interval_s": 8.0,
-      "allow_from": ["123456789012345678", "@ownername"]
+      "allow_from": ["123456789012345678", "@ownername"],
+      "dm_policy": "allowlist",
+      "group_policy": "allowlist",
+      "allow_bots": "mentions",
+      "reply_to_mode": "first",
+      "slash_isolated_sessions": true,
+      "thread_bindings_enabled": true,
+      "thread_binding_state_path": "~/.clawlite/channels/discord-thread-bindings.json",
+      "thread_binding_idle_timeout_s": 1800,
+      "thread_binding_max_age_s": 28800,
+      "guilds": {
+        "123456789012345678": {
+          "require_mention": true,
+          "roles": ["987654321098765432"],
+          "channels": {
+            "111111111111111111": {
+              "allow": true
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -207,8 +235,18 @@ Example config:
 
 Notes:
 
-- `allow_from` can contain user IDs or usernames.
-- Bot/self messages are ignored.
+- `allow_from` can contain stable user IDs or usernames, but IDs are safer. Username-only entries are convenience compatibility, not the safest mode.
+- `dm_policy` supports `open`, `allowlist`, and `disabled`.
+- `group_policy` supports `open`, `mention`, `allowlist`, and `disabled`.
+- `allow_bots` supports `disabled`, `mentions`, and `all`.
+- `reply_to_mode` supports `off`, `first`, and `all`.
+- `guilds.<guild_id>.channels` is an allowlist when present. If the map exists, non-listed channels are denied.
+- `guilds.<guild_id>.users` and `roles` can further restrict who is allowed inside that guild or channel.
+- Bot/self messages are ignored by default. If `allow_bots="mentions"` or `"all"` is set, non-self bot traffic can pass policy checks.
+- Native slash commands default to isolated session keys (`discord:guild:<guild>:channel:<channel>:slash:<user>` or `discord:dm:<user>:slash`). Set `slash_isolated_sessions=false` to keep the legacy shared channel session behavior.
+- Discord thread/channel focus bindings are now persisted locally. Discord treats threads as channels, so `/focus <session_id>` and `/unfocus` work naturally inside a thread or any dedicated channel.
+- By default, `ChannelManager` injects `thread_binding_state_path` under `state_path/channels/discord-thread-bindings.json` when the path is not set explicitly.
+- Focus bindings can expire automatically with `thread_binding_idle_timeout_s` and/or `thread_binding_max_age_s`. When a binding goes stale, ClawLite drops it fail-closed and routes the next inbound event back to the live Discord channel session.
 - Attachments are downloaded concurrently from the Discord CDN; raw bytes are available in the `attachment_data` metadata key. Each entry mirrors the `attachments` row with an added `data` field (bytes or `None` on failure).
 - **Reactions**: `add_reaction(channel_id, message_id, emoji)` sends a reaction. Incoming `MESSAGE_REACTION_ADD` events are emitted as metadata-only events with `event_type: "reaction_add"` and `emoji`.
 - **Embeds**: pass a list of embed dicts under `metadata["discord_embeds"]` (or `"embeds"`) in `send()`. Discord accepts up to 10 embeds per message.
@@ -216,9 +254,30 @@ Notes:
 - Discord-specific send retry knobs exist in code but are not part of the typed schema.
 - For proactive sends, prefer typed targets: `channel:<discord_channel_id>` for guild channels/threads and `user:<discord_user_id>` for DMs.
 - Bare numeric Discord targets are ambiguous. ClawLite now tries them as channel IDs first and only falls back to DM creation if Discord returns `404`.
-- Automatic replies to inbound Discord messages now route back to the originating `channel_id` and preserve native reply references when Discord provides a `message_id`.
+- Session routing is now explicit: DMs resolve to `discord:dm:<user_id>`, while guild traffic resolves to `discord:guild:<guild_id>:channel:<channel_id>`.
+- Bound Discord channels keep replying to the live thread/channel while reusing the focused session key for engine context. The original route is preserved in metadata as `discord_source_session_key`.
+- Automatic replies to inbound Discord messages still route back to the originating `channel_id` and preserve native reply references when Discord provides a `message_id`. Use `reply_to_mode=off|first|all` to control whether ClawLite replies to every Discord chunk, only the first outbound message in a turn, or never attaches a native reply reference.
+- When inbound traffic arrived via a Discord interaction, normal agent replies now reuse the deferred interaction response path instead of always posting a second channel message.
 - If you want the agent to build or reorganize a server, the bot also needs Discord permissions like `View Channels`, `Send Messages`, `Manage Channels`, and `Manage Roles`.
 - Server-building requests are now handled through the `discord_admin` tool, which can list guilds/channels/roles, create roles, create channels/categories, and apply a full layout template.
+
+Focus commands:
+
+```text
+/focus discord:guild:123456789012345678:channel:222222222222222222
+/unfocus
+```
+
+These commands are intercepted before the message reaches the agent runtime. They update the Discord channel/thread binding store and reply back ephemerally when the command came from a native Discord interaction.
+
+Operator commands:
+
+```text
+/discord-status
+/discord-refresh
+```
+
+These are also intercepted before the agent loop. `discord-status` returns the live transport/policy snapshot for the running Discord channel instance, and `discord-refresh` triggers the same transport restart path exposed by the operator surface.
 
 ## Email
 

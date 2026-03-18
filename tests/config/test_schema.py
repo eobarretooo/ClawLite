@@ -247,6 +247,58 @@ def test_channels_config_supports_slack_whatsapp_and_irc_runtime_fields() -> Non
     assert "irc" in cfg.channels.enabled_names()
 
 
+def test_channels_config_supports_discord_policy_and_guild_allowlists() -> None:
+    cfg = AppConfig.model_validate(
+        {
+            "channels": {
+                "discord": {
+                    "enabled": True,
+                    "token": "discord-token",
+                    "allowFrom": ["123", "@owner"],
+                    "dmPolicy": "allowlist",
+                    "groupPolicy": "allowlist",
+                    "allowBots": "mentions",
+                    "requireMention": True,
+                    "ignoreOtherMentions": True,
+                    "replyToMode": "first",
+                    "slashIsolatedSessions": False,
+                    "threadBindingsEnabled": True,
+                    "threadBindingStatePath": " /tmp/discord-bindings.json ",
+                    "threadBindingIdleTimeoutS": 900,
+                    "threadBindingMaxAgeS": 7200,
+                    "guilds": {
+                        "guild-1": {
+                            "requireMention": False,
+                            "users": ["123"],
+                            "channels": {
+                                "chan-1": {
+                                    "allow": True,
+                                    "roles": ["role-1"],
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        }
+    )
+
+    assert cfg.channels.discord.gateway_intents == 46593
+    assert cfg.channels.discord.allow_from == ["123", "@owner"]
+    assert cfg.channels.discord.dm_policy == "allowlist"
+    assert cfg.channels.discord.group_policy == "allowlist"
+    assert cfg.channels.discord.allow_bots == "mentions"
+    assert cfg.channels.discord.require_mention is True
+    assert cfg.channels.discord.ignore_other_mentions is True
+    assert cfg.channels.discord.reply_to_mode == "first"
+    assert cfg.channels.discord.slash_isolated_sessions is False
+    assert cfg.channels.discord.thread_bindings_enabled is True
+    assert cfg.channels.discord.thread_binding_state_path == "/tmp/discord-bindings.json"
+    assert cfg.channels.discord.thread_binding_idle_timeout_s == 900.0
+    assert cfg.channels.discord.thread_binding_max_age_s == 7200.0
+    assert cfg.channels.discord.guilds["guild-1"]["channels"]["chan-1"]["roles"] == ["role-1"]
+
+
 # ---------------------------------------------------------------------------
 # 9. ProvidersConfig.get() returns custom provider
 # ---------------------------------------------------------------------------
