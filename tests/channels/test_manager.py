@@ -27,9 +27,11 @@ class FakeEngine:
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
+        del runtime_metadata
         return _Result(text=f"reply:{session_id}:{user_text}")
 
     def request_stop(self, session_id: str) -> bool:
@@ -44,9 +46,11 @@ class ProgressEngine(FakeEngine):
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
+        del runtime_metadata
         assert progress_hook is not None
         await progress_hook(SimpleNamespace(stage="loop", message="progress:planning", iteration=1, tool_name="", metadata={}))
         await progress_hook(SimpleNamespace(stage="tool", message="progress:using-tool", iteration=1, tool_name="search", metadata={}))
@@ -67,9 +71,11 @@ class ConcurrentEngine(FakeEngine):
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
+        del runtime_metadata
         async with self.lock:
             self.current += 1
             self.max_seen = max(self.max_seen, self.current)
@@ -90,9 +96,11 @@ class MessageToolEngine(FakeEngine):
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
+        del runtime_metadata
         assert self.manager is not None
         await self.manager.send(channel=str(channel or "fake"), target=str(chat_id or ""), text="tool:sent")
         return _Result(text=f"reply:{session_id}:{user_text}")
@@ -109,9 +117,11 @@ class BlockingEngine(FakeEngine):
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
+        del runtime_metadata
         self.started.set()
         assert stop_event is not None
         await stop_event.wait()
@@ -126,9 +136,11 @@ class ExceptionEngine(FakeEngine):
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
+        del runtime_metadata
         raise RuntimeError("boom")
 
 
@@ -144,10 +156,11 @@ class TypingLifecycleEngine(FakeEngine):
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         progress_hook=None,
         stop_event=None,
     ):
-        del channel, chat_id, progress_hook, stop_event
+        del channel, chat_id, runtime_metadata, progress_hook, stop_event
         self.started.set()
         await self.release.wait()
         return _Result(text=f"reply:{session_id}:{user_text}")
@@ -310,6 +323,59 @@ def test_channel_manager_dispatches_inbound_to_engine_and_send() -> None:
     asyncio.run(_scenario())
 
 
+def test_channel_manager_passes_inbound_metadata_to_engine_runtime_context() -> None:
+    async def _scenario() -> None:
+        class MetadataCaptureEngine(FakeEngine):
+            def __init__(self) -> None:
+                self.runtime_metadata: dict[str, Any] | None = None
+
+            async def run(
+                self,
+                *,
+                session_id: str,
+                user_text: str,
+                channel: str | None = None,
+                chat_id: str | None = None,
+                runtime_metadata: dict[str, Any] | None = None,
+                progress_hook=None,
+                stop_event=None,
+            ):
+                del session_id, user_text, channel, chat_id, progress_hook, stop_event
+                self.runtime_metadata = dict(runtime_metadata or {})
+                return _Result(text="ok")
+
+        engine = MetadataCaptureEngine()
+        bus = MessageQueue()
+        mgr = ChannelManager(bus=bus, engine=engine)
+        mgr.register("fake", FakeChannel)
+
+        await mgr.start({"channels": {"fake": {"enabled": True}}})
+
+        fake = mgr._channels["fake"]
+        await fake.emit(
+            session_id="fake:1",
+            user_id="u1",
+            text="hello",
+            metadata={
+                "channel": "fake",
+                "chat_id": "1",
+                "message_thread_id": 99,
+                "reply_to_text": "parent note",
+                "bridge_payload": {"raw": "still forwarded to engine"},
+            },
+        )
+
+        await asyncio.sleep(0.1)
+        assert engine.runtime_metadata is not None
+        assert engine.runtime_metadata["message_thread_id"] == 99
+        assert engine.runtime_metadata["reply_to_text"] == "parent note"
+        assert engine.runtime_metadata["bridge_payload"] == {"raw": "still forwarded to engine"}
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
 def test_channel_manager_appends_tool_approval_notice_metadata() -> None:
     async def _scenario() -> None:
         class ApprovalRegistry:
@@ -342,10 +408,11 @@ def test_channel_manager_appends_tool_approval_notice_metadata() -> None:
                 user_text: str,
                 channel: str | None = None,
                 chat_id: str | None = None,
+                runtime_metadata: dict[str, Any] | None = None,
                 progress_hook=None,
                 stop_event=None,
             ):
-                del session_id, user_text, channel, chat_id, progress_hook, stop_event
+                del session_id, user_text, channel, chat_id, runtime_metadata, progress_hook, stop_event
                 return _Result(text="I need approval to run that tool.")
 
         bus = MessageQueue()

@@ -28,6 +28,26 @@ class PromptBuilder:
     _RUNTIME_CONTEXT_OPEN_TAG = "<untrusted_runtime_context>"
     _RUNTIME_CONTEXT_CLOSE_TAG = "</untrusted_runtime_context>"
     _TRUNCATED_SUFFIX = "\n...[truncated to fit token budget]"
+    _RUNTIME_METADATA_FIELDS: tuple[tuple[str, str], ...] = (
+        ("chat_type", "Chat Type"),
+        ("is_group", "Is Group"),
+        ("update_kind", "Update Kind"),
+        ("event_type", "Event Type"),
+        ("is_edit", "Is Edit"),
+        ("is_command", "Is Command"),
+        ("command", "Command"),
+        ("command_args", "Command Args"),
+        ("message_thread_id", "Thread ID"),
+        ("reply_to_message_id", "Reply-To Message ID"),
+        ("reply_to_text", "Reply-To Text"),
+        ("callback_data", "Callback Data"),
+        ("media_present", "Media Present"),
+        ("media_types", "Media Types"),
+        ("subject", "Subject"),
+        ("emoji", "Emoji"),
+    )
+    _RUNTIME_METADATA_MAX_TEXT_CHARS = 160
+    _RUNTIME_METADATA_MAX_LIST_ITEMS = 6
     _IDENTITY_HEADER = "## IDENTITY.md"
     _CRITICAL_WORKSPACE_FILES: tuple[str, ...] = ("IDENTITY.md", "SOUL.md")
     _FILE_SECTION_RE = re.compile(r"^## ([A-Za-z0-9_.-]+\.md)$", re.MULTILINE)
@@ -184,6 +204,48 @@ class PromptBuilder:
         if room <= 0:
             return suffix[:char_limit]
         return text[:room].rstrip() + suffix
+
+    @classmethod
+    def _truncate_runtime_metadata_text(cls, text: str) -> str:
+        normalized = " ".join(str(text or "").split()).strip()
+        if not normalized:
+            return ""
+        max_chars = cls._RUNTIME_METADATA_MAX_TEXT_CHARS
+        if len(normalized) <= max_chars:
+            return normalized
+        return normalized[: max(1, max_chars - 1)].rstrip() + "…"
+
+    @classmethod
+    def _render_runtime_metadata_value(cls, value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else ""
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        if isinstance(value, str):
+            return cls._truncate_runtime_metadata_text(value)
+        if isinstance(value, (list, tuple, set)):
+            rendered_items: list[str] = []
+            for item in value:
+                rendered = cls._render_runtime_metadata_value(item)
+                if not rendered:
+                    continue
+                rendered_items.append(rendered)
+                if len(rendered_items) >= cls._RUNTIME_METADATA_MAX_LIST_ITEMS:
+                    break
+            return ", ".join(rendered_items)
+        return ""
+
+    @classmethod
+    def _render_runtime_metadata_lines(cls, metadata: dict[str, Any] | None) -> list[str]:
+        if not isinstance(metadata, dict) or not metadata:
+            return []
+        lines: list[str] = []
+        for key, label in cls._RUNTIME_METADATA_FIELDS:
+            rendered = cls._render_runtime_metadata_value(metadata.get(key))
+            if not rendered:
+                continue
+            lines.append(f"{label}: {rendered}")
+        return lines
 
     @classmethod
     def _shape_history(cls, history: list[dict[str, Any]], token_limit: int) -> list[dict[str, Any]]:
@@ -394,8 +456,13 @@ class PromptBuilder:
         )
         return "\n\n".join(item for item in ordered_sections if item).strip()
 
-    @staticmethod
-    def _render_runtime_context(channel: str, chat_id: str) -> str:
+    @classmethod
+    def _render_runtime_context(
+        cls,
+        channel: str,
+        chat_id: str,
+        runtime_metadata: dict[str, Any] | None = None,
+    ) -> str:
         aware_now = datetime.now().astimezone()
         timestamp = aware_now.strftime("%Y-%m-%d %H:%M (%A)")
         tz_name = aware_now.tzname() or "UTC"
@@ -404,12 +471,13 @@ class PromptBuilder:
         if channel and chat_id:
             lines.append(f"Channel: {channel}")
             lines.append(f"Chat ID: {chat_id}")
+        lines.extend(cls._render_runtime_metadata_lines(runtime_metadata))
         return "\n".join(
             [
-                PromptBuilder._RUNTIME_CONTEXT_TAG,
-                PromptBuilder._RUNTIME_CONTEXT_OPEN_TAG,
+                cls._RUNTIME_CONTEXT_TAG,
+                cls._RUNTIME_CONTEXT_OPEN_TAG,
                 *lines,
-                PromptBuilder._RUNTIME_CONTEXT_CLOSE_TAG,
+                cls._RUNTIME_CONTEXT_CLOSE_TAG,
             ]
         )
 
@@ -423,6 +491,7 @@ class PromptBuilder:
         skills_context: str = "",
         channel: str = "",
         chat_id: str = "",
+        runtime_metadata: dict[str, Any] | None = None,
     ) -> PromptArtifacts:
         workspace_block = self._ensure_identity_first(self._read_workspace_files())
         profile_text = self.workspace_loader.user_profile_prompt()
@@ -433,7 +502,11 @@ class PromptBuilder:
             skills_block = "\n".join(f"- {item}" for item in sorted(clean_skills))
             skills_text = f"[Skills]\n{skills_block}" if skills_block else ""
 
-        runtime_context = self._render_runtime_context(channel=channel.strip(), chat_id=chat_id.strip())
+        runtime_context = self._render_runtime_context(
+            channel=channel.strip(),
+            chat_id=chat_id.strip(),
+            runtime_metadata=runtime_metadata,
+        )
 
         normalized_history = self._normalize_history(history)
         clean_memory = [item.strip() for item in memory_snippets if item and item.strip()]

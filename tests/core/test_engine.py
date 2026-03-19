@@ -1901,6 +1901,48 @@ def test_engine_injects_compressed_history_summary_before_recent_turns() -> None
     asyncio.run(_scenario())
 
 
+def test_engine_injects_allowlisted_runtime_metadata_into_prompt_context() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=InMemorySessionStore(),
+            memory=FakeMemory(),
+        )
+
+        out = await engine.run(
+            session_id="telegram:42",
+            user_text="continue",
+            channel="telegram",
+            chat_id="42",
+            runtime_metadata={
+                "message_thread_id": 13,
+                "reply_to_text": "parent context",
+                "command": "focus",
+                "command_args": "session-1",
+                "bridge_payload": {"raw": "ignore me"},
+            },
+        )
+
+        assert out.text == "ok"
+        runtime_messages = [
+            str(row.get("content", ""))
+            for row in provider.snapshots[0]
+            if row.get("role") == "user" and "[Runtime Context" in str(row.get("content", ""))
+        ]
+        assert runtime_messages
+        runtime_context = runtime_messages[0]
+        assert "Thread ID: 13" in runtime_context
+        assert "Reply-To Text: parent context" in runtime_context
+        assert "Command: focus" in runtime_context
+        assert "Command Args: session-1" in runtime_context
+        assert "bridge_payload" not in runtime_context
+        assert "ignore me" not in runtime_context
+
+    asyncio.run(_scenario())
+
+
 def test_engine_formats_memory_snippets_with_ref_and_source_marker() -> None:
     async def _scenario() -> None:
         provider = FakePromptCaptureProvider()

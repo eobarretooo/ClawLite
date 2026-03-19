@@ -2651,6 +2651,7 @@ class AgentEngine:
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         turn_budget: TurnBudget | None = None,
         progress_hook: ProgressHook | None = None,
         stop_event: asyncio.Event | None = None,
@@ -2674,6 +2675,7 @@ class AgentEngine:
                         user_text=user_text,
                         channel=channel,
                         chat_id=chat_id,
+                        runtime_metadata=runtime_metadata,
                         turn_budget=turn_budget,
                         progress_hook=progress_hook,
                         stop_event=stop_event,
@@ -2766,6 +2768,7 @@ class AgentEngine:
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         turn_budget: TurnBudget | None = None,
         progress_hook: ProgressHook | None = None,
         stop_event: asyncio.Event | None = None,
@@ -2822,6 +2825,7 @@ class AgentEngine:
             skills_context=skills_context,
             channel=runtime_channel,
             chat_id=runtime_chat_id,
+            runtime_metadata=runtime_metadata,
         )
         if prompt.history_summary and prompt.trimmed_history_rows:
             prompt.history_summary = await self._maybe_semantic_history_summary(

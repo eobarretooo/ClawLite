@@ -302,6 +302,32 @@ def test_prompt_builder_runtime_context_includes_timezone_offset() -> None:
     assert re.search(r"UTC[+-]\d{4}", context)
 
 
+def test_prompt_builder_runtime_context_includes_allowlisted_metadata_only() -> None:
+    context = PromptBuilder._render_runtime_context(
+        channel="telegram",
+        chat_id="42",
+        runtime_metadata={
+            "message_thread_id": 13,
+            "reply_to_text": "  parent request with extra spacing  ",
+            "command": "deploy",
+            "command_args": "--force now",
+            "media_types": ["photo", "voice"],
+            "media_present": True,
+            "bridge_payload": {"raw": "should stay out"},
+            "channel_id": "internal-only",
+        },
+    )
+
+    assert "Thread ID: 13" in context
+    assert "Reply-To Text: parent request with extra spacing" in context
+    assert "Command: deploy" in context
+    assert "Command Args: --force now" in context
+    assert "Media Types: photo, voice" in context
+    assert "Media Present: true" in context
+    assert "bridge_payload" not in context
+    assert "internal-only" not in context
+
+
 def test_prompt_builder_omits_history_summary_when_history_fits_budget(tmp_path: Path) -> None:
     (tmp_path / "IDENTITY.md").write_text("I am ClawLite", encoding="utf-8")
 
