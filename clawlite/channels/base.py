@@ -5,6 +5,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from clawlite.core.injection_guard import scan_inbound
+from clawlite.utils.logger import bind_event
+
 InboundHandler = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
 
 
@@ -52,7 +55,13 @@ class BaseChannel(ABC):
     async def emit(self, *, session_id: str, user_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         if self.on_message is None:
             return
-        await self.on_message(session_id, user_id, text, metadata or {})
+        result = scan_inbound(text, source=self.name)
+        if result.blocked:
+            bind_event("injection_guard", channel=self.name).warning(
+                "inbound message BLOCKED session={} threats={}", session_id, ",".join(result.threats)
+            )
+            return
+        await self.on_message(session_id, user_id, result.sanitized_text, metadata or {})
 
     @abstractmethod
     async def start(self) -> None:

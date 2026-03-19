@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from clawlite.core.injection_guard import injection_guard_section, wrap_user_text
 from clawlite.workspace.loader import WorkspaceLoader
 
 
@@ -371,9 +372,10 @@ class PromptBuilder:
             return ""
 
         sections = cls._split_workspace_sections(workspace_block)
+        aegishjalmr = injection_guard_section()
         if len(sections) == 1 and not sections[0][0]:
             ordered_sections = cls._fit_prioritized_segments(
-                [sections[0][1], identity_guard, cls._EXECUTION_GUARD_SECTION, profile_text, skills_text],
+                [sections[0][1], identity_guard, aegishjalmr, cls._EXECUTION_GUARD_SECTION, profile_text, skills_text],
                 token_limit,
             )
             return "\n\n".join(item for item in ordered_sections if item).strip()
@@ -388,7 +390,7 @@ class PromptBuilder:
                 secondary.append(section_text)
 
         ordered_sections = cls._fit_prioritized_segments(
-            [*critical, identity_guard, cls._EXECUTION_GUARD_SECTION, profile_text, *secondary, skills_text],
+            [*critical, identity_guard, aegishjalmr, cls._EXECUTION_GUARD_SECTION, profile_text, *secondary, skills_text],
             token_limit,
         )
         return "\n\n".join(item for item in ordered_sections if item).strip()
@@ -452,7 +454,7 @@ class PromptBuilder:
             skills_context=skills_context,
             history_rows=normalized_history,
             runtime_context=runtime_context,
-            user_text=user_text.strip(),
+            user_text=wrap_user_text(user_text.strip()),
             token_budget=self.context_token_budget,
         )
 
