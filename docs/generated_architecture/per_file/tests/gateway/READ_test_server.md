@@ -1,0 +1,285 @@
+# READ tests/gateway/test_server.py
+
+## Identity
+
+- Path: `tests/gateway/test_server.py`
+- Area: `tests`
+- Extension: `.py`
+- Lines: 6602
+- Size bytes: 263482
+- SHA1: `2a43405bb13afcfa8c669a57f498973c69c1b721`
+
+## Summary
+
+`tests.gateway.test_server` is a Python module in the `tests` area. It defines 21 class(es), led by `AutonomyIdleProvider`, `FailingProvider`, `FakeBot`, `FakeProvider`. It exposes 214 function(s), including `__init__`, `_analysis_error`, `_analysis_stats`, `_channels_start`, `_channels_stop`, `_close`. It depends on 27 import statement target(s).
+
+## Structural Data
+
+- Classes: 21
+- Functions: 187
+- Async functions: 27
+- Constants: 0
+- Internal imports: 13
+- Imported by: 0
+- Matching tests: 0
+
+## Classes
+
+- `AutonomyIdleProvider`
+- `FailingProvider`
+- `FakeBot`
+- `FakeProvider`
+- `FakeSelfEvolutionEngine`
+- `ProviderWithDiagnostics`
+- `ProviderWithFailoverDiagnostics`
+- `ProviderWithUnsafeDiagnostics`
+- `RecoveringGatewayChannel`
+- `ReplayProvider`
+- `SelfEvolutionProposalProvider`
+- `_Backend`
+- `_CandidateProvider`
+- `_Engine`
+- `_FailoverProvider`
+- `_FakeTuningMemory`
+- `_Memory`
+- `_Monitor`
+- `_RecoveringGatewayChannel`
+- `_ReplayChannel`
+- `_Sessions`
+
+## Functions
+
+- `__init__`
+- `_analysis_error`
+- `_analysis_stats`
+- `_analyze`
+- `_assert_connect_challenge`
+- `_backfill_embeddings`
+- `_boom`
+- `_quality_snapshot`
+- `_quality_update`
+- `_status`
+- `all`
+- `analyze`
+- `diagnostics`
+- `get_default_model`
+- `is_supported`
+- `mark_delivered`
+- `mark_failed`
+- `operator_clear_suppression`
+- `prune_expired`
+- `quality_state_snapshot`
+- `should_deliver`
+- `snapshot`
+- `status`
+- `test_build_runtime_exposes_observability_status`
+- `test_build_runtime_heartbeat_interval_accepts_120_from_scheduler`
+- `test_build_runtime_heartbeat_state_path_uses_workspace_memory_dir`
+- `test_build_runtime_passes_cron_completed_job_retention`
+- `test_build_runtime_passes_cron_concurrency_limit`
+- `test_build_runtime_passes_session_retention_ttl`
+- `test_build_runtime_registers_openclaw_compatibility_alias_tools`
+- `test_build_runtime_self_evolution_notify_routes_operator_notice`
+- `test_build_runtime_self_evolution_uses_provider_direct_completion`
+- `test_build_runtime_uses_redis_bus_when_configured`
+- `test_gateway_auth_auto_hardening_emits_log_event`
+- `test_gateway_auth_auto_hardens_on_non_loopback_with_token`
+- `test_gateway_auth_keeps_loopback_open_with_mode_off`
+- `test_gateway_auth_required_for_control_plane`
+- `test_gateway_autonomy_respects_provider_backoff_without_calling_model`
+- `test_gateway_autonomy_suppresses_provider_quota_without_calling_model`
+- `test_gateway_autonomy_wake_endpoint_calls_runtime_wake_submitter`
+- `test_gateway_channel_recovery_notice_uses_runtime_send`
+- `test_gateway_channels_inbound_replay_endpoint_calls_manager`
+- `test_gateway_channels_recover_endpoint_recovers_failed_worker`
+- `test_gateway_channels_replay_endpoint_replays_dead_letters`
+- `test_gateway_chat_endpoint`
+- `test_gateway_chat_endpoint_timeout_returns_provider_style_code`
+- `test_gateway_chat_provider_error_returns_graceful_message`
+- `test_gateway_chat_provider_http_400_returns_graceful_message`
+- `test_gateway_cron_delete_uses_to_thread_and_preserves_payload`
+- `test_gateway_cron_endpoints_roundtrip`
+- `test_gateway_dashboard_assets_are_served`
+- `test_gateway_dashboard_state_endpoint_returns_operational_summary`
+- `test_gateway_diagnostics_exposes_cron_wake_policy_discard`
+- `test_gateway_diagnostics_exposes_memory_monitor_telemetry_when_enabled`
+- `test_gateway_diagnostics_exposes_proactive_wake_policy_delay`
+- `test_gateway_diagnostics_exposes_self_evolution_runner_when_enabled`
+- `test_gateway_diagnostics_exposes_subagent_status_and_runner`
+- `test_gateway_diagnostics_http_telemetry_tracks_success_and_errors`
+- `test_gateway_diagnostics_include_provider_telemetry_when_enabled`
+- `test_gateway_diagnostics_include_tuning_runner_and_quality_tuning_state`
+- `test_gateway_diagnostics_includes_autonomy_wake_and_alias_parity`
+- `test_gateway_diagnostics_memory_analysis_fail_soft_when_errors`
+- `test_gateway_diagnostics_memory_analysis_fail_soft_when_unavailable`
+- `test_gateway_diagnostics_memory_quality_cache_fingerprint_includes_reasoning_layers`
+- `test_gateway_diagnostics_memory_quality_cache_hit_refreshes_tuning_from_state`
+- `test_gateway_diagnostics_memory_quality_fail_soft_when_update_errors`
+- `test_gateway_diagnostics_memory_quality_prefers_analysis_stats`
+- `test_gateway_diagnostics_omits_provider_telemetry_when_disabled`
+- `test_gateway_diagnostics_provider_summary_surfaces_failover_state`
+- `test_gateway_diagnostics_provider_telemetry_sanitizes_nested_secrets`
+- `test_gateway_diagnostics_schema_and_toggle`
+- `test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors`
+- `test_gateway_discord_refresh_endpoint_calls_channel_operator_hook`
+- `test_gateway_hatch_session_completes_bootstrap_after_startup_failure`
+- `test_gateway_heartbeat_trigger_contract_updates_state`
+- `test_gateway_heartbeat_trigger_disabled_guard`
+- `test_gateway_heartbeat_trigger_reports_quota_pressure_and_notices_on_repeat`
+- `test_gateway_heartbeat_trigger_surfaces_wake_backpressure_from_coordinator`
+- `test_gateway_internal_sessions_do_not_complete_bootstrap`
+- `test_gateway_lifespan_connects_and_closes_redis_bus`
+- `test_gateway_memory_snapshot_create_endpoint_returns_version`
+- `test_gateway_memory_snapshot_rollback_endpoint_returns_counts`
+- `test_gateway_memory_suggest_refresh_endpoint_returns_snapshot`
+- `test_gateway_non_hatch_session_does_not_complete_bootstrap_after_startup_failure`
+- `test_gateway_provider_error_payload_circuit_open_includes_provider_and_cooldown`
+- `test_gateway_provider_error_payload_codex_missing_token_guidance`
+- `test_gateway_provider_error_payload_failover_cooldown_lists_candidates`
+- `test_gateway_provider_error_payload_http_401_includes_provider_guidance`
+- `test_gateway_provider_error_payload_ollama_model_missing_is_actionable`
+- `test_gateway_provider_error_payload_quota_429_is_specific`
+- `test_gateway_provider_recover_endpoint_calls_provider_operator_hook`
+- `test_gateway_root_entrypoint_is_deterministic`
+- `test_gateway_runtime_accepts_sqlite_memory_backend`
+- `test_gateway_runtime_allows_remote_fallback_when_local_primary_probe_fails`
+- `test_gateway_runtime_disables_memory_monitor_when_proactive_false`
+- `test_gateway_runtime_passes_emotional_tracking_to_memory_store`
+- `test_gateway_runtime_passes_memory_window_to_engine`
+- `test_gateway_runtime_rejects_local_provider_when_startup_probe_fails`
+- `test_gateway_runtime_rejects_pgvector_backend_with_invalid_url`
+- `test_gateway_runtime_rejects_pgvector_backend_with_probe_details`
+- `test_gateway_runtime_rejects_pgvector_backend_without_url`
+- `test_gateway_runtime_repairs_workspace_core_docs_and_surfaces_health`
+- `test_gateway_self_evolution_trigger_accepts_dry_run_payload`
+- `test_gateway_server_import_has_no_runtime_side_effects`
+- `test_gateway_shutdown_isolation_continues_after_stop_errors`
+- `test_gateway_skills_watcher_tracks_hot_reload_and_diagnostics`
+- `test_gateway_startup_completes_bootstrap_lifecycle_without_user_turn`
+- `test_gateway_startup_delivery_replay_sends_autonomy_notice`
+- `test_gateway_startup_inbound_replay_sends_autonomy_notice`
+- `test_gateway_startup_replays_failed_memory_suggestions`
+- `test_gateway_startup_replays_orphaned_resumable_subagent_after_restart`
+- `test_gateway_startup_replays_parallel_subagent_group_after_restart`
+- `test_gateway_startup_replays_resumable_subagents_after_restart`
+- `test_gateway_startup_rollback_when_subsystem_fails`
+- `test_gateway_startup_wake_replay_sends_autonomy_notice`
+- `test_gateway_status_exposes_memory_proactive_enabled_flag`
+- `test_gateway_supervisor_recover_endpoint_calls_runtime_supervisor`
+- `test_gateway_supervisor_recovers_crashed_autonomy_task`
+- `test_gateway_supervisor_recovers_crashed_channels_dispatcher_task`
+- `test_gateway_supervisor_recovers_crashed_channels_recovery_task`
+- `test_gateway_supervisor_recovers_crashed_heartbeat_task`
+- `test_gateway_supervisor_recovers_crashed_self_evolution_task`
+- `test_gateway_supervisor_recovers_crashed_subagent_maintenance_task`
+- `test_gateway_supervisor_reports_provider_circuit_open_once_per_cooldown`
+- `test_gateway_telegram_offset_commit_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_offset_reset_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_offset_sync_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_pairing_approve_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_pairing_reject_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_pairing_revoke_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_refresh_endpoint_calls_channel_operator_hook`
+- `test_gateway_telegram_webhook_endpoint_requires_secret_and_dispatches`
+- `test_gateway_telegram_webhook_processing_failure_returns_200_by_default`
+- `test_gateway_telegram_webhook_processing_failure_returns_503_in_fail_fast_mode`
+- `test_gateway_telegram_webhook_timeout_returns_408_contract`
+- `test_gateway_tools_approval_review_endpoint_updates_request`
+- `test_gateway_tools_approvals_endpoints_return_requests_and_grants`
+- `test_gateway_tools_catalog_http_endpoints_return_expected_shape`
+- `test_gateway_tools_catalog_include_schema_matches_tool_count`
+- `test_gateway_tools_grants_revoke_endpoint_removes_matching_grants`
+- `test_gateway_tuning_loop_annotates_action_reason_and_metadata_with_weakest_layer`
+- `test_gateway_tuning_loop_cooldown_skip_does_not_advance_last_action_at`
+- `test_gateway_tuning_loop_fail_soft_on_action_and_state_update_exceptions`
+- `test_gateway_tuning_loop_guardrails_prevent_action_spam`
+- `test_gateway_tuning_loop_runs_when_heartbeat_disabled`
+- `test_gateway_tuning_loop_stage17_normalizes_legacy_reasoning_layer_aliases`
+- `test_gateway_tuning_loop_stage18_decision_snapshot_uses_layer_specific_tag_metadata`
+- `test_gateway_tuning_loop_stage18_diagnostics_include_action_telemetry_maps`
+- `test_gateway_tuning_loop_stage18_fact_layer_backfill_uses_layer_specific_limit_metadata`
+- `test_gateway_tuning_loop_stage18_notify_includes_template_and_layer_variant_marker`
+- `test_gateway_tuning_loop_stage18_outcome_compact_persists_compaction_metadata`
+- `test_gateway_whatsapp_webhook_rejects_non_dict_payload`
+- `test_gateway_whatsapp_webhook_requires_secret_and_dispatches`
+- `test_gateway_ws_alias_behaves_like_v1_ws`
+- `test_gateway_ws_alias_respects_auth_guard`
+- `test_gateway_ws_envelope_error_path_returns_structured_error`
+- `test_gateway_ws_envelope_hello_and_ping_contract`
+- `test_gateway_ws_envelope_message_result_and_request_id`
+- `test_gateway_ws_legacy_payload_without_type_keeps_legacy_contract`
+- `test_gateway_ws_message_timeout_returns_provider_style_error`
+- `test_gateway_ws_req_res_openclaw_compatibility_methods`
+- `test_gateway_ws_req_streams_chunks_before_final_response`
+- `test_latest_memory_route_caches_default_route_without_full_scan`
+- `test_latest_memory_route_prefers_history_tail_and_skips_full_scan`
+- `test_latest_memory_route_prefers_telegram_when_requested`
+- `test_normalize_background_task_treats_done_and_running_tasks_correctly`
+- `test_provider_config_forwards_failover_and_reliability_settings`
+- `test_route_cron_job_timeout_returns_engine_run_timeout_and_skips_channel_send`
+- `test_run_heartbeat_actionable_dispatch_failure_marks_reason`
+- `test_run_heartbeat_appends_current_time_line_with_workspace_timezone`
+- `test_run_heartbeat_contract_runs_on_actionable_output`
+- `test_run_heartbeat_contract_skips_on_heartbeat_ok`
+- `test_run_heartbeat_does_not_run_memory_monitor_when_present`
+- `test_run_heartbeat_ignores_memory_monitor_suggestions`
+- `test_run_heartbeat_injects_workspace_content_when_available`
+- `test_run_heartbeat_prefers_telegram_route_over_newer_cli_history`
+- `test_run_heartbeat_prunes_expired_sessions_before_provider_call`
+- `test_run_heartbeat_skips_effectively_empty_workspace_heartbeat`
+- `test_run_heartbeat_skips_suggestions_when_memory_monitor_missing`
+- `test_run_proactive_monitor_next_step_prefers_telegram_route_over_newer_cli_history`
+- `test_run_proactive_monitor_next_step_retrieve_fail_soft`
+- `test_run_proactive_monitor_replays_retryable_failed_suggestions`
+- `test_run_proactive_monitor_scan_fail_soft_does_not_raise`
+- `test_run_proactive_monitor_sends_high_priority_memory_suggestions`
+- `test_run_proactive_monitor_sends_next_step_query_proactive_suggestion`
+- `update_quality_state`
+- `update_quality_tuning_state`
+- `_channels_start` (async)
+- `_channels_stop` (async)
+- `_close` (async)
+- `_connect` (async)
+- `_crash` (async)
+- `_cron_start` (async)
+- `_cron_stop` (async)
+- `_engine_run` (async)
+- `_fake_stream_run` (async)
+- `_raise_codex` (async)
+- `_raise_provider` (async)
+- `_run` (async)
+- `_scenario` (async)
+- `_slow_run` (async)
+- `_submit` (async)
+- `_timeout_wait_for` (async)
+- `compact` (async)
+- `complete` (async)
+- `delete_webhook` (async)
+- `retrieve` (async)
+- `run` (async)
+- `run_once` (async)
+- `scan` (async)
+- `send` (async)
+- `set_webhook` (async)
+- `start` (async)
+- `stop` (async)
+
+## Notable String Markers
+
+- `test_build_runtime_exposes_observability_status`
+- `test_build_runtime_heartbeat_interval_accepts_120_from_scheduler`
+- `test_build_runtime_heartbeat_state_path_uses_workspace_memory_dir`
+- `test_build_runtime_passes_cron_completed_job_retention`
+- `test_build_runtime_passes_cron_concurrency_limit`
+- `test_build_runtime_passes_session_retention_ttl`
+- `test_build_runtime_registers_openclaw_compatibility_alias_tools`
+- `test_build_runtime_self_evolution_notify_routes_operator_notice`
+- `test_build_runtime_self_evolution_uses_provider_direct_completion`
+- `test_build_runtime_uses_redis_bus_when_configured`
+- `test_gateway_auth_auto_hardening_emits_log_event`
+- `test_gateway_auth_auto_hardens_on_non_loopback_with_token`
+
+## Reading Guidance
+
+- Start with the file summary, then scan the symbols list for `tests/gateway/test_server.py`.
+- Cross-reference `CONNECTIONS_test_server.md` to see how this file fits into the wider system.

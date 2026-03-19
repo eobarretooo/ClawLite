@@ -1,0 +1,289 @@
+# READ clawlite/gateway/server.py
+
+## Identity
+
+- Path: `clawlite/gateway/server.py`
+- Area: `gateway`
+- Extension: `.py`
+- Lines: 3610
+- Size bytes: 160889
+- SHA1: `5fb27f917e3ed96d7ebb9f97cc850d5b3c0846b2`
+
+## Summary
+
+`clawlite.gateway.server` is a Python module in the `gateway` area. It defines 30 class(es), led by `AutonomyWakeRequest`, `ChannelInboundReplayRequest`, `ChannelRecoverRequest`, `ChannelReplayRequest`. It exposes 194 function(s), including `__getattr__`, `__init__`, `__post_init__`, `__call__`, `_autonomy_snapshot_payload`, `_collect_memory_analysis_metrics`. It depends on 61 import statement target(s).
+
+## Structural Data
+
+- Classes: 30
+- Functions: 52
+- Async functions: 142
+- Constants: 12
+- Internal imports: 45
+- Imported by: 2
+- Matching tests: 1
+
+## Classes
+
+- `AutonomyWakeRequest`
+- `ChannelInboundReplayRequest`
+- `ChannelRecoverRequest`
+- `ChannelReplayRequest`
+- `ChatRequest`
+- `ChatResponse`
+- `ControlPlaneResponse`
+- `CronAddRequest`
+- `CronToggleRequest`
+- `DiagnosticsResponse`
+- `DiscordRefreshRequest`
+- `GatewayAuthGuard`
+- `GatewayLifecycleState`
+- `HttpRequestTelemetry`
+- `MemorySnapshotCreateRequest`
+- `MemorySnapshotRollbackRequest`
+- `MemorySuggestRefreshRequest`
+- `ProviderRecoverRequest`
+- `SupervisorRecoverRequest`
+- `TelegramOffsetCommitRequest`
+- `TelegramOffsetResetRequest`
+- `TelegramOffsetSyncRequest`
+- `TelegramPairingApproveRequest`
+- `TelegramPairingRejectRequest`
+- `TelegramPairingRevokeRequest`
+- `TelegramRefreshRequest`
+- `ToolApprovalReviewRequest`
+- `ToolGrantRevokeRequest`
+- `WebSocketTelemetry`
+- `_LazyGatewayApp`
+
+## Functions
+
+- `__getattr__`
+- `__init__`
+- `__post_init__`
+- `_active_provider_context`
+- `_append_current_time_line`
+- `_background_task_snapshot`
+- `_bootstrap_status_snapshot`
+- `_classify_wake_backpressure`
+- `_control_plane_payload`
+- `_dashboard_state_payload`
+- `_default_heartbeat_route`
+- `_error_code`
+- `_extract_token`
+- `_finalize_bootstrap_for_user_turn`
+- `_get`
+- `_is_effectively_empty_heartbeat`
+- `_is_hatch_session_id`
+- `_is_internal_session_id`
+- `_is_loopback`
+- `_latest_route_from_history_tail`
+- `_message_type`
+- `_normalize_reasoning_layer`
+- `_normalize_tuning_severity`
+- `_normalize_webhook_path`
+- `_parse_failover_cooling_down`
+- `_parse_iso`
+- `_provider_error_payload`
+- `_provider_guidance_tail`
+- `_reasoning_layer_metrics_from_payload`
+- `_record_autonomy_event`
+- `_record_wake_policy_event`
+- `_refresh_bootstrap_component`
+- `_refresh_runtime_components`
+- `_require_for_scope`
+- `_resolve_tuning_backfill_limit`
+- `_resolve_tuning_layer`
+- `_resolve_tuning_notify_variant`
+- `_resolve_tuning_snapshot_tag`
+- `_runestone_to_gjallarhorn`
+- `_select_tuning_action_playbook`
+- `_semantic_metrics_from_payload`
+- `_token_matches`
+- `_utc_now_iso`
+- `_wake_backpressure_row`
+- `_wake_metric_delta`
+- `_wake_reason_label`
+- `check_http`
+- `create_app`
+- `from_config`
+- `mark_component`
+- `posture`
+- `run_gateway`
+- `__call__` (async)
+- `_autonomy_snapshot_payload` (async)
+- `_collect_memory_analysis_metrics` (async)
+- `_collect_memory_quality_inputs` (async)
+- `_diagnostics_response_payload` (async)
+- `_dispatch_autonomy_wake` (async)
+- `_evo_loop` (async)
+- `_gjallarhorn_send` (async)
+- `_handle_supervisor_incident` (async)
+- `_http_exception_handler` (async)
+- `_http_telemetry_middleware` (async)
+- `_latest_memory_route` (async)
+- `_loop` (async)
+- `_maintenance_loop` (async)
+- `_normalize_background_task` (async)
+- `_recover_autonomy` (async)
+- `_recover_autonomy_wake` (async)
+- `_recover_channels_dispatcher` (async)
+- `_recover_channels_recovery` (async)
+- `_recover_cron` (async)
+- `_recover_heartbeat` (async)
+- `_recover_job_workers` (async)
+- `_recover_memory_quality_tuning` (async)
+- `_recover_proactive_monitor` (async)
+- `_recover_self_evolution` (async)
+- `_recover_skills_watcher` (async)
+- `_recover_subagent_maintenance` (async)
+- `_recover_supervised_component` (async)
+- `_resume_recoverable_subagents` (async)
+- `_route_cron_job` (async)
+- `_run_autonomy_tick` (async)
+- `_run_bootstrap_cycle` (async)
+- `_run_engine_with_timeout` (async)
+- `_run_heartbeat` (async)
+- `_run_job_dispatch` (async)
+- `_run_proactive_monitor` (async)
+- `_run_startup_bootstrap_cycle` (async)
+- `_send_autonomy_notice` (async)
+- `_send_channel_recovery_notice` (async)
+- `_start_job_workers` (async)
+- `_start_memory_quality_tuning` (async)
+- `_start_proactive_monitor` (async)
+- `_start_self_evolution` (async)
+- `_start_subagent_maintenance` (async)
+- `_start_subsystems` (async)
+- `_stop_job_workers` (async)
+- `_stop_memory_quality_tuning` (async)
+- `_stop_proactive_monitor` (async)
+- `_stop_self_evolution` (async)
+- `_stop_subagent_maintenance` (async)
+- `_stop_subsystems` (async)
+- `_stream_engine_with_timeout` (async)
+- `_submit_cron_wake` (async)
+- `_submit_heartbeat_wake` (async)
+- `_submit_proactive_wake` (async)
+- `_supervisor_incident_checks` (async)
+- `_tick` (async)
+- `_track_wake_backpressure` (async)
+- `api_autonomy_wake` (async)
+- `api_channels_inbound_replay` (async)
+- `api_channels_recover` (async)
+- `api_channels_replay` (async)
+- `api_dashboard_state` (async)
+- `api_diagnostics` (async)
+- `api_discord_refresh` (async)
+- `api_memory_snapshot_create` (async)
+- `api_memory_snapshot_rollback` (async)
+- `api_memory_suggest_refresh` (async)
+- `api_message` (async)
+- `api_provider_recover` (async)
+- `api_status` (async)
+- `api_supervisor_recover` (async)
+- `api_telegram_offset_commit` (async)
+- `api_telegram_offset_reset` (async)
+- `api_telegram_offset_sync` (async)
+- `api_telegram_pairing_approve` (async)
+- `api_telegram_pairing_reject` (async)
+- `api_telegram_pairing_revoke` (async)
+- `api_telegram_refresh` (async)
+- `api_token` (async)
+- `api_tools_approval_approve` (async)
+- `api_tools_approval_reject` (async)
+- `api_tools_approvals` (async)
+- `api_tools_catalog` (async)
+- `api_tools_grants_revoke` (async)
+- `autonomy_wake` (async)
+- `channels_inbound_replay` (async)
+- `channels_recover` (async)
+- `channels_replay` (async)
+- `chat` (async)
+- `check_ws` (async)
+- `connection_closed` (async)
+- `connection_opened` (async)
+- `cron_add` (async)
+- `cron_disable` (async)
+- `cron_enable` (async)
+- `cron_get` (async)
+- `cron_list` (async)
+- `cron_remove` (async)
+- `cron_status` (async)
+- `dashboard_css` (async)
+- `dashboard_js` (async)
+- `dashboard_state` (async)
+- `diagnostics` (async)
+- `discord_refresh` (async)
+- `finish` (async)
+- `frame_inbound` (async)
+- `frame_outbound` (async)
+- `health` (async)
+- `health_config` (async)
+- `health_norse` (async)
+- `health_providers` (async)
+- `health_tools` (async)
+- `lifespan` (async)
+- `memory_snapshot_create_route` (async)
+- `memory_snapshot_rollback_route` (async)
+- `memory_suggest_refresh` (async)
+- `metrics_providers` (async)
+- `provider_recover` (async)
+- `root` (async)
+- `runestone_tail_endpoint` (async)
+- `self_evolution_status` (async)
+- `self_evolution_trigger` (async)
+- `snapshot` (async)
+- `start` (async)
+- `status` (async)
+- `supervisor_recover` (async)
+- `telegram_offset_commit` (async)
+- `telegram_offset_reset` (async)
+- `telegram_offset_sync` (async)
+- `telegram_pairing_approve` (async)
+- `telegram_pairing_reject` (async)
+- `telegram_pairing_revoke` (async)
+- `telegram_refresh` (async)
+- `tools_approval_approve` (async)
+- `tools_approval_reject` (async)
+- `tools_approvals` (async)
+- `tools_catalog` (async)
+- `tools_grants_revoke` (async)
+- `trigger_heartbeat` (async)
+- `ws_chat` (async)
+- `ws_chat_alias` (async)
+
+## Constants
+
+- `GATEWAY_BOOTSTRAP_ENGINE_TIMEOUT_S`
+- `GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S`
+- `GATEWAY_CONTRACT_VERSION`
+- `GATEWAY_CRON_ENGINE_TIMEOUT_S`
+- `GATEWAY_HEARTBEAT_ENGINE_TIMEOUT_S`
+- `LATEST_MEMORY_ROUTE_CACHE_TTL_S`
+- `LATEST_MEMORY_ROUTE_TAIL_BYTES`
+- `TELEGRAM_WEBHOOK_MAX_BODY_BYTES`
+- `WHATSAPP_WEBHOOK_MAX_BODY_BYTES`
+- `_DASHBOARD_ASSET_ROOT`
+- `_DASHBOARD_BOOTSTRAP_TOKEN`
+- `_LATEST_MEMORY_ROUTE_CACHE`
+
+## Notable String Markers
+
+- `"/", response_class=HTMLResponse`
+- `"/api/autonomy/wake"`
+- `"/api/channels/discord/refresh"`
+- `"/api/channels/inbound-replay"`
+- `"/api/channels/recover"`
+- `"/api/channels/replay"`
+- `"/api/channels/telegram/offset/commit"`
+- `"/api/channels/telegram/offset/reset"`
+- `"/api/channels/telegram/offset/sync"`
+- `"/api/channels/telegram/pairing/approve"`
+- `"/api/channels/telegram/pairing/reject"`
+- `"/api/channels/telegram/pairing/revoke"`
+
+## Reading Guidance
+
+- Start with the file summary, then scan the symbols list for `clawlite/gateway/server.py`.
+- Cross-reference `CONNECTIONS_server.md` to see how this file fits into the wider system.

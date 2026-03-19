@@ -1,0 +1,232 @@
+# READ tests/channels/test_telegram.py
+
+## Identity
+
+- Path: `tests/channels/test_telegram.py`
+- Area: `tests`
+- Extension: `.py`
+- Lines: 5835
+- Size bytes: 192307
+- SHA1: `399fedc29722685e05bf5ce98729a500da5c1eb9`
+
+## Summary
+
+`tests.channels.test_telegram` is a Python module in the `tests` area. It defines 12 class(es), led by `AuthError`, `FailingBot`, `FakeBot`, `FakeRemoteFile`. It exposes 170 function(s), including `__init__`, `_bind_offset_path`, `_tracking_create_task`, `_allow_handler`, `_block_handler`, `_fake_poll_loop`. It depends on 11 import statement target(s).
+
+## Structural Data
+
+- Classes: 12
+- Functions: 142
+- Async functions: 28
+- Constants: 0
+- Internal imports: 3
+- Imported by: 0
+- Matching tests: 0
+
+## Classes
+
+- `AuthError`
+- `FailingBot`
+- `FakeBot`
+- `FakeRemoteFile`
+- `FirstBot`
+- `FormattingError`
+- `Msg`
+- `RecoveringBot`
+- `RetryAfterError`
+- `SecondBot`
+- `StableBot`
+- `ThreadNotFoundError`
+
+## Functions
+
+- `__init__`
+- `_bind_offset_path`
+- `_tracking_create_task`
+- `_tracking_fsync`
+- `_update`
+- `test_telegram_action_create_topic_dispatches_and_returns_marker`
+- `test_telegram_action_delete_dispatches_and_returns_marker`
+- `test_telegram_action_edit_dispatches_and_returns_marker`
+- `test_telegram_action_react_dispatches_and_returns_marker`
+- `test_telegram_allow_from_blocks_not_listed`
+- `test_telegram_allow_from_empty_allows_anyone`
+- `test_telegram_build_reply_keyboard_invalid_row_returns_none`
+- `test_telegram_build_reply_keyboard_remove`
+- `test_telegram_build_reply_keyboard_returns_none_without_key`
+- `test_telegram_build_reply_keyboard_valid`
+- `test_telegram_business_message_is_forwarded_with_business_metadata`
+- `test_telegram_callback_query_blocked_by_allowlist_does_not_emit`
+- `test_telegram_callback_query_is_forwarded_and_acknowledged`
+- `test_telegram_callback_query_policy_blocked_when_context_denies`
+- `test_telegram_callback_query_supergroup_topic_uses_topic_session_id`
+- `test_telegram_callback_require_signed_controls_unsigned_behavior`
+- `test_telegram_callback_sign_payload_uses_random_nonce_per_signature`
+- `test_telegram_callback_signing_accepts_valid_signed_callback`
+- `test_telegram_callback_signing_blocks_tampered_signed_callback`
+- `test_telegram_callback_verify_payload_accepts_valid_signed_data`
+- `test_telegram_callback_verify_payload_rejects_tampered_payload`
+- `test_telegram_channel_post_is_forwarded`
+- `test_telegram_chat_boost_update_emits_normalized_metadata`
+- `test_telegram_chat_join_request_emits_normalized_metadata`
+- `test_telegram_chat_member_update_emits_normalized_metadata`
+- `test_telegram_command_help_is_handled_locally`
+- `test_telegram_command_stop_is_forwarded_with_metadata`
+- `test_telegram_dedupe_is_unified_across_polling_and_webhook`
+- `test_telegram_dedupe_skips_duplicate_callback_query_without_update_id`
+- `test_telegram_dedupe_skips_duplicate_message_key_without_update_id`
+- `test_telegram_deleted_business_messages_emit_normalized_metadata`
+- `test_telegram_dm_allowlist_policy_allows_listed_user_and_blocks_others`
+- `test_telegram_dm_policy_disabled_blocks_private_message`
+- `test_telegram_dm_policy_pairing_allows_after_approval`
+- `test_telegram_dm_policy_pairing_blocks_private_message_and_sends_pairing_notice`
+- `test_telegram_drop_pending_updates_on_startup`
+- `test_telegram_edited_business_message_marks_edit_metadata`
+- `test_telegram_edited_channel_post_is_forwarded_as_edit`
+- `test_telegram_edited_message_duplicate_is_deduped`
+- `test_telegram_group_override_supersedes_base_group_and_topic_policy`
+- `test_telegram_group_policy_disabled_blocks_group_message`
+- `test_telegram_handle_webhook_update_normalizes_callback_payload_and_dedupes`
+- `test_telegram_handle_webhook_update_normalizes_channel_post_payload`
+- `test_telegram_inbound_metadata_includes_message_thread_id`
+- `test_telegram_inline_query_is_answered_with_empty_results`
+- `test_telegram_load_offset_accepts_legacy_payload`
+- `test_telegram_markdown_code_tokens_do_not_collide_with_user_text`
+- `test_telegram_markdown_expands_inline_bullets_into_readable_lines`
+- `test_telegram_markdown_expands_inline_numbered_list_into_readable_lines`
+- `test_telegram_markdown_formats_heading_and_table_into_clean_html`
+- `test_telegram_markdown_strips_replacement_and_control_chars`
+- `test_telegram_media_downloads_largest_photo_to_local_path`
+- `test_telegram_media_group_messages_are_aggregated_into_one_turn`
+- `test_telegram_media_only_message_is_forwarded_with_placeholder`
+- `test_telegram_media_placeholder_covers_extended_media_types`
+- `test_telegram_message_reaction_bot_user_is_ignored`
+- `test_telegram_message_reaction_notifications_all_emits_event`
+- `test_telegram_message_reaction_notifications_off_blocks_event`
+- `test_telegram_message_reaction_notifications_own_requires_sent_cache`
+- `test_telegram_message_reaction_policy_blocked_when_context_denies`
+- `test_telegram_message_reaction_supergroup_topic_uses_topic_session_id`
+- `test_telegram_missing_dependency_reports_extra`
+- `test_telegram_module_import_does_not_call_setup_logging`
+- `test_telegram_my_chat_member_updates_connection_state`
+- `test_telegram_offset_commits_after_successful_processing`
+- `test_telegram_offset_not_committed_when_processing_fails`
+- `test_telegram_offset_state_path_config_persists_to_custom_file`
+- `test_telegram_offset_store_keeps_watermark_below_pending_until_gap_closes`
+- `test_telegram_operator_approve_pairing_returns_status`
+- `test_telegram_operator_force_commit_offset_returns_status`
+- `test_telegram_operator_refresh_transport_refreshes_webhook_and_reloads_offset`
+- `test_telegram_operator_reject_pairing_returns_status`
+- `test_telegram_operator_revoke_pairing_returns_status`
+- `test_telegram_operator_status_reports_offset_and_pairing_state`
+- `test_telegram_operator_status_surfaces_transport_hints`
+- `test_telegram_operator_sync_next_offset_requires_allow_reset_for_zero`
+- `test_telegram_operator_sync_next_offset_returns_status`
+- `test_telegram_payment_queries_are_rejected_when_payments_are_unsupported`
+- `test_telegram_polling_duplicate_update_advances_offset_and_recovers`
+- `test_telegram_polling_recovery_matrix_multiple_reconnects_then_stable_updates`
+- `test_telegram_polling_soak_recovery_reconnects_then_stabilizes`
+- `test_telegram_polling_stale_update_is_skipped_and_counted`
+- `test_telegram_polling_transient_failure_recovers_and_processes_update`
+- `test_telegram_private_thread_message_uses_thread_session_id`
+- `test_telegram_purchased_paid_media_emits_normalized_metadata`
+- `test_telegram_redelivery_reprocesses_after_failed_emit_then_commits_offset`
+- `test_telegram_reply_metadata_is_emitted`
+- `test_telegram_save_offset_writes_safe_watermark_payload`
+- `test_telegram_send_accepts_private_thread_style_session_target`
+- `test_telegram_send_accepts_topic_style_session_target`
+- `test_telegram_send_assigns_caption_to_first_caption_capable_media_item`
+- `test_telegram_send_auth_breaker_close_count_tracks_natural_cooldown`
+- `test_telegram_send_auth_circuit_breaker_cooldown_then_recover`
+- `test_telegram_send_auth_circuit_breaker_opens`
+- `test_telegram_send_falls_back_to_follow_up_text_when_media_has_no_caption_support`
+- `test_telegram_send_markdown_falls_back_to_plain_text`
+- `test_telegram_send_media_caption_supports_raw_html_parse_mode_from_metadata`
+- `test_telegram_send_media_retries_without_thread_when_dm_thread_is_not_found`
+- `test_telegram_send_mixed_chaos_chunking_retry_after_timeout_then_success`
+- `test_telegram_send_omits_general_topic_thread_id_for_group_target`
+- `test_telegram_send_places_reply_markup_on_follow_up_text_when_media_caption_is_too_long`
+- `test_telegram_send_populates_delivery_receipt_for_chunked_send`
+- `test_telegram_send_retries_transient_failures`
+- `test_telegram_send_retries_with_retry_after_delay`
+- `test_telegram_send_retries_without_thread_kwarg_on_old_library`
+- `test_telegram_send_retries_without_thread_when_dm_thread_is_not_found`
+- `test_telegram_send_soak_retries_grow_predictably_without_breaker_open`
+- `test_telegram_send_streaming_edits_message`
+- `test_telegram_send_streaming_renders_markdown_html`
+- `test_telegram_send_supports_inline_keyboard_from_metadata`
+- `test_telegram_send_supports_media_attachments_and_delivery_receipt`
+- `test_telegram_send_supports_message_thread_id_from_metadata`
+- `test_telegram_send_supports_message_thread_id_from_target`
+- `test_telegram_send_supports_raw_html_parse_mode_from_metadata`
+- `test_telegram_signals_track_retry_after_and_ttl_stop`
+- `test_telegram_split_message_chunking`
+- `test_telegram_start_resets_startup_drop_state_for_reuse`
+- `test_telegram_stop_flushes_pending_dedupe_state_before_restart`
+- `test_telegram_supergroup_topic_message_uses_topic_session_id`
+- `test_telegram_topic_allowlist_policy_allows_listed_thread_user_and_blocks_nonlisted`
+- `test_telegram_typing_auth_breaker_suppresses_repeated_calls_when_open`
+- `test_telegram_typing_keepalive_duplicate_start_uses_single_worker_per_chat`
+- `test_telegram_typing_keepalive_normalizes_general_topic_thread_key`
+- `test_telegram_typing_keepalive_uses_chat_and_thread_context`
+- `test_telegram_typing_starts_on_inbound_and_stops_before_outbound_send`
+- `test_telegram_typing_stops_after_inbound_handler_without_immediate_reply`
+- `test_telegram_typing_thread_not_found_retries_without_thread_context`
+- `test_telegram_typing_transient_failures_do_not_break_send_path`
+- `test_telegram_update_dedupe_state_persists_across_restarts`
+- `test_telegram_update_dedupe_state_uses_durable_atomic_write`
+- `test_telegram_voice_media_transcription_enriches_text_and_metadata`
+- `test_telegram_webhook_failed_processing_allows_redelivery_then_commits_dedupe`
+- `test_telegram_webhook_missing_config_falls_back_to_polling`
+- `test_telegram_webhook_mode_start_sets_webhook_and_stop_deletes_webhook`
+- `test_telegram_webhook_out_of_order_updates_buffer_until_gap_closes`
+- `test_telegram_webhook_refreshes_persisted_dedupe_across_live_instances`
+- `test_telegram_webhook_success_persists_dedupe_state_before_restart`
+- `_allow_handler` (async)
+- `_block_handler` (async)
+- `_fake_poll_loop` (async)
+- `_flaky_handle` (async)
+- `_on_message` (async)
+- `_on_message_a` (async)
+- `_on_message_b` (async)
+- `_scenario` (async)
+- `answer_callback_query` (async)
+- `answer_inline_query` (async)
+- `answer_pre_checkout_query` (async)
+- `answer_shipping_query` (async)
+- `create_forum_topic` (async)
+- `delete_message` (async)
+- `delete_webhook` (async)
+- `download_to_drive` (async)
+- `edit_message_text` (async)
+- `fake_chunks` (async)
+- `get_file` (async)
+- `get_updates` (async)
+- `send_chat_action` (async)
+- `send_document` (async)
+- `send_message` (async)
+- `send_photo` (async)
+- `send_sticker` (async)
+- `send_video_note` (async)
+- `set_message_reaction` (async)
+- `set_webhook` (async)
+
+## Notable String Markers
+
+- `clawlite pairing`
+- `test_telegram_action_create_topic_dispatches_and_returns_marker`
+- `test_telegram_action_delete_dispatches_and_returns_marker`
+- `test_telegram_action_edit_dispatches_and_returns_marker`
+- `test_telegram_action_react_dispatches_and_returns_marker`
+- `test_telegram_allow_from_blocks_not_listed`
+- `test_telegram_allow_from_empty_allows_anyone`
+- `test_telegram_build_reply_keyboard_invalid_row_returns_none`
+- `test_telegram_build_reply_keyboard_remove`
+- `test_telegram_build_reply_keyboard_returns_none_without_key`
+- `test_telegram_build_reply_keyboard_valid`
+- `test_telegram_business_message_is_forwarded_with_business_metadata`
+
+## Reading Guidance
+
+- Start with the file summary, then scan the symbols list for `tests/channels/test_telegram.py`.
+- Cross-reference `CONNECTIONS_test_telegram.md` to see how this file fits into the wider system.

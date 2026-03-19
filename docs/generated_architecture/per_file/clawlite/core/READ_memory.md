@@ -1,0 +1,318 @@
+# READ clawlite/core/memory.py
+
+## Identity
+
+- Path: `clawlite/core/memory.py`
+- Area: `core`
+- Extension: `.py`
+- Lines: 4448
+- Size bytes: 183233
+- SHA1: `362bcefcf9bd7214b15043e7a42a49b03c368a5a`
+
+## Summary
+
+`clawlite.core.memory` is a Python module in the `core` area. It defines 4 class(es), led by `MemoryLayer`, `MemoryRecord`, `MemoryStore`, `ResourceContext`. It exposes 269 function(s), including `__init__`, `_advance_branch_head`, `_append`, `_consolidation_loop`, `_decay_loop`, `compact`. It depends on 41 import statement target(s).
+
+## Structural Data
+
+- Classes: 4
+- Functions: 258
+- Async functions: 11
+- Constants: 65
+- Internal imports: 22
+- Imported by: 14
+- Matching tests: 30
+
+## Classes
+
+- `MemoryLayer`
+- `MemoryRecord`
+- `MemoryStore`
+- `ResourceContext`
+
+## Functions
+
+- `__init__`
+- `_advance_branch_head`
+- `_append`
+- `_append_embedding`
+- `_append_or_reinforce_history_record`
+- `_append_privacy_audit_event`
+- `_append_resource_layer`
+- `_apply_retrieval_filters`
+- `_atomic_write_text`
+- `_atomic_write_text_locked`
+- `_bounded_confidence_score`
+- `_build_progressive_retrieval_payload`
+- `_candidate_importance`
+- `_capture_backend_details`
+- `_categorize_memory`
+- `_category_file_path`
+- `_chunk_signature`
+- `_classify_category_with_llm`
+- `_cleanup_expired_ephemeral_records`
+- `_collect_retrieval_records`
+- `_compact_whitespace`
+- `_consolidate_in_scope`
+- `_consolidate_messages`
+- `_cosine_similarity`
+- `_curate_candidates`
+- `_curated_rank`
+- `_current_branch_head`
+- `_current_branch_name`
+- `_decay_penalty`
+- `_decrypt_text_for_category`
+- `_default_branches_metadata`
+- `_default_decay_rate`
+- `_default_privacy`
+- `_default_profile`
+- `_default_quality_state`
+- `_default_quality_tuning_state`
+- `_default_working_memory_share_scope`
+- `_default_working_memory_state`
+- `_delete_records_by_ids`
+- `_delete_records_by_ids_in_scope`
+- `_detect_emotional_tone`
+- `_encrypt_text_for_category`
+- `_encrypted_prefix`
+- `_ensure_file`
+- `_ensure_json_file`
+- `_ensure_scope_paths`
+- `_entity_match_score`
+- `_episodic_digest_label`
+- `_episodic_session_boost`
+- `_evaluate_retrieval_sufficiency`
+- `_extract_consolidation_lines`
+- `_extract_embedding_from_response`
+- `_extract_entities`
+- `_extract_timezone`
+- `_extract_topics`
+- `_fetch_record_by_id`
+- `_filter_records_to_categories`
+- `_flush_and_fsync`
+- `_format_checkpoints`
+- `_fsync_parent_dir`
+- `_generate_embedding`
+- `_guidance_label_from_tone`
+- `_heuristic_category`
+- `_infer_happened_at`
+- `_infer_memory_type`
+- `_is_curation_candidate`
+- `_is_encrypted_category`
+- `_is_trivial_message`
+- `_is_working_episode_record`
+- `_item_file_path`
+- `_iter_existing_scopes`
+- `_legacy_encrypted_prefix`
+- `_load_branches_metadata`
+- `_load_category_items`
+- `_load_json_dict`
+- `_load_or_create_privacy_key`
+- `_load_scope_category_items`
+- `_load_shared_optin_map`
+- `_load_working_memory_state`
+- `_locked_file`
+- `_match_prefixes`
+- `_memory_content_hash`
+- `_memory_has_temporal_markers`
+- `_memory_is_temporally_relevant`
+- `_memory_scope_key`
+- `_memory_text_from_file`
+- `_memory_text_from_url`
+- `_merge_quality_tuning_state`
+- `_merge_reinforced_metadata`
+- `_metadata_content_hash`
+- `_metadata_hint`
+- `_metadata_last_reinforced_at`
+- `_metadata_reinforcement_count`
+- `_normalize_category_label`
+- `_normalize_confidence`
+- `_normalize_curated_fact`
+- `_normalize_decay_rate`
+- `_normalize_embedding`
+- `_normalize_entity_value`
+- `_normalize_for_emotion`
+- `_normalize_layer`
+- `_normalize_memory_metadata`
+- `_normalize_memory_text`
+- `_normalize_memory_type`
+- `_normalize_metadata_value`
+- `_normalize_prefix`
+- `_normalize_quality_tuning_state`
+- `_normalize_reasoning_layer`
+- `_normalize_reasoning_layers_filter`
+- `_normalize_retrieval_filters`
+- `_normalize_session_id`
+- `_normalize_source_sessions`
+- `_normalize_user_id`
+- `_normalize_working_memory_entry`
+- `_normalize_working_memory_promotion_state`
+- `_normalize_working_memory_session`
+- `_normalize_working_memory_share_scope`
+- `_normalize_working_memory_state_payload`
+- `_on_embeddings_error`
+- `_parent_session_id`
+- `_parse_checkpoints`
+- `_parse_iso_timestamp`
+- `_parse_optional_iso_timestamp`
+- `_parse_required_iso_timestamp`
+- `_path_lock`
+- `_persist_layer_artifacts`
+- `_persist_layer_artifacts_to_scope`
+- `_prepare_memory_metadata`
+- `_privacy_allows_memorize`
+- `_privacy_block_reason`
+- `_privacy_settings`
+- `_promote_working_memory_locked`
+- `_prune_curated_facts_for_ids`
+- `_prune_embeddings_for_ids`
+- `_prune_history`
+- `_prune_history_records_for_ids`
+- `_prune_item_and_category_layers`
+- `_prune_item_and_category_layers_in_scope`
+- `_prune_resource_layer_for_ids`
+- `_prune_resource_layer_for_ids_in_scope`
+- `_quality_float`
+- `_quality_int`
+- `_quality_reasoning_layer_key`
+- `_quality_reasoning_metrics_payload`
+- `_query_coverage`
+- `_query_has_temporal_intent`
+- `_rank_records`
+- `_read_curated_facts`
+- `_read_curated_facts_from`
+- `_read_embeddings_map`
+- `_read_history_records`
+- `_read_history_records_from`
+- `_reasoning_intent_boosts`
+- `_recency_score`
+- `_record_content_hash`
+- `_record_decay_anchor`
+- `_record_from_payload`
+- `_record_matches_retrieval_filters`
+- `_record_scope_key`
+- `_record_sort_key`
+- `_record_temporal_anchor`
+- `_refine_hits_with_llm`
+- `_reinforce_record`
+- `_repair_history_file`
+- `_resolve_retrieval_scopes`
+- `_resource_file_path_for_timestamp`
+- `_retrieve_category_hits`
+- `_retrieve_resource_hits`
+- `_rewrite_retrieval_query`
+- `_run_coro_sync`
+- `_runner`
+- `_safe_category_slug`
+- `_salience_boost`
+- `_save_branches_metadata`
+- `_save_working_memory_state`
+- `_scope_category_file_path`
+- `_scope_item_file_path`
+- `_scope_paths`
+- `_scope_resource_file_path_for_timestamp`
+- `_seed_reinforcement_metadata`
+- `_serialize_hit`
+- `_set_current_branch`
+- `_source_session_key`
+- `_stored_history_payload`
+- `_sync_branch_head_file`
+- `_synthesize_visible_episode_digest`
+- `_tokens`
+- `_try_ocr_image_text`
+- `_try_transcribe_audio_text`
+- `_upcoming_event_boost`
+- `_update_category_summary_file`
+- `_update_profile_from_record`
+- `_update_profile_from_text`
+- `_update_profile_upcoming_events`
+- `_update_scope_category_summary_file`
+- `_upsert_history_record_by_id`
+- `_upsert_item_layer`
+- `_upsert_item_layer_in_scope`
+- `_utcnow_iso`
+- `_working_episode_context`
+- `_consolidation_loop` (async)
+- `_decay_loop` (async)
+- `compact` (async)
+- `consolidate_categories` (async)
+- `memorize` (async)
+- `purge_decayed_records` (async)
+- `retrieve` (async)
+- `start_consolidation_loop` (async)
+- `start_decay_loop` (async)
+- `stop_consolidation_loop` (async)
+- `stop_decay_loop` (async)
+
+## Constants
+
+- `CATEGORY`
+- `CURATION_HINT_RE`
+- `EMOTIONAL_MARKERS`
+- `ITEM`
+- `MEMORY_TYPES`
+- `MEMORY_TYPES_FROZENSET`
+- `MEMORY_TYPE_BEHAVIOR`
+- `MEMORY_TYPE_EVENT`
+- `MEMORY_TYPE_KNOWLEDGE`
+- `MEMORY_TYPE_PROFILE`
+- `MEMORY_TYPE_SET`
+- `MEMORY_TYPE_SKILL`
+- `MEMORY_TYPE_TOOL`
+- `PROFILE_TOPIC_STOPWORDS`
+- `REASONING_LAYERS`
+- `REASONING_LAYER_SET`
+- `RESOURCE`
+- `RETRIEVAL_DATE_FILTER_KEYS`
+- `RETRIEVAL_FILTER_KEYS`
+- `RETRIEVAL_LIST_FILTER_KEYS`
+- `TRIVIAL_RE`
+- `WORD_RE`
+- `_DECAY_GC_THRESHOLD`
+- `_DECAY_MAX_PENALTY`
+- `_ENTITY_DATE_RE`
+- `_ENTITY_EMAIL_RE`
+- `_ENTITY_MATCH_MAX_BOOST`
+- `_ENTITY_MATCH_WEIGHTS`
+- `_ENTITY_TIME_RE`
+- `_ENTITY_URL_RE`
+- `_MAX_CHECKPOINT_SIGNATURES`
+- `_MAX_CHECKPOINT_SOURCES`
+- `_MAX_CURATED_FACTS`
+- `_MAX_CURATED_SESSIONS_PER_FACT`
+- `_MAX_HISTORY_RECORDS`
+- `_MAX_QUALITY_HISTORY`
+- `_MAX_QUALITY_TUNING_RECENT_ACTIONS`
+- `_MEMORY_CATEGORIES`
+- `_PATH_LOCKS`
+- `_PATH_LOCKS_GUARD`
+- `_RANKING_CONFIDENCE_BOOST_MAX`
+- `_RANKING_REASONING_BOOST_MAX`
+- `_RECENCY_HALF_LIFE_HOURS`
+- `_RECENCY_MAX_BOOST`
+- `_RETRIEVAL_REWRITE_STOPWORDS`
+- `_SALIENCE_MAX_BOOST`
+- `_SALIENCE_RECENCY_DECAY_DAYS`
+- `_SEMANTIC_BM25_WEIGHT`
+- `_SEMANTIC_VECTOR_WEIGHT`
+- `_TEMPORAL_INTENT_MATCH_BOOST`
+- `_TEMPORAL_INTENT_MISS_PENALTY`
+- `_TEMPORAL_MEMORY_TOKENS`
+- `_TEMPORAL_QUERY_TOKENS`
+- `_TEMPORAL_RECENCY_RELEVANCE_MIN`
+- `_TEMPORAL_VALUE_RE`
+- `_TEXT_LIKE_SUFFIXES`
+- `_UPCOMING_EVENT_MAX_BOOST`
+- `_WORKING_MEMORY_MAX_MESSAGES_PER_SESSION`
+- `_WORKING_MEMORY_MAX_SESSIONS`
+- `_WORKING_MEMORY_PROMOTION_MIN_MESSAGES`
+- `_WORKING_MEMORY_PROMOTION_RATE_LIMIT_MAX`
+- `_WORKING_MEMORY_PROMOTION_RATE_LIMIT_WINDOW_S`
+- `_WORKING_MEMORY_PROMOTION_STEP`
+- `_WORKING_MEMORY_PROMOTION_WINDOW`
+- `_WORKING_MEMORY_SHARE_SCOPE_SET`
+
+## Reading Guidance
+
+- Start with the file summary, then scan the symbols list for `clawlite/core/memory.py`.
+- Cross-reference `CONNECTIONS_memory.md` to see how this file fits into the wider system.

@@ -1,0 +1,249 @@
+# READ tests/core/test_engine.py
+
+## Identity
+
+- Path: `tests/core/test_engine.py`
+- Area: `tests`
+- Extension: `.py`
+- Lines: 3483
+- Size bytes: 129228
+- SHA1: `a44b19d73db75484766efb5b73e6450720b7f3a0`
+
+## Summary
+
+`tests.core.test_engine` is a Python module in the `tests` area. It defines 67 class(es), led by `BlockingConcurrencyProvider`, `ContextCaptureTools`, `ExecNoopTool`, `ExecuteCaptureTools`. It exposes 132 function(s), including `__enter__`, `__exit__`, `__init__`, `_hook`, `_long_execute`, `_scenario`. It depends on 19 import statement target(s).
+
+## Structural Data
+
+- Classes: 67
+- Functions: 122
+- Async functions: 10
+- Constants: 0
+- Internal imports: 11
+- Imported by: 0
+- Matching tests: 0
+
+## Classes
+
+- `BlockingConcurrencyProvider`
+- `ContextCaptureTools`
+- `ExecNoopTool`
+- `ExecuteCaptureTools`
+- `FakeBlockedToolProvider`
+- `FakeBurstToolProvider`
+- `FakeChangingResultTools`
+- `FakeDiagnosticSwitchProvider`
+- `FakeDictProviderPayloadProvider`
+- `FakeDuplicateAndInvalidToolIdProvider`
+- `FakeErrorProvider`
+- `FakeFixedTextProvider`
+- `FakeInvalidToolArgumentsProvider`
+- `FakeInvalidToolCallsContainerProvider`
+- `FakeInvalidToolNameProvider`
+- `FakeJsonStringToolProvider`
+- `FakeLiveLookupFailureProvider`
+- `FakeLiveLookupRetryProvider`
+- `FakeLongToolProvider`
+- `FakeLoopRecoveryProvider`
+- `FakeLoopingToolProvider`
+- `FakeManyToolTurnsProvider`
+- `FakeMemory`
+- `FakeMemoryPolicyBlocksWrite`
+- `FakeMemoryWithAsyncEmotionGuidance`
+- `FakeMemoryWithAsyncMemorize`
+- `FakeMemoryWithAsyncPolicySearch`
+- `FakeMemoryWithAsyncWriteBlock`
+- `FakeMemoryWithContextKwargs`
+- `FakeMemoryWithEmotionGuidance`
+- `FakeMemoryWithIntegrationHint`
+- `FakeMemoryWithPolicySearch`
+- `FakeMemoryWithProfileHint`
+- `FakeMemoryWithSubagentDigestPersistence`
+- `FakeMemoryWithWorkingSetCapture`
+- `FakeNeverCalledProvider`
+- `FakePingPongToolProvider`
+- `FakePingPongTools`
+- `FakePlannerMemory`
+- `FakePromptCaptureProvider`
+- `FakeProvider`
+- `FakeProviderWithMessageCapture`
+- `FakeProviderWithReasoningCapture`
+- `FakeProviderWithSamplingAndReasoningCapture`
+- `FakeProviderWithSamplingCapture`
+- `FakeRepeatedPlanProvider`
+- `FakeSemanticSummaryProvider`
+- `FakeSkillsLoader`
+- `FakeSubagentManagerEmpty`
+- `FakeSubagentManagerForDigest`
+- `FakeSubagentManagerForDigestWithContinuation`
+- `FakeSubagentManagerForDigestWithTargetSession`
+- `FakeSubagentManagerForParallelDigest`
+- `FakeSubagentSynthesizer`
+- `FakeSubagentSynthesizerWithMemoryContext`
+- `FakeToolCompactionProvider`
+- `FakeTools`
+- `FakeUnknownToolNameProvider`
+- `FakeWebSearchTools`
+- `FakeWebToolProvider`
+- `FakeWhitespaceVariantFailTools`
+- `LargeToolResultTools`
+- `SessionStoreCapture`
+- `SessionStoreRecorder`
+- `_FakeSpan`
+- `_FakeTracer`
+- `_Sessions`
+
+## Functions
+
+- `__enter__`
+- `__exit__`
+- `__init__`
+- `_fake_monotonic`
+- `_fake_perf_counter`
+- `_hook`
+- `_signature_spy`
+- `always_on`
+- `append`
+- `args_schema`
+- `consolidate`
+- `discover`
+- `emotion_guidance`
+- `get_default_model`
+- `get_working_set`
+- `integration_hint`
+- `integration_policy`
+- `list_completed_unsynthesized`
+- `load_skills_for_context`
+- `mark_synthesized`
+- `profile_prompt_hint`
+- `read`
+- `record_exception`
+- `recover_session_context`
+- `remember_working_set`
+- `render_for_prompt`
+- `schema`
+- `search`
+- `set_attribute`
+- `start_as_current_span`
+- `summarize`
+- `test_engine_accepts_tool_arguments_from_json_string_payload`
+- `test_engine_appends_sources_after_real_web_tool_usage`
+- `test_engine_async_progress_hook_failures_do_not_abort_turn`
+- `test_engine_caches_memory_callable_signatures`
+- `test_engine_caches_provider_complete_signature_and_preserves_kwargs`
+- `test_engine_compacts_large_tool_results_before_history_injection`
+- `test_engine_detects_ping_pong_non_progress_tool_loops`
+- `test_engine_detects_repeated_non_progress_tool_loops`
+- `test_engine_detects_repeated_provider_plans_before_extra_tool_execution`
+- `test_engine_disables_working_memory_promotion_when_memory_write_policy_blocks_persistence`
+- `test_engine_emits_progress_events`
+- `test_engine_enforces_per_turn_tool_budget`
+- `test_engine_enriches_subagent_digest_with_target_session_memory`
+- `test_engine_fails_closed_when_live_lookup_request_still_has_no_tool_evidence`
+- `test_engine_formats_memory_snippets_with_ref_and_source_marker`
+- `test_engine_handles_typed_provider_errors`
+- `test_engine_identity_enforcer_blocks_persistence_on_residual_vendor_contamination`
+- `test_engine_identity_guard_keeps_identity_question_output_when_clawlite_already_present`
+- `test_engine_identity_guard_keeps_normal_output_unchanged`
+- `test_engine_identity_guard_normalizes_provider_intro_on_identity_question`
+- `test_engine_identity_guard_prepends_identity_on_question_when_no_provider_intro`
+- `test_engine_identity_guard_rewrites_embedded_provider_clause_and_persists_clean_text`
+- `test_engine_identity_guard_rewrites_provider_intro_without_identity_question`
+- `test_engine_identity_guard_rewrites_provider_self_sentence_before_persisting`
+- `test_engine_ignores_invalid_tool_call_containers_from_provider`
+- `test_engine_injects_async_emotional_guidance_as_system_message`
+- `test_engine_injects_compressed_history_summary_before_recent_turns`
+- `test_engine_injects_emotional_guidance_as_system_message`
+- `test_engine_injects_loop_recovery_notice_once_before_stopping`
+- `test_engine_injects_memory_integration_hint_as_system_message`
+- `test_engine_injects_memory_profile_hint_as_system_message`
+- `test_engine_injects_routing_hint_for_weather_skill`
+- `test_engine_injects_subagent_digest_once_and_marks_synthesized`
+- `test_engine_injects_web_research_notice_for_explicit_internet_requests`
+- `test_engine_keeps_parallelism_for_different_sessions`
+- `test_engine_marks_real_subagent_digest_async_and_does_not_repeat_it`
+- `test_engine_memory_planner_next_query_rewrites_after_insufficient_first_hit`
+- `test_engine_memory_planner_next_query_rewrites_when_temporal_intent_lacks_temporal_hit`
+- `test_engine_memory_planner_no_retrieve_skips_lookup_for_trivial_input`
+- `test_engine_memory_planner_retrieve_uses_original_query`
+- `test_engine_memory_planner_session_recovery_exception_is_fail_soft`
+- `test_engine_memory_planner_skips_session_recovery_when_retrieval_has_hits`
+- `test_engine_memory_planner_uses_async_recommended_search_limit_from_integration_policy`
+- `test_engine_memory_planner_uses_recommended_search_limit_from_integration_policy`
+- `test_engine_memory_planner_uses_session_recovery_when_retrieval_has_no_hits`
+- `test_engine_memory_planner_uses_working_set_before_legacy_session_recovery`
+- `test_engine_module_does_not_export_setup_logging_helper`
+- `test_engine_normalizes_dict_provider_payloads_and_tuple_tool_calls`
+- `test_engine_normalizes_duplicate_and_invalid_tool_call_ids`
+- `test_engine_passes_channel_and_user_to_tool_registry`
+- `test_engine_passes_max_tokens_and_temperature_when_supported`
+- `test_engine_passes_runtime_user_context_to_memory_search_and_memorize`
+- `test_engine_persists_and_replays_legal_tool_history_from_session_store`
+- `test_engine_persists_parallel_group_summary_in_subagent_digest_memory`
+- `test_engine_planner_filters_foreign_subagent_digests_by_parent_session`
+- `test_engine_planner_merges_parent_subagent_digest_when_primary_memory_is_weak`
+- `test_engine_prefers_async_memorize_over_consolidate`
+- `test_engine_prunes_message_growth_in_long_tool_loops`
+- `test_engine_reasoning_effort_inline_off_disables_default`
+- `test_engine_reasoning_effort_inline_overrides_config`
+- `test_engine_reasoning_effort_uses_config_default`
+- `test_engine_records_working_memory_for_user_and_assistant_turns`
+- `test_engine_rejects_invalid_tool_argument_payloads_before_dispatch`
+- `test_engine_rejects_invalid_tool_names_before_dispatch`
+- `test_engine_rejects_unknown_tool_names_before_dispatch`
+- `test_engine_respects_stop_event_before_provider_call`
+- `test_engine_retries_live_lookup_requests_when_provider_answers_without_tool_use`
+- `test_engine_retrieval_metrics_counts_routes_attempts_hits_and_rewrites`
+- `test_engine_retrieval_metrics_latency_buckets_accounting`
+- `test_engine_returns_quota_specific_message_for_quota_429`
+- `test_engine_run_emits_engine_and_provider_spans`
+- `test_engine_runs_tool_roundtrip`
+- `test_engine_serializes_concurrent_runs_for_same_session`
+- `test_engine_session_locks_are_memory_safe_after_sessions_finish`
+- `test_engine_skips_memory_persistence_when_async_integration_policy_blocks_write`
+- `test_engine_skips_memory_persistence_when_integration_policy_blocks_write`
+- `test_engine_skips_subagent_digest_memory_promotion_when_policy_blocks_write`
+- `test_engine_skips_web_research_notice_for_normal_requests`
+- `test_engine_softens_unverified_web_claims_without_web_tools`
+- `test_engine_stop_requests_expire_by_ttl_and_cleanup`
+- `test_engine_subagent_digest_mentions_continuation_context_between_executions`
+- `test_engine_subagent_digest_mentions_parallel_group_metadata`
+- `test_engine_surfaces_tool_approval_requirement_as_safe_tool_result`
+- `test_engine_surfaces_tool_safety_block_as_safe_tool_result`
+- `test_engine_switches_to_diagnostic_mode_after_repeated_identical_tool_failures`
+- `test_engine_sync_progress_hook_failures_do_not_abort_turn`
+- `test_engine_truncates_tool_result_payload`
+- `test_engine_turn_metrics_counts_executed_tool_calls`
+- `test_engine_uses_configured_memory_window_for_session_history`
+- `test_engine_uses_semantic_history_summary_when_enabled`
+- `test_engine_uses_tool_message_protocol_and_processes_all_calls`
+- `_hook` (async)
+- `_long_execute` (async)
+- `_scenario` (async)
+- `complete` (async)
+- `emotion_guidance` (async)
+- `execute` (async)
+- `integration_policy` (async)
+- `memorize` (async)
+- `retrieve` (async)
+- `run` (async)
+
+## Notable String Markers
+
+- `test_engine_accepts_tool_arguments_from_json_string_payload`
+- `test_engine_appends_sources_after_real_web_tool_usage`
+- `test_engine_async_progress_hook_failures_do_not_abort_turn`
+- `test_engine_caches_memory_callable_signatures`
+- `test_engine_caches_provider_complete_signature_and_preserves_kwargs`
+- `test_engine_compacts_large_tool_results_before_history_injection`
+- `test_engine_detects_ping_pong_non_progress_tool_loops`
+- `test_engine_detects_repeated_non_progress_tool_loops`
+- `test_engine_detects_repeated_provider_plans_before_extra_tool_execution`
+- `test_engine_disables_working_memory_promotion_when_memory_write_policy_blocks_persistence`
+- `test_engine_emits_progress_events`
+- `test_engine_enforces_per_turn_tool_budget`
+
+## Reading Guidance
+
+- Start with the file summary, then scan the symbols list for `tests/core/test_engine.py`.
+- Cross-reference `CONNECTIONS_test_engine.md` to see how this file fits into the wider system.
