@@ -77,6 +77,21 @@ def test_process_start_blocks_explicit_shell_path_outside_workspace(tmp_path: Pa
     asyncio.run(_scenario())
 
 
+def test_process_start_blocks_internal_network_fetch_target(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        tool = ProcessTool(workspace_path=tmp_path, restrict_to_workspace=True)
+        payload = _loads(
+            await tool.run(
+                {"action": "start", "command": "curl http://169.254.169.254/latest/meta-data"},
+                ToolContext(session_id="s"),
+            )
+        )
+        assert payload["status"] == "failed"
+        assert payload["error"] == "blocked_by_policy:internal_url:169.254.169.254"
+
+    asyncio.run(_scenario())
+
+
 def test_process_kill_running_process(tmp_path: Path) -> None:
     async def _scenario() -> None:
         tool = ProcessTool(workspace_path=tmp_path, restrict_to_workspace=True)

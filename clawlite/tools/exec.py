@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import re
 import shlex
 import shutil
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 import time
 from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
@@ -71,6 +74,12 @@ class ExecTool(Tool):
     _SHELL_PATH_RE = re.compile(
         r"(~(?:[/\\][^\s\"'|><;]+)+|(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|%[A-Za-z_][A-Za-z0-9_]*%)(?:[/\\][^\s\"'|><;]+)+)"
     )
+    _SHELL_CONTROL_TOKENS = frozenset({"&&", "||", "|", ";", "&", ">", ">>", "<", "<<"})
+    _NETWORK_FETCH_BINARIES = frozenset({"curl", "wget", "invoke-webrequest", "invoke-restmethod", "iwr", "irm"})
+    _CURL_URL_FLAGS = frozenset({"--url"})
+    _CURL_SKIP_VALUE_FLAGS = frozenset({"-x", "--proxy", "-e", "--referer"})
+    _POWERSHELL_URL_FLAGS = frozenset({"-uri", "-url"})
+    _POWERSHELL_SKIP_VALUE_FLAGS = frozenset({"-proxy"})
 
     def __init__(
         self,
@@ -312,6 +321,144 @@ class ExecTool(Tool):
         except (OSError, RuntimeError, ValueError):
             return None
 
+    @classmethod
+    def _network_fetch_binary_name(cls, raw: object) -> str:
+        value = str(raw or "").strip().strip("\"'")
+        if not value:
+            return ""
+        value = re.sub(r"^[<$({]+", "", value)
+        return cls._binary_name(value)
+
+    @staticmethod
+    def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
+        return (
+            ip.is_loopback
+            or ip.is_link_local
+            or ip.is_private
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        )
+
+    @classmethod
+    def _validate_network_fetch_url(cls, raw_url: str) -> str | None:
+        value = str(raw_url or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = urlparse(value)
+        except Exception:
+            return None
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        host = str(parsed.hostname or "").strip().lower()
+        if not host:
+            return "blocked_by_policy:internal_url:missing_host"
+        if host == "localhost" or host.endswith(".localhost") or host.endswith(".local") or host.endswith(".internal"):
+            return f"blocked_by_policy:internal_url:{host}"
+
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+
+        if literal is not None:
+            if cls._is_blocked_ip(literal):
+                return f"blocked_by_policy:internal_url:{host}"
+            return None
+
+        try:
+            infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return None
+
+        for info in infos:
+            try:
+                resolved = ipaddress.ip_address(str(info[4][0]))
+            except (ValueError, IndexError, TypeError):
+                continue
+            if cls._is_blocked_ip(resolved):
+                return f"blocked_by_policy:internal_url:{host}"
+        return None
+
+    @classmethod
+    def _iter_network_fetch_segments(cls, argv: list[str]) -> list[tuple[str, list[str]]]:
+        segments: list[tuple[str, list[str]]] = []
+        active_binary = ""
+        active_tokens: list[str] = []
+        for raw in argv:
+            token = str(raw or "")
+            if token in cls._SHELL_CONTROL_TOKENS:
+                if active_binary and active_tokens:
+                    segments.append((active_binary, active_tokens))
+                active_binary = ""
+                active_tokens = []
+                continue
+            if active_binary:
+                active_tokens.append(token)
+                continue
+            binary = cls._network_fetch_binary_name(token)
+            if binary in cls._NETWORK_FETCH_BINARIES:
+                active_binary = binary
+                active_tokens = [token]
+        if active_binary and active_tokens:
+            segments.append((active_binary, active_tokens))
+        return segments
+
+    @classmethod
+    def _iter_network_fetch_target_urls(cls, binary: str, tokens: list[str]) -> list[str]:
+        urls: list[str] = []
+        expect_url = False
+        skip_next = False
+        for raw in tokens[1:]:
+            token = str(raw or "").strip()
+            lower = token.lower()
+            if not token:
+                continue
+            if skip_next:
+                skip_next = False
+                continue
+            if expect_url:
+                expect_url = False
+                urls.append(token)
+                continue
+            if lower in cls._SHELL_CONTROL_TOKENS:
+                break
+            if binary == "curl":
+                if lower.startswith("--url="):
+                    urls.append(token.split("=", 1)[1])
+                    continue
+                if lower in cls._CURL_URL_FLAGS:
+                    expect_url = True
+                    continue
+                if lower in cls._CURL_SKIP_VALUE_FLAGS:
+                    skip_next = True
+                    continue
+            elif binary in {"invoke-webrequest", "invoke-restmethod", "iwr", "irm"}:
+                if lower.startswith("-uri:") or lower.startswith("-url:"):
+                    urls.append(token.split(":", 1)[1])
+                    continue
+                if lower in cls._POWERSHELL_URL_FLAGS:
+                    expect_url = True
+                    continue
+                if lower in cls._POWERSHELL_SKIP_VALUE_FLAGS:
+                    skip_next = True
+                    continue
+
+            if token.startswith("-"):
+                continue
+            urls.append(token)
+        return urls
+
+    @classmethod
+    def _guard_network_fetch_targets(cls, argv: list[str]) -> str | None:
+        for binary, tokens in cls._iter_network_fetch_segments(argv):
+            for raw_url in cls._iter_network_fetch_target_urls(binary, tokens):
+                error = cls._validate_network_fetch_url(raw_url)
+                if error:
+                    return error
+        return None
+
     def _guard_explicit_shell_command(self, shell_command: str, cwd: Path, *, recursion_depth: int) -> str | None:
         if self.restrict_to_workspace:
             workspace = self.workspace_path
@@ -338,6 +485,10 @@ class ExecTool(Tool):
             return "blocked_by_policy:deny_pattern"
         if self.allow_patterns and (not self._match_any(self.allow_patterns, cmd)):
             return "blocked_by_policy:not_in_allow_patterns"
+
+        network_error = self._guard_network_fetch_targets(argv)
+        if network_error:
+            return network_error
 
         path_candidates = self._path_like_tokens(argv)
         for path_value in path_candidates:

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - engine regressions that inspect exact tool/tool-call history now use hermetic in-memory session state instead of machine-local persisted rows
 - cron scheduler regression coverage now waits on an explicit callback event instead of a fixed sleep, removing a suite-load race in `test_cron_service_add_and_run`
 - `exec` and `process` now treat explicit shell wrappers such as `sh -lc`, `bash -lc`, and `cmd /c` as nested shell executions for workspace guarding, so `$HOME` / `~` style path expansion can no longer bypass `restrict_to_workspace`
+- `exec` and `process` now block obvious `curl` / `wget` / PowerShell `http(s)` fetches to localhost, private ranges, and metadata-style targets, closing a network-policy bypass that sat outside `web_fetch`
 
 ## [v0.7.0-beta.0] - 2026-03-17
 
