@@ -1576,6 +1576,24 @@ class AgentEngine:
             return {"allow_memory_write": payload}
         return {}
 
+    async def _call_memory_side_effect(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *args: Any,
+        offload_sync: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        if inspect.iscoroutinefunction(fn):
+            return await fn(*args, **kwargs)
+        if offload_sync:
+            result = await asyncio.to_thread(fn, *args, **kwargs)
+        else:
+            result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     @staticmethod
     def _clamp_memory_search_limit(raw: Any, *, default: int = 6) -> int:
         try:
@@ -3325,6 +3343,7 @@ class AgentEngine:
         memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": assistant_text}]
         remember_working_messages_fn = getattr(self.memory, "remember_working_messages", None)
         remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
+        offload_sync = self._supports_deferred_turn_persistence()
         working_memory_written = False
         if callable(remember_working_messages_fn):
             base_working_kwargs: dict[str, Any] = {
@@ -3336,18 +3355,21 @@ class AgentEngine:
             if runtime_channel:
                 base_working_kwargs["metadata"] = {"channel": runtime_channel}
             try:
-                working_batch_result = remember_working_messages_fn(
+                await self._call_memory_side_effect(
+                    remember_working_messages_fn,
                     messages=memory_messages,
+                    offload_sync=offload_sync,
                     **base_working_kwargs,
                 )
-                if inspect.isawaitable(working_batch_result):
-                    await working_batch_result
                 working_memory_written = True
             except TypeError:
                 try:
-                    working_batch_result = remember_working_messages_fn(session_id, messages=memory_messages)
-                    if inspect.isawaitable(working_batch_result):
-                        await working_batch_result
+                    await self._call_memory_side_effect(
+                        remember_working_messages_fn,
+                        session_id,
+                        messages=memory_messages,
+                        offload_sync=offload_sync,
+                    )
                     working_memory_written = True
                 except Exception as exc:
                     run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
@@ -3363,32 +3385,36 @@ class AgentEngine:
             if runtime_channel:
                 base_working_kwargs["metadata"] = {"channel": runtime_channel}
             try:
-                working_user_result = remember_working_set_fn(
+                await self._call_memory_side_effect(
+                    remember_working_set_fn,
                     role="user",
                     content=user_text,
+                    offload_sync=offload_sync,
                     **base_working_kwargs,
                 )
-                if inspect.isawaitable(working_user_result):
-                    await working_user_result
-                working_assistant_result = remember_working_set_fn(
+                await self._call_memory_side_effect(
+                    remember_working_set_fn,
                     role="assistant",
                     content=assistant_text,
+                    offload_sync=offload_sync,
                     **base_working_kwargs,
                 )
-                if inspect.isawaitable(working_assistant_result):
-                    await working_assistant_result
             except TypeError:
                 try:
-                    working_user_result = remember_working_set_fn(session_id, role="user", content=user_text)
-                    if inspect.isawaitable(working_user_result):
-                        await working_user_result
-                    working_assistant_result = remember_working_set_fn(
+                    await self._call_memory_side_effect(
+                        remember_working_set_fn,
+                        session_id,
+                        role="user",
+                        content=user_text,
+                        offload_sync=offload_sync,
+                    )
+                    await self._call_memory_side_effect(
+                        remember_working_set_fn,
                         session_id,
                         role="assistant",
                         content=assistant_text,
+                        offload_sync=offload_sync,
                     )
-                    if inspect.isawaitable(working_assistant_result):
-                        await working_assistant_result
                 except Exception as exc:
                     run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
             except Exception as exc:
@@ -3409,19 +3435,28 @@ class AgentEngine:
                 if self._accepts_parameter(memorize_fn, "shared"):
                     memorize_kwargs["shared"] = False
                 try:
-                    memorize_result = memorize_fn(**memorize_kwargs)
+                    await self._call_memory_side_effect(
+                        memorize_fn,
+                        offload_sync=offload_sync,
+                        **memorize_kwargs,
+                    )
                 except TypeError:
-                    memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
-                if inspect.isawaitable(memorize_result):
-                    await memorize_result
+                    await self._call_memory_side_effect(
+                        memorize_fn,
+                        messages=memory_messages,
+                        source=f"session:{session_id}",
+                        offload_sync=offload_sync,
+                    )
             except Exception as exc:
                 run_log.warning("memory memorize failed session={} error={}", session_id or "-", exc)
             return
 
         try:
-            self.memory.consolidate(
+            await self._call_memory_side_effect(
+                self.memory.consolidate,
                 memory_messages,
                 source=f"session:{session_id}",
+                offload_sync=offload_sync,
             )
         except Exception as exc:
             run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)

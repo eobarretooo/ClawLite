@@ -5,6 +5,7 @@ import asyncio
 import copy
 import gc
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -499,6 +500,54 @@ class FakeMemoryWithDeferredTurnPersistence(FakeMemory):
                 "reasoning_layer": reasoning_layer,
                 "memory_type": memory_type,
                 "happened_at": happened_at,
+            }
+        )
+        return {"status": "ok"}
+
+
+class FakeMemoryWithSlowDeferredWorkingSet(FakeMemory):
+    supports_deferred_turn_persistence = True
+
+    def __init__(self, *, delay_s: float = 0.3) -> None:
+        super().__init__([])
+        self.delay_s = max(0.0, float(delay_s))
+        self.batch_calls: list[dict[str, Any]] = []
+        self.memorize_calls: list[dict[str, Any]] = []
+
+    def remember_working_messages(
+        self,
+        *,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        user_id: str = "default",
+        metadata: dict[str, Any] | None = None,
+        allow_promotion: bool = True,
+    ) -> None:
+        time.sleep(self.delay_s)
+        self.batch_calls.append(
+            {
+                "session_id": session_id,
+                "messages": [dict(item) for item in messages],
+                "user_id": user_id,
+                "metadata": dict(metadata or {}),
+                "allow_promotion": allow_promotion,
+            }
+        )
+
+    async def memorize(
+        self,
+        *,
+        messages=None,
+        source: str = "session",
+        user_id: str = "",
+        shared: bool = False,
+    ) -> dict[str, Any]:
+        self.memorize_calls.append(
+            {
+                "messages": [dict(item) for item in messages or []],
+                "source": source,
+                "user_id": user_id,
+                "shared": shared,
             }
         )
         return {"status": "ok"}
@@ -2610,6 +2659,36 @@ def test_engine_run_defers_memory_persistence_until_after_transcript_write() -> 
             },
         ]
         await engine.drain_turn_persistence()
+
+    asyncio.run(_scenario())
+
+
+def test_engine_deferred_working_memory_does_not_block_other_sessions() -> None:
+    async def _scenario() -> None:
+        provider = FakeFixedTextProvider("pong")
+        memory = FakeMemoryWithSlowDeferredWorkingSet(delay_s=0.35)
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=InMemorySessionStore(),
+            memory=memory,
+        )
+
+        first = await engine.run(session_id="cli:one", user_text="first")
+        assert first.text == "pong"
+
+        started_at = time.perf_counter()
+        await asyncio.sleep(0)
+        second = await asyncio.wait_for(engine.run(session_id="cli:two", user_text="second"), timeout=1.0)
+        elapsed = time.perf_counter() - started_at
+
+        assert second.text == "pong"
+        assert elapsed < 0.25
+
+        await engine.drain_turn_persistence()
+        assert [row["session_id"] for row in memory.batch_calls] == ["cli:one", "cli:two"]
+        assert memory.memorize_calls[0]["source"] == "session:cli:one"
+        assert memory.memorize_calls[1]["source"] == "session:cli:two"
 
     asyncio.run(_scenario())
 
