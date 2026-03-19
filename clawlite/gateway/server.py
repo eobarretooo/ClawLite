@@ -21,6 +21,7 @@ from clawlite.bus.queue import MessageQueue
 from clawlite.config.loader import load_config
 from clawlite.config.schema import AppConfig
 from clawlite.core.engine import AgentEngine
+from clawlite.core.huginn_muninn import wrap_with_ravens
 from clawlite.core.memory_monitor import MemoryMonitor, MemorySuggestion
 from clawlite.providers import detect_provider_name
 from clawlite.providers.catalog import default_provider_model, provider_profile
@@ -1264,6 +1265,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "If nothing needs operator attention right now, reply AUTONOMY_IDLE. "
             "If the operator needs a concise autonomous update, reply with only that notice text."
         )
+        # Log ravens' counsel if they surface high-priority findings
+        ravens = (snapshot or {}).get("ravens_counsel") or {}
+        if isinstance(ravens, dict) and ravens.get("combined_priority") in ("high", "medium"):
+            huginn_d = ravens.get("huginn") or {}
+            muninn_d = ravens.get("muninn") or {}
+            bind_event("ravens").warning(
+                "ᚺ Huginn [{}] {} | ᛗ Muninn {}",
+                huginn_d.get("priority", "?"),
+                huginn_d.get("suggested_action", "")[:80],
+                muninn_d.get("suggested_action", "")[:80],
+            )
         snapshot_text = json.dumps(snapshot or {}, ensure_ascii=False, sort_keys=True)
         result = await _run_engine_with_timeout(
             engine=runtime.engine,
@@ -2396,7 +2408,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         max_queue_backlog=int(cfg.gateway.autonomy.max_queue_backlog or 200),
         session_id=str(cfg.gateway.autonomy.session_id or "autonomy:system"),
         snapshot_callback=_autonomy_snapshot_payload,
-        run_callback=_run_autonomy_tick,
+        run_callback=wrap_with_ravens(_run_autonomy_tick),
     )
 
     async def _supervisor_incident_checks() -> list[SupervisorIncident]:
