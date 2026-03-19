@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - inbound channel text now also neutralizes bracketed `[Developer]` role-spoof markers before channel traffic reaches the agent loop, while keeping noisier prefixes like `Assistant:` and `Tool:` untouched for now
 - `stream_run()` now also falls back to the full `run()` loop for explicit GitHub and Docker skill-routed turns, reducing another class of streaming/text-only divergence without broadly disabling provider streaming
 - the untrusted runtime-context block is now merged into the current user turn before provider calls, avoiding another provider-compatibility edge around adjacent `user` messages without changing what gets persisted to session history
+- gateway WebSocket streaming now coalesces tiny provider chunks into fewer `chat.chunk` events before the final response, reducing frame spam without changing ordering or accumulated text semantics
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

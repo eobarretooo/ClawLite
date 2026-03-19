@@ -4701,7 +4701,6 @@ def test_gateway_ws_req_streams_chunks_before_final_response(tmp_path: Path) -> 
                 }
             )
             chunk_one = socket.receive_json()
-            chunk_two = socket.receive_json()
             final_payload = socket.receive_json()
 
     assert seen == [
@@ -4717,19 +4716,7 @@ def test_gateway_ws_req_streams_chunks_before_final_response(tmp_path: Path) -> 
         "id": "m-stream",
         "params": {
             "session_id": "cli:req-stream",
-            "text": "po",
-            "accumulated": "po",
-            "done": False,
-            "degraded": False,
-        },
-    }
-    assert chunk_two == {
-        "type": "event",
-        "event": "chat.chunk",
-        "id": "m-stream",
-        "params": {
-            "session_id": "cli:req-stream",
-            "text": "ng",
+            "text": "pong",
             "accumulated": "pong",
             "done": True,
             "degraded": False,

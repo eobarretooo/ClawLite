@@ -171,8 +171,67 @@ def test_websocket_handler_streams_req_chat_chunks_before_final_result() -> None
         "id": "m1",
         "params": {
             "session_id": "cli:req-stream",
-            "text": "po",
-            "accumulated": "po",
+            "text": "pong",
+            "accumulated": "pong",
+            "done": True,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[3] == {
+        "type": "res",
+        "id": "m1",
+        "ok": True,
+        "result": {
+            "session_id": "cli:req-stream",
+            "text": "pong",
+            "model": "",
+        },
+    }
+
+
+def test_websocket_handler_coalesces_stream_until_sentence_boundary() -> None:
+    handler, socket = _build_handler(
+        inbound=[
+            {"type": "req", "id": "c1", "method": "connect", "params": {}},
+            {
+                "type": "req",
+                "id": "m2",
+                "method": "chat.send",
+                "params": {
+                    "sessionId": "cli:req-stream-boundary",
+                    "text": "ping",
+                    "stream": True,
+                },
+            },
+        ]
+    )
+
+    async def _sentence_stream(
+        session_id: str,
+        text: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, object] | None = None,
+    ):
+        del session_id, text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="Hello world", accumulated="Hello world", done=False)
+        yield ProviderChunk(text=", this is a test.", accumulated="Hello world, this is a test.", done=False)
+        yield ProviderChunk(text=" Next chunk", accumulated="Hello world, this is a test. Next chunk", done=False)
+        yield ProviderChunk(text=" closes.", accumulated="Hello world, this is a test. Next chunk closes.", done=True)
+
+    handler.stream_engine_with_timeout_fn = _sentence_stream
+
+    asyncio.run(handler.handle(socket, path_label="/ws"))
+
+    assert socket.sent[2] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m2",
+        "params": {
+            "session_id": "cli:req-stream-boundary",
+            "text": "Hello world, this is a test.",
+            "accumulated": "Hello world, this is a test.",
             "done": False,
             "degraded": False,
         },
@@ -180,22 +239,22 @@ def test_websocket_handler_streams_req_chat_chunks_before_final_result() -> None
     assert socket.sent[3] == {
         "type": "event",
         "event": "chat.chunk",
-        "id": "m1",
+        "id": "m2",
         "params": {
-            "session_id": "cli:req-stream",
-            "text": "ng",
-            "accumulated": "pong",
+            "session_id": "cli:req-stream-boundary",
+            "text": " Next chunk closes.",
+            "accumulated": "Hello world, this is a test. Next chunk closes.",
             "done": True,
             "degraded": False,
         },
     }
     assert socket.sent[4] == {
         "type": "res",
-        "id": "m1",
+        "id": "m2",
         "ok": True,
         "result": {
-            "session_id": "cli:req-stream",
-            "text": "pong",
+            "session_id": "cli:req-stream-boundary",
+            "text": "Hello world, this is a test. Next chunk closes.",
             "model": "",
         },
     }

@@ -1361,6 +1361,10 @@ Output message:
 {"text":"...","model":"gemini/gemini-2.5-flash"}
 ```
 
+Quando `stream=true` for usado no envelope `req` moderno, o gateway envia eventos `chat.chunk`
+antes do `res` final. Esses eventos podem ser coalescidos pelo transporte para juntar chunks muito
+pequenos do provider em blocos mais úteis, preservando a ordem e o campo `accumulated`.
+
 Alias compatível: `WS /ws` (mesmo comportamento, incluindo autenticação).
 
 ## Envelope de erro HTTP
