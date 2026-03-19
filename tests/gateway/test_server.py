@@ -173,6 +173,73 @@ class ProviderWithFailoverDiagnostics:
         return {"ok": True, "cleared": 1, "role": role, "model": model}
 
 
+def _normalized_diagnostics_engine_payload(engine_payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(engine_payload)
+
+    skills_diag = dict(normalized.get("skills", {}) or {})
+    watcher = dict(skills_diag.get("watcher", {}) or {})
+    for key in (
+        "ticks",
+        "last_result",
+        "last_tick_monotonic",
+        "last_refresh_monotonic",
+        "pending",
+        "debounced",
+    ):
+        watcher.pop(key, None)
+    skills_diag["watcher"] = watcher
+    normalized["skills"] = skills_diag
+
+    memory_analysis = dict(normalized.get("memory_analysis", {}) or {})
+    if memory_analysis:
+        confidence = dict(memory_analysis.get("confidence", {}) or {})
+        counts = dict(memory_analysis.get("counts", {}) or {})
+        recent = dict(memory_analysis.get("recent", {}) or {})
+        semantic = dict(memory_analysis.get("semantic", {}) or {})
+        normalized["memory_analysis"] = {
+            "available": bool(memory_analysis.get("available", False)),
+            "keys": sorted(memory_analysis.keys()),
+            "confidence_keys": sorted(confidence.keys()),
+            "counts_keys": sorted(counts.keys()),
+            "recent_keys": sorted(recent.keys()),
+            "semantic_keys": sorted(semantic.keys()),
+            "reasoning_layers_type": type(memory_analysis.get("reasoning_layers", {})).__name__,
+            "categories_type": type(memory_analysis.get("categories", {})).__name__,
+            "top_sources_type": type(memory_analysis.get("top_sources", [])).__name__,
+        }
+
+    memory_integration = dict(normalized.get("memory_integration", {}) or {})
+    if memory_integration:
+        policies = dict(memory_integration.get("policies", {}) or {})
+        quality = dict(memory_integration.get("quality", {}) or {})
+        normalized["memory_integration"] = {
+            "available": bool(memory_integration.get("available", False)),
+            "mode": str(memory_integration.get("mode", "")),
+            "keys": sorted(memory_integration.keys()),
+            "policy_keys": sorted(policies.keys()),
+            "quality_keys": sorted(quality.keys()),
+        }
+
+    memory_quality = dict(normalized.get("memory_quality", {}) or {})
+    if memory_quality:
+        report = dict(memory_quality.get("report", {}) or {})
+        reasoning_layers = dict(report.get("reasoning_layers", {}) or {})
+        state = dict(memory_quality.get("state", {}) or {})
+        tuning = dict(memory_quality.get("tuning", {}) or {})
+        normalized["memory_quality"] = {
+            "available": bool(memory_quality.get("available", False)),
+            "updated": bool(memory_quality.get("updated", False)),
+            "error_type": type(memory_quality.get("error")).__name__,
+            "keys": sorted(memory_quality.keys()),
+            "report_keys": sorted(report.keys()),
+            "report_reasoning_layer_keys": sorted(reasoning_layers.keys()),
+            "state_keys": sorted(state.keys()),
+            "tuning_keys": sorted(tuning.keys()),
+        }
+
+    return normalized
+
+
 class RecoveringGatewayChannel(BaseChannel):
     starts = 0
 
@@ -5321,22 +5388,8 @@ def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:
         assert alias_payload["schema_version"] == payload["schema_version"]
         assert alias_payload["contract_version"] == payload["contract_version"]
         assert alias_payload["environment"] == payload["environment"]
-        expected_engine = dict(payload["engine"])
-        actual_engine = dict(alias_payload["engine"])
-        for engine_block in (expected_engine, actual_engine):
-            skills_diag = dict(engine_block.get("skills", {}) or {})
-            watcher = dict(skills_diag.get("watcher", {}) or {})
-            for key in (
-                "ticks",
-                "last_result",
-                "last_tick_monotonic",
-                "last_refresh_monotonic",
-                "pending",
-                "debounced",
-            ):
-                watcher.pop(key, None)
-            skills_diag["watcher"] = watcher
-            engine_block["skills"] = skills_diag
+        expected_engine = _normalized_diagnostics_engine_payload(dict(payload["engine"]))
+        actual_engine = _normalized_diagnostics_engine_payload(dict(alias_payload["engine"]))
         assert actual_engine == expected_engine
         assert set(alias_payload["control_plane"].keys()) == set(payload["control_plane"].keys())
         assert alias_payload["control_plane"]["contract_version"] == payload["control_plane"]["contract_version"]
@@ -6392,22 +6445,8 @@ def test_gateway_diagnostics_omits_provider_telemetry_when_disabled(tmp_path: Pa
 
         alias_payload = client.get("/api/diagnostics").json()
         assert "provider" not in alias_payload["engine"]
-        expected_engine = dict(payload["engine"])
-        actual_engine = dict(alias_payload["engine"])
-        for engine_block in (expected_engine, actual_engine):
-            skills_diag = dict(engine_block.get("skills", {}) or {})
-            watcher = dict(skills_diag.get("watcher", {}) or {})
-            for key in (
-                "ticks",
-                "last_result",
-                "last_tick_monotonic",
-                "last_refresh_monotonic",
-                "pending",
-                "debounced",
-            ):
-                watcher.pop(key, None)
-            skills_diag["watcher"] = watcher
-            engine_block["skills"] = skills_diag
+        expected_engine = _normalized_diagnostics_engine_payload(dict(payload["engine"]))
+        actual_engine = _normalized_diagnostics_engine_payload(dict(alias_payload["engine"]))
         assert actual_engine == expected_engine
 
 
