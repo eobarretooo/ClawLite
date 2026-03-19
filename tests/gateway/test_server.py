@@ -3376,6 +3376,44 @@ def test_gateway_tools_approval_review_endpoint_updates_request(tmp_path: Path) 
     assert grant_keys[0].startswith("exact::req-1::telegram:1::telegram::browser:evaluate")
 
 
+def test_gateway_tools_approval_review_endpoint_rejects_actor_bound_requests_from_generic_control_plane(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    registry = app.state.runtime.engine.tools
+    registry._approval_requests["req-actor"] = {
+        "request_id": "req-actor",
+        "tool": "browser",
+        "session_id": "telegram:1",
+        "channel": "telegram",
+        "requester_actor": "telegram:42",
+        "matched_approval_specifiers": ["browser:evaluate"],
+        "status": "pending",
+        "created_at_monotonic": time.monotonic() - 1.0,
+        "expires_at_monotonic": time.monotonic() + 300.0,
+        "arguments_preview": '{"action":"evaluate"}',
+        "approval_context": {"tool": "browser", "action": "evaluate"},
+        "notified_count": 1,
+    }
+    registry._approval_request_order.append("req-actor")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/tools/approvals/req-actor/approve",
+            json={"actor": "telegram:42", "note": "ok"},
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error"] == "approval_channel_bound:telegram:42"
+    reviewed = registry._approval_requests["req-actor"]
+    assert reviewed["status"] == "pending"
+
+
 def test_gateway_tools_grants_revoke_endpoint_removes_matching_grants(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),

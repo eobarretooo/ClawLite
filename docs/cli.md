@@ -246,7 +246,7 @@ The local skill state is stored in `~/.clawlite/state/skills-state.json`.
 | `tools show <name>` | Shows one live tool entry, resolving aliases like `bash -> exec` | `clawlite tools show bash` |
 
 `tools safety` does not run the tool. It shows the resolved channel, derived specifiers, matched risky rules, matched approval rules, a structured `approval_context`, and a final `decision` of `allow`, `approval`, or `block`. For `exec`, the preview now also exposes derived specifiers such as `exec:shell`, `exec:env-key:...`, and `exec:cwd`.
-`tools approvals`, `tools approve`, `tools reject`, and `tools revoke-grant` use the live gateway control surface and accept the same `--gateway-url`, `--token`, and `--timeout` flags as `tools catalog`. Approval rows now surface structured context like exec binary/env keys/cwd and browser or web host targets, and `tools approvals` can narrow the queue further with `--tool` and `--rule`.
+`tools approvals`, `tools approve`, `tools reject`, and `tools revoke-grant` use the live gateway control surface and accept the same `--gateway-url`, `--token`, and `--timeout` flags as `tools catalog`. Approval rows now surface structured context like exec binary/env keys/cwd and browser or web host targets, and `tools approvals` can narrow the queue further with `--tool` and `--rule`. When a request row includes `requester_actor`, that review is actor-bound: inspect it from CLI if you want, but approve/reject it from the original Telegram/Discord interaction instead of the generic CLI command.
 `tools catalog` and `tools show` call the gateway catalog endpoint and accept `--gateway-url`, `--token`, and `--timeout`.
 
 ## Common Operator Workflow

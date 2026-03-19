@@ -177,10 +177,13 @@ class GatewayRequestHandlers:
             raise HTTPException(status_code=500, detail="tool_approval_review_failed")
         if not bool(summary.get("ok", False)):
             error = str(summary.get("error", "tool_approval_review_failed") or "tool_approval_review_failed")
+            expected_actor = str(summary.get("expected_actor", "") or "").strip()
             if error == "approval_request_not_found":
                 raise HTTPException(status_code=404, detail=error)
             if error == "invalid_review_decision":
                 raise HTTPException(status_code=400, detail=error)
+            if error in {"approval_actor_required", "approval_actor_mismatch", "approval_channel_bound"} and expected_actor:
+                raise HTTPException(status_code=400, detail=f"{error}:{expected_actor}")
             raise HTTPException(status_code=400, detail=error)
         return {"ok": True, "summary": summary}
 

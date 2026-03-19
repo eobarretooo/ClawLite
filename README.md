@@ -127,6 +127,7 @@ Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
 - Builtin skills can now be gated with `skills.allowBundled` without blocking workspace or marketplace overrides.
 - Tool safety now supports granular specifiers such as `browser:evaluate`, `run_skill:github`, `exec:git`, `exec:shell`, and `exec:env-key:git-ssh-command`, plus approval mode via `approval_specifiers` / `approval_channels`, with `tool:*` wildcards for channel-specific policy.
 - The default approval baseline is now safer out of the box: `browser:evaluate`, `exec`, `mcp`, and `run_skill` require approval on Telegram and Discord, and approval reviews are bound to the original requester when that actor identity is available.
+- Actor-bound Telegram/Discord approval requests can still be inspected from the gateway or CLI, but the actual approve/reject step now stays on the native channel interaction instead of trusting a manually supplied actor string over the generic control plane.
 - Tool safety now also derives host-aware rules for `web_fetch` and `browser:navigate`, so operator policy can target specific destinations such as `web_fetch:host:example-com` instead of only whole-tool approvals.
 - Explicit shell wrappers like `sh -lc`, `bash -lc`, and `cmd /c` now classify as `exec:shell` and are recursively guarded under workspace restriction, so they no longer bypass `restrict_to_workspace` by hiding path access behind `$HOME`, `~`, or similar expansions.
 - `exec` and `process` now also block obvious `curl` / `wget` / PowerShell web fetches to localhost, private ranges, and metadata-style `http(s)` targets, closing a network-policy bypass that previously sat outside `web_fetch`.
@@ -159,7 +160,7 @@ Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
 - Prompt/context hardening on `main` now includes larger history budget allocation, optional semantic compression for trimmed history, optional oversized tool-result compaction, workspace prompt file byte ceilings, and explicit per-tool timeout overrides through `tools.timeouts.<tool>`.
 - The cron control plane now exposes richer operational state: `/v1/cron/status`, expanded `/v1/cron/list`, per-job inspection, and native enable/disable controls on top of the existing scheduler.
 - Runtime scale-out and observability are now in place as opt-in surfaces: Redis bus backend, OTLP telemetry hooks, session TTL, history compaction, `sqlite-vec`, and `memory_compact`.
-- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1767 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `194 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
+- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1770 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `194 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
 - Tracking docs: [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROBUSTNESS_SCORECARD.md`](docs/ROBUSTNESS_SCORECARD.md).
 - The next major execution track is the OpenClaw parity push for Docker, Discord, tools, and skills.
 

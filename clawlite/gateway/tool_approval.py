@@ -199,6 +199,7 @@ async def handle_tool_approval_inbound_action(
         decision=decision,
         actor=actor,
         note=note,
+        trusted_actor=True,
     )
 
     if bool(result.get("ok", False)):
@@ -232,6 +233,10 @@ async def handle_tool_approval_inbound_action(
         return True
 
     error = str(result.get("error", "review_failed") or "review_failed")
+    if error == "approval_actor_required":
+        error = "approval_actor_required:reviewer identity is required for this approval"
+    if error == "approval_channel_bound":
+        error = "approval_channel_bound:this approval must be reviewed from the original channel interaction"
     if error == "approval_actor_mismatch":
         error = "approval_actor_mismatch:only the original requester can review this approval"
     await _reply_to_event(

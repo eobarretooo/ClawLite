@@ -1084,7 +1084,7 @@ Alias compatível: `GET /api/tools/approvals`.
 
 ## `POST /v1/tools/approvals/{request_id}/approve`
 
-Approves one pending tool request and creates the temporary grant bound to the reviewed request fingerprint plus the same session, channel, and matched specifier set. When `requester_actor` was recorded on the original request, only that same actor can review it; mismatches fail closed with `approval_actor_mismatch`.
+Approves one pending tool request and creates the temporary grant bound to the reviewed request fingerprint plus the same session, channel, and matched specifier set. When `requester_actor` was recorded on the original request, only that same actor can review it from the native channel interaction path; generic HTTP review fails closed with `approval_actor_required`, `approval_actor_mismatch`, or `approval_channel_bound`.
 
 Request body:
 
@@ -1096,6 +1096,8 @@ Request body:
 ```
 
 Alias compatível: `POST /api/tools/approvals/{request_id}/approve`.
+
+For actor-bound channel requests, inspect the queue over HTTP/CLI if needed, but perform the actual review from the original Telegram/Discord button callback instead of the generic control-plane endpoint.
 
 ## `POST /v1/tools/approvals/{request_id}/reject`
 

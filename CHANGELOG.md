@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - gateway WebSocket coalescing now also supports configurable delivery profiles (`compact`, `newline`, `paragraph`, `raw`) so different WS clients can choose how aggressively chunks are grouped without changing the engine stream itself
 - the default approval baseline now requires review for `browser:evaluate`, `exec`, `mcp`, and `run_skill` on Telegram and Discord, instead of leaving those channels opt-in by default
 - approval-gated tool reviews now fail closed when a different actor tries to approve someone else's request on channels where the original requester identity is known
+- actor-bound Telegram/Discord approval requests can no longer be approved through the generic gateway/CLI review path just by replaying the expected actor string; those reviews now stay on the native channel interaction path unless stronger control-plane identity is added later
 - `stream_run()` now keeps the per-session lock through provider-stream cleanup and persists even empty completed turns, reducing another class of state divergence versus `run()`
 - the `message` tool now exposes a more honest per-channel contract: Discord supports send plus button components, Telegram keeps the richer action/media bridge, and unsupported channels fail closed for advanced actions/buttons/media
 
