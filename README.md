@@ -141,7 +141,7 @@ Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
 - That WebSocket chunk coalescing is now tunable under `gateway.websocket` (`coalesce_enabled`, `coalesce_min_chars`, `coalesce_max_chars`, `coalesce_profile`) while keeping the previous defaults.
 - Scheduled cron turns and queued `agent_run` / `skill_exec` jobs now preserve explicit routing context (`channel`, `target` / `chat_id`, `runtime_metadata`) when that data is already present in the payload.
 - `stream_run()` now falls back to the full agent loop for live lookup turns, explicit GitHub/Docker skill-routed turns, and summarize requests that clearly point at a URL or file, so streaming no longer takes a text-only shortcut when the runtime already knows the answer should go through operational tools or verified lookup.
-- `stream_run()` now also keeps the same per-session lock through provider streaming cleanup and persists even empty completed turns, reducing another class of state divergence against `run()`.
+- `stream_run()` now also keeps the same per-session lock through provider streaming cleanup, reuses the same completed-turn session/memory persistence path as `run()` for successful streams, and avoids appending empty assistant rows when a provider ends the stream with an error chunk.
 - The `message` tool is now more honest about per-channel capabilities: Telegram keeps the richer action/media bridge, Discord supports send plus button components, and unsupported channels fail closed instead of silently pretending advanced actions exist.
 - The prompt runtime-context block is now merged into the current user turn before provider calls, reducing provider-compatibility risk from adjacent `user` messages while preserving the same untrusted metadata semantics and raw session persistence.
 - Approval-gated tool calls now surface interactive approve/reject controls in Telegram and Discord, backed by temporary request-bound grants so the operator can approve and then retry only that reviewed call safely.
@@ -160,7 +160,7 @@ Full guide: [`docs/DOCKER.md`](docs/DOCKER.md)
 - Prompt/context hardening on `main` now includes larger history budget allocation, optional semantic compression for trimmed history, optional oversized tool-result compaction, workspace prompt file byte ceilings, and explicit per-tool timeout overrides through `tools.timeouts.<tool>`.
 - The cron control plane now exposes richer operational state: `/v1/cron/status`, expanded `/v1/cron/list`, per-job inspection, and native enable/disable controls on top of the existing scheduler.
 - Runtime scale-out and observability are now in place as opt-in surfaces: Redis bus backend, OTLP telemetry hooks, session TTL, history compaction, `sqlite-vec`, and `memory_compact`.
-- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1770 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `194 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
+- Latest validation on `main`: `python -m pytest tests -q --tb=short` → `1774 passed, 1 skipped`; `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → `194 passed`; `bash scripts/smoke_test.sh` → `7 ok / 0 failure(s)`.
 - Tracking docs: [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROBUSTNESS_SCORECARD.md`](docs/ROBUSTNESS_SCORECARD.md).
 - The next major execution track is the OpenClaw parity push for Docker, Discord, tools, and skills.
 

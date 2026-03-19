@@ -11,7 +11,7 @@ Phase 7 is complete on `main`: `self_evolution` validates fixes fail-closed, pro
 The current OpenClaw parity track is active on `main`. The latest slice adds structured approval context for approval-gated tool calls, so gateway/CLI/operator reviews now show exec binary/env keys/cwd plus browser or web host targets instead of only raw argument previews.
 That same approval state remains exposed through the gateway/CLI (`tools approvals|approve|reject|revoke-grant`) with exact `tool` / `rule` filters, `exec` approvals understand shell/env/cwd-derived specifiers such as `exec:shell` and `exec:env-key:git-ssh-command`, and skills gained richer local operator visibility through `skills doctor`, `skills managed`, `skills search local_matches`, and the new `skills config` write path for `skills.entries.<skillKey>`. Docker also moved into the next parity slice: the official image now runs rootless as `clawlite`, a `scripts/docker_setup.sh` helper bootstraps build/configure/up, and CI now validates `docker compose config` plus an image build smoke.
 The current hardening slice also closes the remaining `plano.md` runtime gaps: `ContextWindowManager` now budgets assistant `tool_calls`, session listing is mtime-sorted, empty frontmatter skill names are flagged in diagnostics, prompt history now has a larger cap with optional semantic trimming and oversized tool-result compaction, OAuth-backed Gemini/Qwen providers can refresh file-backed credentials once on `401`, tool execution supports per-tool timeout overrides, and cron now exposes richer status/list/get/enable/disable control-plane routes plus a cross-process `portalocker` fallback when `fcntl` is unavailable.
-The newest follow-up slice tightens the default approval baseline on Telegram/Discord, binds approval review to the original requester when available, keeps `stream_run()` under the same session-lock discipline during provider-stream cleanup, and makes the `message` tool explicit about per-channel capabilities instead of silently overpromising advanced actions.
+The newest follow-up slice tightens the default approval baseline on Telegram/Discord, binds approval review to the original requester when available, keeps `stream_run()` under the same session-lock discipline during provider-stream cleanup, reuses the same completed-turn persistence path for successful streams while skipping empty assistant rows on provider-error done-chunks, and makes the `message` tool explicit about per-channel capabilities instead of silently overpromising advanced actions.
 
 > **🤖 AI-built · Solo dev** — Every commit is written by Claude (AI), with the author supervising direction. No team.
 
@@ -19,7 +19,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **1770 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **1774 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, and CI smoke for `docker compose config` plus image build
@@ -99,7 +99,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 1770 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 1774 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
