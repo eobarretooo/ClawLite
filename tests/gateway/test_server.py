@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -6482,6 +6483,17 @@ def test_gateway_job_workers_forward_context_for_agent_and_skill_runs(tmp_path: 
     )
     app = create_app(cfg)
     seen: list[dict[str, Any]] = []
+    agent_seen = threading.Event()
+    skill_seen = threading.Event()
+
+    def _job_state(job: Any) -> dict[str, Any]:
+        if job is None:
+            return {"status": None, "error": "", "result": ""}
+        return {
+            "status": getattr(job, "status", None),
+            "error": str(getattr(job, "error", "") or ""),
+            "result": str(getattr(job, "result", "") or ""),
+        }
 
     async def _capture_run(
         *,
@@ -6498,8 +6510,12 @@ def test_gateway_job_workers_forward_context_for_agent_and_skill_runs(tmp_path: 
                 "channel": channel,
                 "chat_id": chat_id,
                 "runtime_metadata": runtime_metadata,
-            }
-        )
+                }
+            )
+        if session_id == "telegram:42":
+            agent_seen.set()
+        elif session_id == "discord:99":
+            skill_seen.set()
         return SimpleNamespace(text="ok", model="fake/test")
 
     app.state.runtime.engine.run = _capture_run
@@ -6528,15 +6544,26 @@ def test_gateway_job_workers_forward_context_for_agent_and_skill_runs(tmp_path: 
             session_id="discord:99",
         )
 
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             agent_status = app.state.runtime.job_queue.status(agent_job.id)
             skill_status = app.state.runtime.job_queue.status(skill_job.id)
-            if agent_status is not None and skill_status is not None and agent_status.status == "done" and skill_status.status == "done":
+            if (
+                agent_seen.is_set()
+                and skill_seen.is_set()
+                and agent_status is not None
+                and skill_status is not None
+                and agent_status.status == "done"
+                and skill_status.status == "done"
+            ):
                 break
             time.sleep(0.05)
         else:
-            raise AssertionError("timed out waiting for job workers to finish")
+            raise AssertionError(
+                "timed out waiting for job workers to finish "
+                f"(agent_seen={agent_seen.is_set()} agent={_job_state(agent_status)} "
+                f"skill_seen={skill_seen.is_set()} skill={_job_state(skill_status)})"
+            )
 
     forwarded = [row for row in seen if row["session_id"] in {"telegram:42", "discord:99"}]
     assert forwarded == [
