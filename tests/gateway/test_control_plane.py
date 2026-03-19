@@ -32,6 +32,9 @@ def test_control_plane_auth_payload_reads_guard_shape() -> None:
         "token_configured": True,
         "header_name": "x-clawlite-token",
         "query_param": "token",
+        "dashboard_session_enabled": False,
+        "dashboard_session_header_name": "",
+        "dashboard_session_query_param": "",
     }
 
 

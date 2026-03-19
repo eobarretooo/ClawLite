@@ -370,11 +370,12 @@ class GatewayWebSocketHandlers:
         )
         return True
 
-    async def handle(self, socket: WebSocket, *, path_label: str) -> None:
+    async def handle(self, socket: WebSocket, *, path_label: str, allow_dashboard_session: bool = False) -> None:
         if not await self.auth_guard.check_ws(
             socket=socket,
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
+            allow_dashboard_session=allow_dashboard_session,
         ):
             return
         await socket.accept()

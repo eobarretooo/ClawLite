@@ -2828,6 +2828,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"dashboard_state": "/api/dashboard/state"' in body
         assert '"status": "/api/status"' in body
         assert '"diagnostics": "/api/diagnostics"' in body
+        assert '"dashboard_session": "/api/dashboard/session"' in body
         assert '"message": "/api/message"' in body
         assert '"channels_replay": "/v1/control/channels/replay"' in body
         assert '"channels_recover": "/v1/control/channels/recover"' in body
@@ -2902,6 +2903,10 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "window.sessionStorage" in js.text
     assert "window.localStorage.setItem(tokenStorageKey" not in js.text
     assert "storageRemove(window.localStorage, tokenStorageKey);" in js.text
+    assert 'const dashboardSessionStorageKey = "clawlite.dashboard.sessionToken"' in js.text
+    assert "exchangeDashboardSession" in js.text
+    assert '"/api/dashboard/session"' in js.text
+    assert "X-ClawLite-Dashboard-Session" in js.text
     assert "dashboard:operator:" in js.text
     assert "scheduleAutoRefresh" in js.text
     assert "window.location.hash" in js.text
@@ -4508,6 +4513,123 @@ def test_gateway_auth_required_for_control_plane(tmp_path: Path) -> None:
         )
         assert chat.status_code == 200
         assert chat.json()["text"] == "pong"
+
+
+def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "secret-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        missing = client.post("/api/dashboard/session")
+        assert missing.status_code == 401
+        assert missing.json()["error"] == "gateway_auth_required"
+
+        query_denied = client.post("/api/dashboard/session?token=secret-token")
+        assert query_denied.status_code == 401
+        assert query_denied.json()["error"] == "gateway_auth_required"
+
+        minted = client.post("/api/dashboard/session", headers={"Authorization": "Bearer secret-token"})
+        assert minted.status_code == 200
+        payload = minted.json()
+        assert payload["ok"] is True
+        assert payload["token_type"] == "dashboard_session"
+        assert payload["session_token"].startswith("dshs1.")
+        session_headers = {payload["header_name"]: payload["session_token"]}
+
+        api_status = client.get("/api/status", headers=session_headers)
+        assert api_status.status_code == 200
+        assert api_status.json()["auth"]["dashboard_session_enabled"] is True
+
+        dashboard_state = client.get("/api/dashboard/state", headers=session_headers)
+        assert dashboard_state.status_code == 200
+
+        api_token = client.get("/api/token", headers=session_headers)
+        assert api_token.status_code == 200
+        assert api_token.json()["dashboard_session_enabled"] is True
+
+        api_tools = client.get("/api/tools/catalog", headers=session_headers)
+        assert api_tools.status_code == 200
+
+        api_message = client.post(
+            "/api/message",
+            headers=session_headers,
+            json={"session_id": "dashboard:test", "text": "ping"},
+        )
+        assert api_message.status_code == 200
+        assert api_message.json()["text"] == "pong"
+
+        v1_status = client.get("/v1/status", headers=session_headers)
+        assert v1_status.status_code == 401
+        assert v1_status.json()["error"] == "gateway_auth_required"
+
+        v1_tools = client.get("/v1/tools/catalog", headers=session_headers)
+        assert v1_tools.status_code == 401
+        assert v1_tools.json()["error"] == "gateway_auth_required"
+
+        v1_chat = client.post(
+            "/v1/chat",
+            headers=session_headers,
+            json={"session_id": "dashboard:test", "text": "ping"},
+        )
+        assert v1_chat.status_code == 401
+        assert v1_chat.json()["error"] == "gateway_auth_required"
+
+
+def test_gateway_dashboard_session_alias_ws_only_and_not_chainable(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "secret-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        minted = client.post("/api/dashboard/session", headers={"Authorization": "Bearer secret-token"})
+        assert minted.status_code == 200
+        payload = minted.json()
+        session_headers = {payload["header_name"]: payload["session_token"]}
+
+        nested = client.post("/api/dashboard/session", headers=session_headers)
+        assert nested.status_code == 401
+        assert nested.json()["error"] == "gateway_auth_required"
+
+        invalid = client.get("/api/status", headers={payload["header_name"]: "dshs1.invalid"})
+        assert invalid.status_code == 401
+        assert invalid.json()["error"] == "gateway_auth_invalid"
+
+        with client.websocket_connect(f"/ws?{payload['query_param']}={payload['session_token']}") as socket:
+            _assert_connect_challenge(socket)
+            socket.send_json({"session_id": "dashboard:ws", "text": "ping"})
+            response = socket.receive_json()
+            assert response["text"] == "pong"
+
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"/v1/ws?{payload['query_param']}={payload['session_token']}"):
+                pass
 
 
 def test_gateway_auth_auto_hardens_on_non_loopback_with_token(tmp_path: Path) -> None:

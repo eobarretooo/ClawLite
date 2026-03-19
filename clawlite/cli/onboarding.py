@@ -372,8 +372,9 @@ def build_dashboard_handoff(
             "id": "token",
             "title": "Gateway token",
             "body": (
-                "The gateway token is shared auth for the API and dashboard. The browser keeps tokenized URLs in memory "
-                "for the current tab and strips them from the address bar after load."
+                "The gateway token is shared auth for the API and dashboard, but the packaged browser shell now exchanges "
+                "that one-time handoff for a scoped dashboard session kept only for the current tab and strips `#token=` "
+                "from the address bar after load."
             ),
         },
         {

@@ -17,12 +17,14 @@ class GatewayStatusHandlers:
     dashboard_state_payload_fn: Callable[[], dict[str, Any]]
     diagnostics_payload_fn: Callable[[], Awaitable[Any]]
     token_payload_fn: Callable[[], dict[str, Any]]
+    dashboard_session_payload_fn: Callable[[], dict[str, Any]] = lambda: {"ok": False, "error": "dashboard_session_disabled"}
 
-    def _check(self, request: Request, *, scope: str) -> None:
+    def _check(self, request: Request, *, scope: str, allow_dashboard_session: bool = False) -> None:
         self.auth_guard.check_http(
             request=request,
             scope=scope,
             diagnostics_auth=self.diagnostics_require_auth,
+            allow_dashboard_session=allow_dashboard_session,
         )
 
     async def health(self, request: Request) -> dict[str, Any]:
@@ -69,38 +71,45 @@ class GatewayStatusHandlers:
 
         return {"metrics": get_telemetry_registry().snapshot_all()}
 
-    async def status(self, request: Request) -> Any:
+    async def status(self, request: Request, *, allow_dashboard_session: bool = False) -> Any:
         self.auth_guard.check_http(
             request=request,
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
             require_token_if_configured=True,
+            allow_dashboard_session=allow_dashboard_session,
         )
         return self.status_payload_fn()
 
-    async def dashboard_state(self, request: Request) -> dict[str, Any]:
+    async def dashboard_state(self, request: Request, *, allow_dashboard_session: bool = False) -> dict[str, Any]:
         self.auth_guard.check_http(
             request=request,
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
             require_token_if_configured=True,
+            allow_dashboard_session=allow_dashboard_session,
         )
         return self.dashboard_state_payload_fn()
 
-    async def diagnostics(self, request: Request) -> Any:
+    async def diagnostics(self, request: Request, *, allow_dashboard_session: bool = False) -> Any:
         if not self.cfg.gateway.diagnostics.enabled:
             raise HTTPException(status_code=404, detail="diagnostics_disabled")
-        self._check(request, scope="diagnostics")
+        self._check(request, scope="diagnostics", allow_dashboard_session=allow_dashboard_session)
         return await self.diagnostics_payload_fn()
 
-    async def api_token(self, request: Request) -> dict[str, Any]:
+    async def api_token(self, request: Request, *, allow_dashboard_session: bool = False) -> dict[str, Any]:
         self.auth_guard.check_http(
             request=request,
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
             require_token_if_configured=True,
+            allow_dashboard_session=allow_dashboard_session,
         )
         return self.token_payload_fn()
+
+    async def dashboard_session(self, request: Request) -> dict[str, Any]:
+        self.auth_guard.check_http_gateway_token(request=request)
+        return self.dashboard_session_payload_fn()
 
 
 __all__ = ["GatewayStatusHandlers"]

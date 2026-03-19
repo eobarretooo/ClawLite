@@ -2,6 +2,7 @@ const bootstrap = window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ || {};
 const auth = bootstrap.auth || {};
 const paths = bootstrap.paths || {};
 const tokenStorageKey = "clawlite.dashboard.token";
+const dashboardSessionStorageKey = "clawlite.dashboard.sessionToken";
 const operatorStorageKey = "clawlite.dashboard.operatorId";
 const chatSessionStorageKey = "clawlite.dashboard.chatSessionId";
 const refreshStorageKey = "clawlite.dashboard.refreshMs";
@@ -51,6 +52,10 @@ function storedDashboardToken() {
   return legacy;
 }
 
+function storedDashboardSessionToken() {
+  return storageGet(window.sessionStorage, dashboardSessionStorageKey).trim();
+}
+
 function createDashboardOperatorId() {
   const randomId =
     window.crypto && typeof window.crypto.randomUUID === "function"
@@ -84,6 +89,7 @@ function ensureChatSessionId(defaultSessionId) {
 const state = {
   activeTab: "overview",
   token: storedDashboardToken(),
+  dashboardSessionToken: storedDashboardSessionToken(),
   autoRefreshMs: Number(window.localStorage.getItem(refreshStorageKey) || defaultRefreshMs),
   ws: null,
   wsState: "offline",
@@ -104,6 +110,24 @@ const state = {
 };
 state.sessionId = ensureChatSessionId(state.operatorId) || state.operatorId;
 
+function dashboardSessionHeaderName() {
+  return String(auth.dashboard_session_header_name || "X-ClawLite-Dashboard-Session").trim() || "X-ClawLite-Dashboard-Session";
+}
+
+function dashboardSessionQueryParam() {
+  return String(auth.dashboard_session_query_param || "dashboard_session").trim() || "dashboard_session";
+}
+
+function rawAuthHeaders(tokenValue) {
+  const token = String(tokenValue || "").trim();
+  if (!token) {
+    return {};
+  }
+  const headerName = auth.header_name || "Authorization";
+  const value = headerName.toLowerCase() === "authorization" ? `Bearer ${token}` : token;
+  return { [headerName]: value };
+}
+
 function byId(id) {
   return document.getElementById(id);
 }
@@ -113,12 +137,13 @@ function safeJson(value) {
 }
 
 function authHeaders() {
+  if (state.dashboardSessionToken) {
+    return { [dashboardSessionHeaderName()]: state.dashboardSessionToken };
+  }
   if (!state.token) {
     return {};
   }
-  const headerName = auth.header_name || "Authorization";
-  const value = headerName.toLowerCase() === "authorization" ? `Bearer ${state.token}` : state.token;
-  return { [headerName]: value };
+  return rawAuthHeaders(state.token);
 }
 
 function tokenFromLocationHash() {
@@ -133,7 +158,9 @@ function tokenFromLocationHash() {
 function buildWsUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL(`${protocol}//${window.location.host}${paths.ws || "/ws"}`);
-  if (state.token) {
+  if (state.dashboardSessionToken) {
+    url.searchParams.set(dashboardSessionQueryParam(), state.dashboardSessionToken);
+  } else if (state.token) {
     url.searchParams.set(auth.query_param || "token", state.token);
   }
   return url.toString();
@@ -144,6 +171,15 @@ function persistChatSession(nextSessionId) {
   state.sessionId = sessionId;
   storageSet(window.sessionStorage, chatSessionStorageKey, sessionId);
   return sessionId;
+}
+
+function persistDashboardSession(nextToken) {
+  state.dashboardSessionToken = String(nextToken || "").trim();
+  if (state.dashboardSessionToken) {
+    storageSet(window.sessionStorage, dashboardSessionStorageKey, state.dashboardSessionToken);
+  } else {
+    storageRemove(window.sessionStorage, dashboardSessionStorageKey);
+  }
 }
 
 function currentChatSessionId(fallback = state.sessionId) {
@@ -1259,7 +1295,7 @@ function renderOverview() {
   setText("auth-badge", String((status.auth || {}).posture || auth.posture || "open"));
   setText(
     "auth-summary",
-    `Header ${auth.header_name || "Authorization"} or query ${auth.query_param || "token"}. Token configured: ${Boolean((status.auth || {}).token_configured)}. Loopback bypass: ${Boolean((status.auth || {}).allow_loopback_without_auth)}.`,
+    `Gateway auth uses ${auth.header_name || "Authorization"} or query ${auth.query_param || "token"}, while the packaged dashboard prefers ${dashboardSessionHeaderName()} and query ${dashboardSessionQueryParam()} after the one-time exchange. Token configured: ${Boolean((status.auth || {}).token_configured)}. Loopback bypass: ${Boolean((status.auth || {}).allow_loopback_without_auth)}.`,
   );
 
   setText("nav-refresh-state", state.autoRefreshMs > 0 ? formatDuration(state.autoRefreshMs / 1000) : "manual");
@@ -1287,7 +1323,7 @@ function renderRuntime() {
   setCode("status-json", state.status || { note: "status unavailable" });
   setCode("diagnostics-json", state.diagnostics || { note: "diagnostics unavailable" });
   setCode("tools-json", state.tools || { note: "tools catalog unavailable" });
-  setCode("token-preview", state.tokenInfo || { token_saved: Boolean(state.token), auth_mode: auth.mode || "off" });
+  setCode("token-preview", state.tokenInfo || { token_saved: Boolean(state.token || state.dashboardSessionToken), auth_mode: auth.mode || "off" });
 
   const components = (state.status || {}).components || {};
   setCode("components-preview", components);
@@ -1340,6 +1376,9 @@ async function fetchJson(path, options = {}) {
   }
   if (!response.ok) {
     const detail = payload.detail || payload.error || response.statusText;
+    if (response.status === 401 && state.dashboardSessionToken && !state.token) {
+      persistDashboardSession("");
+    }
     throw new Error(`${response.status} ${detail}`);
   }
   return payload;
@@ -1365,7 +1404,7 @@ async function refreshTokenInfo() {
   try {
     state.tokenInfo = await fetchJson(paths.token || "/api/token");
   } catch (error) {
-    state.tokenInfo = { error: error.message, token_saved: Boolean(state.token) };
+    state.tokenInfo = { error: error.message, token_saved: Boolean(state.token || state.dashboardSessionToken) };
   }
 }
 
@@ -1449,7 +1488,15 @@ function connectWs() {
     setCode("ws-event-preview", state.wsPreview);
   });
 
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
+    if (event && event.code === 4401) {
+      if (state.dashboardSessionToken && !state.token) {
+        persistDashboardSession("");
+      }
+      updateWsStatus("auth-required");
+      recordEvent("warn", "WebSocket auth required", "Paste the gateway token again to reconnect this tab.", "auth");
+      return;
+    }
     updateWsStatus("offline");
     recordEvent("warn", "WebSocket closed", "Attempting reconnect in 1.4s", "transport");
     window.clearTimeout(state.reconnectTimer);
@@ -1473,22 +1520,83 @@ function persistToken(nextToken) {
   }
 }
 
-function bootstrapTokenFromUrl() {
+async function exchangeDashboardSession(rawToken, { source = "auth" } = {}) {
+  const token = String(rawToken || "").trim();
+  if (!token) {
+    persistToken("");
+    persistDashboardSession("");
+    return false;
+  }
+  const response = await fetch(paths.dashboard_session || "/api/dashboard/session", {
+    method: "POST",
+    headers: {
+      ...rawAuthHeaders(token),
+    },
+  });
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch (_error) {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    const detail = payload.detail || payload.error || response.statusText;
+    throw new Error(`${response.status} ${detail}`);
+  }
+  const sessionToken = String(payload.session_token || "").trim();
+  if (!sessionToken) {
+    throw new Error("dashboard_session_missing");
+  }
+  persistDashboardSession(sessionToken);
+  persistToken("");
+  const tokenInput = byId("token-input");
+  if (tokenInput) {
+    tokenInput.value = "";
+  }
+  recordEvent(
+    "ok",
+    "Dashboard session established",
+    payload.expires_at
+      ? `Scoped dashboard session active until ${payload.expires_at}.`
+      : "Scoped dashboard session stored for the current browser tab.",
+    source,
+  );
+  return true;
+}
+
+async function bootstrapTokenFromUrl() {
   const hashToken = tokenFromLocationHash();
   if (!hashToken) {
-    return;
+    return false;
   }
-  persistToken(hashToken);
   if (window.history && typeof window.history.replaceState === "function") {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   } else {
     window.location.hash = "";
   }
-  const tokenInput = byId("token-input");
-  if (tokenInput) {
-    tokenInput.value = state.token;
+  await exchangeDashboardSession(hashToken, { source: "auth" });
+  recordEvent(
+    "ok",
+    "Gateway token bootstrapped",
+    "Loaded token from the dashboard URL fragment, exchanged it for a scoped dashboard session, and removed it from the address bar.",
+    "auth",
+  );
+  return true;
+}
+
+async function migrateLegacyDashboardToken() {
+  if (state.dashboardSessionToken || !state.token) {
+    return false;
   }
-  recordEvent("ok", "Gateway token bootstrapped", "Loaded token from dashboard URL fragment and removed it from the address bar.", "auth");
+  await exchangeDashboardSession(state.token, { source: "auth" });
+  recordEvent(
+    "ok",
+    "Dashboard token migrated",
+    "Replaced the legacy raw gateway token stored in this tab with a scoped dashboard session.",
+    "auth",
+  );
+  return true;
 }
 
 async function sendHttpMessage() {
@@ -2185,7 +2293,7 @@ function bindEvents() {
     node.addEventListener("click", () => setActiveTab(node.dataset.tabTarget || "overview"));
   });
 
-  byId("token-input").value = state.token;
+  byId("token-input").value = "";
   const sessionInput = byId("session-input");
   sessionInput.value = state.sessionId;
   setText("metric-session-route", `chat -> ${state.sessionId}`);
@@ -2206,16 +2314,21 @@ function bindEvents() {
   });
 
   byId("save-token").addEventListener("click", async () => {
-    persistToken(byId("token-input").value);
-    recordEvent("ok", "Gateway token saved", state.token ? "Operator token stored for the current browser tab." : "Token cleared.", "auth");
-    connectWs();
-    await refreshAll("token-save");
+    try {
+      await exchangeDashboardSession(byId("token-input").value, { source: "auth" });
+      connectWs();
+      await refreshAll("token-save");
+    } catch (error) {
+      recordEvent("danger", "Dashboard session exchange failed", error.message, "auth");
+      renderAll();
+    }
   });
 
   byId("clear-token").addEventListener("click", async () => {
     persistToken("");
+    persistDashboardSession("");
     byId("token-input").value = "";
-    recordEvent("warn", "Gateway token cleared", "Dashboard returned to anonymous mode.", "auth");
+    recordEvent("warn", "Dashboard token cleared", "Dashboard returned to anonymous mode.", "auth");
     connectWs();
     await refreshAll("token-clear");
   });
@@ -2296,11 +2409,20 @@ function bindEvents() {
   });
 }
 
-bindEvents();
-bootstrapTokenFromUrl();
-setActiveTab(state.activeTab);
-renderAll();
-recordEvent("ok", "Dashboard booted", "Packaged shell loaded with gateway bootstrap metadata.", "ui");
-void refreshAll("initial");
-scheduleAutoRefresh();
-connectWs();
+async function initializeDashboard() {
+  bindEvents();
+  setActiveTab(state.activeTab);
+  renderAll();
+  recordEvent("ok", "Dashboard booted", "Packaged shell loaded with gateway bootstrap metadata.", "ui");
+  try {
+    await bootstrapTokenFromUrl();
+    await migrateLegacyDashboardToken();
+  } catch (error) {
+    recordEvent("danger", "Dashboard auth bootstrap failed", error.message, "auth");
+  }
+  await refreshAll("initial");
+  scheduleAutoRefresh();
+  connectWs();
+}
+
+void initializeDashboard();

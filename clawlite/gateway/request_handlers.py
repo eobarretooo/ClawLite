@@ -27,19 +27,21 @@ class GatewayRequestHandlers:
     dashboard_asset_text_fn: Callable[[str], str]
     render_root_dashboard_html_fn: Callable[..., str]
 
-    def _check_control(self, request: Request) -> None:
+    def _check_control(self, request: Request, *, allow_dashboard_session: bool = False) -> None:
         self.auth_guard.check_http(
             request=request,
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
+            allow_dashboard_session=allow_dashboard_session,
         )
 
-    def _check_sensitive_control(self, request: Request) -> None:
+    def _check_sensitive_control(self, request: Request, *, allow_dashboard_session: bool = False) -> None:
         self.auth_guard.check_http(
             request=request,
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
             require_token_if_configured=True,
+            allow_dashboard_session=allow_dashboard_session,
         )
 
     @staticmethod
@@ -64,8 +66,8 @@ class GatewayRequestHandlers:
             "jobs": jobs,
         }
 
-    async def chat(self, req: Any, request: Request) -> Any:
-        self._check_sensitive_control(request)
+    async def chat(self, req: Any, request: Request, *, allow_dashboard_session: bool = False) -> Any:
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         if not str(req.session_id or "").strip() or not str(req.text or "").strip():
             raise HTTPException(status_code=400, detail="session_id and text are required")
         logger.debug("chat request received session={} chars={}", req.session_id, len(str(req.text or "")))
@@ -94,8 +96,8 @@ class GatewayRequestHandlers:
         bind_event("gateway.chat", session=str(req.session_id)).info("chat response generated model={}", out.model)
         return {"text": out.text, "model": out.model}
 
-    async def tools_catalog(self, request: Request) -> dict[str, Any]:
-        self._check_sensitive_control(request)
+    async def tools_catalog(self, request: Request, *, allow_dashboard_session: bool = False) -> dict[str, Any]:
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         include_schema = self.parse_include_schema_flag_fn(request.query_params)
         return self.build_tools_catalog_payload_fn(self.runtime.engine.tools.schema(), include_schema=include_schema)
 

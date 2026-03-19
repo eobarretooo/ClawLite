@@ -107,6 +107,12 @@ from clawlite.gateway.dashboard_state import (
 from clawlite.gateway.dashboard_runtime import (
     dashboard_state_payload as _dashboard_state_payload_runtime,
 )
+from clawlite.gateway.dashboard_sessions import (
+    DEFAULT_DASHBOARD_SESSION_HEADER_NAME,
+    DEFAULT_DASHBOARD_SESSION_QUERY_PARAM,
+    DashboardSessionRegistry,
+    dashboard_session_expiry_iso,
+)
 from clawlite.gateway.diagnostics_payload import (
     diagnostics_payload as _diagnostics_payload_builder,
 )
@@ -636,6 +642,9 @@ class GatewayAuthGuard:
     header_name: str
     query_param: str
     protect_health: bool
+    dashboard_session_header_name: str
+    dashboard_session_query_param: str
+    dashboard_sessions: DashboardSessionRegistry | None = None
 
     @classmethod
     def from_config(cls, config: AppConfig) -> GatewayAuthGuard:
@@ -661,6 +670,9 @@ class GatewayAuthGuard:
             header_name=str(auth_cfg.header_name or "Authorization").strip() or "Authorization",
             query_param=str(auth_cfg.query_param or "token").strip() or "token",
             protect_health=bool(auth_cfg.protect_health),
+            dashboard_session_header_name=DEFAULT_DASHBOARD_SESSION_HEADER_NAME,
+            dashboard_session_query_param=DEFAULT_DASHBOARD_SESSION_QUERY_PARAM,
+            dashboard_sessions=DashboardSessionRegistry() if token else None,
         )
 
     def posture(self) -> str:
@@ -705,6 +717,25 @@ class GatewayAuthGuard:
     def _token_matches(self, supplied_token: str) -> bool:
         return bool(self.token) and hmac.compare_digest(supplied_token, self.token)
 
+    @staticmethod
+    def _extract_dashboard_session(*, header_value: str, query_value: str) -> str:
+        if query_value:
+            return query_value.strip()
+        return header_value.strip()
+
+    def _dashboard_session_matches(self, supplied_token: str) -> bool:
+        return bool(self.dashboard_sessions) and self.dashboard_sessions.verify(supplied_token)
+
+    def check_http_gateway_token(self, *, request: Request) -> None:
+        if not self.token:
+            raise HTTPException(status_code=404, detail="dashboard_session_disabled")
+        header_value = str(request.headers.get(self.header_name, "") or "")
+        supplied_token = self._extract_token(header_value=header_value, query_value="")
+        if not supplied_token:
+            raise HTTPException(status_code=401, detail="gateway_auth_required")
+        if not self._token_matches(supplied_token):
+            raise HTTPException(status_code=401, detail="gateway_auth_invalid")
+
     def check_http(
         self,
         *,
@@ -712,42 +743,80 @@ class GatewayAuthGuard:
         scope: str,
         diagnostics_auth: bool,
         require_token_if_configured: bool = False,
+        allow_dashboard_session: bool = False,
     ) -> None:
         client_host = request.client.host if request.client is not None else None
         header_value = str(request.headers.get(self.header_name, "") or "")
         query_value = str(request.query_params.get(self.query_param, "") or "")
         supplied_token = self._extract_token(header_value=header_value, query_value=query_value)
+        dashboard_header = str(request.headers.get(self.dashboard_session_header_name, "") or "")
+        dashboard_query = str(request.query_params.get(self.dashboard_session_query_param, "") or "")
+        dashboard_session = (
+            self._extract_dashboard_session(header_value=dashboard_header, query_value=dashboard_query)
+            if allow_dashboard_session and scope == "control" and self.token
+            else ""
+        )
+        raw_valid = self._token_matches(supplied_token)
+        dashboard_valid = self._dashboard_session_matches(dashboard_session) if dashboard_session else False
         if require_token_if_configured and self.token:
-            if not supplied_token:
-                raise HTTPException(status_code=401, detail="gateway_auth_required")
-            if not self._token_matches(supplied_token):
+            if raw_valid or dashboard_valid:
+                return
+            if supplied_token or dashboard_session:
                 raise HTTPException(status_code=401, detail="gateway_auth_invalid")
-            return
+            if not supplied_token and not dashboard_session:
+                raise HTTPException(status_code=401, detail="gateway_auth_required")
         should_require = self._require_for_scope(scope=scope, host=client_host, diagnostics_auth=diagnostics_auth)
-        if should_require and not self._token_matches(supplied_token):
+        if should_require and not (raw_valid or dashboard_valid):
+            if supplied_token or dashboard_session:
+                raise HTTPException(status_code=401, detail="gateway_auth_invalid")
             raise HTTPException(status_code=401, detail="gateway_auth_required")
-        if self.mode == "optional" and supplied_token and self.token and not self._token_matches(supplied_token):
+        if self.mode == "optional" and supplied_token and self.token and not raw_valid:
+            raise HTTPException(status_code=401, detail="gateway_auth_invalid")
+        if self.mode == "optional" and dashboard_session and self.token and not dashboard_valid:
             raise HTTPException(status_code=401, detail="gateway_auth_invalid")
 
-    async def check_ws(self, *, socket: WebSocket, scope: str, diagnostics_auth: bool) -> bool:
+    async def check_ws(
+        self,
+        *,
+        socket: WebSocket,
+        scope: str,
+        diagnostics_auth: bool,
+        allow_dashboard_session: bool = False,
+    ) -> bool:
         client_host = socket.client.host if socket.client is not None else None
         header_value = str(socket.headers.get(self.header_name, "") or "")
         query_value = str(socket.query_params.get(self.query_param, "") or "")
         supplied_token = self._extract_token(header_value=header_value, query_value=query_value)
+        dashboard_header = str(socket.headers.get(self.dashboard_session_header_name, "") or "")
+        dashboard_query = str(socket.query_params.get(self.dashboard_session_query_param, "") or "")
+        dashboard_session = (
+            self._extract_dashboard_session(header_value=dashboard_header, query_value=dashboard_query)
+            if allow_dashboard_session and scope == "control" and self.token
+            else ""
+        )
+        raw_valid = self._token_matches(supplied_token)
+        dashboard_valid = self._dashboard_session_matches(dashboard_session) if dashboard_session else False
         should_require = self._require_for_scope(scope=scope, host=client_host, diagnostics_auth=diagnostics_auth)
         require_token_if_configured = scope == "control" and bool(self.token)
         if require_token_if_configured:
-            if not supplied_token:
-                await socket.close(code=4401, reason="gateway_auth_required")
-                return False
-            if not self._token_matches(supplied_token):
+            if raw_valid or dashboard_valid:
+                return True
+            if supplied_token or dashboard_session:
                 await socket.close(code=4401, reason="gateway_auth_invalid")
                 return False
-            return True
-        if should_require and not self._token_matches(supplied_token):
+            if not supplied_token and not dashboard_session:
+                await socket.close(code=4401, reason="gateway_auth_required")
+                return False
+        if should_require and not (raw_valid or dashboard_valid):
+            if supplied_token or dashboard_session:
+                await socket.close(code=4401, reason="gateway_auth_invalid")
+                return False
             await socket.close(code=4401, reason="gateway_auth_required")
             return False
-        if self.mode == "optional" and supplied_token and self.token and not self._token_matches(supplied_token):
+        if self.mode == "optional" and supplied_token and self.token and not raw_valid:
+            await socket.close(code=4401, reason="gateway_auth_invalid")
+            return False
+        if self.mode == "optional" and dashboard_session and self.token and not dashboard_valid:
             await socket.close(code=4401, reason="gateway_auth_invalid")
             return False
         return True
@@ -3030,7 +3099,25 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "mode": auth_guard.mode,
             "header_name": auth_guard.header_name,
             "query_param": auth_guard.query_param,
+            "dashboard_session_enabled": bool(auth_guard.dashboard_sessions) and bool(auth_guard.token),
+            "dashboard_session_header_name": auth_guard.dashboard_session_header_name,
+            "dashboard_session_query_param": auth_guard.dashboard_session_query_param,
         },
+        dashboard_session_payload_fn=lambda: (
+            (
+                lambda record: {
+                    "ok": True,
+                    "token_type": "dashboard_session",
+                    "session_token": record.token,
+                    "expires_at": dashboard_session_expiry_iso(record),
+                    "expires_in_s": auth_guard.dashboard_sessions.ttl_seconds if auth_guard.dashboard_sessions is not None else 0,
+                    "header_name": auth_guard.dashboard_session_header_name,
+                    "query_param": auth_guard.dashboard_session_query_param,
+                }
+            )(auth_guard.dashboard_sessions.issue())
+            if auth_guard.dashboard_sessions is not None and auth_guard.token
+            else {"ok": False, "error": "dashboard_session_disabled"}
+        ),
     )
     websocket_handlers = GatewayWebSocketHandlers(
         auth_guard=auth_guard,
@@ -3093,7 +3180,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/status", response_model=ControlPlaneResponse)
     async def api_status(request: Request) -> ControlPlaneResponse:
-        return await status_handlers.status(request)
+        return await status_handlers.status(request, allow_dashboard_session=True)
 
     @app.get("/v1/dashboard/state")
     async def dashboard_state(request: Request) -> dict[str, Any]:
@@ -3101,7 +3188,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/dashboard/state")
     async def api_dashboard_state(request: Request) -> dict[str, Any]:
-        return await status_handlers.dashboard_state(request)
+        return await status_handlers.dashboard_state(request, allow_dashboard_session=True)
 
     @app.get("/v1/diagnostics", response_model=DiagnosticsResponse)
     async def diagnostics(request: Request) -> DiagnosticsResponse:
@@ -3109,7 +3196,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/diagnostics", response_model=DiagnosticsResponse)
     async def api_diagnostics(request: Request) -> DiagnosticsResponse:
-        return await status_handlers.diagnostics(request)
+        return await status_handlers.diagnostics(request, allow_dashboard_session=True)
+
+    @app.post("/api/dashboard/session")
+    async def api_dashboard_session(request: Request) -> dict[str, Any]:
+        return await status_handlers.dashboard_session(request)
 
     @app.post("/v1/control/channels/replay")
     async def channels_replay(request: Request, payload: ChannelReplayRequest | None = None) -> dict[str, Any]:
@@ -3309,7 +3400,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/api/message", response_model=ChatResponse)
     async def api_message(req: ChatRequest, request: Request) -> ChatResponse:
-        return ChatResponse(**(await request_handlers.chat(req, request)))
+        return ChatResponse(**(await request_handlers.chat(req, request, allow_dashboard_session=True)))
 
     @app.get("/v1/tools/catalog")
     async def tools_catalog(request: Request) -> dict[str, Any]:
@@ -3317,7 +3408,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/tools/catalog")
     async def api_tools_catalog(request: Request) -> dict[str, Any]:
-        return await request_handlers.tools_catalog(request)
+        return await request_handlers.tools_catalog(request, allow_dashboard_session=True)
 
     @app.get("/v1/tools/approvals")
     async def tools_approvals(
@@ -3447,7 +3538,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/token")
     async def api_token(request: Request) -> dict[str, Any]:
-        return await status_handlers.api_token(request)
+        return await status_handlers.api_token(request, allow_dashboard_session=True)
 
     app.add_api_route(telegram_webhook_path, webhook_handlers.telegram, methods=["POST"])
     app.add_api_route(whatsapp_webhook_path, webhook_handlers.whatsapp, methods=["POST"])
@@ -3498,7 +3589,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.websocket("/ws")
     async def ws_chat_alias(socket: WebSocket) -> None:
-        await websocket_handlers.handle(socket, path_label="/ws")
+        await websocket_handlers.handle(socket, path_label="/ws", allow_dashboard_session=True)
 
     @app.get(f"{_DASHBOARD_ASSET_ROOT}/dashboard.css")
     async def dashboard_css() -> Response:

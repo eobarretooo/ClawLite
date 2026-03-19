@@ -26,6 +26,7 @@ class GatewayControlHandlers:
             scope="control",
             diagnostics_auth=self.diagnostics_require_auth,
             require_token_if_configured=True,
+            allow_dashboard_session=True,
         )
 
     def _require_channel(self, channel_name: str) -> Any:

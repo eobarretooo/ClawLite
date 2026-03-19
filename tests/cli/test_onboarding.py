@@ -168,6 +168,8 @@ def test_build_dashboard_handoff_can_redact_sensitive_dashboard_fields() -> None
     assert "dashboard_url_with_token" not in payload
     dashboard_row = next(item for item in payload["guidance"] if item["id"] == "dashboard")
     assert "#token=" not in dashboard_row["body"]
+    token_row = next(item for item in payload["guidance"] if item["id"] == "token")
+    assert "scoped dashboard session" in token_row["body"]
 
 
 def test_probe_provider_openai_success(monkeypatch) -> None:

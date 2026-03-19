@@ -55,6 +55,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
         "auth": dict(auth_payload),
         "paths": {
             "health": "/health",
+            "dashboard_session": "/api/dashboard/session",
             "dashboard_state": "/api/dashboard/state",
             "status": "/api/status",
             "diagnostics": "/api/diagnostics",
