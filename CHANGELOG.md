@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `web_fetch` and `web_search` now mark successful payloads as untrusted external content and include a safety notice so fetched pages/snippets are treated as data rather than instructions
 - prompt guidance now treats browser page reads and browser evaluations as untrusted external data, while `browser.navigate` keeps the explicit external-content notice and `browser.evaluate` preserves its raw return contract
 - inbound channel turns now inject a compact allowlisted subset of runtime metadata into the untrusted prompt context, so reply/thread/command/media hints reach the model without exposing raw webhook payloads
+- inbound channel text now normalizes real CRLF/CR newlines and neutralizes obvious spoof markers like `[System Message]` or line-leading `System:` before it reaches the agent loop
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

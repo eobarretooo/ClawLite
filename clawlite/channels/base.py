@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from clawlite.channels.inbound_text import sanitize_inbound_system_tags
+
 InboundHandler = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
 
 
@@ -52,7 +54,12 @@ class BaseChannel(ABC):
     async def emit(self, *, session_id: str, user_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
         if self.on_message is None:
             return
-        await self.on_message(session_id, user_id, text, metadata or {})
+        await self.on_message(
+            session_id,
+            user_id,
+            sanitize_inbound_system_tags(text),
+            metadata or {},
+        )
 
     @abstractmethod
     async def start(self) -> None:
