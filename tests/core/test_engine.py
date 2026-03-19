@@ -1972,13 +1972,11 @@ def test_engine_injects_allowlisted_runtime_metadata_into_prompt_context() -> No
         )
 
         assert out.text == "ok"
-        runtime_messages = [
-            str(row.get("content", ""))
-            for row in provider.snapshots[0]
-            if row.get("role") == "user" and "[Runtime Context" in str(row.get("content", ""))
-        ]
-        assert runtime_messages
-        runtime_context = runtime_messages[0]
+        final_user_message = provider.snapshots[0][-1]
+        assert final_user_message["role"] == "user"
+        runtime_context = str(final_user_message.get("content", ""))
+        assert runtime_context.endswith("continue")
+        assert "[Runtime Context" in runtime_context
         assert "Message ID: m-42" in runtime_context
         assert "Thread ID: 13" in runtime_context
         assert "Thread TS: 1700.3" in runtime_context
@@ -2039,14 +2037,46 @@ def test_engine_stream_run_uses_shaped_prompt_memory_history_and_runtime_context
         memory_sections = [row for row in snapshot if row.get("role") == "system" and "[Memory]" in str(row.get("content", ""))]
         assert memory_sections
         assert any(row.get("role") == "assistant" and "older answer" in str(row.get("content", "")) for row in snapshot)
-        runtime_rows = [
-            str(row.get("content", ""))
-            for row in snapshot
-            if row.get("role") == "user" and "[Runtime Context" in str(row.get("content", ""))
-        ]
-        assert runtime_rows
-        assert "Thread ID: 13" in runtime_rows[0]
-        assert "Reply-To Text: parent context" in runtime_rows[0]
+        final_user_message = snapshot[-1]
+        assert final_user_message["role"] == "user"
+        merged_content = str(final_user_message.get("content", ""))
+        assert merged_content.endswith("continue")
+        assert "[Runtime Context" in merged_content
+        assert "Thread ID: 13" in merged_content
+        assert "Reply-To Text: parent context" in merged_content
+
+    asyncio.run(_scenario())
+
+
+def test_engine_run_merges_runtime_context_into_single_current_user_message() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+        )
+
+        out = await engine.run(
+            session_id="telegram:42",
+            user_text="hello",
+            channel="telegram",
+            chat_id="42",
+            runtime_metadata={"reply_to_message_id": "7"},
+        )
+
+        assert out.text == "ok"
+        snapshot = provider.snapshots[0]
+        user_rows = [row for row in snapshot if row.get("role") == "user"]
+        assert user_rows
+        final_user_message = user_rows[-1]
+        content = str(final_user_message.get("content", ""))
+        assert content.endswith("hello")
+        assert "[Runtime Context" in content
+        assert "Reply-To Message ID: 7" in content
+        if len(user_rows) >= 2:
+            assert "[Runtime Context" not in str(user_rows[-2].get("content", ""))
 
     asyncio.run(_scenario())
 

@@ -1688,9 +1688,10 @@ class AgentEngine:
                 messages.append({"role": "system", "content": routing_notice})
         if prompt.history_messages:
             messages.extend(prompt.history_messages)
+        current_user_content = str(user_text or "")
         if prompt.runtime_context:
-            messages.append({"role": "user", "content": prompt.runtime_context})
-        messages.append({"role": "user", "content": user_text})
+            current_user_content = f"{prompt.runtime_context}\n\n{current_user_content}".strip()
+        messages.append({"role": "user", "content": current_user_content})
 
         return _PreparedTurnPrompt(
             messages=messages,
