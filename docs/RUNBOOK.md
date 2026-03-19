@@ -16,13 +16,13 @@ Equivalent alias:
 clawlite gateway --host 127.0.0.1 --port 8787
 ```
 
-Print or reopen the tokenized dashboard handoff without relaunching onboarding:
+Print or reopen the one-time tokenized dashboard handoff without relaunching onboarding:
 
 ```bash
 clawlite dashboard --no-open
 ```
 
-The payload includes the current bootstrap state and the same backup, web-search, and security notes shown at the end of onboarding.
+The payload includes the current bootstrap state and the same backup, web-search, and security notes shown at the end of onboarding. After bootstrap, the browser strips `#token=` from the address bar and keeps the token only for the current tab session.
 
 If bootstrap is still pending and you want to hatch from the terminal instead of the dashboard:
 

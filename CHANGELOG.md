@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider streaming now advertises pre-text tool-call turns back to the engine, so `stream_run()` can fall back to the full tool loop before emitting visible text instead of getting stuck on a text-only stream path
 - when a gateway token is configured, the broader control-plane surface now requires it even on loopback, including `status`, dashboard state, chat, cron/control mutations, approvals/grants, and gateway WebSocket chat, while root/assets/health stay open unless separately protected
 - authenticated dashboard state now redacts raw handoff secrets, keeping only `gateway_url` and a masked token preview instead of echoing `gateway_token` or tokenized dashboard URLs back through the runtime API
+- the packaged dashboard now keeps its gateway token only in `sessionStorage` for the current browser tab, clears any legacy `localStorage` copy on load/clear, and defaults live chat to a per-tab `dashboard:operator:<id>` session instead of a shared browser-wide operator route
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

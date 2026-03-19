@@ -16,6 +16,8 @@ Default base URL: `http://127.0.0.1:8787`
 
 Entrypoint do dashboard local do gateway. Serve um shell HTML/CSS/JS empacotado com visão operacional para status, diagnostics, sessions, automation, tools e chat ao vivo.
 
+The packaged dashboard treats tokenized URLs as a one-time bootstrap path: it scrubs `#token=` from the address bar after load, keeps the gateway token only for the current browser tab, and seeds live chat with a per-tab `dashboard:operator:<id>` session instead of a fixed shared browser identity.
+
 ## `GET /v1/dashboard/state`
 
 Resumo agregado para o dashboard local.
@@ -40,7 +42,7 @@ Example response:
     "count": 2,
     "items": [
       {
-        "session_id": "dashboard:operator",
+        "session_id": "dashboard:operator:a1b2c3d4e5f6",
         "last_role": "assistant",
         "last_preview": "Runtime ready.",
         "active_subagents": 0,
