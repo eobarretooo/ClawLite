@@ -494,6 +494,10 @@ class AgentEngine:
         r"\buse\s+the\s+docker\s+(?:skill|tool)\b",
         re.IGNORECASE,
     )
+    _EXPLICIT_WEB_SEARCH_REQUEST_RE = re.compile(
+        r"\buse\s+the\s+web(?:[-_\s])?search\s+(?:skill|tool)\b",
+        re.IGNORECASE,
+    )
     _EXPLICIT_SUMMARIZE_SKILL_REQUEST_RE = re.compile(
         r"\buse\s+the\s+summarize\s+(?:skill|tool)\b",
         re.IGNORECASE,
@@ -2817,6 +2821,7 @@ class AgentEngine:
         *,
         user_text: str,
         live_lookup_required: bool,
+        available_tool_names: set[str] | None = None,
         available_skill_names: set[str] | None = None,
     ) -> bool:
         compact = " ".join(str(user_text or "").split()).strip()
@@ -2829,8 +2834,11 @@ class AgentEngine:
             for name in (available_skill_names or set())
             if str(name or "").strip()
         }
-        if not skill_names:
-            return False
+        tool_names = {
+            str(name or "").strip().lower()
+            for name in (available_tool_names or set())
+            if str(name or "").strip()
+        }
         if (
             skill_names.intersection({"github", "github-issues", "gh-issues"})
             and (
@@ -2851,6 +2859,11 @@ class AgentEngine:
                     and cls._DOCKER_ACTION_RE.search(compact)
                 )
             )
+        ):
+            return True
+        if (
+            ({"web-search", "web_search"} & skill_names or "web_search" in tool_names)
+            and cls._EXPLICIT_WEB_SEARCH_REQUEST_RE.search(compact)
         ):
             return True
         if (
@@ -3044,6 +3057,7 @@ class AgentEngine:
                     if self._stream_requires_full_run(
                         user_text=user_text,
                         live_lookup_required=prepared.live_lookup_required,
+                        available_tool_names=prepared.available_tool_names,
                         available_skill_names=prepared.available_skill_names,
                     ):
                         await queue.put(("fallback", None))

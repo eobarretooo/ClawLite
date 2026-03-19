@@ -2755,6 +2755,65 @@ def test_engine_stream_run_falls_back_to_full_run_for_summarize_sources() -> Non
     asyncio.run(_scenario())
 
 
+def test_engine_stream_run_falls_back_to_full_run_for_explicit_web_search_requests() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingWebToolProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeWebSearchTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["web-search"]),
+        )
+        seen: list[dict[str, Any]] = []
+
+        async def _fallback_run(
+            *,
+            session_id: str,
+            user_text: str,
+            channel: str | None = None,
+            chat_id: str | None = None,
+            runtime_metadata: dict[str, Any] | None = None,
+        ) -> ProviderResult:
+            seen.append(
+                {
+                    "session_id": session_id,
+                    "user_text": user_text,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "runtime_metadata": runtime_metadata,
+                }
+            )
+            return ProviderResult(text="web-search-result", tool_calls=[], model="fake/model")
+
+        engine.run = _fallback_run  # type: ignore[method-assign]
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="cli:stream-web-search",
+                user_text="use the web-search skill to find current docs",
+                channel="telegram",
+                chat_id="42",
+                runtime_metadata={"reply_to_message_id": "9"},
+            )
+        ]
+
+        assert provider.stream_calls == 0
+        assert chunks == [ProviderChunk(text="web-search-result", accumulated="web-search-result", done=True)]
+        assert seen == [
+            {
+                "session_id": "cli:stream-web-search",
+                "user_text": "use the web-search skill to find current docs",
+                "channel": "telegram",
+                "chat_id": "42",
+                "runtime_metadata": {"reply_to_message_id": "9"},
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
 def test_engine_stream_run_keeps_provider_stream_for_explanatory_github_and_docker_prompts() -> None:
     async def _scenario() -> None:
         github_provider = FakeStreamingPromptCaptureProvider("stream-gh")
@@ -2824,6 +2883,25 @@ def test_engine_stream_run_keeps_provider_stream_for_explanatory_github_and_dock
         assert "".join(chunk.text for chunk in summarize_repo_chunks) == "stream-summary"
         assert summarize_provider.stream_calls == 2
 
+        web_search_provider = FakeStreamingPromptCaptureProvider("stream-web")
+        web_search_engine = AgentEngine(
+            provider=web_search_provider,
+            tools=FakeWebSearchTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["web-search"]),
+        )
+        web_search_chunks = [
+            chunk
+            async for chunk in await web_search_engine.stream_run(
+                session_id="cli:stream-web-search-topic",
+                user_text="explain how the web-search skill works",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in web_search_chunks) == "stream-web"
+        assert web_search_provider.stream_calls == 1
+
     asyncio.run(_scenario())
 
 
@@ -2857,6 +2935,12 @@ def test_engine_stream_requires_full_run_for_live_lookup_and_explicit_skill_rout
         live_lookup_required=False,
         available_skill_names={"summarize"},
     )
+    assert AgentEngine._stream_requires_full_run(
+        user_text="use the web-search skill to find docs",
+        live_lookup_required=False,
+        available_tool_names={"web_search"},
+        available_skill_names={"web-search"},
+    )
     assert not AgentEngine._stream_requires_full_run(
         user_text="how do GitHub workflows work?",
         live_lookup_required=False,
@@ -2876,6 +2960,12 @@ def test_engine_stream_requires_full_run_for_live_lookup_and_explicit_skill_rout
         user_text="summarize owner/repo in 3 bullet points",
         live_lookup_required=False,
         available_skill_names={"summarize"},
+    )
+    assert not AgentEngine._stream_requires_full_run(
+        user_text="explain how the web-search skill works",
+        live_lookup_required=False,
+        available_tool_names={"web_search"},
+        available_skill_names={"web-search"},
     )
 
 
