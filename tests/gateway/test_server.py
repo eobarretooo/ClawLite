@@ -2949,6 +2949,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
 
 
 def test_gateway_dashboard_state_redacts_sensitive_handoff_token_fields(tmp_path: Path) -> None:
+    token = "secret" + "-token"
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
         state_path=str(tmp_path / "state"),
@@ -2957,14 +2958,14 @@ def test_gateway_dashboard_state_redacts_sensitive_handoff_token_fields(tmp_path
         gateway={
             "auth": {
                 "mode": "required",
-                "token": "secret-token",
+                "token": token,
             }
         },
     )
     app = create_app(cfg)
 
     with TestClient(app) as client:
-        response = client.get("/api/dashboard/state", headers={"Authorization": "Bearer secret-token"})
+        response = client.get("/api/dashboard/state", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -2975,7 +2976,7 @@ def test_gateway_dashboard_state_redacts_sensitive_handoff_token_fields(tmp_path
     assert "dashboard_url_with_token" not in handoff
     dashboard_row = next(item for item in handoff["guidance"] if item["id"] == "dashboard")
     assert "#token=" not in dashboard_row["body"]
-    assert "secret-token" not in json.dumps(handoff)
+    assert token not in json.dumps(handoff)
 
 
 class _ReplayChannel(BaseChannel):

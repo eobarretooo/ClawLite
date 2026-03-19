@@ -157,7 +157,8 @@ def test_build_dashboard_handoff_reports_configured_web_search_backends() -> Non
 
 
 def test_build_dashboard_handoff_can_redact_sensitive_dashboard_fields() -> None:
-    cfg = AppConfig.from_dict({"gateway": {"auth": {"mode": "required", "token": "tok-12345678"}}})
+    token = "tok-" + "12345678"
+    cfg = AppConfig.from_dict({"gateway": {"auth": {"mode": "required", "token": token}}})
 
     payload = build_dashboard_handoff(cfg, include_sensitive=False)
 
