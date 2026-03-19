@@ -492,6 +492,46 @@ class FakeMemoryWithDeferredTurnPersistence(FakeMemory):
         return {"status": "ok"}
 
 
+class FakeMemoryWithWorkingSetBatchCapture(FakeMemory):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.working_set_writes: list[dict[str, Any]] = []
+        self.batch_calls: list[dict[str, Any]] = []
+
+    def remember_working_messages(
+        self,
+        *,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        user_id: str = "default",
+        metadata: dict[str, Any] | None = None,
+        allow_promotion: bool = True,
+    ) -> None:
+        self.batch_calls.append(
+            {
+                "session_id": session_id,
+                "messages": [dict(item) for item in messages],
+                "user_id": user_id,
+                "metadata": dict(metadata or {}),
+                "allow_promotion": allow_promotion,
+            }
+        )
+        for item in messages:
+            self.working_set_writes.append(
+                {
+                    "session_id": session_id,
+                    "role": str(item.get("role", "") or ""),
+                    "content": str(item.get("content", "") or ""),
+                    "user_id": user_id,
+                    "metadata": dict(metadata or {}),
+                    "allow_promotion": allow_promotion,
+                }
+            )
+
+    def remember_working_set(self, *args, **kwargs) -> None:
+        raise AssertionError("remember_working_set fallback should not be used when batch API is available")
+
+
 class FakeMemoryWithContextKwargs(FakeMemory):
     def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
         super().__init__(rows)
@@ -2323,6 +2363,62 @@ def test_engine_stream_run_records_working_memory_for_completed_turns() -> None:
         ]
 
         assert "".join(chunk.text for chunk in chunks) == "ok"
+        assert memory.working_set_writes == [
+            {
+                "session_id": "telegram:42",
+                "role": "user",
+                "content": "hello there",
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
+            },
+            {
+                "session_id": "telegram:42",
+                "role": "assistant",
+                "content": "ok",
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
+            },
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_prefers_batch_working_memory_persistence_when_available() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("ok")
+        memory = FakeMemoryWithWorkingSetBatchCapture()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=InMemorySessionStore(),
+            memory=memory,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="telegram:42",
+                user_text="hello there",
+                channel="telegram",
+                chat_id="42",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in chunks) == "ok"
+        assert memory.batch_calls == [
+            {
+                "session_id": "telegram:42",
+                "messages": [
+                    {"role": "user", "content": "hello there"},
+                    {"role": "assistant", "content": "ok"},
+                ],
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
+            }
+        ]
         assert memory.working_set_writes == [
             {
                 "session_id": "telegram:42",

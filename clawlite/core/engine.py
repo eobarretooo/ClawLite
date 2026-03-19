@@ -3310,8 +3310,37 @@ class AgentEngine:
         run_log: Any,
     ) -> None:
         memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": assistant_text}]
+        remember_working_messages_fn = getattr(self.memory, "remember_working_messages", None)
         remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
-        if callable(remember_working_set_fn):
+        working_memory_written = False
+        if callable(remember_working_messages_fn):
+            base_working_kwargs: dict[str, Any] = {
+                "session_id": session_id,
+                "allow_promotion": allow_memory_write,
+            }
+            if runtime_chat_id:
+                base_working_kwargs["user_id"] = runtime_chat_id
+            if runtime_channel:
+                base_working_kwargs["metadata"] = {"channel": runtime_channel}
+            try:
+                working_batch_result = remember_working_messages_fn(
+                    messages=memory_messages,
+                    **base_working_kwargs,
+                )
+                if inspect.isawaitable(working_batch_result):
+                    await working_batch_result
+                working_memory_written = True
+            except TypeError:
+                try:
+                    working_batch_result = remember_working_messages_fn(session_id, messages=memory_messages)
+                    if inspect.isawaitable(working_batch_result):
+                        await working_batch_result
+                    working_memory_written = True
+                except Exception as exc:
+                    run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
+            except Exception as exc:
+                run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
+        if not working_memory_written and callable(remember_working_set_fn):
             base_working_kwargs: dict[str, Any] = {
                 "session_id": session_id,
                 "allow_promotion": allow_memory_write,

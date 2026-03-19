@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - active `stream_run()` sessions now honor stop requests mid-stream instead of draining the provider to the end, and cancelled streams skip assistant persistence while finishing with an explicit stop chunk
 - the `message` tool now exposes a more honest per-channel contract: Discord supports send plus button components, Telegram keeps the richer action/media bridge, and unsupported channels fail closed for advanced actions/buttons/media
 - production runtimes now batch transcript appends per turn and defer heavier memory persistence behind the response while draining that per-session queue before the next prompt and on CLI/gateway shutdown
+- completed-turn working-memory persistence now prefers a single batch write when the memory backend supports it, reducing post-turn working-set flush overhead without changing transcript durability
 - `stream_run()` now also falls back to the full `run()` loop for explicit `web_search` / `web-search` routing requests instead of staying on a raw provider stream when the operator already asked for a live search path
 - when a gateway token is configured, the broader control-plane surface now requires it even on loopback, including `status`, dashboard state, chat, cron/control mutations, approvals/grants, and gateway WebSocket chat, while root/assets/health stay open unless separately protected
 

@@ -1947,6 +1947,80 @@ class MemoryStore:
             fh.write(json.dumps(normalized_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
             self._flush_and_fsync(fh)
 
+    def remember_working_messages(
+        self,
+        session_id: str,
+        *,
+        messages: Iterable[dict[str, Any]],
+        user_id: str = "default",
+        metadata: dict[str, Any] | None = None,
+        allow_promotion: bool = True,
+    ) -> None:
+        clean_session_id = self._normalize_session_id(session_id)
+        if not clean_session_id:
+            return
+
+        pending_messages: list[dict[str, Any]] = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "") or "").strip().lower() or "user"
+            content = " ".join(str(item.get("content", "") or "").split())
+            if not content:
+                continue
+            pending_messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "user_id": str(item.get("user_id", user_id) or user_id),
+                    "metadata": item.get("metadata", metadata),
+                }
+            )
+        if not pending_messages:
+            return
+
+        with self._locked_file(self.working_memory_path, "a+", exclusive=True) as fh:
+            fh.seek(0)
+            raw = fh.read()
+            try:
+                payload = json.loads(str(raw or "").strip() or "{}")
+            except Exception:
+                payload = {}
+            state = self._normalize_working_memory_state_payload(payload)
+            sessions = dict(state.get("sessions", {}))
+            for item in pending_messages:
+                _remember_working_message_helper(
+                    sessions=sessions,
+                    session_id=clean_session_id,
+                    role=str(item.get("role", "") or ""),
+                    content=str(item.get("content", "") or ""),
+                    user_id=str(item.get("user_id", user_id) or user_id),
+                    metadata=item.get("metadata", metadata),
+                    allow_promotion=allow_promotion,
+                    normalize_working_memory_session_fn=self._normalize_working_memory_session,
+                    normalize_user_id_fn=self._normalize_user_id,
+                    working_memory_share_group_fn=self._working_memory_share_group,
+                    default_working_memory_share_scope_fn=self._default_working_memory_share_scope,
+                    parent_session_id_fn=self._parent_session_id,
+                    normalize_working_memory_promotion_state_fn=self._normalize_working_memory_promotion_state,
+                    normalize_working_memory_entry_fn=lambda payload, current_session_id, fallback_user_id: self._normalize_working_memory_entry(
+                        payload,
+                        session_id=current_session_id,
+                        fallback_user_id=fallback_user_id,
+                    ),
+                    normalize_memory_metadata_fn=self._normalize_memory_metadata,
+                    utcnow_iso=self._utcnow_iso,
+                    max_messages_per_session=self._WORKING_MEMORY_MAX_MESSAGES_PER_SESSION,
+                    promote_working_memory_locked_fn=self._promote_working_memory_locked,
+                )
+            state["sessions"] = sessions
+            state["updated_at"] = self._utcnow_iso()
+            normalized_state = self._normalize_working_memory_state_payload(state)
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps(normalized_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            self._flush_and_fsync(fh)
+
     def get_working_set(
         self,
         session_id: str,

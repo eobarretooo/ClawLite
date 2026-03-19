@@ -934,6 +934,34 @@ def test_memory_working_set_auto_promotes_episode_snapshots_in_batches(tmp_path:
     assert diag["working_memory_promotions"] == 2
 
 
+def test_memory_remember_working_messages_batches_single_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    flush_calls: list[str] = []
+
+    def _count_flush(_fh) -> None:
+        flush_calls.append("flush")
+
+    monkeypatch.setattr(store, "_flush_and_fsync", _count_flush)
+
+    store.remember_working_messages(
+        "cli:owner",
+        messages=[
+            {"role": "user", "content": "parent session says deploy on friday"},
+            {"role": "assistant", "content": "subagent found the release checklist"},
+        ],
+        user_id="42",
+        metadata={"channel": "telegram"},
+    )
+
+    rows = store.get_working_set("cli:owner", limit=8)
+    assert [row["content"] for row in rows] == [
+        "subagent found the release checklist",
+        "parent session says deploy on friday",
+    ]
+    assert all(row["metadata"]["channel"] == "telegram" for row in rows)
+    assert flush_calls == ["flush"]
+
+
 def test_memory_search_prioritizes_same_session_working_episode(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.jsonl")
     store.add("release checklist blocker still waiting", source="session:generic", user_id="42")
