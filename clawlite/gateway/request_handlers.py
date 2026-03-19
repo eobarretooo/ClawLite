@@ -18,7 +18,7 @@ class GatewayRequestHandlers:
     runtime: Any
     dashboard_asset_root: str
     dashboard_bootstrap_token: str
-    run_engine_with_timeout_fn: Callable[[str, str], Awaitable[Any]]
+    run_engine_with_timeout_fn: Callable[..., Awaitable[Any]]
     provider_error_payload_fn: Callable[[RuntimeError], tuple[int, str]]
     finalize_bootstrap_for_user_turn_fn: Callable[[str], None]
     build_tools_catalog_payload_fn: Callable[..., dict[str, Any]]
@@ -61,8 +61,19 @@ class GatewayRequestHandlers:
         if not str(req.session_id or "").strip() or not str(req.text or "").strip():
             raise HTTPException(status_code=400, detail="session_id and text are required")
         logger.debug("chat request received session={} chars={}", req.session_id, len(str(req.text or "")))
+        channel = str(getattr(req, "channel", "") or "").strip() or None
+        raw_chat_id = getattr(req, "chat_id", None)
+        chat_id = None if raw_chat_id is None else str(raw_chat_id).strip() or None
+        raw_runtime_metadata = getattr(req, "runtime_metadata", None)
+        runtime_metadata = dict(raw_runtime_metadata) if isinstance(raw_runtime_metadata, dict) and raw_runtime_metadata else None
         try:
-            out = await self.run_engine_with_timeout_fn(str(req.session_id), str(req.text))
+            out = await self.run_engine_with_timeout_fn(
+                str(req.session_id),
+                str(req.text),
+                channel=channel,
+                chat_id=chat_id,
+                runtime_metadata=runtime_metadata,
+            )
         except RuntimeError as exc:
             status_code, detail = self.provider_error_payload_fn(exc)
             bind_event("gateway.chat", session=str(req.session_id)).error(

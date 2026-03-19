@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - prompt guidance now treats browser page reads and browser evaluations as untrusted external data, while `browser.navigate` keeps the explicit external-content notice and `browser.evaluate` preserves its raw return contract
 - inbound channel turns now inject a compact allowlisted subset of runtime metadata into the untrusted prompt context, so reply/thread/command/media hints reach the model without exposing raw webhook payloads
 - inbound channel text now normalizes real CRLF/CR newlines and neutralizes obvious spoof markers like `[System Message]` or line-leading `System:` before it reaches the agent loop
+- direct gateway chat turns over HTTP and WebSocket now forward optional `channel`, `chat_id`, and `runtime_metadata` into the engine, preserving the same safe runtime-context path used by native channel adapters
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

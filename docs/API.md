@@ -1144,11 +1144,21 @@ Request:
 ```json
 {
   "session_id": "telegram:123",
-  "text": "remind me to drink water"
+  "text": "remind me to drink water",
+  "channel": "telegram",
+  "chat_id": "123",
+  "runtime_metadata": {
+    "reply_to_message_id": "456"
+  }
 }
 ```
 
 Alias compatível: `POST /api/message` (mesma request/response e mesma política de autenticação).
+
+Campos opcionais:
+- `channel`: dica explícita de canal quando a requisição HTTP não veio de um adapter já normalizado.
+- `chat_id`: identificador do alvo/chat a preservar no contexto do turno.
+- `runtime_metadata`: objeto JSON opcional com metadata inbound adicional. O gateway só aceita objeto e ignora outros tipos; o prompt do agente continua vendo apenas a allowlist segura/untrusted já documentada.
 
 Nota operacional: o tool `message` suporta acoes Telegram (`send`, `reply`, `edit`, `delete`, `react`, `create_topic`) via argumentos de `action` e bridge de metadata (`_telegram_action*`), preservando o fluxo normal de envio e inline keyboard.
 
@@ -1331,8 +1341,19 @@ WebSocket for chat.
 Input message:
 
 ```json
-{"session_id":"cli:ws","text":"hello"}
+{
+  "session_id": "cli:ws",
+  "text": "hello",
+  "channel": "telegram",
+  "chat_id": "123",
+  "runtime_metadata": {
+    "reply_to_message_id": "456"
+  }
+}
 ```
+
+No envelope `req` moderno, WebSocket também aceita `sessionId`, `chatId` e `runtimeMetadata`.
+Os campos opcionais têm a mesma semântica do `POST /v1/chat`, e `runtime_metadata` / `runtimeMetadata` inválido é ignorado em vez de virar erro de contrato.
 
 Output message:
 

@@ -18,8 +18,8 @@ class GatewayWebSocketHandlers:
     lifecycle: Any
     ws_telemetry: Any
     contract_version: str
-    run_engine_with_timeout_fn: Callable[[str, str], Awaitable[Any]]
-    stream_engine_with_timeout_fn: Callable[[str, str], Any] | None
+    run_engine_with_timeout_fn: Callable[..., Awaitable[Any]]
+    stream_engine_with_timeout_fn: Callable[..., Any] | None
     provider_error_payload_fn: Callable[[RuntimeError], tuple[int, str]]
     finalize_bootstrap_for_user_turn_fn: Callable[[str], None]
     control_plane_payload_fn: Callable[[], Any]
@@ -86,6 +86,23 @@ class GatewayWebSocketHandlers:
             return raw.strip().lower() in {"1", "true", "yes", "on"}
         return False
 
+    @staticmethod
+    def _coerce_chat_context(payload: dict[str, Any]) -> tuple[str | None, str | None, dict[str, Any] | None]:
+        channel = str(payload.get("channel", "") or "").strip() or None
+        raw_chat_id = payload.get("chat_id")
+        if raw_chat_id is None:
+            raw_chat_id = payload.get("chatId")
+        chat_id: str | None = None
+        if isinstance(raw_chat_id, (str, int)) and not isinstance(raw_chat_id, bool):
+            chat_id = str(raw_chat_id).strip() or None
+        raw_runtime_metadata = payload.get("runtime_metadata")
+        if raw_runtime_metadata is None:
+            raw_runtime_metadata = payload.get("runtimeMetadata")
+        runtime_metadata = None
+        if isinstance(raw_runtime_metadata, dict) and raw_runtime_metadata:
+            runtime_metadata = dict(raw_runtime_metadata)
+        return channel, chat_id, runtime_metadata
+
     async def _run_chat_request(self, *, request_id: str | int | None, params: dict[str, Any]) -> dict[str, Any]:
         session_id = str(params.get("session_id") or params.get("sessionId") or "").strip()
         text = str(params.get("text") or "").strip()
@@ -96,8 +113,15 @@ class GatewayWebSocketHandlers:
                 message="session_id/sessionId and text are required",
                 status_code=400,
             )
+        channel, chat_id, runtime_metadata = self._coerce_chat_context(params)
         try:
-            out = await self.run_engine_with_timeout_fn(session_id, text)
+            out = await self.run_engine_with_timeout_fn(
+                session_id,
+                text,
+                channel=channel,
+                chat_id=chat_id,
+                runtime_metadata=runtime_metadata,
+            )
         except RuntimeError as exc:
             status_code, detail = self.provider_error_payload_fn(exc)
             bind_event("gateway.ws", session=session_id, channel="ws").error(
@@ -158,8 +182,15 @@ class GatewayWebSocketHandlers:
 
         last_accumulated = ""
         last_model = ""
+        channel, chat_id, runtime_metadata = self._coerce_chat_context(params)
         try:
-            async for chunk in self.stream_engine_with_timeout_fn(session_id, text):
+            async for chunk in self.stream_engine_with_timeout_fn(
+                session_id,
+                text,
+                channel=channel,
+                chat_id=chat_id,
+                runtime_metadata=runtime_metadata,
+            ):
                 last_accumulated = str(getattr(chunk, "accumulated", "") or last_accumulated)
                 last_model = str(getattr(chunk, "model", "") or last_model)
                 event_payload = {
@@ -434,8 +465,15 @@ class GatewayWebSocketHandlers:
                         if handled:
                             continue
 
+                    channel, chat_id, runtime_metadata = self._coerce_chat_context(payload)
                     try:
-                        out = await self.run_engine_with_timeout_fn(session_id, text)
+                        out = await self.run_engine_with_timeout_fn(
+                            session_id,
+                            text,
+                            channel=channel,
+                            chat_id=chat_id,
+                            runtime_metadata=runtime_metadata,
+                        )
                     except RuntimeError as exc:
                         status_code, detail = self.provider_error_payload_fn(exc)
                         bind_event("gateway.ws", session=session_id, channel="ws").error(
@@ -469,8 +507,15 @@ class GatewayWebSocketHandlers:
                 if not session_id or not text:
                     await _send_ws({"error": "session_id and text are required"})
                     continue
+                channel, chat_id, runtime_metadata = self._coerce_chat_context(payload)
                 try:
-                    out = await self.run_engine_with_timeout_fn(session_id, text)
+                    out = await self.run_engine_with_timeout_fn(
+                        session_id,
+                        text,
+                        channel=channel,
+                        chat_id=chat_id,
+                        runtime_metadata=runtime_metadata,
+                    )
                 except RuntimeError as exc:
                     status_code, detail = self.provider_error_payload_fn(exc)
                     bind_event("gateway.ws", session=session_id, channel="ws").error(

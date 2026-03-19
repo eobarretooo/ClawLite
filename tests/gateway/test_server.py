@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -491,6 +492,63 @@ def test_gateway_chat_endpoint(tmp_path: Path) -> None:
         alias = client.post("/api/message", json={"session_id": "cli:1", "text": "ping"})
         assert alias.status_code == 200
         assert alias.json()["text"] == "pong"
+
+
+def test_gateway_chat_endpoint_forwards_optional_context(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    seen: list[dict[str, Any]] = []
+
+    async def _capture_run(
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ):
+        seen.append(
+            {
+                "session_id": session_id,
+                "user_text": user_text,
+                "channel": channel,
+                "chat_id": chat_id,
+                "runtime_metadata": runtime_metadata,
+            }
+        )
+        return SimpleNamespace(text="pong", model="fake/test")
+
+    app.state.runtime.engine.run = _capture_run
+
+    with TestClient(app) as client:
+        chat = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "cli:1",
+                "text": "ping",
+                "channel": "telegram",
+                "chat_id": "42",
+                "runtime_metadata": {"reply_to_message_id": "7"},
+            },
+        )
+        assert chat.status_code == 200
+        assert chat.json()["text"] == "pong"
+
+    forwarded = [row for row in seen if row["session_id"] == "cli:1"]
+    assert forwarded == [
+        {
+            "session_id": "cli:1",
+            "user_text": "ping",
+            "channel": "telegram",
+            "chat_id": "42",
+            "runtime_metadata": {"reply_to_message_id": "7"},
+        }
+    ]
 
 
 def test_gateway_chat_endpoint_timeout_returns_provider_style_code(tmp_path: Path) -> None:
@@ -4595,9 +4653,25 @@ def test_gateway_ws_req_streams_chunks_before_final_response(tmp_path: Path) -> 
     )
     app = create_app(cfg)
 
-    async def _fake_stream_run(*, session_id: str, user_text: str):
+    seen: list[dict[str, Any]] = []
+
+    async def _fake_stream_run(
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ):
         assert session_id == "cli:req-stream"
         assert user_text == "ping"
+        seen.append(
+            {
+                "channel": channel,
+                "chat_id": chat_id,
+                "runtime_metadata": runtime_metadata,
+            }
+        )
         yield ProviderChunk(text="po", accumulated="po", done=False)
         yield ProviderChunk(text="ng", accumulated="pong", done=True)
 
@@ -4615,13 +4689,27 @@ def test_gateway_ws_req_streams_chunks_before_final_response(tmp_path: Path) -> 
                     "type": "req",
                     "id": "m-stream",
                     "method": "chat.send",
-                    "params": {"sessionId": "cli:req-stream", "text": "ping", "stream": True},
+                    "params": {
+                        "sessionId": "cli:req-stream",
+                        "text": "ping",
+                        "stream": True,
+                        "channel": "telegram",
+                        "chatId": 123,
+                        "runtimeMetadata": {"reply_to_message_id": "456"},
+                    },
                 }
             )
             chunk_one = socket.receive_json()
             chunk_two = socket.receive_json()
             final_payload = socket.receive_json()
 
+    assert seen == [
+        {
+            "channel": "telegram",
+            "chat_id": "123",
+            "runtime_metadata": {"reply_to_message_id": "456"},
+        }
+    ]
     assert chunk_one == {
         "type": "event",
         "event": "chat.chunk",

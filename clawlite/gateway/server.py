@@ -188,6 +188,9 @@ def _normalize_webhook_path(value: str, *, default: str = "/api/webhooks/telegra
 class ChatRequest(BaseModel):
     session_id: str
     text: str
+    channel: str = ""
+    chat_id: str | None = None
+    runtime_metadata: dict[str, Any] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -502,10 +505,23 @@ async def _run_engine_with_timeout(
     session_id: str,
     user_text: str,
     timeout_s: float,
+    channel: str | None = None,
+    chat_id: str | None = None,
+    runtime_metadata: dict[str, Any] | None = None,
 ) -> Any:
+    run_kwargs: dict[str, Any] = {
+        "session_id": session_id,
+        "user_text": user_text,
+    }
+    if str(channel or "").strip():
+        run_kwargs["channel"] = str(channel).strip()
+    if str(chat_id or "").strip():
+        run_kwargs["chat_id"] = str(chat_id).strip()
+    if isinstance(runtime_metadata, dict) and runtime_metadata:
+        run_kwargs["runtime_metadata"] = dict(runtime_metadata)
     try:
         return await asyncio.wait_for(
-            engine.run(session_id=session_id, user_text=user_text),
+            engine.run(**run_kwargs),
             timeout=max(0.001, float(timeout_s)),
         )
     except (asyncio.TimeoutError, TimeoutError) as exc:
@@ -518,8 +534,21 @@ async def _stream_engine_with_timeout(
     session_id: str,
     user_text: str,
     timeout_s: float,
+    channel: str | None = None,
+    chat_id: str | None = None,
+    runtime_metadata: dict[str, Any] | None = None,
 ):
-    stream = engine.stream_run(session_id=session_id, user_text=user_text)
+    stream_kwargs: dict[str, Any] = {
+        "session_id": session_id,
+        "user_text": user_text,
+    }
+    if str(channel or "").strip():
+        stream_kwargs["channel"] = str(channel).strip()
+    if str(chat_id or "").strip():
+        stream_kwargs["chat_id"] = str(chat_id).strip()
+    if isinstance(runtime_metadata, dict) and runtime_metadata:
+        stream_kwargs["runtime_metadata"] = dict(runtime_metadata)
+    stream = engine.stream_run(**stream_kwargs)
     deadline = time.monotonic() + max(0.001, float(timeout_s))
     try:
         while True:
@@ -2965,17 +2994,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         lifecycle=lifecycle,
         ws_telemetry=ws_telemetry,
         contract_version=GATEWAY_CONTRACT_VERSION,
-        run_engine_with_timeout_fn=lambda session_id, user_text: _run_engine_with_timeout(
+        run_engine_with_timeout_fn=lambda session_id, user_text, **context: _run_engine_with_timeout(
             engine=runtime.engine,
             session_id=session_id,
             user_text=user_text,
             timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
+            **context,
         ),
-        stream_engine_with_timeout_fn=lambda session_id, user_text: _stream_engine_with_timeout(
+        stream_engine_with_timeout_fn=lambda session_id, user_text, **context: _stream_engine_with_timeout(
             engine=runtime.engine,
             session_id=session_id,
             user_text=user_text,
             timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
+            **context,
         ),
         provider_error_payload_fn=_provider_error_payload,
         finalize_bootstrap_for_user_turn_fn=_finalize_bootstrap_for_user_turn,
@@ -2991,11 +3022,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         runtime=runtime,
         dashboard_asset_root=_DASHBOARD_ASSET_ROOT,
         dashboard_bootstrap_token=_DASHBOARD_BOOTSTRAP_TOKEN,
-        run_engine_with_timeout_fn=lambda session_id, user_text: _run_engine_with_timeout(
+        run_engine_with_timeout_fn=lambda session_id, user_text, **context: _run_engine_with_timeout(
             engine=runtime.engine,
             session_id=session_id,
             user_text=user_text,
             timeout_s=GATEWAY_CHAT_WS_ENGINE_TIMEOUT_S,
+            **context,
         ),
         provider_error_payload_fn=_provider_error_payload,
         finalize_bootstrap_for_user_turn_fn=_finalize_bootstrap_for_user_turn,

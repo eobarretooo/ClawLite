@@ -48,7 +48,13 @@ def _build_handlers() -> GatewayRequestHandlers:
 
 def test_request_handlers_chat_and_cron_paths() -> None:
     handlers = _build_handlers()
-    req = SimpleNamespace(session_id="cli:test", text="ping")
+    req = SimpleNamespace(
+        session_id="cli:test",
+        text="ping",
+        channel="telegram",
+        chat_id="123",
+        runtime_metadata={"reply_to_message_id": "456"},
+    )
     request = SimpleNamespace(query_params={})
 
     chat_payload = asyncio.run(handlers.chat(req, request))
@@ -67,6 +73,13 @@ def test_request_handlers_chat_and_cron_paths() -> None:
     cron_remove_payload = asyncio.run(handlers.cron_remove(job_id="job-1", request=request))
 
     assert chat_payload == {"text": "pong", "model": "fake/test"}
+    handlers.run_engine_with_timeout_fn.assert_awaited_once_with(
+        "cli:test",
+        "ping",
+        channel="telegram",
+        chat_id="123",
+        runtime_metadata={"reply_to_message_id": "456"},
+    )
     assert cron_add_payload == {"ok": True, "status": "created", "id": "job-1"}
     assert cron_status_payload["status"]["running"] is True
     assert cron_list_payload["count"] == 1
