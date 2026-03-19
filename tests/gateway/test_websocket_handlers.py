@@ -392,6 +392,132 @@ def test_websocket_handler_uses_configured_coalesce_max_chars() -> None:
     }
 
 
+def test_websocket_handler_newline_profile_waits_for_newline_not_sentence() -> None:
+    handler, socket = _build_handler(
+        inbound=[
+            {"type": "req", "id": "c1", "method": "connect", "params": {}},
+            {
+                "type": "req",
+                "id": "m5",
+                "method": "chat.send",
+                "params": {
+                    "sessionId": "cli:req-stream-newline",
+                    "text": "ping",
+                    "stream": True,
+                },
+            },
+        ]
+    )
+    handler.coalesce_profile = "newline"
+    handler.coalesce_min_chars = 8
+    handler.coalesce_max_chars = 200
+
+    async def _newline_stream(
+        session_id: str,
+        text: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, object] | None = None,
+    ):
+        del session_id, text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="Hello world.", accumulated="Hello world.", done=False)
+        yield ProviderChunk(text="\n", accumulated="Hello world.\n", done=False)
+        yield ProviderChunk(text="Next line done", accumulated="Hello world.\nNext line done", done=True)
+
+    handler.stream_engine_with_timeout_fn = _newline_stream
+
+    asyncio.run(handler.handle(socket, path_label="/ws"))
+
+    assert socket.sent[2] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m5",
+        "params": {
+            "session_id": "cli:req-stream-newline",
+            "text": "Hello world.\n",
+            "accumulated": "Hello world.\n",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[3] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m5",
+        "params": {
+            "session_id": "cli:req-stream-newline",
+            "text": "Next line done",
+            "accumulated": "Hello world.\nNext line done",
+            "done": True,
+            "degraded": False,
+        },
+    }
+
+
+def test_websocket_handler_paragraph_profile_waits_for_blank_line() -> None:
+    handler, socket = _build_handler(
+        inbound=[
+            {"type": "req", "id": "c1", "method": "connect", "params": {}},
+            {
+                "type": "req",
+                "id": "m6",
+                "method": "chat.send",
+                "params": {
+                    "sessionId": "cli:req-stream-paragraph",
+                    "text": "ping",
+                    "stream": True,
+                },
+            },
+        ]
+    )
+    handler.coalesce_profile = "paragraph"
+    handler.coalesce_min_chars = 8
+    handler.coalesce_max_chars = 200
+
+    async def _paragraph_stream(
+        session_id: str,
+        text: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, object] | None = None,
+    ):
+        del session_id, text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="Para one.", accumulated="Para one.", done=False)
+        yield ProviderChunk(text="\n\n", accumulated="Para one.\n\n", done=False)
+        yield ProviderChunk(text="Para two done", accumulated="Para one.\n\nPara two done", done=True)
+
+    handler.stream_engine_with_timeout_fn = _paragraph_stream
+
+    asyncio.run(handler.handle(socket, path_label="/ws"))
+
+    assert socket.sent[2] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m6",
+        "params": {
+            "session_id": "cli:req-stream-paragraph",
+            "text": "Para one.\n\n",
+            "accumulated": "Para one.\n\n",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[3] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m6",
+        "params": {
+            "session_id": "cli:req-stream-paragraph",
+            "text": "Para two done",
+            "accumulated": "Para one.\n\nPara two done",
+            "done": True,
+            "degraded": False,
+        },
+    }
+
+
 def test_websocket_handler_legacy_message_forwards_context_and_ignores_invalid_runtime_metadata() -> None:
     handler, socket = _build_handler(
         inbound=[

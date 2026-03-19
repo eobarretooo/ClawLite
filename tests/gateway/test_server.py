@@ -4817,6 +4817,90 @@ def test_gateway_ws_req_respects_websocket_coalescing_config(tmp_path: Path) -> 
     }
 
 
+def test_gateway_ws_req_respects_websocket_coalescing_profile(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+        gateway={"websocket": {"coalesce_profile": "newline", "coalesce_min_chars": 8}},
+    )
+    app = create_app(cfg)
+
+    async def _fake_stream_run(
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ):
+        del session_id, user_text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="Hello world.", accumulated="Hello world.", done=False)
+        yield ProviderChunk(text="\n", accumulated="Hello world.\n", done=False)
+        yield ProviderChunk(text="Next line done", accumulated="Hello world.\nNext line done", done=True)
+
+    app.state.runtime.engine.stream_run = _fake_stream_run
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as socket:
+            _assert_connect_challenge(socket)
+            socket.send_json({"type": "req", "id": "c1", "method": "connect", "params": {}})
+            connect_payload = socket.receive_json()
+            assert connect_payload["ok"] is True
+
+            socket.send_json(
+                {
+                    "type": "req",
+                    "id": "m-stream-newline",
+                    "method": "chat.send",
+                    "params": {
+                        "sessionId": "cli:req-stream-newline",
+                        "text": "ping",
+                        "stream": True,
+                    },
+                }
+            )
+            chunk_one = socket.receive_json()
+            chunk_two = socket.receive_json()
+            final_payload = socket.receive_json()
+
+    assert chunk_one == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m-stream-newline",
+        "params": {
+            "session_id": "cli:req-stream-newline",
+            "text": "Hello world.\n",
+            "accumulated": "Hello world.\n",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert chunk_two == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m-stream-newline",
+        "params": {
+            "session_id": "cli:req-stream-newline",
+            "text": "Next line done",
+            "accumulated": "Hello world.\nNext line done",
+            "done": True,
+            "degraded": False,
+        },
+    }
+    assert final_payload == {
+        "type": "res",
+        "id": "m-stream-newline",
+        "ok": True,
+        "result": {
+            "session_id": "cli:req-stream-newline",
+            "text": "Hello world.\nNext line done",
+            "model": "",
+        },
+    }
+
+
 def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),

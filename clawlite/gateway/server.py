@@ -3038,6 +3038,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         coalesce_enabled=cfg.gateway.websocket.coalesce_enabled,
         coalesce_min_chars=cfg.gateway.websocket.coalesce_min_chars,
         coalesce_max_chars=cfg.gateway.websocket.coalesce_max_chars,
+        coalesce_profile=cfg.gateway.websocket.coalesce_profile,
     )
     request_handlers = GatewayRequestHandlers(
         auth_guard=auth_guard,

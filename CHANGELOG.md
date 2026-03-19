@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the untrusted runtime-context block is now merged into the current user turn before provider calls, avoiding another provider-compatibility edge around adjacent `user` messages without changing what gets persisted to session history
 - gateway WebSocket streaming now coalesces tiny provider chunks into fewer `chat.chunk` events before the final response, reducing frame spam without changing ordering or accumulated text semantics
 - gateway WebSocket chunk coalescing is now configurable under `gateway.websocket`, while preserving the existing default buffering behavior and `chat.chunk` contract
+- gateway WebSocket coalescing now also supports configurable delivery profiles (`compact`, `newline`, `paragraph`, `raw`) so different WS clients can choose how aggressively chunks are grouped without changing the engine stream itself
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

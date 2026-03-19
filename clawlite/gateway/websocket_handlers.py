@@ -34,6 +34,7 @@ class GatewayWebSocketHandlers:
     coalesce_enabled: bool = True
     coalesce_min_chars: int = _STREAM_COALESCE_DEFAULT_MIN_CHARS
     coalesce_max_chars: int = _STREAM_COALESCE_DEFAULT_MAX_CHARS
+    coalesce_profile: str = "compact"
 
     @staticmethod
     def _envelope_error(*, error: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
@@ -114,12 +115,17 @@ class GatewayWebSocketHandlers:
         content = str(text or "")
         if not content:
             return bool(done)
-        if not self.coalesce_enabled:
+        profile = str(self.coalesce_profile or "compact").strip().lower()
+        if not self.coalesce_enabled or profile == "raw":
             return True
         if done or len(content) >= self.coalesce_max_chars:
             return True
         if len(content) < self.coalesce_min_chars:
             return False
+        if profile == "paragraph":
+            return content.endswith("\n\n")
+        if profile == "newline":
+            return content.endswith("\n")
         if content.endswith("\n\n") or content.endswith("\n"):
             return True
         stripped = content.rstrip()

@@ -27,6 +27,7 @@ def test_empty_config_defaults():
     assert cfg.gateway.websocket.coalesce_enabled is True
     assert cfg.gateway.websocket.coalesce_min_chars == 24
     assert cfg.gateway.websocket.coalesce_max_chars == 120
+    assert cfg.gateway.websocket.coalesce_profile == "compact"
     assert cfg.agents.defaults.model == "gemini/gemini-2.5-flash"
     assert cfg.agents.defaults.max_tokens == 8192
     assert cfg.agents.defaults.temperature == 0.1
@@ -80,6 +81,7 @@ def test_camel_case_input():
                 "coalesceEnabled": False,
                 "coalesceMinChars": 40,
                 "coalesceMaxChars": 16,
+                "coalesceProfile": "paragraph",
             },
         },
         "tools": {
@@ -94,6 +96,7 @@ def test_camel_case_input():
     assert cfg.gateway.websocket.coalesce_enabled is False
     assert cfg.gateway.websocket.coalesce_min_chars == 40
     assert cfg.gateway.websocket.coalesce_max_chars == 40
+    assert cfg.gateway.websocket.coalesce_profile == "paragraph"
     assert cfg.tools.web.search_timeout == 5.0
     assert cfg.tools.web.max_chars == 3000
     assert cfg.tools.web.block_private_addresses is False

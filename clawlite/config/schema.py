@@ -337,6 +337,7 @@ class GatewayWebSocketConfig(Base):
     coalesce_enabled: bool = True
     coalesce_min_chars: int = 24
     coalesce_max_chars: int = 120
+    coalesce_profile: str = "compact"
 
     @field_validator("coalesce_min_chars", "coalesce_max_chars", mode="before")
     @classmethod
@@ -347,6 +348,14 @@ class GatewayWebSocketConfig(Base):
         }
         value = v if v not in (None, "") else defaults.get(str(info.field_name), 1)
         return max(1, int(value))
+
+    @field_validator("coalesce_profile", mode="before")
+    @classmethod
+    def _coalesce_profile_default(cls, v: Any) -> str:
+        value = str(v or "compact").strip().lower()
+        if value not in {"compact", "newline", "paragraph", "raw"}:
+            return "compact"
+        return value
 
     @model_validator(mode="after")
     def _normalize_coalesce_bounds(self) -> "GatewayWebSocketConfig":

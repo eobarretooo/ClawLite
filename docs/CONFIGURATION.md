@@ -195,6 +195,7 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 | `coalesce_enabled` | `true` | Coalesce small provider stream chunks into fewer `chat.chunk` WS events |
 | `coalesce_min_chars` | `24` | Minimum buffered chars before newline/sentence coalescing is eligible to flush |
 | `coalesce_max_chars` | `120` | Hard flush ceiling for buffered chunk text before the next `chat.chunk` event |
+| `coalesce_profile` | `"compact"` | Flush preference: `compact` (sentence/newline), `newline`, `paragraph`, or `raw` |
 
 ---
 
