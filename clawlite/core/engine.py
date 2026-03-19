@@ -2898,6 +2898,10 @@ class AgentEngine:
             return True
         return False
 
+    @staticmethod
+    def _stream_accumulated_has_visible_text(*, text: str = "", accumulated: str = "") -> bool:
+        return bool(str(accumulated or "").strip() or str(text or "").strip())
+
     @classmethod
     def _routing_notice_for_turn(
         cls,
@@ -3154,7 +3158,10 @@ class AgentEngine:
                                 await queue.put(("fallback", None))
                                 return
                             accumulated = chunk.accumulated or (accumulated + chunk.text)
-                            if chunk.text or accumulated:
+                            if self._stream_accumulated_has_visible_text(
+                                text=chunk.text,
+                                accumulated=accumulated,
+                            ):
                                 visible_text_emitted = True
                             if chunk.error:
                                 final_error = str(chunk.error)

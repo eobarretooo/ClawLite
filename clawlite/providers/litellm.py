@@ -749,7 +749,7 @@ class LiteLLMProvider(LLMProvider):
                                     text = str(delta.get("content") or "")
                                     finish_reason = choice.get("finish_reason")
                                     streamed_tool_calls = delta.get("tool_calls")
-                                    if not accumulated and not text and (
+                                    if not accumulated.strip() and not text.strip() and (
                                         (isinstance(streamed_tool_calls, list) and streamed_tool_calls)
                                         or finish_reason == "tool_calls"
                                     ):
