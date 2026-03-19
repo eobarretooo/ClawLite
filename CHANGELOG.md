@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the main-turn memory planner now probes a smaller initial search window before widening the same query, reducing the common retrieval cost when early memory hits are already sufficient
 - active `stream_run()` sessions now honor stop requests mid-stream instead of draining the provider to the end, and cancelled streams skip assistant persistence while finishing with an explicit stop chunk
 - the `message` tool now exposes a more honest per-channel contract: Discord supports send plus button components, Telegram keeps the richer action/media bridge, and unsupported channels fail closed for advanced actions/buttons/media
+- production runtimes now batch transcript appends per turn and defer heavier memory persistence behind the response while draining that per-session queue before the next prompt and on CLI/gateway shutdown
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

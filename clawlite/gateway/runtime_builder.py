@@ -408,6 +408,7 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         memory_backend_name=str(config.agents.defaults.memory.backend or "sqlite"),
         memory_backend_url=str(config.agents.defaults.memory.pgvector_url or ""),
     )
+    memory.supports_deferred_turn_persistence = True
     tools.register(SkillTool(loader=skills, registry=tools, memory=memory, provider=provider))
     memory_monitor = (
         MemoryMonitor(

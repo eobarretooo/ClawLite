@@ -430,6 +430,70 @@ class FakeMemoryWithAsyncMemorize(FakeMemory):
         return None
 
 
+class FakeMemoryWithDeferredTurnPersistence(FakeMemory):
+    supports_deferred_turn_persistence = True
+
+    def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
+        super().__init__(rows)
+        self.memorize_calls: list[dict[str, Any]] = []
+        self.working_set_writes: list[dict[str, Any]] = []
+        self.allow_memorize = asyncio.Event()
+        self.memorize_started = asyncio.Event()
+
+    def remember_working_set(
+        self,
+        messages,
+        *,
+        session_id: str = "",
+        user_id: str = "",
+        metadata: dict[str, Any] | None = None,
+        allow_promotion: bool = True,
+    ) -> None:
+        for item in list(messages or []):
+            if not isinstance(item, dict):
+                continue
+            self.working_set_writes.append(
+                {
+                    "session_id": session_id,
+                    "role": str(item.get("role", "") or ""),
+                    "content": str(item.get("content", "") or ""),
+                    "user_id": user_id,
+                    "metadata": dict(metadata or {}),
+                    "allow_promotion": bool(allow_promotion),
+                }
+            )
+
+    async def memorize(
+        self,
+        *,
+        messages=None,
+        source: str = "session",
+        text: str | None = None,
+        user_id: str = "",
+        shared: bool = False,
+        metadata: dict[str, Any] | None = None,
+        reasoning_layer: str | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
+    ) -> dict[str, Any]:
+        self.memorize_started.set()
+        await self.allow_memorize.wait()
+        self.memorize_calls.append(
+            {
+                "messages": messages,
+                "text": text,
+                "source": source,
+                "user_id": user_id,
+                "shared": shared,
+                "metadata": dict(metadata or {}),
+                "reasoning_layer": reasoning_layer,
+                "memory_type": memory_type,
+                "happened_at": happened_at,
+            }
+        )
+        return {"status": "ok"}
+
+
 class FakeMemoryWithContextKwargs(FakeMemory):
     def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
         super().__init__(rows)
@@ -2365,6 +2429,64 @@ def test_engine_stream_run_persists_degraded_completion_turn() -> None:
             {"session_id": "cli:stream-degraded", "role": "user", "content": "ping"},
             {"session_id": "cli:stream-degraded", "role": "assistant", "content": "ok"},
         ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_run_defers_memory_persistence_until_after_transcript_write() -> None:
+    async def _scenario() -> None:
+        provider = FakeFixedTextProvider("pong")
+        memory = FakeMemoryWithDeferredTurnPersistence()
+        sessions = SessionStoreRecorder()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=memory,
+        )
+
+        first = await engine.run(session_id="cli:deferred", user_text="ping")
+        assert first.text == "pong"
+        assert sessions.rows == [
+            {"session_id": "cli:deferred", "role": "user", "content": "ping"},
+            {"session_id": "cli:deferred", "role": "assistant", "content": "pong"},
+        ]
+        assert memory.memorize_calls == []
+        await asyncio.wait_for(memory.memorize_started.wait(), timeout=1.0)
+
+        second_started = asyncio.Event()
+
+        class _SecondProvider(FakeFixedTextProvider):
+            async def complete(self, *, messages, tools):
+                second_started.set()
+                return await super().complete(messages=messages, tools=tools)
+
+        engine.provider = _SecondProvider("second")
+        second_task = asyncio.create_task(engine.run(session_id="cli:deferred", user_text="again"))
+        await asyncio.sleep(0.05)
+        assert second_started.is_set() is False
+
+        memory.allow_memorize.set()
+        second = await asyncio.wait_for(second_task, timeout=1.0)
+        assert second.text == "second"
+        assert second_started.is_set() is True
+        assert memory.memorize_calls == [
+            {
+                "messages": [
+                    {"role": "user", "content": "ping"},
+                    {"role": "assistant", "content": "pong"},
+                ],
+                "text": None,
+                "source": "session:cli:deferred",
+                "user_id": "",
+                "shared": False,
+                "metadata": {},
+                "reasoning_layer": None,
+                "memory_type": None,
+                "happened_at": None,
+            }
+        ]
+        await engine.drain_turn_persistence()
 
     asyncio.run(_scenario())
 

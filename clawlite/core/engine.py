@@ -235,6 +235,17 @@ class InMemorySessionStore(SessionStoreProtocol):
             row["name"] = tool_name
         self._rows.setdefault(session_id, []).append(row)
 
+    def append_many(self, session_id: str, rows: list[dict[str, Any]]) -> None:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            self.append(
+                session_id,
+                str(row.get("role", "") or ""),
+                str(row.get("content", "") or ""),
+                metadata=dict(row.get("metadata") or {}),
+            )
+
 
 class AgentEngine:
     """Core autonomous loop used by channels, cron and CLI."""
@@ -573,6 +584,7 @@ class AgentEngine:
         self._last_stop_request_cleanup = 0.0
         self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._session_locks_guard = asyncio.Lock()
+        self._turn_persistence_tasks: dict[str, asyncio.Task[None]] = {}
         self._callable_parameter_specs: dict[tuple[int, int], _CallableParameterSpec | None] = {}
         self._retrieval_route_counts: dict[str, int] = {
             self._MEMORY_ROUTE_NO_RETRIEVE: 0,
@@ -1614,6 +1626,7 @@ class AgentEngine:
         include_tool_guidance: bool = True,
     ) -> _PreparedTurnPrompt:
         runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
+        await self._await_turn_persistence(session_id)
         history = self._read_session_history_messages(session_id, limit=self.memory_window)
         memory_policy = await self._memory_integration_policy_async(actor="agent", session_id=session_id)
         allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
@@ -3192,22 +3205,96 @@ class AgentEngine:
                 return
         append_fn(session_id, role, content)
 
-    async def _persist_completed_turn(
+    def _append_session_messages(
+        self,
+        session_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        append_many_fn = getattr(self.sessions, "append_many", None)
+        if callable(append_many_fn):
+            try:
+                append_many_fn(session_id, rows)
+                return
+            except TypeError:
+                pass
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            self._append_session_message(
+                session_id,
+                str(row.get("role", "") or ""),
+                str(row.get("content", "") or ""),
+                metadata=dict(row.get("metadata") or {}),
+            )
+
+    def _supports_deferred_turn_persistence(self) -> bool:
+        return bool(getattr(self.memory, "supports_deferred_turn_persistence", False))
+
+    async def _await_turn_persistence(self, session_id: str) -> None:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return
+        task = self._turn_persistence_tasks.get(normalized_session_id)
+        if task is None:
+            return
+        try:
+            await asyncio.shield(task)
+        except Exception:
+            pass
+
+    async def drain_turn_persistence(self, *, session_id: str = "") -> None:
+        normalized_session_id = str(session_id or "").strip()
+        if normalized_session_id:
+            await self._await_turn_persistence(normalized_session_id)
+            return
+        pending = list(self._turn_persistence_tasks.values())
+        if not pending:
+            return
+        await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
+
+    def _queue_turn_persistence(
+        self,
+        *,
+        session_id: str,
+        run_log: Any,
+        payload_coro_factory: Callable[[], Awaitable[None]],
+    ) -> None:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return
+        previous = self._turn_persistence_tasks.get(normalized_session_id)
+
+        async def _runner() -> None:
+            if previous is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(previous)
+            try:
+                await payload_coro_factory()
+            except Exception as exc:
+                run_log.warning(
+                    "deferred turn persistence failed session={} error={}",
+                    normalized_session_id or "-",
+                    exc,
+                )
+            finally:
+                current = self._turn_persistence_tasks.get(normalized_session_id)
+                if current is task:
+                    self._turn_persistence_tasks.pop(normalized_session_id, None)
+
+        task = asyncio.create_task(_runner())
+        self._turn_persistence_tasks[normalized_session_id] = task
+
+    async def _persist_turn_memory(
         self,
         *,
         session_id: str,
         user_text: str,
-        assistant_text: str | None,
+        assistant_text: str,
         runtime_channel: str,
         runtime_chat_id: str,
         allow_memory_write: bool,
         run_log: Any,
     ) -> None:
-        self._append_session_message(session_id, "user", user_text)
-        if assistant_text is None:
-            return
-
-        self._append_session_message(session_id, "assistant", assistant_text)
         memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": assistant_text}]
         remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
         if callable(remember_working_set_fn):
@@ -3282,6 +3369,48 @@ class AgentEngine:
             )
         except Exception as exc:
             run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)
+
+    async def _persist_completed_turn(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        assistant_text: str | None,
+        runtime_channel: str,
+        runtime_chat_id: str,
+        allow_memory_write: bool,
+        run_log: Any,
+    ) -> None:
+        session_rows = [{"role": "user", "content": user_text, "metadata": {}}]
+        if assistant_text is None:
+            self._append_session_messages(session_id, session_rows)
+            return
+        session_rows.append({"role": "assistant", "content": assistant_text, "metadata": {}})
+        self._append_session_messages(session_id, session_rows)
+        if self._supports_deferred_turn_persistence():
+            self._queue_turn_persistence(
+                session_id=session_id,
+                run_log=run_log,
+                payload_coro_factory=lambda: self._persist_turn_memory(
+                    session_id=session_id,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                    runtime_channel=runtime_channel,
+                    runtime_chat_id=runtime_chat_id,
+                    allow_memory_write=allow_memory_write,
+                    run_log=run_log,
+                ),
+            )
+            return
+        await self._persist_turn_memory(
+            session_id=session_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            runtime_channel=runtime_channel,
+            runtime_chat_id=runtime_chat_id,
+            allow_memory_write=allow_memory_write,
+            run_log=run_log,
+        )
 
     async def _run_serialized(
         self,

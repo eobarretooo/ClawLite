@@ -300,6 +300,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                     "timed_out": True,
                 }
             )
+        finally:
+            drain_turn_persistence = getattr(runtime.engine, "drain_turn_persistence", None)
+            if callable(drain_turn_persistence):
+                await drain_turn_persistence()
 
     asyncio.run(_scenario())
     return 0
@@ -343,6 +347,10 @@ def cmd_hatch(args: argparse.Namespace) -> int:
                 }
             )
             return 2
+        finally:
+            drain_turn_persistence = getattr(runtime.engine, "drain_turn_persistence", None)
+            if callable(drain_turn_persistence):
+                await drain_turn_persistence()
 
         model = str(getattr(out, "model", "") or "").strip()
         text = str(getattr(out, "text", "") or "")

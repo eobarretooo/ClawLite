@@ -43,6 +43,39 @@ def test_session_store_append_retries_once_on_transient_oserror(tmp_path: Path, 
     assert diag["append_success"] == 1
 
 
+def test_session_store_append_many_uses_single_append_and_preserves_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(root=tmp_path / "sessions")
+    calls: list[str] = []
+    original_append_once = store._append_once
+
+    def _recording_append_once(path: Path, payload: str) -> None:
+        calls.append(payload)
+        original_append_once(path, payload)
+
+    monkeypatch.setattr(store, "_append_once", _recording_append_once)
+
+    store.append_many(
+        "telegram:batch",
+        [
+            {"role": "user", "content": "hello", "metadata": {}},
+            {"role": "assistant", "content": "world", "metadata": {}},
+        ],
+    )
+
+    assert len(calls) == 1
+    rows = store.read("telegram:batch", limit=10)
+    assert rows == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "world"},
+    ]
+
+    diag = store.diagnostics()
+    assert diag["append_success"] == 2
+
+
 def test_session_store_read_recovers_from_malformed_json_and_repairs_file(tmp_path: Path) -> None:
     store = SessionStore(root=tmp_path / "sessions")
     target = store._path("telegram:3")

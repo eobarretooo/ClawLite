@@ -139,6 +139,61 @@ class SessionStore:
                 self._diagnostics["append_failures"] = int(self._diagnostics["append_failures"]) + 1
                 raise
 
+    def append_many(
+        self,
+        session_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        clean_session_id = str(session_id or "").strip()
+        if not clean_session_id:
+            raise ValueError("session_id is required")
+        messages: list[SessionMessage] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            clean_role = str(row.get("role", "") or "").strip().lower()
+            clean_content = str(row.get("content", "") or "").strip()
+            metadata_payload = dict(row.get("metadata") or {})
+            if clean_role not in {"system", "user", "assistant", "tool"}:
+                raise ValueError("invalid role")
+            if not clean_content and not self._metadata_allows_empty_content(metadata_payload):
+                continue
+            messages.append(
+                SessionMessage(
+                    session_id=clean_session_id,
+                    role=clean_role,
+                    content=clean_content,
+                    metadata=metadata_payload,
+                )
+            )
+        if not messages:
+            return
+
+        path = self._path(clean_session_id)
+        payload = "".join(json.dumps(asdict(msg), ensure_ascii=False) + "\n" for msg in messages)
+        attempts = 2
+        for attempt in range(1, attempts + 1):
+            self._diagnostics["append_attempts"] = int(self._diagnostics["append_attempts"]) + 1
+            try:
+                self._append_once(path, payload)
+                self._diagnostics["append_success"] = int(self._diagnostics["append_success"]) + len(messages)
+                self._diagnostics["last_error"] = ""
+                cached_count = self._session_line_estimates.get(path)
+                if cached_count is None:
+                    self._session_line_estimates[path] = self._get_line_estimate(path)
+                else:
+                    self._session_line_estimates[path] = cached_count + len(messages)
+                self._maybe_compact_session_file(path)
+                return
+            except OSError as exc:
+                self._diagnostics["last_error"] = str(exc)
+                if attempt < attempts:
+                    self._diagnostics["append_retries"] = int(self._diagnostics["append_retries"]) + 1
+                    time.sleep(0.01)
+                    continue
+                self._diagnostics["append_failures"] = int(self._diagnostics["append_failures"]) + 1
+                raise
+
     @staticmethod
     def _append_once(path: Path, payload: str) -> None:
         with path.open("a", encoding="utf-8") as handle:

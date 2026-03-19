@@ -2701,6 +2701,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             lifecycle.phase = "stopping"
             lifecycle.ready = False
             bind_event("gateway.lifecycle").info("gateway shutdown begin")
+            drain_turn_persistence = getattr(runtime.engine, "drain_turn_persistence", None)
+            if callable(drain_turn_persistence):
+                await drain_turn_persistence()
             await _stop_subsystems()
             bus_close = getattr(runtime.bus, "close", None)
             if callable(bus_close):
