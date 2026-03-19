@@ -3055,6 +3055,65 @@ def test_engine_memory_planner_retrieve_uses_original_query() -> None:
     asyncio.run(_scenario())
 
 
+def test_engine_memory_planner_expands_same_query_after_probe_when_no_rewrite_applies() -> None:
+    async def _scenario() -> None:
+        provider = FakePromptCaptureProvider()
+        query = "deployment blockers timeline"
+        memory = FakePlannerMemory(
+            {
+                query: [
+                    MemoryRecord(
+                        id=f"probe-{idx}",
+                        text=text,
+                        source="session:cli:ops",
+                        created_at=f"2026-03-04T12:0{idx}:00+00:00",
+                    )
+                    for idx, text in enumerate(
+                        [
+                            "Unrelated note one.",
+                            "Unrelated note two.",
+                            "Unrelated note three.",
+                            "Unrelated note four.",
+                            "Deployment blockers are database migration lag and API timeout budgets.",
+                            "Deployment blockers also include missing rollback rehearsal.",
+                        ],
+                        start=1,
+                    )
+                ]
+            }
+        )
+        engine = AgentEngine(provider=provider, tools=FakeTools(), memory=memory)
+
+        out = await engine.run(session_id="cli:memory-probe-expand", user_text=query)
+        assert out.text == "ok"
+        assert memory.search_calls == [query, query, query]
+        assert memory.search_call_details == [
+            {
+                "query": query,
+                "limit": 4,
+                "user_id": "memory-probe-expand",
+                "session_id": "cli:memory-probe-expand",
+                "include_shared": True,
+            },
+            {
+                "query": query,
+                "limit": 6,
+                "user_id": "memory-probe-expand",
+                "session_id": "cli:memory-probe-expand",
+                "include_shared": True,
+            },
+            {
+                "query": query,
+                "limit": 12,
+                "user_id": "memory-probe-expand",
+                "session_id": "cli:memory-probe-expand",
+                "include_shared": True,
+            },
+        ]
+
+    asyncio.run(_scenario())
+
+
 def test_engine_memory_planner_next_query_rewrites_after_insufficient_first_hit() -> None:
     async def _scenario() -> None:
         provider = FakePromptCaptureProvider()
@@ -3088,7 +3147,7 @@ def test_engine_memory_planner_next_query_rewrites_after_insufficient_first_hit(
         assert memory.search_call_details == [
             {
                 "query": original_query,
-                "limit": 6,
+                "limit": 4,
                 "user_id": "next-query",
                 "session_id": "cli:next-query",
                 "include_shared": True,

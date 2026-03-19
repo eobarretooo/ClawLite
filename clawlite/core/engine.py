@@ -1389,6 +1389,13 @@ class AgentEngine:
         return max(2, min(12, max(clean_limit * 2, clean_limit + 2)))
 
     @staticmethod
+    def _memory_probe_limit(search_limit: int) -> int:
+        clean_limit = max(1, int(search_limit or 1))
+        if clean_limit <= 4:
+            return clean_limit
+        return 4
+
+    @staticmethod
     def _row_metadata(row: MemoryRecord) -> dict[str, Any]:
         metadata = getattr(row, "metadata", {})
         return metadata if isinstance(metadata, dict) else {}
@@ -1757,6 +1764,7 @@ class AgentEngine:
             session_id=session_id,
         )
         search_limit = self._clamp_memory_search_limit(effective_policy.get("recommended_search_limit", 6), default=6)
+        probe_limit = self._memory_probe_limit(search_limit)
         try:
             if not self._is_memory_retrieval_candidate(user_text):
                 run_log.debug("memory planner route={} query=- rows=0", route)
@@ -1774,7 +1782,7 @@ class AgentEngine:
             started = time.perf_counter()
             first_rows = self._memory_search(
                 query=selected_query,
-                limit=search_limit,
+                limit=probe_limit,
                 user_id=user_id,
                 session_id=session_id,
                 include_shared=True,
@@ -1804,6 +1812,20 @@ class AgentEngine:
                     if second_rows:
                         hits += 1
                         selected_rows = second_rows
+                elif probe_limit < search_limit:
+                    started = time.perf_counter()
+                    expanded_rows = self._memory_search(
+                        query=selected_query,
+                        limit=search_limit,
+                        user_id=user_id,
+                        session_id=session_id,
+                        include_shared=True,
+                    )
+                    attempts += 1
+                    self._record_retrieval_latency((time.perf_counter() - started) * 1000.0)
+                    if expanded_rows:
+                        hits += 1
+                        selected_rows = expanded_rows
 
             subagent_digest_rows: list[MemoryRecord] = []
             if (

@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - actor-bound Telegram/Discord approval requests can no longer be approved through the generic gateway/CLI review path just by replaying the expected actor string; those reviews now stay on the native channel interaction path unless stronger control-plane identity is added later
 - `stream_run()` now keeps the per-session lock through provider-stream cleanup and persists even empty completed turns, reducing another class of state divergence versus `run()`
 - successful `stream_run()` turns now reuse the same session/memory persistence path as `run()`, while provider-error done-chunks stop short of appending empty assistant rows into session history
+- the main-turn memory planner now probes a smaller initial search window before widening the same query, reducing the common retrieval cost when early memory hits are already sufficient
 - the `message` tool now exposes a more honest per-channel contract: Discord supports send plus button components, Telegram keeps the richer action/media bridge, and unsupported channels fail closed for advanced actions/buttons/media
 
 ## [v0.7.0-beta.0] - 2026-03-17
