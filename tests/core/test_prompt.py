@@ -276,6 +276,7 @@ def test_prompt_builder_adds_always_on_identity_guard_section(tmp_path: Path) ->
     assert "Always answer as ClawLite." in out.system_prompt
     assert "Never claim to be a provider model" in out.system_prompt
     assert "[Execution Guard]" in out.system_prompt
+    assert "IMMEDIATELY call the appropriate tool" in out.system_prompt
     assert (
         "execute directly instead of asking for redundant confirmation"
         in out.system_prompt

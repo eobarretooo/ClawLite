@@ -385,6 +385,25 @@ class AgentEngine:
         r"\b(?:latest|current|recent|today|news|up[- ]to[- ]date|recente|recentes|atual|atualizado|hoje|not[ií]cias)\b",
         re.IGNORECASE,
     )
+    _EXTERNAL_FRESH_LOOKUP_RE = re.compile(
+        r"\b(?:"
+        r"who|what|when|where|which|weather|forecast|temperature|temperatura|clima|tempo|previs[aã]o|"
+        r"news|not[ií]cias|price|pre[cç]o|valor|cotac[aã]o|cotação|stock|market|score|placar|"
+        r"ceo|president|presidente|release|version|vers[aã]o|update|atualiza[cç][aã]o|"
+        r"docs?|documentation|documenta[cç][aã]o"
+        r")\b",
+        re.IGNORECASE,
+    )
+    _INTERNAL_FRESH_LOOKUP_RE = re.compile(
+        r"\b(?:"
+        r"my|our|we|us|session|workspace|project|deployment|task|run|subagent|preference|"
+        r"config|setting|settings|remember|memory|memories|note|notes|todo|cron|job|"
+        r"meu|minha|meus|minhas|nosso|nossa|nossos|nossas|sess[aã]o|projeto|"
+        r"implanta[cç][aã]o|tarefa|execu[cç][aã]o|subagente|prefer[eê]ncia|"
+        r"configura[cç][aã]o|lembra|lembrar|mem[oó]ria|nota|notas"
+        r")\b",
+        re.IGNORECASE,
+    )
     _WEB_RESEARCH_SYSTEM_NOTICE = (
         "[Web Research Requirement]\n"
         "- The user explicitly asked for current web research or up-to-date information.\n"
@@ -2525,10 +2544,13 @@ class AgentEngine:
         compact = " ".join(str(user_text or "").split()).strip()
         if not compact:
             return False
-        return bool(
-            cls._WEB_RESEARCH_REQUEST_RE.search(compact)
-            or cls._UP_TO_DATE_REQUEST_RE.search(compact)
-        )
+        if cls._WEB_RESEARCH_REQUEST_RE.search(compact):
+            return True
+        if not cls._UP_TO_DATE_REQUEST_RE.search(compact):
+            return False
+        if cls._INTERNAL_FRESH_LOOKUP_RE.search(compact):
+            return False
+        return bool(cls._EXTERNAL_FRESH_LOOKUP_RE.search(compact))
 
     @classmethod
     def _web_research_notice_for_turn(cls, *, user_text: str, tool_names: set[str]) -> str:

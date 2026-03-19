@@ -50,6 +50,7 @@ class PromptBuilder:
     )
     _EXECUTION_GUARD_SECTION = (
         "[Execution Guard]\n"
+        "- CRITICAL RULE: For execution requests, IMMEDIATELY call the appropriate tool. DO NOT reply with text saying what you are going to do (e.g., 'I will create the folder' or 'Creating the file...'). Just call the tool directly.\n"
         "- For safe, low-risk requests, execute directly instead of asking for redundant confirmation.\n"
         "- Only ask before destructive actions, irreversible external side effects, credential use, or when the target is ambiguous.\n"
         "- If the user's name is unknown, do not invent one or use placeholders like Owner.\n"

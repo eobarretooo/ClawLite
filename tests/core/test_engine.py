@@ -1772,9 +1772,9 @@ def test_engine_surfaces_tool_safety_block_as_safe_tool_result() -> None:
             )
         )
         registry.register(ExecNoopTool())
-        engine = AgentEngine(provider=provider, tools=registry)
+        engine = AgentEngine(provider=provider, tools=registry, sessions=InMemorySessionStore())
 
-        out = await engine.run(session_id="telegram:9001", user_text="run")
+        out = await engine.run(session_id="telegram:tool-safety-block", user_text="run")
         assert out.text == "done"
         assert provider.calls == 2
         tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
@@ -1799,9 +1799,9 @@ def test_engine_surfaces_tool_approval_requirement_as_safe_tool_result() -> None
             )
         )
         registry.register(ExecNoopTool())
-        engine = AgentEngine(provider=provider, tools=registry)
+        engine = AgentEngine(provider=provider, tools=registry, sessions=InMemorySessionStore())
 
-        out = await engine.run(session_id="telegram:9001", user_text="run")
+        out = await engine.run(session_id="telegram:tool-approval-required", user_text="run")
         assert out.text == "done"
         assert provider.calls == 2
         tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]

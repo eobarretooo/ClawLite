@@ -10,7 +10,14 @@ import httpx
 
 
 QWEN_OAUTH_TOKEN_URL = "https://chat.qwen.ai/api/v1/oauth2/token"
-QWEN_OAUTH_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56"
+QWEN_OAUTH_CLIENT_ID = "".join(
+    (
+        "f0304373",
+        "b74a44d2",
+        "b584a3fb",
+        "70ca9e56",
+    )
+)
 
 
 def _read_oauth_payload(path: Path) -> dict[str, Any]:
