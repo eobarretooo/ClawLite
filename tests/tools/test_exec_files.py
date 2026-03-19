@@ -286,6 +286,27 @@ def test_exec_tool_blocks_internal_network_fetch_in_env_split_string_inline_runt
     assert guard_error == "blocked_by_policy:internal_url:169.254.169.254"
 
 
+def test_exec_tool_blocks_internal_network_fetch_in_node_print_inline_runtime() -> None:
+    tool = ExecTool()
+    command = "node -p \"fetch('http://169.254.169.254/latest/meta-data')\""
+    guard_error = tool._guard_command(command, shlex.split(command), Path.cwd().resolve())
+    assert guard_error == "blocked_by_policy:internal_url:169.254.169.254"
+
+
+def test_exec_tool_blocks_internal_network_fetch_in_python_module_runtime() -> None:
+    tool = ExecTool()
+    command = "python3 -m urllib.request http://169.254.169.254/latest/meta-data"
+    guard_error = tool._guard_command(command, shlex.split(command), Path.cwd().resolve())
+    assert guard_error == "blocked_by_policy:internal_url:169.254.169.254"
+
+
+def test_exec_tool_blocks_internal_network_fetch_in_env_wrapped_python_module_runtime() -> None:
+    tool = ExecTool()
+    command = "env -i python3 -m urllib.request http://169.254.169.254/latest/meta-data"
+    guard_error = tool._guard_command(command, shlex.split(command), Path.cwd().resolve())
+    assert guard_error == "blocked_by_policy:internal_url:169.254.169.254"
+
+
 def test_exec_tool_blocks_localhost_network_fetch_in_node_inline_runtime() -> None:
     async def _scenario() -> None:
         out = await ExecTool().run(
@@ -325,6 +346,13 @@ def test_exec_tool_allows_print_only_url_in_transparent_wrapped_inline_runtime()
 def test_exec_tool_allows_print_only_url_in_env_split_string_runtime() -> None:
     tool = ExecTool()
     command = "env -S \"python3 -c \\\"print('http://localhost:8000/health')\\\"\""
+    guard_error = tool._guard_command(command, shlex.split(command), Path.cwd().resolve())
+    assert guard_error is None
+
+
+def test_exec_tool_allows_non_network_python_module_runtime() -> None:
+    tool = ExecTool()
+    command = "python3 -m urllib.parse http://localhost:8000/health"
     guard_error = tool._guard_command(command, shlex.split(command), Path.cwd().resolve())
     assert guard_error is None
 

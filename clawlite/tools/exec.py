@@ -109,12 +109,13 @@ class ExecTool(Tool):
     }
     _INLINE_RUNTIME_FLAGS: dict[str, frozenset[str]] = {
         "python": frozenset({"-c"}),
-        "node": frozenset({"-e", "--eval"}),
+        "node": frozenset({"-e", "--eval", "-p", "--print"}),
         "ruby": frozenset({"-e"}),
         "php": frozenset({"-r"}),
         "perl": frozenset({"-e"}),
         "powershell": frozenset({"-c", "-command", "--command"}),
     }
+    _PYTHON_NETWORK_MODULES = frozenset({"urllib.request"})
     _INLINE_RUNTIME_NETWORK_HINTS: dict[str, re.Pattern[str]] = {
         "python": re.compile(
             r"(requests\.\w+|httpx\.\w+|urllib\.request\.|urlopen\s*\(|aiohttp\.|urllib3\.|socket\.(?:create_connection|getaddrinfo|socket)\s*\()",
@@ -666,6 +667,42 @@ class ExecTool(Tool):
         return None
 
     @classmethod
+    def _guard_python_module_fetch_targets(cls, argv: list[str]) -> str | None:
+        start = cls._resolve_inline_runtime_start(argv)
+        if start is None or start >= len(argv):
+            return None
+        if cls._runtime_family(argv[start]) != "python":
+            return None
+        for index, raw in enumerate(argv[start + 1 :], start=start + 1):
+            token = str(raw or "").strip()
+            lower = token.lower()
+            if not token:
+                continue
+            if token in cls._SHELL_CONTROL_TOKENS:
+                break
+            if lower == "-m" and index + 1 < len(argv):
+                module_name = str(argv[index + 1] or "").strip().lower()
+                if module_name not in cls._PYTHON_NETWORK_MODULES:
+                    return None
+                for candidate_raw in argv[index + 2 :]:
+                    candidate = str(candidate_raw or "").strip()
+                    if not candidate:
+                        continue
+                    if candidate in cls._SHELL_CONTROL_TOKENS:
+                        break
+                    if candidate == "--":
+                        continue
+                    if candidate.startswith("-"):
+                        continue
+                    error = cls._validate_network_fetch_url(candidate)
+                    if error:
+                        return error
+                return None
+            if not token.startswith("-"):
+                break
+        return None
+
+    @classmethod
     def _guard_network_fetch_targets(cls, argv: list[str], *, recursion_depth: int = 0) -> str | None:
         for binary, tokens in cls._iter_network_fetch_segments(argv):
             for raw_url in cls._iter_network_fetch_target_urls(binary, tokens):
@@ -678,6 +715,9 @@ class ExecTool(Tool):
         inline_error = cls._guard_inline_runtime_fetch_targets(argv)
         if inline_error:
             return inline_error
+        module_error = cls._guard_python_module_fetch_targets(argv)
+        if module_error:
+            return module_error
         return None
 
     def _guard_explicit_shell_command(self, shell_command: str, cwd: Path, *, recursion_depth: int) -> str | None:

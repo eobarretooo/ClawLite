@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - prompt runtime context now includes a few more safe structural channel hints such as message IDs, Slack thread timestamps, Telegram forum state, Discord DM state, signed callback/button ids, and single media-type markers without exposing raw channel payloads
 - `exec` and `process` now also block internal `http(s)` targets inside obvious inline runtime fetch payloads such as `python -c` and `node -e`, closing another path around `web_fetch` network policy
 - the inline-runtime network guard now also resolves common transparent launch wrappers such as `/usr/bin/env`, `env -i`, `env -S`, `command --`, `nohup`, `nice`, `timeout`, and `stdbuf`, closing another set of `exec` / `process` bypasses around `web_fetch` policy
+- the same guard now also covers explicit runtime modes like `node -p` and `python -m urllib.request`, closing a few more interpreter-level bypasses without blocking non-network module invocations
 - `AgentEngine` now marks synthesized subagent digests with the async-safe subagent API inside the live event loop, so completed digest runs no longer leak back into later turns
 - engine regressions that inspect exact tool/tool-call history now use hermetic in-memory session state instead of machine-local persisted rows
 - cron scheduler regression coverage now waits on an explicit callback event instead of a fixed sleep, removing a suite-load race in `test_cron_service_add_and_run`
