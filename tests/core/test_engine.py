@@ -127,6 +127,19 @@ class FakeStreamingPromptCaptureProvider:
             yield ProviderChunk(text=char, accumulated=accumulated, done=index == len(self.text) - 1)
 
 
+class FakeStreamingErrorProvider:
+    async def stream(self, *, messages, max_tokens=None, temperature=None):
+        del messages, max_tokens, temperature
+        yield ProviderChunk(text="", accumulated="", done=True, error="provider_stream_error:boom")
+
+
+class FakeStreamingDegradedProvider:
+    async def stream(self, *, messages, max_tokens=None, temperature=None):
+        del messages, max_tokens, temperature
+        yield ProviderChunk(text="o", accumulated="o", done=False)
+        yield ProviderChunk(text="k", accumulated="ok", done=True, degraded=True)
+
+
 class LockTrackingStreamingProvider:
     def __init__(self) -> None:
         self.active = 0
@@ -2205,6 +2218,136 @@ def test_engine_stream_run_persists_empty_completion_turn() -> None:
         assert sessions.rows == [
             {"session_id": "cli:stream-empty", "role": "user", "content": "ping"},
             {"session_id": "cli:stream-empty", "role": "assistant", "content": ""},
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_records_working_memory_for_completed_turns() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("ok")
+        memory = FakeMemoryWithWorkingSetCapture()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=InMemorySessionStore(),
+            memory=memory,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="telegram:42",
+                user_text="hello there",
+                channel="telegram",
+                chat_id="42",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in chunks) == "ok"
+        assert memory.working_set_writes == [
+            {
+                "session_id": "telegram:42",
+                "role": "user",
+                "content": "hello there",
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
+            },
+            {
+                "session_id": "telegram:42",
+                "role": "assistant",
+                "content": "ok",
+                "user_id": "42",
+                "metadata": {"channel": "telegram"},
+                "allow_promotion": True,
+            },
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_memorizes_completed_turn_with_runtime_user_context() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("ok")
+        memory = FakeMemoryWithContextKwargs()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=InMemorySessionStore(),
+            memory=memory,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="telegram:42",
+                user_text="remember this",
+                channel="telegram",
+                chat_id="42",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in chunks) == "ok"
+        assert memory.memorize_calls == [
+            {
+                "messages": [
+                    {"role": "user", "content": "remember this"},
+                    {"role": "assistant", "content": "ok"},
+                ],
+                "source": "session:telegram:42",
+                "user_id": "42",
+                "shared": False,
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_skips_assistant_persistence_after_provider_error_chunk() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingErrorProvider()
+        memory = FakeMemoryWithAsyncMemorize()
+        sessions = SessionStoreRecorder()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=memory,
+        )
+
+        chunks = [chunk async for chunk in await engine.stream_run(session_id="cli:stream-error", user_text="ping")]
+
+        assert chunks == [ProviderChunk(text="", accumulated="", done=True, error="provider_stream_error:boom")]
+        assert sessions.rows == [
+            {"session_id": "cli:stream-error", "role": "user", "content": "ping"},
+        ]
+        assert memory.memorize_calls == []
+        assert memory.consolidate_calls == 0
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_persists_degraded_completion_turn() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingDegradedProvider()
+        sessions = SessionStoreRecorder()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        chunks = [chunk async for chunk in await engine.stream_run(session_id="cli:stream-degraded", user_text="ping")]
+
+        assert chunks == [
+            ProviderChunk(text="o", accumulated="o", done=False),
+            ProviderChunk(text="k", accumulated="ok", done=True, degraded=True),
+        ]
+        assert sessions.rows == [
+            {"session_id": "cli:stream-degraded", "role": "user", "content": "ping"},
+            {"session_id": "cli:stream-degraded", "role": "assistant", "content": "ok"},
         ]
 
     asyncio.run(_scenario())

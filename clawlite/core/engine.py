@@ -3022,6 +3022,7 @@ class AgentEngine:
                             run_log.warning("context_window_trim_failed error={}", exc)
                     accumulated = ""
                     completed = False
+                    final_error = ""
                     stream_iter = stream_fn(messages=messages)
                     try:
                         while True:
@@ -3031,6 +3032,8 @@ class AgentEngine:
                                 completed = True
                                 break
                             accumulated = chunk.accumulated or (accumulated + chunk.text)
+                            if chunk.error:
+                                final_error = str(chunk.error)
                             await queue.put(("chunk", chunk))
                             if chunk.done:
                                 completed = True
@@ -3042,8 +3045,23 @@ class AgentEngine:
                                 await aclose()
 
                     if completed:
-                        self._append_session_message(session_id, "user", user_text)
-                        self._append_session_message(session_id, "assistant", accumulated)
+                        if final_error:
+                            run_log.info(
+                                "stream completion skipped assistant persistence after provider failure session={} error={}",
+                                session_id or "-",
+                                final_error,
+                            )
+                            self._append_session_message(session_id, "user", user_text)
+                        else:
+                            await self._persist_completed_turn(
+                                session_id=session_id,
+                                user_text=user_text,
+                                assistant_text=accumulated,
+                                runtime_channel=prepared.runtime_channel,
+                                runtime_chat_id=prepared.runtime_chat_id,
+                                allow_memory_write=prepared.allow_memory_write,
+                                run_log=run_log,
+                            )
                 except Exception as exc:
                     await queue.put(("error", exc))
                 finally:
@@ -3078,6 +3096,7 @@ class AgentEngine:
                     producer.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await producer
+                self.clear_stop(session_id)
 
         return _gen()
 
@@ -3100,6 +3119,97 @@ class AgentEngine:
             if require_metadata_support:
                 return
         append_fn(session_id, role, content)
+
+    async def _persist_completed_turn(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        assistant_text: str | None,
+        runtime_channel: str,
+        runtime_chat_id: str,
+        allow_memory_write: bool,
+        run_log: Any,
+    ) -> None:
+        self._append_session_message(session_id, "user", user_text)
+        if assistant_text is None:
+            return
+
+        self._append_session_message(session_id, "assistant", assistant_text)
+        memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": assistant_text}]
+        remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
+        if callable(remember_working_set_fn):
+            base_working_kwargs: dict[str, Any] = {
+                "session_id": session_id,
+                "allow_promotion": allow_memory_write,
+            }
+            if runtime_chat_id:
+                base_working_kwargs["user_id"] = runtime_chat_id
+            if runtime_channel:
+                base_working_kwargs["metadata"] = {"channel": runtime_channel}
+            try:
+                working_user_result = remember_working_set_fn(
+                    role="user",
+                    content=user_text,
+                    **base_working_kwargs,
+                )
+                if inspect.isawaitable(working_user_result):
+                    await working_user_result
+                working_assistant_result = remember_working_set_fn(
+                    role="assistant",
+                    content=assistant_text,
+                    **base_working_kwargs,
+                )
+                if inspect.isawaitable(working_assistant_result):
+                    await working_assistant_result
+            except TypeError:
+                try:
+                    working_user_result = remember_working_set_fn(session_id, role="user", content=user_text)
+                    if inspect.isawaitable(working_user_result):
+                        await working_user_result
+                    working_assistant_result = remember_working_set_fn(
+                        session_id,
+                        role="assistant",
+                        content=assistant_text,
+                    )
+                    if inspect.isawaitable(working_assistant_result):
+                        await working_assistant_result
+                except Exception as exc:
+                    run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
+            except Exception as exc:
+                run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
+        if not allow_memory_write:
+            run_log.info("memory persistence skipped by integration policy session={}", session_id or "-")
+            return
+
+        memorize_fn = getattr(self.memory, "memorize", None)
+        if callable(memorize_fn):
+            try:
+                memorize_kwargs: dict[str, Any] = {
+                    "messages": memory_messages,
+                    "source": f"session:{session_id}",
+                }
+                if self._accepts_parameter(memorize_fn, "user_id"):
+                    memorize_kwargs["user_id"] = runtime_chat_id
+                if self._accepts_parameter(memorize_fn, "shared"):
+                    memorize_kwargs["shared"] = False
+                try:
+                    memorize_result = memorize_fn(**memorize_kwargs)
+                except TypeError:
+                    memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
+                if inspect.isawaitable(memorize_result):
+                    await memorize_result
+            except Exception as exc:
+                run_log.warning("memory memorize failed session={} error={}", session_id or "-", exc)
+            return
+
+        try:
+            self.memory.consolidate(
+                memory_messages,
+                source=f"session:{session_id}",
+            )
+        except Exception as exc:
+            run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)
 
     async def _run_serialized(
         self,
@@ -3883,84 +3993,21 @@ class AgentEngine:
                 enforcement.persist_allowed,
             )
 
-        self._append_session_message(session_id, "user", user_text)
         if not graceful_error and enforcement.persist_allowed:
-            self._append_session_message(session_id, "assistant", final.text)
-            memory_messages = [{"role": "user", "content": user_text}, {"role": "assistant", "content": final.text}]
-            remember_working_set_fn = getattr(self.memory, "remember_working_set", None)
-            if callable(remember_working_set_fn):
-                base_working_kwargs: dict[str, Any] = {
-                    "session_id": session_id,
-                    "allow_promotion": allow_memory_write,
-                }
-                if runtime_chat_id:
-                    base_working_kwargs["user_id"] = runtime_chat_id
-                if runtime_channel:
-                    base_working_kwargs["metadata"] = {"channel": runtime_channel}
-                try:
-                    working_user_result = remember_working_set_fn(
-                        role="user",
-                        content=user_text,
-                        **base_working_kwargs,
-                    )
-                    if inspect.isawaitable(working_user_result):
-                        await working_user_result
-                    working_assistant_result = remember_working_set_fn(
-                        role="assistant",
-                        content=final.text,
-                        **base_working_kwargs,
-                    )
-                    if inspect.isawaitable(working_assistant_result):
-                        await working_assistant_result
-                except TypeError:
-                    try:
-                        working_user_result = remember_working_set_fn(session_id, role="user", content=user_text)
-                        if inspect.isawaitable(working_user_result):
-                            await working_user_result
-                        working_assistant_result = remember_working_set_fn(
-                            session_id,
-                            role="assistant",
-                            content=final.text,
-                        )
-                        if inspect.isawaitable(working_assistant_result):
-                            await working_assistant_result
-                    except Exception as exc:
-                        run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
-                except Exception as exc:
-                    run_log.warning("working memory write failed session={} error={}", session_id or "-", exc)
-            if not allow_memory_write:
-                run_log.info("memory persistence skipped by integration policy session={}", session_id or "-")
-            else:
-                memorize_fn = getattr(self.memory, "memorize", None)
-                if callable(memorize_fn):
-                    try:
-                        memorize_kwargs: dict[str, Any] = {
-                            "messages": memory_messages,
-                            "source": f"session:{session_id}",
-                        }
-                        if self._accepts_parameter(memorize_fn, "user_id"):
-                            memorize_kwargs["user_id"] = runtime_chat_id
-                        if self._accepts_parameter(memorize_fn, "shared"):
-                            memorize_kwargs["shared"] = False
-                        try:
-                            memorize_result = memorize_fn(**memorize_kwargs)
-                        except TypeError:
-                            memorize_result = memorize_fn(messages=memory_messages, source=f"session:{session_id}")
-                        if inspect.isawaitable(memorize_result):
-                            await memorize_result
-                    except Exception as exc:
-                        run_log.warning("memory memorize failed session={} error={}", session_id or "-", exc)
-                else:
-                    try:
-                        self.memory.consolidate(
-                            memory_messages,
-                            source=f"session:{session_id}",
-                        )
-                    except Exception as exc:
-                        run_log.warning("memory consolidate failed session={} error={}", session_id or "-", exc)
+            await self._persist_completed_turn(
+                session_id=session_id,
+                user_text=user_text,
+                assistant_text=final.text,
+                runtime_channel=runtime_channel,
+                runtime_chat_id=runtime_chat_id,
+                allow_memory_write=allow_memory_write,
+                run_log=run_log,
+            )
         elif not graceful_error:
+            self._append_session_message(session_id, "user", user_text)
             run_log.warning("assistant persistence blocked by identity enforcement session={}", session_id or "-")
         else:
+            self._append_session_message(session_id, "user", user_text)
             run_log.info("skipping assistant persistence after provider failure")
         if final.model == "engine/stop":
             turn_outcome = "cancelled"

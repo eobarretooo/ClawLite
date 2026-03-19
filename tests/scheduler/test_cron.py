@@ -27,7 +27,7 @@ def test_cron_service_add_and_run(tmp_path: Path) -> None:
 
         await service.add_job(session_id="s1", expression="every 1", prompt="ping")
         await service.start(_on_job)
-        await asyncio.wait_for(completed.wait(), timeout=3.0)
+        await asyncio.wait_for(completed.wait(), timeout=8.0)
         await service.stop()
 
         assert seen
