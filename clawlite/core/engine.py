@@ -2568,6 +2568,18 @@ class AgentEngine:
         return cls._WEB_RESEARCH_SYSTEM_NOTICE
 
     @classmethod
+    def _stream_requires_full_run(cls, *, user_text: str, live_lookup_required: bool) -> bool:
+        """Return True when streaming must fall back to run() for correctness.
+
+        Live-lookup turns need memory, history, and tool execution — the raw
+        streaming path skips all of that and produces stale/wrong answers.
+        """
+        compact = " ".join(str(user_text or "").split()).strip()
+        if not compact:
+            return False
+        return live_lookup_required
+
+    @classmethod
     def _routing_notice_for_turn(
         cls,
         *,
@@ -2650,6 +2662,7 @@ class AgentEngine:
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
         turn_budget: TurnBudget | None = None,
         progress_hook: ProgressHook | None = None,
         stop_event: asyncio.Event | None = None,
@@ -2697,12 +2710,16 @@ class AgentEngine:
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
     ) -> AsyncGenerator[ProviderChunk, None]:
         """Stream agent response as ProviderChunk objects.
 
         If the provider implements ``stream()``, delegates to it after building
         the message list.  Otherwise falls back to the blocking ``run()`` and
         yields a single done-chunk with the complete result.
+
+        Live-lookup turns (web research, current data) always fall back to the
+        full ``run()`` path so memory, history, and tools are available.
 
         Usage::
 
@@ -2718,6 +2735,20 @@ class AgentEngine:
                     user_text=user_text,
                     channel=channel,
                     chat_id=chat_id,
+                    runtime_metadata=runtime_metadata,
+                )
+                yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
+                return
+
+            # Live-lookup turns need full run() for tools + memory + history
+            live_lookup_required = self._turn_requires_live_lookup(user_text=user_text)
+            if self._stream_requires_full_run(user_text=user_text, live_lookup_required=live_lookup_required):
+                result = await self.run(
+                    session_id=session_id,
+                    user_text=user_text,
+                    channel=channel,
+                    chat_id=chat_id,
+                    runtime_metadata=runtime_metadata,
                 )
                 yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
                 return
@@ -2821,6 +2852,7 @@ class AgentEngine:
             skills_context=skills_context,
             channel=runtime_channel,
             chat_id=runtime_chat_id,
+            runtime_metadata=runtime_metadata,
         )
         if prompt.history_summary and prompt.trimmed_history_rows:
             prompt.history_summary = await self._maybe_semantic_history_summary(

@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from clawlite.channels.inbound_text import sanitize_inbound_system_tags
 from clawlite.core.injection_guard import scan_inbound
 from clawlite.utils.logging import bind_event
 
@@ -101,7 +102,18 @@ class BaseChannel(ABC):
                 "inbound message BLOCKED session={} threats={}", session_id, ",".join(result.threats)
             )
             return
-        await self.on_message(session_id, user_id, result.sanitized_text, metadata or {})
+        # Upstream: neutralize spoofed system-role markers ([System Message], System: prefix, etc.)
+        clean_text = sanitize_inbound_system_tags(result.sanitized_text)
+        if clean_text != result.sanitized_text:
+            bind_event("system_tag_spoof", channel=self.name).warning(
+                "spoofed system tags stripped session={} user={}", session_id, user_id
+            )
+            try:
+                from clawlite.core.runestone import audit as _rs_audit
+                _rs_audit(kind="system_tag_spoof", source=self.name, details={"session_id": session_id, "user_id": user_id})
+            except Exception:
+                pass
+        await self.on_message(session_id, user_id, clean_text, metadata or {})
 
     @abstractmethod
     async def start(self) -> None:

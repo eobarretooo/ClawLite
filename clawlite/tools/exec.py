@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import re
 import shlex
 import shutil
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 import time
 from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
@@ -71,6 +74,66 @@ class ExecTool(Tool):
     _SHELL_PATH_RE = re.compile(
         r"(~(?:[/\\][^\s\"'|><;]+)+|(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|%[A-Za-z_][A-Za-z0-9_]*%)(?:[/\\][^\s\"'|><;]+)+)"
     )
+    _SHELL_CONTROL_TOKENS = frozenset({"&&", "||", "|", ";", "&", ">", ">>", "<", "<<"})
+    _NETWORK_FETCH_BINARIES = frozenset({"curl", "wget", "invoke-webrequest", "invoke-restmethod", "iwr", "irm"})
+    _HTTP_URL_RE = re.compile(r"https?://[^\s\"'`;|<>)]+", re.IGNORECASE)
+    _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+    _TIMEOUT_DURATION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:[smhd]|ms)?$", re.IGNORECASE)
+    _TRANSPARENT_RUNTIME_WRAPPERS = frozenset({"command", "env", "env.exe", "nice", "nohup", "stdbuf", "timeout"})
+    _TRANSPARENT_RUNTIME_WRAPPER_FLAGS: dict[str, dict[str, int]] = {
+        "command": {"--": 0, "-p": 0, "-v": 0, "-V": 0},
+        "env": {
+            "--": 0,
+            "-i": 0,
+            "--ignore-environment": 0,
+            "-u": 1,
+            "--unset": 1,
+            "-c": 1,
+            "--chdir": 1,
+            "-s": 1,
+            "--split-string": 1,
+        },
+        "nice": {"--": 0, "-n": 1, "--adjustment": 1},
+        "nohup": {"--": 0},
+        "stdbuf": {"--": 0, "-i": 1, "-o": 1, "-e": 1},
+        "timeout": {
+            "--": 0,
+            "-k": 1,
+            "--kill-after": 1,
+            "-s": 1,
+            "--signal": 1,
+            "--foreground": 0,
+            "--preserve-status": 0,
+            "--verbose": 0,
+        },
+    }
+    _INLINE_RUNTIME_FLAGS: dict[str, frozenset[str]] = {
+        "python": frozenset({"-c"}),
+        "node": frozenset({"-e", "--eval", "-p", "--print"}),
+        "ruby": frozenset({"-e"}),
+        "php": frozenset({"-r"}),
+        "perl": frozenset({"-e"}),
+        "powershell": frozenset({"-c", "-command", "--command"}),
+    }
+    _PYTHON_NETWORK_MODULES = frozenset({"urllib.request"})
+    _INLINE_RUNTIME_NETWORK_HINTS: dict[str, re.Pattern[str]] = {
+        "python": re.compile(
+            r"(requests\.\w+|httpx\.\w+|urllib\.request\.|urlopen\s*\(|aiohttp\.|urllib3\.|socket\.(?:create_connection|getaddrinfo|socket)\s*\()",
+            re.IGNORECASE,
+        ),
+        "node": re.compile(
+            r"(fetch\s*\(|axios\.\w+|http(?:s)?\.(?:get|request)\s*\(|undici|got\s*\()",
+            re.IGNORECASE,
+        ),
+        "ruby": re.compile(r"(Net::HTTP|URI\.open|OpenURI)", re.IGNORECASE),
+        "php": re.compile(r"(curl_init\s*\(|file_get_contents\s*\(|stream_socket_client\s*\()", re.IGNORECASE),
+        "perl": re.compile(r"(LWP::UserAgent|HTTP::Tiny|getstore\s*\()", re.IGNORECASE),
+        "powershell": re.compile(r"(Invoke-WebRequest|Invoke-RestMethod|Net\.Web(?:Client|Request))", re.IGNORECASE),
+    }
+    _CURL_URL_FLAGS = frozenset({"--url"})
+    _CURL_SKIP_VALUE_FLAGS = frozenset({"-x", "--proxy", "-e", "--referer"})
+    _POWERSHELL_URL_FLAGS = frozenset({"-uri", "-url"})
+    _POWERSHELL_SKIP_VALUE_FLAGS = frozenset({"-proxy"})
 
     def __init__(
         self,
@@ -312,6 +375,346 @@ class ExecTool(Tool):
         except (OSError, RuntimeError, ValueError):
             return None
 
+    @classmethod
+    def _network_fetch_binary_name(cls, raw: object) -> str:
+        value = str(raw or "").strip().strip("\"'")
+        if not value:
+            return ""
+        value = re.sub(r"^[<$({]+", "", value)
+        return cls._binary_name(value)
+
+    @staticmethod
+    def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
+        return (
+            ip.is_loopback
+            or ip.is_link_local
+            or ip.is_private
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        )
+
+    @classmethod
+    def _validate_network_fetch_url(cls, raw_url: str) -> str | None:
+        value = str(raw_url or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = urlparse(value)
+        except Exception:
+            return None
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        host = str(parsed.hostname or "").strip().lower()
+        if not host:
+            return "blocked_by_policy:internal_url:missing_host"
+        if host == "localhost" or host.endswith(".localhost") or host.endswith(".local") or host.endswith(".internal"):
+            return f"blocked_by_policy:internal_url:{host}"
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal is not None:
+            if cls._is_blocked_ip(literal):
+                return f"blocked_by_policy:internal_url:{host}"
+            return None
+        try:
+            infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return None
+        for info in infos:
+            try:
+                resolved = ipaddress.ip_address(str(info[4][0]))
+            except (ValueError, IndexError, TypeError):
+                continue
+            if cls._is_blocked_ip(resolved):
+                return f"blocked_by_policy:internal_url:{host}"
+        return None
+
+    @classmethod
+    def _iter_network_fetch_segments(cls, argv: list[str]) -> list[tuple[str, list[str]]]:
+        segments: list[tuple[str, list[str]]] = []
+        active_binary = ""
+        active_tokens: list[str] = []
+        for raw in argv:
+            token = str(raw or "")
+            if token in cls._SHELL_CONTROL_TOKENS:
+                if active_binary and active_tokens:
+                    segments.append((active_binary, active_tokens))
+                active_binary = ""
+                active_tokens = []
+                continue
+            if active_binary:
+                active_tokens.append(token)
+                continue
+            binary = cls._network_fetch_binary_name(token)
+            if binary in cls._NETWORK_FETCH_BINARIES:
+                active_binary = binary
+                active_tokens = [token]
+        if active_binary and active_tokens:
+            segments.append((active_binary, active_tokens))
+        return segments
+
+    @classmethod
+    def _iter_network_fetch_target_urls(cls, binary: str, tokens: list[str]) -> list[str]:
+        urls: list[str] = []
+        expect_url = False
+        skip_next = False
+        for raw in tokens[1:]:
+            token = str(raw or "").strip()
+            lower = token.lower()
+            if not token:
+                continue
+            if skip_next:
+                skip_next = False
+                continue
+            if expect_url:
+                expect_url = False
+                urls.append(token)
+                continue
+            if lower in cls._SHELL_CONTROL_TOKENS:
+                break
+            if binary == "curl":
+                if lower.startswith("--url="):
+                    urls.append(token.split("=", 1)[1])
+                    continue
+                if lower in cls._CURL_URL_FLAGS:
+                    expect_url = True
+                    continue
+                if lower in cls._CURL_SKIP_VALUE_FLAGS:
+                    skip_next = True
+                    continue
+            elif binary in {"invoke-webrequest", "invoke-restmethod", "iwr", "irm"}:
+                if lower.startswith("-uri:") or lower.startswith("-url:"):
+                    urls.append(token.split(":", 1)[1])
+                    continue
+                if lower in cls._POWERSHELL_URL_FLAGS:
+                    expect_url = True
+                    continue
+                if lower in cls._POWERSHELL_SKIP_VALUE_FLAGS:
+                    skip_next = True
+                    continue
+            if token.startswith("-"):
+                continue
+            urls.append(token)
+        return urls
+
+    @classmethod
+    def _runtime_family(cls, raw: object) -> str:
+        binary = cls._binary_name(raw)
+        if binary in {"python", "python3", "python.exe", "python3.exe", "py"}:
+            return "python"
+        if binary in {"node", "node.exe"}:
+            return "node"
+        if binary in {"ruby", "ruby.exe"}:
+            return "ruby"
+        if binary in {"php", "php.exe"}:
+            return "php"
+        if binary in {"perl", "perl.exe"}:
+            return "perl"
+        if binary in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
+            return "powershell"
+        return ""
+
+    @classmethod
+    def _is_env_assignment(cls, raw: object) -> bool:
+        token = str(raw or "").strip()
+        return bool(token) and cls._ENV_ASSIGNMENT_RE.match(token) is not None
+
+    @classmethod
+    def _transparent_runtime_wrapper_name(cls, raw: object) -> str:
+        binary = cls._binary_name(raw)
+        if binary in cls._TRANSPARENT_RUNTIME_WRAPPERS:
+            return "env" if binary == "env.exe" else binary
+        return ""
+
+    @classmethod
+    def _transparent_runtime_wrapper_flag_consumption(cls, wrapper: str, raw: object) -> int | None:
+        token = str(raw or "").strip()
+        lower = token.lower()
+        if not lower:
+            return None
+        spec = cls._TRANSPARENT_RUNTIME_WRAPPER_FLAGS.get(wrapper, {})
+        if lower in spec:
+            return spec[lower]
+        if wrapper == "nice" and lower.startswith("--adjustment="):
+            return 0
+        if wrapper == "stdbuf":
+            if re.match(r"^-[ioe].+$", token, re.IGNORECASE):
+                return 0
+            if lower.startswith("--input=") or lower.startswith("--output=") or lower.startswith("--error="):
+                return 0
+        if wrapper == "env":
+            if lower.startswith("--unset=") or lower.startswith("--chdir="):
+                return 0
+        return None
+
+    @classmethod
+    def _resolve_inline_runtime_start(cls, argv: list[str]) -> int | None:
+        if not argv:
+            return None
+        index = 0
+        while index < len(argv):
+            token = str(argv[index] or "").strip()
+            if not token:
+                index += 1
+                continue
+            if token in cls._SHELL_CONTROL_TOKENS:
+                return None
+            if cls._is_env_assignment(token):
+                index += 1
+                continue
+            wrapper = cls._transparent_runtime_wrapper_name(token)
+            if not wrapper:
+                return index
+            index += 1
+            while index < len(argv):
+                inner = str(argv[index] or "").strip()
+                if not inner:
+                    index += 1
+                    continue
+                if inner in cls._SHELL_CONTROL_TOKENS:
+                    return None
+                if wrapper == "env" and cls._is_env_assignment(inner):
+                    index += 1
+                    continue
+                consumption = cls._transparent_runtime_wrapper_flag_consumption(wrapper, inner)
+                if consumption is None:
+                    if wrapper == "timeout" and cls._TIMEOUT_DURATION_RE.match(inner) is not None:
+                        index += 1
+                        continue
+                    break
+                index += 1 + consumption
+            continue
+        return None
+
+    @classmethod
+    def _inline_runtime_payload(cls, argv: list[str]) -> tuple[str, str] | None:
+        start = cls._resolve_inline_runtime_start(argv)
+        if start is None or start >= len(argv):
+            return None
+        runtime = cls._runtime_family(argv[start])
+        if not runtime:
+            return None
+        flags = cls._INLINE_RUNTIME_FLAGS.get(runtime, frozenset())
+        if not flags:
+            return None
+        for index, inner_raw in enumerate(argv[start + 1:], start=start + 1):
+            inner = str(inner_raw or "").strip()
+            if not inner:
+                continue
+            if inner in cls._SHELL_CONTROL_TOKENS:
+                break
+            if inner.lower() in flags and index + 1 < len(argv):
+                payload = str(argv[index + 1] or "")
+                return runtime, payload
+            if not inner.startswith("-"):
+                break
+        return None
+
+    @classmethod
+    def _guard_inline_runtime_fetch_targets(cls, argv: list[str]) -> str | None:
+        payload_row = cls._inline_runtime_payload(argv)
+        if payload_row is None:
+            return None
+        runtime, payload = payload_row
+        hint_re = cls._INLINE_RUNTIME_NETWORK_HINTS.get(runtime)
+        if hint_re is None or hint_re.search(payload) is None:
+            return None
+        for raw_url in cls._HTTP_URL_RE.findall(payload):
+            error = cls._validate_network_fetch_url(raw_url)
+            if error:
+                return error
+        return None
+
+    @classmethod
+    def _guard_python_module_fetch_targets(cls, argv: list[str]) -> str | None:
+        start = cls._resolve_inline_runtime_start(argv)
+        if start is None or start >= len(argv):
+            return None
+        if cls._runtime_family(argv[start]) != "python":
+            return None
+        for index, raw in enumerate(argv[start + 1:], start=start + 1):
+            token = str(raw or "").strip()
+            lower = token.lower()
+            if not token:
+                continue
+            if token in cls._SHELL_CONTROL_TOKENS:
+                break
+            if lower == "-m" and index + 1 < len(argv):
+                module_name = str(argv[index + 1] or "").strip().lower()
+                if module_name not in cls._PYTHON_NETWORK_MODULES:
+                    return None
+                for candidate_raw in argv[index + 2:]:
+                    candidate = str(candidate_raw or "").strip()
+                    if not candidate:
+                        continue
+                    if candidate in cls._SHELL_CONTROL_TOKENS:
+                        break
+                    if candidate == "--":
+                        continue
+                    if candidate.startswith("-"):
+                        continue
+                    error = cls._validate_network_fetch_url(candidate)
+                    if error:
+                        return error
+                return None
+            if not token.startswith("-"):
+                break
+        return None
+
+    @classmethod
+    def _guard_env_split_string_payloads(cls, argv: list[str], *, recursion_depth: int = 0) -> str | None:
+        if recursion_depth >= 4:
+            return None
+        for index, raw in enumerate(argv):
+            if cls._binary_name(raw) != "env":
+                continue
+            pointer = index + 1
+            while pointer < len(argv):
+                token = str(argv[pointer] or "").strip()
+                lower = token.lower()
+                if not token:
+                    pointer += 1
+                    continue
+                if token in cls._SHELL_CONTROL_TOKENS:
+                    break
+                if cls._is_env_assignment(token):
+                    pointer += 1
+                    continue
+                if lower in {"-s", "--split-string"} and pointer + 1 < len(argv):
+                    payload = str(argv[pointer + 1] or "").strip()
+                    if not payload:
+                        break
+                    try:
+                        nested_argv = shlex.split(payload)
+                    except ValueError:
+                        return None
+                    return cls._guard_network_fetch_targets(nested_argv, recursion_depth=recursion_depth + 1)
+                consumption = cls._transparent_runtime_wrapper_flag_consumption("env", token)
+                if consumption is None:
+                    break
+                pointer += 1 + consumption
+        return None
+
+    @classmethod
+    def _guard_network_fetch_targets(cls, argv: list[str], *, recursion_depth: int = 0) -> str | None:
+        for binary, tokens in cls._iter_network_fetch_segments(argv):
+            for raw_url in cls._iter_network_fetch_target_urls(binary, tokens):
+                error = cls._validate_network_fetch_url(raw_url)
+                if error:
+                    return error
+        split_string_error = cls._guard_env_split_string_payloads(argv, recursion_depth=recursion_depth)
+        if split_string_error:
+            return split_string_error
+        inline_error = cls._guard_inline_runtime_fetch_targets(argv)
+        if inline_error:
+            return inline_error
+        module_error = cls._guard_python_module_fetch_targets(argv)
+        if module_error:
+            return module_error
+        return None
+
     def _guard_explicit_shell_command(self, shell_command: str, cwd: Path, *, recursion_depth: int) -> str | None:
         if self.restrict_to_workspace:
             workspace = self.workspace_path
@@ -390,6 +793,16 @@ class ExecTool(Tool):
             nested_error = self._guard_explicit_shell_command(shell_command, cwd, recursion_depth=recursion_depth)
             if nested_error:
                 return nested_error
+
+        # ᚾ Network guard: block internal fetches in curl/wget/inline runtimes
+        network_error = self._guard_network_fetch_targets(argv)
+        if network_error:
+            try:
+                from clawlite.core.runestone import audit as _rs_audit
+                _rs_audit(kind="exec_network_block", source="exec", details={"error": network_error, "command": cmd[:256]})
+            except Exception:
+                pass
+            return network_error
 
         return None
 
