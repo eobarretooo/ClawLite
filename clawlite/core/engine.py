@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import asyncio
 import hashlib
 import json
@@ -2989,47 +2990,94 @@ class AgentEngine:
                 yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
                 return
 
-            run_log = bind_event("agent.stream", session=session_id, channel=channel or "-")
-            prepared = await self._prepare_turn_prompt(
-                session_id=session_id,
-                user_text=user_text,
-                channel=channel,
-                chat_id=chat_id,
-                runtime_metadata=runtime_metadata,
-                run_log=run_log,
-                include_tool_guidance=False,
-            )
-            if self._stream_requires_full_run(
-                user_text=user_text,
-                live_lookup_required=prepared.live_lookup_required,
-                available_skill_names=prepared.available_skill_names,
-            ):
-                result = await self.run(
-                    session_id=session_id,
-                    user_text=user_text,
-                    channel=channel,
-                    chat_id=chat_id,
-                    runtime_metadata=runtime_metadata,
-                )
-                yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
-                return
-            messages = list(prepared.messages)
-            _cwm_budget = getattr(self, "_context_budget_chars", 0)
-            if _cwm_budget > 0:
+            queue: asyncio.Queue[tuple[str, ProviderChunk | Exception | None]] = asyncio.Queue()
+
+            async def _producer() -> None:
+                session_lock = await self._get_session_lock(session_id)
+                await session_lock.acquire()
                 try:
-                    messages = ContextWindowManager(budget_chars=_cwm_budget).trim(messages)
+                    run_log = bind_event("agent.stream", session=session_id, channel=channel or "-")
+                    prepared = await self._prepare_turn_prompt(
+                        session_id=session_id,
+                        user_text=user_text,
+                        channel=channel,
+                        chat_id=chat_id,
+                        runtime_metadata=runtime_metadata,
+                        run_log=run_log,
+                        include_tool_guidance=False,
+                    )
+                    if self._stream_requires_full_run(
+                        user_text=user_text,
+                        live_lookup_required=prepared.live_lookup_required,
+                        available_skill_names=prepared.available_skill_names,
+                    ):
+                        await queue.put(("fallback", None))
+                        return
+                    messages = list(prepared.messages)
+                    _cwm_budget = getattr(self, "_context_budget_chars", 0)
+                    if _cwm_budget > 0:
+                        try:
+                            messages = ContextWindowManager(budget_chars=_cwm_budget).trim(messages)
+                        except Exception as exc:
+                            run_log.warning("context_window_trim_failed error={}", exc)
+                    accumulated = ""
+                    completed = False
+                    stream_iter = stream_fn(messages=messages)
+                    try:
+                        while True:
+                            try:
+                                chunk = await anext(stream_iter)
+                            except StopAsyncIteration:
+                                completed = True
+                                break
+                            accumulated = chunk.accumulated or (accumulated + chunk.text)
+                            await queue.put(("chunk", chunk))
+                            if chunk.done:
+                                completed = True
+                                break
+                    finally:
+                        aclose = getattr(stream_iter, "aclose", None)
+                        if callable(aclose):
+                            with contextlib.suppress(Exception):
+                                await aclose()
+
+                    if completed:
+                        self._append_session_message(session_id, "user", user_text)
+                        self._append_session_message(session_id, "assistant", accumulated)
                 except Exception as exc:
-                    run_log.warning("context_window_trim_failed error={}", exc)
-            accumulated = ""
-            async for chunk in stream_fn(messages=messages):
-                accumulated = chunk.accumulated or (accumulated + chunk.text)
-                yield chunk
-                if chunk.done:
-                    break
-            # Persist assistant reply to session history
-            if accumulated:
-                self._append_session_message(session_id, "user", user_text)
-                self._append_session_message(session_id, "assistant", accumulated)
+                    await queue.put(("error", exc))
+                finally:
+                    session_lock.release()
+                    await queue.put(("done", None))
+
+            producer = asyncio.create_task(_producer())
+            try:
+                while True:
+                    kind, payload = await queue.get()
+                    if kind == "chunk":
+                        assert isinstance(payload, ProviderChunk)
+                        yield payload
+                        continue
+                    if kind == "fallback":
+                        result = await self.run(
+                            session_id=session_id,
+                            user_text=user_text,
+                            channel=channel,
+                            chat_id=chat_id,
+                            runtime_metadata=runtime_metadata,
+                        )
+                        yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
+                        return
+                    if kind == "error":
+                        assert isinstance(payload, Exception)
+                        raise payload
+                    if kind == "done":
+                        break
+            finally:
+                if not producer.done():
+                    producer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await producer
 
         return _gen()
 
@@ -3066,6 +3114,9 @@ class AgentEngine:
         stop_event: asyncio.Event | None = None,
     ) -> ProviderResult:
         runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
+        requester_id = ""
+        if isinstance(runtime_metadata, dict):
+            requester_id = str(runtime_metadata.get("user_id", "") or "").strip()
         run_log = bind_event("agent.loop", session=session_id, channel=runtime_channel or "-")
         run_log.info("processing message chars={}", len(user_text))
         turn_started_at = time.perf_counter()
@@ -3616,6 +3667,7 @@ class AgentEngine:
                                 session_id=session_id,
                                 channel=runtime_channel,
                                 user_id=runtime_chat_id,
+                                requester_id=requester_id,
                             )
                         except Exception as exc:
                             bind_event("tool.exec", session=session_id, channel=runtime_channel or "-", tool=name).error("execution failed call_id={} error={}", call_id, exc)

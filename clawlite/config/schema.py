@@ -1642,8 +1642,10 @@ class ToolSafetyPolicyConfig(Base):
         default_factory=lambda: ["browser", "exec", "run_skill", "web_fetch", "web_search", "mcp"]
     )
     risky_specifiers: list[str] = Field(default_factory=list)
-    approval_specifiers: list[str] = Field(default_factory=list)
-    approval_channels: list[str] = Field(default_factory=list)
+    approval_specifiers: list[str] = Field(
+        default_factory=lambda: ["browser:evaluate", "exec", "mcp", "run_skill"]
+    )
+    approval_channels: list[str] = Field(default_factory=lambda: ["discord", "telegram"])
     approval_grant_ttl_s: float = 900.0
     blocked_channels: list[str] = Field(default_factory=list)
     allowed_channels: list[str] = Field(default_factory=list)

@@ -413,8 +413,8 @@ def test_load_config_tools_safety_defaults(tmp_path: Path) -> None:
     assert cfg.tools.safety.enabled is True
     assert cfg.tools.safety.risky_tools == ["browser", "exec", "run_skill", "web_fetch", "web_search", "mcp"]
     assert cfg.tools.safety.risky_specifiers == []
-    assert cfg.tools.safety.approval_specifiers == []
-    assert cfg.tools.safety.approval_channels == []
+    assert cfg.tools.safety.approval_specifiers == ["browser:evaluate", "exec", "mcp", "run_skill"]
+    assert cfg.tools.safety.approval_channels == ["discord", "telegram"]
     assert cfg.tools.safety.approval_grant_ttl_s == 900.0
     assert cfg.tools.safety.blocked_channels == []
     assert cfg.tools.safety.allowed_channels == []

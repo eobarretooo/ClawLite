@@ -127,6 +127,55 @@ def test_handle_tool_approval_inbound_action_replies_via_discord_interaction() -
     asyncio.run(_scenario())
 
 
+def test_handle_tool_approval_inbound_action_rejects_mismatched_actor() -> None:
+    async def _scenario() -> None:
+        sent: list[dict[str, object]] = []
+
+        class _Channels:
+            async def send(self, *, channel: str, target: str, text: str, metadata=None) -> str:
+                sent.append(
+                    {
+                        "channel": channel,
+                        "target": target,
+                        "text": text,
+                        "metadata": dict(metadata or {}),
+                    }
+                )
+                return "ok"
+
+            def get_channel(self, name: str):
+                del name
+                return None
+
+        class _Tools:
+            def review_approval_request(self, request_id: str, **kwargs):
+                del request_id, kwargs
+                return {"ok": False, "error": "approval_actor_mismatch"}
+
+        event = InboundEvent(
+            channel="telegram",
+            session_id="telegram:123",
+            user_id="77",
+            text="tool_approval:approve:req-1",
+            metadata={
+                "callback_data": "tool_approval:approve:req-1",
+                "chat_id": "123",
+                "message_id": 99,
+            },
+        )
+
+        handled = await handle_tool_approval_inbound_action(
+            event,
+            tools=_Tools(),
+            channels=_Channels(),
+        )
+
+        assert handled is True
+        assert "original requester" in str(sent[0]["text"]).lower()
+
+    asyncio.run(_scenario())
+
+
 def test_handle_tool_approval_inbound_action_ignores_non_control_messages() -> None:
     async def _scenario() -> None:
         handled = await handle_tool_approval_inbound_action(

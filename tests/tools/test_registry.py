@@ -282,12 +282,27 @@ def test_tool_registry_allows_non_risky_tools_for_empty_channel_and_session() ->
     asyncio.run(_scenario())
 
 
-def test_tool_registry_default_safety_allows_run_skill_for_telegram() -> None:
+def test_tool_registry_default_safety_requires_run_skill_approval_for_telegram() -> None:
     async def _scenario() -> None:
         reg = ToolRegistry()
         reg.register(RunSkillLikeTool())
-        out = await reg.execute("run_skill", {"name": "echo"}, session_id="telegram:1", channel="telegram", user_id="1")
-        assert out == "skill=echo"
+        try:
+            await reg.execute(
+                "run_skill",
+                {"name": "echo"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="1",
+                requester_id="actor-1",
+            )
+            raise AssertionError("expected approval requirement")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_requires_approval:run_skill:telegram"
+
+        pending = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(pending) == 1
+        assert pending[0]["matched_approval_specifiers"] == ["run_skill"]
+        assert pending[0]["requester_actor"] == "telegram:actor-1"
 
     asyncio.run(_scenario())
 
@@ -388,6 +403,8 @@ def test_tool_registry_blocks_run_skill_name_specifier_for_telegram() -> None:
                 enabled=True,
                 risky_tools=[],
                 risky_specifiers=["run_skill:github"],
+                approval_specifiers=[],
+                approval_channels=[],
                 blocked_channels=["telegram"],
                 allowed_channels=[],
             )
@@ -411,6 +428,8 @@ def test_tool_registry_blocks_exec_binary_specifier_for_telegram() -> None:
                 enabled=True,
                 risky_tools=[],
                 risky_specifiers=["exec:git"],
+                approval_specifiers=[],
+                approval_channels=[],
                 blocked_channels=["telegram"],
                 allowed_channels=[],
             )
@@ -544,6 +563,8 @@ def test_tool_registry_layered_profile_override_changes_effective_risky_tools() 
             safety=ToolSafetyPolicyConfig(
                 enabled=True,
                 risky_tools=["exec"],
+                approval_specifiers=[],
+                approval_channels=[],
                 blocked_channels=["telegram"],
                 allowed_channels=[],
                 profile="ops",
@@ -568,6 +589,8 @@ def test_tool_registry_layered_channel_override_can_clear_risky_specifiers() -> 
                 enabled=True,
                 risky_tools=[],
                 risky_specifiers=["browser:evaluate"],
+                approval_specifiers=[],
+                approval_channels=[],
                 blocked_channels=["telegram"],
                 allowed_channels=[],
                 by_channel={
@@ -762,7 +785,14 @@ def test_tool_registry_approval_request_grant_allows_retry() -> None:
         )
         reg.register(BrowserLikeTool())
         try:
-            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+            await reg.execute(
+                "browser",
+                {"action": "evaluate"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="7",
+                requester_id="7",
+            )
             raise AssertionError("expected approval requirement")
         except RuntimeError as exc:
             assert str(exc) == "tool_requires_approval:browser:telegram"
@@ -780,7 +810,14 @@ def test_tool_registry_approval_request_grant_allows_retry() -> None:
         assert review["ok"] is True
         assert review["status"] == "approved"
 
-        out = await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+        out = await reg.execute(
+            "browser",
+            {"action": "evaluate"},
+            session_id="telegram:1",
+            channel="telegram",
+            user_id="7",
+            requester_id="7",
+        )
         assert out == "ok"
 
     asyncio.run(_scenario())
@@ -807,6 +844,7 @@ def test_tool_registry_approval_grant_is_bound_to_same_request_payload() -> None
                 session_id="telegram:1",
                 channel="telegram",
                 user_id="7",
+                requester_id="7",
             )
             raise AssertionError("expected approval requirement")
         except RuntimeError as exc:
@@ -829,6 +867,7 @@ def test_tool_registry_approval_grant_is_bound_to_same_request_payload() -> None
             session_id="telegram:1",
             channel="telegram",
             user_id="7",
+            requester_id="7",
         )
         assert same_request == "ok"
 
@@ -839,6 +878,7 @@ def test_tool_registry_approval_grant_is_bound_to_same_request_payload() -> None
                 session_id="telegram:1",
                 channel="telegram",
                 user_id="7",
+                requester_id="7",
             )
             raise AssertionError("expected approval requirement for different payload")
         except RuntimeError as exc:
@@ -863,7 +903,14 @@ def test_tool_registry_consume_pending_approval_requests_is_one_shot() -> None:
         )
         reg.register(BrowserLikeTool())
         try:
-            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+            await reg.execute(
+                "browser",
+                {"action": "evaluate"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="7",
+                requester_id="7",
+            )
             raise AssertionError("expected approval requirement")
         except RuntimeError:
             pass
@@ -888,7 +935,14 @@ def test_tool_registry_approval_snapshots_include_requests_and_grants() -> None:
         )
         reg.register(BrowserLikeTool())
         try:
-            await reg.execute("browser", {"action": "evaluate"}, session_id="telegram:1", channel="telegram", user_id="7")
+            await reg.execute(
+                "browser",
+                {"action": "evaluate"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="7",
+                requester_id="7",
+            )
             raise AssertionError("expected approval requirement")
         except RuntimeError:
             pass
@@ -899,7 +953,7 @@ def test_tool_registry_approval_snapshots_include_requests_and_grants() -> None:
         assert pending[0]["request_age_s"] >= 0.0
         assert pending[0]["expires_in_s"] > 0.0
 
-        review = reg.review_approval_request(pending[0]["request_id"], decision="approved", actor="cli")
+        review = reg.review_approval_request(pending[0]["request_id"], decision="approved", actor="telegram:7")
         assert review["ok"] is True
 
         approved = reg.approval_requests_snapshot(status="approved", session_id="telegram:1", channel="telegram")
@@ -960,6 +1014,7 @@ def test_tool_registry_legacy_approval_grants_remain_visible_and_usable() -> Non
             session_id="telegram:1",
             channel="telegram",
             user_id="7",
+            requester_id="7",
         )
         assert out == "ok"
 
@@ -971,12 +1026,45 @@ def test_tool_registry_legacy_approval_grants_remain_visible_and_usable() -> Non
     asyncio.run(_scenario())
 
 
+def test_tool_registry_rejects_approval_review_from_different_actor() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        reg.register(RunSkillLikeTool())
+        try:
+            await reg.execute(
+                "run_skill",
+                {"name": "github"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="1",
+                requester_id="42",
+            )
+            raise AssertionError("expected approval requirement")
+        except RuntimeError as exc:
+            assert str(exc) == "tool_requires_approval:run_skill:telegram"
+
+        pending = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(pending) == 1
+        review = reg.review_approval_request(
+            pending[0]["request_id"],
+            decision="approved",
+            actor="telegram:99",
+        )
+        assert review["ok"] is False
+        assert review["error"] == "approval_actor_mismatch"
+        assert review["expected_actor"] == "telegram:42"
+
+    asyncio.run(_scenario())
+
+
 def test_tool_registry_layered_agent_override_supersedes_profile_and_global() -> None:
     async def _scenario() -> None:
         reg = ToolRegistry(
             safety=ToolSafetyPolicyConfig(
                 enabled=True,
                 risky_tools=["exec"],
+                approval_specifiers=[],
+                approval_channels=[],
                 blocked_channels=["telegram"],
                 allowed_channels=[],
                 profile="ops",
@@ -1007,6 +1095,8 @@ def test_tool_registry_layered_channel_override_supersedes_agent_and_global() ->
             safety=ToolSafetyPolicyConfig(
                 enabled=True,
                 risky_tools=["exec"],
+                approval_specifiers=[],
+                approval_channels=[],
                 blocked_channels=["telegram"],
                 allowed_channels=[],
                 by_agent={

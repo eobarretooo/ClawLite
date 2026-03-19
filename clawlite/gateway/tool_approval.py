@@ -232,6 +232,8 @@ async def handle_tool_approval_inbound_action(
         return True
 
     error = str(result.get("error", "review_failed") or "review_failed")
+    if error == "approval_actor_mismatch":
+        error = "approval_actor_mismatch:only the original requester can review this approval"
     await _reply_to_event(
         channels=channels,
         event=event,

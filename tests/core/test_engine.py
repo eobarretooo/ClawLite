@@ -50,7 +50,17 @@ class FakeProvider:
 
 @dataclass
 class FakeTools:
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
+        del channel, user_id, requester_id
         return f"{name}:{arguments.get('text', '')}:{session_id}"
 
     def schema(self):
@@ -115,6 +125,23 @@ class FakeStreamingPromptCaptureProvider:
         for index, char in enumerate(self.text):
             accumulated += char
             yield ProviderChunk(text=char, accumulated=accumulated, done=index == len(self.text) - 1)
+
+
+class LockTrackingStreamingProvider:
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    async def stream(self, *, messages, max_tokens=None, temperature=None):
+        del messages, max_tokens, temperature
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            yield ProviderChunk(text="o", accumulated="o", done=False)
+            await asyncio.sleep(0.02)
+            yield ProviderChunk(text="k", accumulated="ok", done=True)
+        finally:
+            self.active -= 1
 
 
 class FakeFixedTextProvider:
@@ -195,8 +222,17 @@ class FakeStreamingWebToolProvider(FakeWebToolProvider):
 
 
 class FakeWebSearchTools:
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
-        del arguments, session_id, channel, user_id
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
+        del arguments, session_id, channel, user_id, requester_id
         if name != "web_search":
             raise AssertionError(f"unexpected tool {name}")
         return json.dumps(
@@ -1011,8 +1047,17 @@ class FakeWhitespaceVariantFailTools:
             "  boom failed   ",
         ]
 
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
-        del name, arguments, session_id, channel, user_id
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
+        del name, arguments, session_id, channel, user_id, requester_id
         message = self._errors[min(self.calls, len(self._errors) - 1)]
         self.calls += 1
         raise RuntimeError(message)
@@ -1022,8 +1067,17 @@ class FakeWhitespaceVariantFailTools:
 
 
 class FakePingPongTools:
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
-        del arguments, session_id, channel, user_id
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
+        del arguments, session_id, channel, user_id, requester_id
         if name == "alpha":
             return "alpha:still waiting"
         if name == "beta":
@@ -1041,8 +1095,17 @@ class FakeChangingResultTools:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
-        del channel, user_id
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
+        del channel, user_id, requester_id
         self.calls += 1
         return f"{name}:{arguments.get('text', '')}:{session_id}:{self.calls}"
 
@@ -1225,7 +1288,17 @@ class ContextCaptureTools:
         self.last_channel = ""
         self.last_user_id = ""
 
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
+        del requester_id
         self.last_channel = str(channel)
         self.last_user_id = str(user_id)
         return f"{name}:ok:{session_id}"
@@ -1249,7 +1322,16 @@ class ExecuteCaptureTools:
     def __init__(self) -> None:
         self.execute_calls: list[dict[str, Any]] = []
 
-    async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
+    async def execute(
+        self,
+        name,
+        arguments,
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
         self.execute_calls.append(
             {
                 "name": name,
@@ -1257,6 +1339,7 @@ class ExecuteCaptureTools:
                 "session_id": session_id,
                 "channel": channel,
                 "user_id": user_id,
+                "requester_id": requester_id,
             }
         )
         return f"{name}:{arguments.get('text', '')}:{session_id}"
@@ -1352,6 +1435,7 @@ def test_engine_accepts_tool_arguments_from_json_string_payload() -> None:
                 "session_id": "cli:json-args",
                 "channel": "cli",
                 "user_id": "json-args",
+                "requester_id": "",
             }
         ]
         tool_rows = [row for row in provider.snapshots[1] if row.get("role") == "tool"]
@@ -1433,6 +1517,7 @@ def test_engine_normalizes_dict_provider_payloads_and_tuple_tool_calls() -> None
                 "session_id": "cli:dict-provider",
                 "channel": "cli",
                 "user_id": "dict-provider",
+                "requester_id": "",
             }
         ]
         metrics = engine.turn_metrics_snapshot()
@@ -2099,6 +2184,57 @@ def test_engine_stream_run_persists_user_and_assistant_messages_after_completion
             {"session_id": "cli:stream", "role": "user", "content": "ping"},
             {"session_id": "cli:stream", "role": "assistant", "content": "pong"},
         ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_persists_empty_completion_turn() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("")
+        sessions = SessionStoreRecorder()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        chunks = [chunk async for chunk in await engine.stream_run(session_id="cli:stream-empty", user_text="ping")]
+
+        assert chunks == [ProviderChunk(text="", accumulated="", done=True)]
+        assert sessions.rows == [
+            {"session_id": "cli:stream-empty", "role": "user", "content": "ping"},
+            {"session_id": "cli:stream-empty", "role": "assistant", "content": ""},
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_serializes_same_session_streams_with_lock() -> None:
+    async def _scenario() -> None:
+        provider = LockTrackingStreamingProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=InMemorySessionStore(),
+            memory=FakeMemory(),
+        )
+
+        async def _consume() -> str:
+            parts: list[str] = []
+            async for chunk in await engine.stream_run(
+                session_id="telegram:42",
+                user_text="go",
+                channel="telegram",
+                chat_id="42",
+            ):
+                parts.append(chunk.text)
+            return "".join(parts)
+
+        first, second = await asyncio.gather(_consume(), _consume())
+        assert first == "ok"
+        assert second == "ok"
+        assert provider.max_active == 1
 
     asyncio.run(_scenario())
 
@@ -3941,8 +4077,17 @@ def test_engine_compacts_large_tool_results_before_history_injection() -> None:
         provider = FakeToolCompactionProvider()
 
         class LargeToolResultTools(FakeTools):
-            async def execute(self, name, arguments, *, session_id: str, channel: str = "", user_id: str = "") -> str:
-                del name, arguments, session_id, channel, user_id
+            async def execute(
+                self,
+                name,
+                arguments,
+                *,
+                session_id: str,
+                channel: str = "",
+                user_id: str = "",
+                requester_id: str = "",
+            ) -> str:
+                del name, arguments, session_id, channel, user_id, requester_id
                 return "LARGE-RESULT-" * 400
 
         engine = AgentEngine(

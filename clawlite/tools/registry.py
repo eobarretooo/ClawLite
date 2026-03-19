@@ -551,6 +551,7 @@ class ToolRegistry:
         session_id: str,
         channel: str,
         user_id: str,
+        requester_id: str,
         safety: dict[str, Any],
     ) -> dict[str, Any]:
         self._prune_approval_state()
@@ -578,6 +579,12 @@ class ToolRegistry:
             "session_id": str(session_id or "").strip(),
             "channel": resolved_channel,
             "user_id": str(user_id or "").strip(),
+            "requester_id": str(requester_id or "").strip(),
+            "requester_actor": (
+                f"{resolved_channel}:{str(requester_id or '').strip()}"
+                if resolved_channel and str(requester_id or "").strip()
+                else ""
+            ),
             "derived_specifiers": list(safety.get("derived_specifiers", []) or []),
             "matched_approval_specifiers": matched_rules,
             "approval_reason": str(safety.get("approval_reason", "") or "").strip(),
@@ -673,6 +680,18 @@ class ToolRegistry:
         payload = self._approval_requests.get(normalized_request_id)
         if payload is None:
             return {"ok": False, "error": "approval_request_not_found"}
+        expected_actor = str(payload.get("requester_actor", "") or "").strip()
+        normalized_actor = str(actor or "").strip()
+        if expected_actor and normalized_actor and normalized_actor != expected_actor:
+            return {
+                "ok": False,
+                "error": "approval_actor_mismatch",
+                "request_id": normalized_request_id,
+                "tool": str(payload.get("tool", "") or "").strip(),
+                "channel": str(payload.get("channel", "") or "").strip(),
+                "session_id": str(payload.get("session_id", "") or "").strip(),
+                "expected_actor": expected_actor,
+            }
         status = str(payload.get("status", "pending") or "pending").strip().lower()
         if status != "pending":
             return {
@@ -1188,7 +1207,16 @@ class ToolRegistry:
         # 4. global default
         return self._default_timeout_s
 
-    async def execute(self, name: str, arguments: dict[str, Any], *, session_id: str, channel: str = "", user_id: str = "") -> str:
+    async def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str,
+        channel: str = "",
+        user_id: str = "",
+        requester_id: str = "",
+    ) -> str:
         tool = self.get(name)
         if tool is None:
             raise ToolError(name, "not_found", recoverable=False)
@@ -1214,6 +1242,7 @@ class ToolRegistry:
                 session_id=session_id,
                 channel=resolved_channel or channel,
                 user_id=user_id,
+                requester_id=requester_id,
                 safety=safety,
             )
             reason_channel = str(safety.get("resolved_channel") or "").strip() or "unknown"

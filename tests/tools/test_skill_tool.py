@@ -199,9 +199,9 @@ def test_run_skill_executes_command_binding(tmp_path: Path) -> None:
         reg.register(tool)
         out = await tool.run(
             {"name": "echo-skill", "input": "hello world"},
-            ToolContext(session_id="s1"),
+            ToolContext(session_id="cli:s1", channel="cli"),
         )
-        assert out == "exec:echo hello world::"
+        assert out == "exec:echo hello world:cli:"
 
     asyncio.run(_scenario())
 
@@ -650,10 +650,10 @@ def test_run_skill_allows_execution_when_memory_policy_allows(tmp_path: Path) ->
         tool = SkillTool(loader=SkillsLoader(builtin_root=tmp_path), registry=reg, memory=memory)
         out = await tool.run(
             {"name": "echo-skill", "input": "hello"},
-            ToolContext(session_id="s8"),
+            ToolContext(session_id="cli:s8", channel="cli"),
         )
-        assert out == "exec:echo hello::"
-        assert memory.calls == [("skill", "s8")]
+        assert out == "exec:echo hello:cli:"
+        assert memory.calls == [("skill", "cli:s8")]
 
     asyncio.run(_scenario())
 
