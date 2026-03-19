@@ -10,7 +10,15 @@ from typing import Any
 
 import clawlite.core.engine as engine_module
 from clawlite.config.schema import ToolSafetyPolicyConfig
-from clawlite.core.engine import AgentEngine, InMemorySessionStore, LoopDetectionSettings, ProviderResult, ToolCall, TurnBudget
+from clawlite.core.engine import (
+    AgentEngine,
+    InMemorySessionStore,
+    LoopDetectionSettings,
+    ProviderChunk,
+    ProviderResult,
+    ToolCall,
+    TurnBudget,
+)
 from clawlite.core.memory import MemoryRecord
 from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.core.subagent_synthesizer import SubagentSynthesizer
@@ -88,6 +96,23 @@ class FakePromptCaptureProvider:
         del tools
         self.snapshots.append(copy.deepcopy(messages))
         return ProviderResult(text="ok", tool_calls=[], model="fake/model")
+
+
+class FakeStreamingPromptCaptureProvider:
+    def __init__(self, text: str = "ok") -> None:
+        self.text = text
+        self.snapshots: list[list[dict[str, Any]]] = []
+
+    async def stream(self, *, messages, max_tokens=None, temperature=None):
+        del max_tokens, temperature
+        self.snapshots.append(copy.deepcopy(messages))
+        if not self.text:
+            yield ProviderChunk(text="", accumulated="", done=True)
+            return
+        accumulated = ""
+        for index, char in enumerate(self.text):
+            accumulated += char
+            yield ProviderChunk(text=char, accumulated=accumulated, done=index == len(self.text) - 1)
 
 
 class FakeFixedTextProvider:
@@ -1939,6 +1964,82 @@ def test_engine_injects_allowlisted_runtime_metadata_into_prompt_context() -> No
         assert "Command Args: session-1" in runtime_context
         assert "bridge_payload" not in runtime_context
         assert "ignore me" not in runtime_context
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_uses_shaped_prompt_memory_history_and_runtime_context() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("ok")
+        memory = FakeMemory(
+            [
+                MemoryRecord(
+                    id="a1b2c3d4e5f6",
+                    text="Remember the thread context.",
+                    source="session:telegram:42",
+                    created_at="2026-03-04T12:00:00+00:00",
+                )
+            ]
+        )
+        sessions = InMemorySessionStore()
+        sessions.append("telegram:42", "user", "older request")
+        sessions.append("telegram:42", "assistant", "older answer")
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=memory,
+        )
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="telegram:42",
+                user_text="continue",
+                channel="telegram",
+                chat_id="42",
+                runtime_metadata={
+                    "message_thread_id": 13,
+                    "reply_to_text": "parent context",
+                },
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in chunks) == "ok"
+        snapshot = provider.snapshots[0]
+        memory_sections = [row for row in snapshot if row.get("role") == "system" and "[Memory]" in str(row.get("content", ""))]
+        assert memory_sections
+        assert any(row.get("role") == "assistant" and "older answer" in str(row.get("content", "")) for row in snapshot)
+        runtime_rows = [
+            str(row.get("content", ""))
+            for row in snapshot
+            if row.get("role") == "user" and "[Runtime Context" in str(row.get("content", ""))
+        ]
+        assert runtime_rows
+        assert "Thread ID: 13" in runtime_rows[0]
+        assert "Reply-To Text: parent context" in runtime_rows[0]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_persists_user_and_assistant_messages_after_completion() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("pong")
+        sessions = SessionStoreRecorder()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        chunks = [chunk async for chunk in await engine.stream_run(session_id="cli:stream", user_text="ping")]
+
+        assert "".join(chunk.text for chunk in chunks) == "pong"
+        assert sessions.rows == [
+            {"session_id": "cli:stream", "role": "user", "content": "ping"},
+            {"session_id": "cli:stream", "role": "assistant", "content": "pong"},
+        ]
 
     asyncio.run(_scenario())
 

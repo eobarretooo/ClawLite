@@ -108,6 +108,19 @@ class _CallableParameterSpec:
     accepts_kwargs: bool
 
 
+@dataclass(slots=True)
+class _PreparedTurnPrompt:
+    messages: list[dict[str, Any]]
+    tool_schema: list[dict[str, Any]]
+    available_tool_names: set[str]
+    available_skill_names: set[str]
+    live_lookup_required: bool
+    live_lookup_capability: bool
+    allow_memory_write: bool
+    runtime_channel: str
+    runtime_chat_id: str
+
+
 class AgentLoopError(Exception):
     pass
 
@@ -1527,6 +1540,128 @@ class AgentEngine:
                 return ""
         return str(value or "").strip()
 
+    async def _prepare_turn_prompt(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+        run_log: Any,
+        include_tool_guidance: bool = True,
+    ) -> _PreparedTurnPrompt:
+        runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
+        history = self._read_session_history_messages(session_id, limit=self.memory_window)
+        memory_policy = await self._memory_integration_policy_async(actor="agent", session_id=session_id)
+        allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
+        proactive_snippets: list[str] = []
+        _proactive = getattr(self, "proactive_loader", None)
+        if _proactive is not None:
+            try:
+                proactive_snippets = _proactive.warm(user_text, session_id=session_id)
+            except Exception:
+                pass
+        memories = self._plan_memory_snippets(
+            session_id=session_id,
+            user_id=runtime_chat_id,
+            user_text=user_text,
+            run_log=run_log,
+            policy=memory_policy,
+        )
+        if proactive_snippets:
+            seen: set[str] = set(memories)
+            for snippet in proactive_snippets:
+                if snippet not in seen:
+                    seen.add(snippet)
+                    memories = [snippet] + memories
+        skills = self.skills_loader.render_for_prompt()
+        always_names = [item.name for item in self.skills_loader.always_on()]
+        skills_context = self.skills_loader.load_skills_for_context(always_names)
+        tool_schema = self.tools.schema()
+        available_tool_names = self._tool_schema_names(tool_schema)
+        available_skill_names = {
+            str(item.name or "").strip().lower()
+            for item in self.skills_loader.discover(include_unavailable=False)
+            if str(item.name or "").strip()
+        }
+        live_lookup_required = self._turn_requires_live_lookup(user_text=user_text)
+        live_lookup_capability = self._has_live_lookup_capability(
+            tool_names=available_tool_names,
+            skill_names=available_skill_names,
+        )
+
+        prompt = self.prompt_builder.build(
+            user_text=user_text,
+            history=history,
+            memory_snippets=memories,
+            skills_for_prompt=skills,
+            skills_context=skills_context,
+            channel=runtime_channel,
+            chat_id=runtime_chat_id,
+            runtime_metadata=runtime_metadata,
+        )
+        if prompt.history_summary and prompt.trimmed_history_rows:
+            prompt.history_summary = await self._maybe_semantic_history_summary(
+                trimmed_history_rows=prompt.trimmed_history_rows,
+                fallback_summary=prompt.history_summary,
+                user_text=user_text,
+            )
+
+        messages: list[dict[str, Any]] = []
+        if prompt.system_prompt:
+            messages.append({"role": "system", "content": prompt.system_prompt})
+        if prompt.memory_section:
+            messages.append({"role": "system", "content": prompt.memory_section})
+        if prompt.skills_context:
+            messages.append({"role": "system", "content": f"[Skill Guides]\n{prompt.skills_context}"})
+        if prompt.history_summary:
+            messages.append({"role": "system", "content": prompt.history_summary})
+        try:
+            guidance = await self._emotion_guidance(user_text, session_id=session_id)
+        except Exception as exc:
+            run_log.warning("emotional guidance failed session={} error={}", session_id or "-", exc)
+            guidance = ""
+        if guidance:
+            messages.append({"role": "system", "content": guidance})
+        integration_hint = await self._memory_integration_hint(actor="agent", session_id=session_id)
+        if integration_hint:
+            messages.append({"role": "system", "content": integration_hint})
+        profile_hint = await self._memory_profile_hint()
+        if profile_hint:
+            messages.append({"role": "system", "content": profile_hint})
+        if include_tool_guidance:
+            web_notice = self._web_research_notice_for_turn(
+                user_text=user_text,
+                tool_names=available_tool_names,
+            )
+            if web_notice:
+                messages.append({"role": "system", "content": web_notice})
+            routing_notice = self._routing_notice_for_turn(
+                user_text=user_text,
+                tool_names=available_tool_names,
+                skill_names=available_skill_names,
+            )
+            if routing_notice:
+                messages.append({"role": "system", "content": routing_notice})
+        if prompt.history_messages:
+            messages.extend(prompt.history_messages)
+        if prompt.runtime_context:
+            messages.append({"role": "user", "content": prompt.runtime_context})
+        messages.append({"role": "user", "content": user_text})
+
+        return _PreparedTurnPrompt(
+            messages=messages,
+            tool_schema=tool_schema,
+            available_tool_names=available_tool_names,
+            available_skill_names=available_skill_names,
+            live_lookup_required=live_lookup_required,
+            live_lookup_capability=live_lookup_capability,
+            allow_memory_write=allow_memory_write,
+            runtime_channel=runtime_channel,
+            runtime_chat_id=runtime_chat_id,
+        )
+
     async def _emotion_guidance(self, user_text: str, *, session_id: str = "") -> str:
         guidance_fn = getattr(self.memory, "emotion_guidance", None)
         if not callable(guidance_fn):
@@ -2700,6 +2835,7 @@ class AgentEngine:
         user_text: str,
         channel: str | None = None,
         chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
     ) -> AsyncGenerator[ProviderChunk, None]:
         """Stream agent response as ProviderChunk objects.
 
@@ -2721,13 +2857,28 @@ class AgentEngine:
                     user_text=user_text,
                     channel=channel,
                     chat_id=chat_id,
+                    runtime_metadata=runtime_metadata,
                 )
                 yield ProviderChunk(text=result.text, accumulated=result.text, done=True)
                 return
 
-            # Provider supports streaming: build history and delegate
-            history = self._read_session_history_messages(session_id, limit=self.memory_window)
-            messages: list[dict[str, Any]] = [*history, {"role": "user", "content": user_text}]
+            run_log = bind_event("agent.stream", session=session_id, channel=channel or "-")
+            prepared = await self._prepare_turn_prompt(
+                session_id=session_id,
+                user_text=user_text,
+                channel=channel,
+                chat_id=chat_id,
+                runtime_metadata=runtime_metadata,
+                run_log=run_log,
+                include_tool_guidance=False,
+            )
+            messages = list(prepared.messages)
+            _cwm_budget = getattr(self, "_context_budget_chars", 0)
+            if _cwm_budget > 0:
+                try:
+                    messages = ContextWindowManager(budget_chars=_cwm_budget).trim(messages)
+                except Exception as exc:
+                    run_log.warning("context_window_trim_failed error={}", exc)
             accumulated = ""
             async for chunk in stream_fn(messages=messages):
                 accumulated = chunk.accumulated or (accumulated + chunk.text)
@@ -2779,101 +2930,25 @@ class AgentEngine:
         turn_started_at = time.perf_counter()
         budget = self._resolve_turn_budget(turn_budget)
         progress_counter = [0]
-        history = self._read_session_history_messages(session_id, limit=self.memory_window)
-        memory_policy = await self._memory_integration_policy_async(actor="agent", session_id=session_id)
-        proactive_snippets: list[str] = []
-        _proactive = getattr(self, "proactive_loader", None)
-        if _proactive is not None:
-            try:
-                proactive_snippets = _proactive.warm(user_text, session_id=session_id)
-            except Exception:
-                pass
-        memories = self._plan_memory_snippets(
+
+        prepared = await self._prepare_turn_prompt(
             session_id=session_id,
-            user_id=runtime_chat_id,
             user_text=user_text,
-            run_log=run_log,
-            policy=memory_policy,
-        )
-        if proactive_snippets:
-            seen: set[str] = set(memories)
-            for s in proactive_snippets:
-                if s not in seen:
-                    seen.add(s)
-                    memories = [s] + memories
-        skills = self.skills_loader.render_for_prompt()
-        always_names = [item.name for item in self.skills_loader.always_on()]
-        skills_context = self.skills_loader.load_skills_for_context(always_names)
-        tool_schema = self.tools.schema()
-        available_tool_names = self._tool_schema_names(tool_schema)
-        available_skill_names = {
-            str(item.name or "").strip().lower()
-            for item in self.skills_loader.discover(include_unavailable=False)
-            if str(item.name or "").strip()
-        }
-        live_lookup_required = self._turn_requires_live_lookup(user_text=user_text)
-        live_lookup_capability = self._has_live_lookup_capability(
-            tool_names=available_tool_names,
-            skill_names=available_skill_names,
-        )
-
-        prompt = self.prompt_builder.build(
-            user_text=user_text,
-            history=history,
-            memory_snippets=memories,
-            skills_for_prompt=skills,
-            skills_context=skills_context,
-            channel=runtime_channel,
-            chat_id=runtime_chat_id,
+            channel=channel,
+            chat_id=chat_id,
             runtime_metadata=runtime_metadata,
+            run_log=run_log,
+            include_tool_guidance=True,
         )
-        if prompt.history_summary and prompt.trimmed_history_rows:
-            prompt.history_summary = await self._maybe_semantic_history_summary(
-                trimmed_history_rows=prompt.trimmed_history_rows,
-                fallback_summary=prompt.history_summary,
-                user_text=user_text,
-            )
-
-        messages: list[dict[str, Any]] = []
-        if prompt.system_prompt:
-            messages.append({"role": "system", "content": prompt.system_prompt})
-        if prompt.memory_section:
-            messages.append({"role": "system", "content": prompt.memory_section})
-        if prompt.skills_context:
-            messages.append({"role": "system", "content": f"[Skill Guides]\n{prompt.skills_context}"})
-        if prompt.history_summary:
-            messages.append({"role": "system", "content": prompt.history_summary})
-        try:
-            guidance = await self._emotion_guidance(user_text, session_id=session_id)
-        except Exception as exc:
-            run_log.warning("emotional guidance failed session={} error={}", session_id or "-", exc)
-            guidance = ""
-        if guidance:
-            messages.append({"role": "system", "content": guidance})
-        integration_hint = await self._memory_integration_hint(actor="agent", session_id=session_id)
-        if integration_hint:
-            messages.append({"role": "system", "content": integration_hint})
-        profile_hint = await self._memory_profile_hint()
-        if profile_hint:
-            messages.append({"role": "system", "content": profile_hint})
-        web_notice = self._web_research_notice_for_turn(
-            user_text=user_text,
-            tool_names=available_tool_names,
-        )
-        if web_notice:
-            messages.append({"role": "system", "content": web_notice})
-        routing_notice = self._routing_notice_for_turn(
-            user_text=user_text,
-            tool_names=available_tool_names,
-            skill_names=available_skill_names,
-        )
-        if routing_notice:
-            messages.append({"role": "system", "content": routing_notice})
-        if prompt.history_messages:
-            messages.extend(prompt.history_messages)
-        if prompt.runtime_context:
-            messages.append({"role": "user", "content": prompt.runtime_context})
-        messages.append({"role": "user", "content": user_text})
+        runtime_channel = prepared.runtime_channel
+        runtime_chat_id = prepared.runtime_chat_id
+        tool_schema = prepared.tool_schema
+        available_tool_names = prepared.available_tool_names
+        available_skill_names = prepared.available_skill_names
+        live_lookup_required = prepared.live_lookup_required
+        live_lookup_capability = prepared.live_lookup_capability
+        allow_memory_write = prepared.allow_memory_write
+        messages = list(prepared.messages)
         current_turn_start_index = len(messages) - 1
         # Context window budget trim
         _cwm_budget = getattr(self, "_context_budget_chars", 0)
@@ -3576,7 +3651,6 @@ class AgentEngine:
                 model="engine/fallback",
             )
 
-        allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
         final = await self._inject_subagent_digest(
             final=final,
             session_id=session_id,

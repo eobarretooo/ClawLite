@@ -259,7 +259,7 @@ Hybrid BM25 + vector search · FTS5 full-text · temporal decay + salience scori
 Heartbeat supervisor · persistent cron engine · autonomy wake coordinator · dead-letter queue + replay · background job queue (priority, retry, SQLite) · context window budget trimming · loop detection with bus events · bounded subagent orchestration (depth guard, retry budgets, zombie cleanup)
 
 **🌊 Streaming**
-`engine.stream_run()` async generator · `ProviderChunk` (delta/accumulated/done) · edit-in-place streaming on Telegram and Discord
+`engine.stream_run()` async generator · `ProviderChunk` (delta/accumulated/done) · same base prompt shaping as `run()` for memory/history/runtime context · edit-in-place streaming on Telegram and Discord
 
 **🖥️ Operator Dashboard** — `http://localhost:8787`
 Live chat · sessions view · automation controls (cron, recovery, channels) · memory health · tools catalog · WebSocket frame preview
@@ -447,7 +447,7 @@ ClawLite has four main layers:
 
 **2. FastAPI Gateway** (`:8787`) — HTTP + WebSocket server, operator dashboard, auth, and channel dispatch. Single entry point for all traffic.
 
-**3. Agent Engine** — the core loop. On each turn it builds a prompt from memory + identity + workspace files, calls tools as needed, and streams tokens from LiteLLM (20+ providers). Loop detection, context window budgeting, and subagent orchestration all live here.
+**3. Agent Engine** — the core loop. On each turn it builds a prompt from memory + identity + workspace files, calls tools as needed, and streams tokens from LiteLLM (20+ providers). `run()` and `stream_run()` now share the same base prompt shaping for memory, history, and runtime context. Loop detection, context window budgeting, and subagent orchestration all live here.
 
 **4. Supporting layers** always running in the background:
 - **Memory** — hybrid BM25 + vector search, FTS5, temporal decay, SQLite or pgvector
