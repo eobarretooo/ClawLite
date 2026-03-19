@@ -440,6 +440,48 @@ class AgentEngine:
     )
     _GITHUB_REQUEST_RE = re.compile(r"\b(?:github|pull request|prs?\b|issues?\b|workflows?)\b", re.IGNORECASE)
     _DOCKER_REQUEST_RE = re.compile(r"\b(?:docker|compose|container(?:es)?|image(?:ns)?)\b", re.IGNORECASE)
+    _GITHUB_STREAM_ROUTE_RE = re.compile(
+        r"(?:"
+        r"\bgithub\b"
+        r"|"
+        r"\bpull\s+requests?\b"
+        r"|"
+        r"\bpr\s*#?\d+\b"
+        r"|"
+        r"\bissues?\s*#?\d+\b"
+        r"|"
+        r"\b[a-z0-9_.-]+/[a-z0-9_.-]+\b"
+        r"|"
+        r"\bworkflow\s+run\b"
+        r")",
+        re.IGNORECASE,
+    )
+    _GITHUB_ACTION_RE = re.compile(
+        r"\b(?:check|list|show|get|open|close|comment|review|merge|rerun|re-run|cancel|inspect|triage)\b",
+        re.IGNORECASE,
+    )
+    _DOCKER_STREAM_ROUTE_RE = re.compile(
+        r"(?:"
+        r"\bdocker\b"
+        r"|"
+        r"\bdocker(?:\s+|-)?compose\b"
+        r"|"
+        r"\bcompose\s+(?:stack|service|services|project)\b"
+        r")",
+        re.IGNORECASE,
+    )
+    _DOCKER_ACTION_RE = re.compile(
+        r"\b(?:run|start|stop|restart|build|pull|push|logs|ps|exec|inspect|up|down)\b",
+        re.IGNORECASE,
+    )
+    _EXPLICIT_GITHUB_SKILL_REQUEST_RE = re.compile(
+        r"\buse\s+the\s+github\s+(?:skill|tool)\b",
+        re.IGNORECASE,
+    )
+    _EXPLICIT_DOCKER_SKILL_REQUEST_RE = re.compile(
+        r"\buse\s+the\s+docker\s+(?:skill|tool)\b",
+        re.IGNORECASE,
+    )
     _ROUTING_HINT_HEADER = "[Routing Hint]"
     _LIVE_LOOKUP_SKILL_NAMES: frozenset[str] = frozenset({"weather", "web-search"})
 
@@ -2709,11 +2751,43 @@ class AgentEngine:
         *,
         user_text: str,
         live_lookup_required: bool,
+        available_skill_names: set[str] | None = None,
     ) -> bool:
         compact = " ".join(str(user_text or "").split()).strip()
         if not compact:
             return False
-        return live_lookup_required
+        if live_lookup_required:
+            return True
+        skill_names = {
+            str(name or "").strip().lower()
+            for name in (available_skill_names or set())
+            if str(name or "").strip()
+        }
+        if not skill_names:
+            return False
+        if (
+            skill_names.intersection({"github", "github-issues", "gh-issues"})
+            and (
+                cls._EXPLICIT_GITHUB_SKILL_REQUEST_RE.search(compact)
+                or (
+                    cls._GITHUB_STREAM_ROUTE_RE.search(compact)
+                    and cls._GITHUB_ACTION_RE.search(compact)
+                )
+            )
+        ):
+            return True
+        if (
+            "docker" in skill_names
+            and (
+                cls._EXPLICIT_DOCKER_SKILL_REQUEST_RE.search(compact)
+                or (
+                    cls._DOCKER_STREAM_ROUTE_RE.search(compact)
+                    and cls._DOCKER_ACTION_RE.search(compact)
+                )
+            )
+        ):
+            return True
+        return False
 
     @classmethod
     def _routing_notice_for_turn(
@@ -2887,6 +2961,7 @@ class AgentEngine:
             if self._stream_requires_full_run(
                 user_text=user_text,
                 live_lookup_required=prepared.live_lookup_required,
+                available_skill_names=prepared.available_skill_names,
             ):
                 result = await self.run(
                     session_id=session_id,

@@ -2116,14 +2116,140 @@ def test_engine_stream_run_falls_back_to_full_run_for_live_lookup_turns() -> Non
     asyncio.run(_scenario())
 
 
-def test_engine_stream_requires_full_run_only_for_live_lookup_turns() -> None:
+def test_engine_stream_run_falls_back_to_full_run_for_explicit_github_skill_turns() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("stream")
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["github"]),
+        )
+        seen: list[dict[str, Any]] = []
+
+        async def _fallback_run(
+            *,
+            session_id: str,
+            user_text: str,
+            channel: str | None = None,
+            chat_id: str | None = None,
+            runtime_metadata: dict[str, Any] | None = None,
+        ) -> ProviderResult:
+            seen.append(
+                {
+                    "session_id": session_id,
+                    "user_text": user_text,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "runtime_metadata": runtime_metadata,
+                }
+            )
+            return ProviderResult(text="github-result", tool_calls=[], model="fake/model")
+
+        engine.run = _fallback_run  # type: ignore[method-assign]
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="cli:stream-gh",
+                user_text="check the GitHub issue status for this repo",
+                channel="telegram",
+                chat_id="42",
+                runtime_metadata={"reply_to_message_id": "7"},
+            )
+        ]
+
+        assert provider.stream_calls == 0
+        assert chunks == [
+            ProviderChunk(text="github-result", accumulated="github-result", done=True)
+        ]
+        assert seen == [
+            {
+                "session_id": "cli:stream-gh",
+                "user_text": "check the GitHub issue status for this repo",
+                "channel": "telegram",
+                "chat_id": "42",
+                "runtime_metadata": {"reply_to_message_id": "7"},
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_keeps_provider_stream_for_explanatory_github_and_docker_prompts() -> None:
+    async def _scenario() -> None:
+        github_provider = FakeStreamingPromptCaptureProvider("stream-gh")
+        github_engine = AgentEngine(
+            provider=github_provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["github"]),
+        )
+
+        github_chunks = [
+            chunk
+            async for chunk in await github_engine.stream_run(
+                session_id="cli:stream-gh-topic",
+                user_text="how do GitHub workflows work?",
+            )
+        ]
+
+        docker_provider = FakeStreamingPromptCaptureProvider("stream-docker")
+        docker_engine = AgentEngine(
+            provider=docker_provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["docker"]),
+        )
+
+        docker_chunks = [
+            chunk
+            async for chunk in await docker_engine.stream_run(
+                session_id="cli:stream-docker-topic",
+                user_text="what is a Docker image?",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in github_chunks) == "stream-gh"
+        assert github_provider.stream_calls == 1
+        assert "".join(chunk.text for chunk in docker_chunks) == "stream-docker"
+        assert docker_provider.stream_calls == 1
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_requires_full_run_for_live_lookup_and_explicit_skill_routes() -> None:
     assert AgentEngine._stream_requires_full_run(
         user_text="Qual a temperatura em Suzano, SP?",
         live_lookup_required=True,
     )
+    assert AgentEngine._stream_requires_full_run(
+        user_text="check GitHub issue #42 for this repo",
+        live_lookup_required=False,
+        available_skill_names={"github"},
+    )
+    assert AgentEngine._stream_requires_full_run(
+        user_text="restart the docker compose stack",
+        live_lookup_required=False,
+        available_skill_names={"docker"},
+    )
+    assert not AgentEngine._stream_requires_full_run(
+        user_text="how do GitHub workflows work?",
+        live_lookup_required=False,
+        available_skill_names={"github"},
+    )
+    assert not AgentEngine._stream_requires_full_run(
+        user_text="what is a Docker image?",
+        live_lookup_required=False,
+        available_skill_names={"docker"},
+    )
     assert not AgentEngine._stream_requires_full_run(
         user_text="Resume isso em 3 linhas",
         live_lookup_required=False,
+        available_skill_names={"summarize"},
     )
 
 
