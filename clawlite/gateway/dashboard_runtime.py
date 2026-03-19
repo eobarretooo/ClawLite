@@ -3,6 +3,13 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+def _dashboard_handoff_payload(*, runtime: Any, build_dashboard_handoff: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return build_dashboard_handoff(runtime.config, include_sensitive=False)
+    except TypeError:
+        return build_dashboard_handoff(runtime.config)
+
+
 def dashboard_channels_summary(*, runtime: Any, dashboard_channels_summary_payload: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, Any]:
     return dashboard_channels_summary_payload(runtime.channels.status())
 
@@ -94,7 +101,7 @@ def dashboard_state_payload(
         supervisor_payload=runtime.supervisor.status() if runtime.supervisor is not None else {},
         skills_payload=skills,
         workspace_payload=runtime.workspace.runtime_health(),
-        handoff_payload=build_dashboard_handoff(runtime.config),
+        handoff_payload=_dashboard_handoff_payload(runtime=runtime, build_dashboard_handoff=build_dashboard_handoff),
         onboarding_payload=runtime.workspace.onboarding_status(),
         bootstrap_payload=runtime.workspace.bootstrap_status(),
         memory_payload=dashboard_memory_summary(

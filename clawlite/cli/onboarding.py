@@ -305,6 +305,7 @@ def build_dashboard_handoff(
     variables: dict[str, str] | None = None,
     ensure_token: bool = False,
     bootstrap_pending_override: bool | None = None,
+    include_sensitive: bool = True,
 ) -> dict[str, Any]:
     token = str(config.gateway.auth.token or "").strip()
     if not token and ensure_token:
@@ -357,12 +358,14 @@ def build_dashboard_handoff(
             "later if you want more controllable search backends."
         )
 
+    dashboard_link = dashboard_url_with_token if include_sensitive else gateway_url
+
     guidance: list[dict[str, str]] = [
         {
             "id": "dashboard",
             "title": "Dashboard",
             "body": (
-                f"Open the local control plane with `clawlite dashboard --no-open` or use {dashboard_url_with_token or gateway_url}."
+                f"Open the local control plane with `clawlite dashboard --no-open` or use {dashboard_link}."
             ),
         },
         {
@@ -408,10 +411,8 @@ def build_dashboard_handoff(
             },
         )
 
-    return {
+    payload = {
         "gateway_url": gateway_url,
-        "dashboard_url_with_token": dashboard_url_with_token,
-        "gateway_token": token,
         "gateway_token_masked": _mask_secret(token, keep=8),
         "bootstrap_pending": bootstrap_pending,
         "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else "",
@@ -420,6 +421,10 @@ def build_dashboard_handoff(
         "onboarding_label": onboarding_label,
         "guidance": guidance,
     }
+    if include_sensitive:
+        payload["dashboard_url_with_token"] = dashboard_url_with_token
+        payload["gateway_token"] = token
+    return payload
 
 
 def apply_provider_selection(

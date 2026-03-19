@@ -2948,6 +2948,36 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "enabled" in payload["self_evolution"]
 
 
+def test_gateway_dashboard_state_redacts_sensitive_handoff_token_fields(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "secret-token",
+            }
+        },
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.get("/api/dashboard/state", headers={"Authorization": "Bearer secret-token"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    handoff = payload["handoff"]
+    assert handoff["gateway_url"] == "http://127.0.0.1:8787"
+    assert handoff["gateway_token_masked"] == "****et-token"
+    assert "gateway_token" not in handoff
+    assert "dashboard_url_with_token" not in handoff
+    dashboard_row = next(item for item in handoff["guidance"] if item["id"] == "dashboard")
+    assert "#token=" not in dashboard_row["body"]
+    assert "secret-token" not in json.dumps(handoff)
+
+
 class _ReplayChannel(BaseChannel):
     def __init__(self) -> None:
         super().__init__(name="fake", config={}, capabilities=ChannelCapabilities())

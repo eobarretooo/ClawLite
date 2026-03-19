@@ -156,6 +156,19 @@ def test_build_dashboard_handoff_reports_configured_web_search_backends() -> Non
     assert "SearXNG" in web_row["body"]
 
 
+def test_build_dashboard_handoff_can_redact_sensitive_dashboard_fields() -> None:
+    cfg = AppConfig.from_dict({"gateway": {"auth": {"mode": "required", "token": "tok-12345678"}}})
+
+    payload = build_dashboard_handoff(cfg, include_sensitive=False)
+
+    assert payload["gateway_url"] == "http://127.0.0.1:8787"
+    assert payload["gateway_token_masked"] == "****12345678"
+    assert "gateway_token" not in payload
+    assert "dashboard_url_with_token" not in payload
+    dashboard_row = next(item for item in payload["guidance"] if item["id"] == "dashboard")
+    assert "#token=" not in dashboard_row["body"]
+
+
 def test_probe_provider_openai_success(monkeypatch) -> None:
     class _Response:
         status_code = 200
