@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, ClassVar
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -12,9 +12,9 @@ from clawlite.utils.logging import bind_event
 
 @dataclass
 class GatewayWebSocketHandlers:
-    _STREAM_COALESCE_MIN_CHARS = 24
-    _STREAM_COALESCE_MAX_CHARS = 120
-    _STREAM_SENTENCE_TRAILERS = "\"')]}»”’"
+    _STREAM_COALESCE_DEFAULT_MIN_CHARS: ClassVar[int] = 24
+    _STREAM_COALESCE_DEFAULT_MAX_CHARS: ClassVar[int] = 120
+    _STREAM_SENTENCE_TRAILERS: ClassVar[str] = "\"')]}»”’"
 
     auth_guard: Any
     diagnostics_require_auth: bool
@@ -31,6 +31,9 @@ class GatewayWebSocketHandlers:
     build_tools_catalog_payload_fn: Callable[..., dict[str, Any]]
     parse_include_schema_flag_fn: Callable[[Any], bool]
     utc_now_iso_fn: Callable[[], str]
+    coalesce_enabled: bool = True
+    coalesce_min_chars: int = _STREAM_COALESCE_DEFAULT_MIN_CHARS
+    coalesce_max_chars: int = _STREAM_COALESCE_DEFAULT_MAX_CHARS
 
     @staticmethod
     def _envelope_error(*, error: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
@@ -107,19 +110,20 @@ class GatewayWebSocketHandlers:
             runtime_metadata = dict(raw_runtime_metadata)
         return channel, chat_id, runtime_metadata
 
-    @classmethod
-    def _should_flush_stream_buffer(cls, text: str, *, done: bool) -> bool:
+    def _should_flush_stream_buffer(self, text: str, *, done: bool) -> bool:
         content = str(text or "")
         if not content:
             return bool(done)
-        if done or len(content) >= cls._STREAM_COALESCE_MAX_CHARS:
+        if not self.coalesce_enabled:
             return True
-        if len(content) < cls._STREAM_COALESCE_MIN_CHARS:
+        if done or len(content) >= self.coalesce_max_chars:
+            return True
+        if len(content) < self.coalesce_min_chars:
             return False
         if content.endswith("\n\n") or content.endswith("\n"):
             return True
         stripped = content.rstrip()
-        while stripped and stripped[-1] in cls._STREAM_SENTENCE_TRAILERS:
+        while stripped and stripped[-1] in self._STREAM_SENTENCE_TRAILERS:
             stripped = stripped[:-1].rstrip()
         return bool(stripped) and stripped[-1] in ".!?"
 

@@ -260,6 +260,138 @@ def test_websocket_handler_coalesces_stream_until_sentence_boundary() -> None:
     }
 
 
+def test_websocket_handler_can_disable_stream_coalescing() -> None:
+    handler, socket = _build_handler(
+        inbound=[
+            {"type": "req", "id": "c1", "method": "connect", "params": {}},
+            {
+                "type": "req",
+                "id": "m3",
+                "method": "chat.send",
+                "params": {
+                    "sessionId": "cli:req-stream-no-coalesce",
+                    "text": "ping",
+                    "stream": True,
+                },
+            },
+        ]
+    )
+    handler.coalesce_enabled = False
+
+    async def _chunked_stream(
+        session_id: str,
+        text: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, object] | None = None,
+    ):
+        del session_id, text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="po", accumulated="po", done=False)
+        yield ProviderChunk(text="ng", accumulated="pong", done=True)
+
+    handler.stream_engine_with_timeout_fn = _chunked_stream
+
+    asyncio.run(handler.handle(socket, path_label="/ws"))
+
+    assert socket.sent[2] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m3",
+        "params": {
+            "session_id": "cli:req-stream-no-coalesce",
+            "text": "po",
+            "accumulated": "po",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[3] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m3",
+        "params": {
+            "session_id": "cli:req-stream-no-coalesce",
+            "text": "ng",
+            "accumulated": "pong",
+            "done": True,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[4] == {
+        "type": "res",
+        "id": "m3",
+        "ok": True,
+        "result": {
+            "session_id": "cli:req-stream-no-coalesce",
+            "text": "pong",
+            "model": "",
+        },
+    }
+
+
+def test_websocket_handler_uses_configured_coalesce_max_chars() -> None:
+    handler, socket = _build_handler(
+        inbound=[
+            {"type": "req", "id": "c1", "method": "connect", "params": {}},
+            {
+                "type": "req",
+                "id": "m4",
+                "method": "chat.send",
+                "params": {
+                    "sessionId": "cli:req-stream-max",
+                    "text": "ping",
+                    "stream": True,
+                },
+            },
+        ]
+    )
+    handler.coalesce_min_chars = 50
+    handler.coalesce_max_chars = 12
+
+    async def _long_stream(
+        session_id: str,
+        text: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, object] | None = None,
+    ):
+        del session_id, text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="123456", accumulated="123456", done=False)
+        yield ProviderChunk(text="7890ab", accumulated="1234567890ab", done=False)
+        yield ProviderChunk(text="cdef", accumulated="1234567890abcdef", done=True)
+
+    handler.stream_engine_with_timeout_fn = _long_stream
+
+    asyncio.run(handler.handle(socket, path_label="/ws"))
+
+    assert socket.sent[2] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m4",
+        "params": {
+            "session_id": "cli:req-stream-max",
+            "text": "1234567890ab",
+            "accumulated": "1234567890ab",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert socket.sent[3] == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m4",
+        "params": {
+            "session_id": "cli:req-stream-max",
+            "text": "cdef",
+            "accumulated": "1234567890abcdef",
+            "done": True,
+            "degraded": False,
+        },
+    }
+
+
 def test_websocket_handler_legacy_message_forwards_context_and_ignores_invalid_runtime_metadata() -> None:
     handler, socket = _build_handler(
         inbound=[

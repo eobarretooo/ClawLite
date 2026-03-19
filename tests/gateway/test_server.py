@@ -4734,6 +4734,89 @@ def test_gateway_ws_req_streams_chunks_before_final_response(tmp_path: Path) -> 
     }
 
 
+def test_gateway_ws_req_respects_websocket_coalescing_config(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+        gateway={"websocket": {"coalesce_enabled": False}},
+    )
+    app = create_app(cfg)
+
+    async def _fake_stream_run(
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ):
+        del session_id, user_text, channel, chat_id, runtime_metadata
+        yield ProviderChunk(text="po", accumulated="po", done=False)
+        yield ProviderChunk(text="ng", accumulated="pong", done=True)
+
+    app.state.runtime.engine.stream_run = _fake_stream_run
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as socket:
+            _assert_connect_challenge(socket)
+            socket.send_json({"type": "req", "id": "c1", "method": "connect", "params": {}})
+            connect_payload = socket.receive_json()
+            assert connect_payload["ok"] is True
+
+            socket.send_json(
+                {
+                    "type": "req",
+                    "id": "m-stream-raw",
+                    "method": "chat.send",
+                    "params": {
+                        "sessionId": "cli:req-stream-raw",
+                        "text": "ping",
+                        "stream": True,
+                    },
+                }
+            )
+            chunk_one = socket.receive_json()
+            chunk_two = socket.receive_json()
+            final_payload = socket.receive_json()
+
+    assert chunk_one == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m-stream-raw",
+        "params": {
+            "session_id": "cli:req-stream-raw",
+            "text": "po",
+            "accumulated": "po",
+            "done": False,
+            "degraded": False,
+        },
+    }
+    assert chunk_two == {
+        "type": "event",
+        "event": "chat.chunk",
+        "id": "m-stream-raw",
+        "params": {
+            "session_id": "cli:req-stream-raw",
+            "text": "ng",
+            "accumulated": "pong",
+            "done": True,
+            "degraded": False,
+        },
+    }
+    assert final_payload == {
+        "type": "res",
+        "id": "m-stream-raw",
+        "ok": True,
+        "result": {
+            "session_id": "cli:req-stream-raw",
+            "text": "pong",
+            "model": "",
+        },
+    }
+
+
 def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),

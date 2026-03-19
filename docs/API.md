@@ -1363,7 +1363,9 @@ Output message:
 
 Quando `stream=true` for usado no envelope `req` moderno, o gateway envia eventos `chat.chunk`
 antes do `res` final. Esses eventos podem ser coalescidos pelo transporte para juntar chunks muito
-pequenos do provider em blocos mais úteis, preservando a ordem e o campo `accumulated`.
+pequenos do provider em blocos mais úteis, preservando a ordem e o campo `accumulated`. Os limites
+desse coalescing podem ser ajustados em `gateway.websocket.coalesce_enabled`,
+`gateway.websocket.coalesce_min_chars` e `gateway.websocket.coalesce_max_chars`.
 
 Alias compatível: `WS /ws` (mesmo comportamento, incluindo autenticação).
 

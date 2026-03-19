@@ -188,6 +188,14 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 
 **Advanced tuning fields:** `tuning_loop_enabled`, `tuning_loop_interval_s`, `tuning_loop_timeout_s`, `tuning_loop_cooldown_s`, `tuning_degrading_streak_threshold`, `tuning_recent_actions_limit`, `tuning_error_backoff_s`, `self_evolution_enabled`, `self_evolution_cooldown_s`, `self_evolution_branch_prefix`, `self_evolution_require_approval`.
 
+### `gateway.websocket`
+
+| Field | Default | Description |
+|---|---|---|
+| `coalesce_enabled` | `true` | Coalesce small provider stream chunks into fewer `chat.chunk` WS events |
+| `coalesce_min_chars` | `24` | Minimum buffered chars before newline/sentence coalescing is eligible to flush |
+| `coalesce_max_chars` | `120` | Hard flush ceiling for buffered chunk text before the next `chat.chunk` event |
+
 ---
 
 ## `channels`

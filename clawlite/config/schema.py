@@ -333,6 +333,28 @@ class GatewayAutonomyConfig(Base):
         return value or "self-evolution"
 
 
+class GatewayWebSocketConfig(Base):
+    coalesce_enabled: bool = True
+    coalesce_min_chars: int = 24
+    coalesce_max_chars: int = 120
+
+    @field_validator("coalesce_min_chars", "coalesce_max_chars", mode="before")
+    @classmethod
+    def _coalesce_char_bounds(cls, v: Any, info: Any) -> int:
+        defaults = {
+            "coalesce_min_chars": 24,
+            "coalesce_max_chars": 120,
+        }
+        value = v if v not in (None, "") else defaults.get(str(info.field_name), 1)
+        return max(1, int(value))
+
+    @model_validator(mode="after")
+    def _normalize_coalesce_bounds(self) -> "GatewayWebSocketConfig":
+        if self.coalesce_max_chars < self.coalesce_min_chars:
+            self.coalesce_max_chars = self.coalesce_min_chars
+        return self
+
+
 class GatewayConfig(Base):
     host: str = "127.0.0.1"
     port: int = 8787
@@ -345,6 +367,7 @@ class GatewayConfig(Base):
     diagnostics: GatewayDiagnosticsConfig = Field(default_factory=GatewayDiagnosticsConfig)
     supervisor: GatewaySupervisorConfig = Field(default_factory=GatewaySupervisorConfig)
     autonomy: GatewayAutonomyConfig = Field(default_factory=GatewayAutonomyConfig)
+    websocket: GatewayWebSocketConfig = Field(default_factory=GatewayWebSocketConfig)
 
     @field_validator("host", mode="before")
     @classmethod

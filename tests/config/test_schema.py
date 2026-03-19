@@ -24,6 +24,9 @@ def test_empty_config_defaults():
     cfg = AppConfig()
     assert cfg.gateway.port == 8787
     assert cfg.gateway.host == "127.0.0.1"
+    assert cfg.gateway.websocket.coalesce_enabled is True
+    assert cfg.gateway.websocket.coalesce_min_chars == 24
+    assert cfg.gateway.websocket.coalesce_max_chars == 120
     assert cfg.agents.defaults.model == "gemini/gemini-2.5-flash"
     assert cfg.agents.defaults.max_tokens == 8192
     assert cfg.agents.defaults.temperature == 0.1
@@ -73,6 +76,11 @@ def test_camel_case_input():
         "gateway": {
             "heartbeat": {"intervalS": 600},
             "auth": {"allowLoopbackWithoutAuth": False},
+            "websocket": {
+                "coalesceEnabled": False,
+                "coalesceMinChars": 40,
+                "coalesceMaxChars": 16,
+            },
         },
         "tools": {
             "web": {"searchTimeout": 5.0, "maxChars": 3000, "blockPrivateAddresses": False},
@@ -83,6 +91,9 @@ def test_camel_case_input():
     assert cfg.agents.defaults.max_tool_iterations == 20
     assert cfg.gateway.heartbeat.interval_s == 600
     assert cfg.gateway.auth.allow_loopback_without_auth is False
+    assert cfg.gateway.websocket.coalesce_enabled is False
+    assert cfg.gateway.websocket.coalesce_min_chars == 40
+    assert cfg.gateway.websocket.coalesce_max_chars == 40
     assert cfg.tools.web.search_timeout == 5.0
     assert cfg.tools.web.max_chars == 3000
     assert cfg.tools.web.block_private_addresses is False

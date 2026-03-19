@@ -3035,6 +3035,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         build_tools_catalog_payload_fn=build_tools_catalog_payload,
         parse_include_schema_flag_fn=parse_include_schema_flag,
         utc_now_iso_fn=_utc_now_iso,
+        coalesce_enabled=cfg.gateway.websocket.coalesce_enabled,
+        coalesce_min_chars=cfg.gateway.websocket.coalesce_min_chars,
+        coalesce_max_chars=cfg.gateway.websocket.coalesce_max_chars,
     )
     request_handlers = GatewayRequestHandlers(
         auth_guard=auth_guard,
