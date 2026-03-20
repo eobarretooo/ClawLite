@@ -9,7 +9,7 @@ Default base URL: `http://127.0.0.1:8787`
 - `gateway.auth.mode=required`: requires token (except loopback when `allow_loopback_without_auth=true`).
 - Token can be sent via configurable header (default `Authorization`, with or without `Bearer ` prefix) or configurable query param (default `token`).
 - If a gateway token is configured, the control-plane routes (`/v1/status`, `/v1/dashboard/state`, `/v1/chat`, control mutations, approvals/grants, and `WS /v1/ws`) require that token even when the gateway is otherwise open on loopback.
-- The packaged dashboard can exchange that raw gateway token once at `POST /api/dashboard/session` and then use the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token.
+- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token.
 - `/health` only requires auth when `gateway.auth.protect_health=true` and mode is `required`.
 - `/v1/diagnostics` depends on `gateway.diagnostics.enabled` and may require auth with `gateway.diagnostics.require_auth=true`.
 
@@ -17,7 +17,7 @@ Default base URL: `http://127.0.0.1:8787`
 
 Entrypoint do dashboard local do gateway. Serve um shell HTML/CSS/JS empacotado com visão operacional para status, diagnostics, sessions, automation, tools e chat ao vivo.
 
-The packaged dashboard treats tokenized URLs as a one-time bootstrap path: it scrubs `#token=` from the address bar after load, exchanges the raw gateway token for a scoped dashboard-session credential, keeps only that derived session plus its per-tab dashboard client id in the current browser tab, and seeds live chat with a per-tab `dashboard:operator:<id>` session instead of a fixed shared browser identity.
+The packaged dashboard treats bootstrap URLs as a one-time handoff path: it scrubs `#handoff=` from the address bar after load, exchanges that short-lived bootstrap credential for a scoped dashboard-session credential, keeps only that derived session plus its per-tab dashboard client id in the current browser tab, and seeds live chat with a per-tab `dashboard:operator:<id>` session instead of a fixed shared browser identity.
 
 ## `GET /v1/dashboard/state`
 
