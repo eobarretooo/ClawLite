@@ -1691,6 +1691,80 @@ def test_telegram_voice_media_transcription_enriches_text_and_metadata(
     asyncio.run(_scenario())
 
 
+def test_telegram_photo_media_ocr_enriches_text_and_metadata(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "media_download_dir": str(tmp_path / "media")},
+            on_message=_on_message,
+        )
+
+        class FakeRemoteFile:
+            async def download_to_drive(self, path: str) -> None:
+                Path(path).write_bytes(b"img")
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.file_ids: list[str] = []
+
+            async def get_file(self, file_id: str):
+                self.file_ids.append(file_id)
+                return FakeRemoteFile()
+
+        channel.bot = FakeBot()
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=[SimpleNamespace(file_id="p1"), SimpleNamespace(file_id="p2")],
+            voice=None,
+            audio=None,
+            document=None,
+            chat_id=42,
+            from_user=user,
+            message_id=18,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=106,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
+
+        with patch.object(
+            telegram_module,
+            "_try_ocr_image_text",
+            return_value="release board checklist",
+        ):
+            await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        _, _, text, metadata = emitted[0]
+        media_item = metadata["media_items"][0]
+        assert media_item["text_excerpt"] == "release board checklist"
+        assert media_item["text_extraction_kind"] == "ocr"
+        assert text == (
+            "[telegram media message: photo]\n\n"
+            f"[photo saved: {media_item['local_path']}]\n"
+            "[photo text: release board checklist]"
+        )
+
+    asyncio.run(_scenario())
+
+
 def test_telegram_document_media_download_enriches_text_with_saved_path(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict]] = []
@@ -1755,6 +1829,80 @@ def test_telegram_document_media_download_enriches_text_with_saved_path(tmp_path
         assert emitted[0][2] == (
             "[telegram media message: document]\n\n"
             f"[document saved: {local_path}]"
+        )
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_document_media_pdf_extract_enriches_text_with_excerpt(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "media_download_dir": str(tmp_path / "media")},
+            on_message=_on_message,
+        )
+
+        class FakeRemoteFile:
+            async def download_to_drive(self, path: str) -> None:
+                Path(path).write_bytes(b"pdf")
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.file_ids: list[str] = []
+
+            async def get_file(self, file_id: str):
+                self.file_ids.append(file_id)
+                return FakeRemoteFile()
+
+        channel.bot = FakeBot()
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=None,
+            voice=None,
+            audio=None,
+            document=SimpleNamespace(file_id="d1", file_name="brief.pdf", mime_type="application/pdf"),
+            chat_id=42,
+            from_user=user,
+            message_id=19,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=107,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
+
+        with patch.object(
+            telegram_module,
+            "_extract_telegram_document_text",
+            return_value=("Quarterly launch plan", "pdf"),
+        ):
+            await channel._handle_update(update)
+
+        assert len(emitted) == 1
+        _, _, text, metadata = emitted[0]
+        media_item = metadata["media_items"][0]
+        assert media_item["text_excerpt"] == "Quarterly launch plan"
+        assert media_item["text_extraction_kind"] == "pdf"
+        assert text == (
+            "[telegram media message: document]\n\n"
+            f"[document saved: {media_item['local_path']}]\n"
+            "[document text: Quarterly launch plan]"
         )
 
     asyncio.run(_scenario())

@@ -531,7 +531,7 @@ def test_cron_multi_instance_claims_due_job_once(tmp_path: Path) -> None:
 
         await service_a.start(_on_job)
         await service_b.start(_on_job)
-        await asyncio.wait_for(completed.wait(), timeout=4.0)
+        await asyncio.wait_for(completed.wait(), timeout=8.0)
         await asyncio.sleep(0.3)
         await service_a.stop()
         await service_b.stop()

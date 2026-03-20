@@ -82,6 +82,7 @@ from clawlite.channels.telegram_transport import (
     webhook_requested as _webhook_requested_transport,
 )
 from clawlite.config.schema import TelegramChannelConfig
+from clawlite.core.memory_ingest import try_ocr_image_text as _try_ocr_image_text
 
 MAX_MESSAGE_LEN = 4000
 MAX_CAPTION_LEN = 1024
@@ -111,6 +112,30 @@ TELEGRAM_ALLOWED_UPDATES = [
     "channel_post",
     "edited_channel_post",
 ]
+
+_TELEGRAM_TEXT_DOCUMENT_SUFFIXES = frozenset(
+    {".txt", ".md", ".markdown", ".json", ".csv", ".log", ".html", ".htm"}
+)
+
+
+def _extract_telegram_document_text(target: Path) -> tuple[str, str]:
+    suffix = target.suffix.lower()
+    if suffix in _TELEGRAM_TEXT_DOCUMENT_SUFFIXES:
+        try:
+            content = target.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return "", ""
+        return " ".join(content.split()).strip(), "text"
+    if suffix != ".pdf":
+        return "", ""
+    try:
+        import pypdf  # type: ignore
+
+        reader = pypdf.PdfReader(str(target))
+        pages = [str(page.extract_text() or "") for page in reader.pages]
+    except Exception:
+        return "", ""
+    return " ".join("\n".join(pages).split()).strip(), "pdf"
 
 
 def _sanitize_telegram_text(text: str) -> str:
@@ -1992,6 +2017,35 @@ class TelegramChannel(BaseChannel):
         item["transcription_language"] = language
         self._signals["media_transcription_count"] += 1
 
+    async def _maybe_extract_media_text_item(self, *, item: dict[str, Any]) -> None:
+        media_type = str(item.get("type", "") or "").strip().lower()
+        if media_type not in {"photo", "document"}:
+            return
+        local_path = str(item.get("local_path", "") or "").strip()
+        if not local_path:
+            return
+        target = Path(local_path)
+        if not target.exists():
+            return
+        extracted = ""
+        extraction_kind = ""
+        try:
+            if media_type == "photo":
+                extracted = await asyncio.to_thread(_try_ocr_image_text, target)
+                extraction_kind = "ocr" if extracted else ""
+            else:
+                extracted, extraction_kind = await asyncio.to_thread(
+                    _extract_telegram_document_text,
+                    target,
+                )
+        except Exception:
+            return
+        cleaned = self._compact_text(extracted, limit=800)
+        if not cleaned:
+            return
+        item["text_excerpt"] = cleaned
+        item["text_extraction_kind"] = extraction_kind or "text"
+
     def _build_media_text_suffix_lines(self, media_info: dict[str, Any]) -> list[str]:
         lines: list[str] = []
         saved_lines: list[str] = []
@@ -2010,6 +2064,18 @@ class TelegramChannel(BaseChannel):
             remaining = saved_total - len(saved_lines)
             saved_lines.append(f"[{remaining} more media file(s) saved]")
         lines.extend(saved_lines)
+        extracted_lines = 0
+        for item in media_info.get("items", []):
+            if extracted_lines >= 2:
+                break
+            if not isinstance(item, dict):
+                continue
+            excerpt = self._compact_text(item.get("text_excerpt", ""), limit=800)
+            if not excerpt:
+                continue
+            media_type = str(item.get("type", "media") or "media").strip().lower()
+            lines.append(f"[{media_type} text: {excerpt}]")
+            extracted_lines += 1
         for item in media_info.get("items", []):
             if not isinstance(item, dict):
                 continue
@@ -3080,6 +3146,7 @@ class TelegramChannel(BaseChannel):
             )
             return
 
+        text_extraction_budget = 2
         for item in media_info.get("items", []):
             if not isinstance(item, dict):
                 continue
@@ -3095,6 +3162,12 @@ class TelegramChannel(BaseChannel):
                 await remote_file.download_to_drive(str(target))
                 item["local_path"] = str(target)
                 self._signals["media_download_count"] += 1
+                if text_extraction_budget > 0:
+                    before_excerpt = str(item.get("text_excerpt", "") or "")
+                    await self._maybe_extract_media_text_item(item=item)
+                    after_excerpt = str(item.get("text_excerpt", "") or "")
+                    if after_excerpt and after_excerpt != before_excerpt:
+                        text_extraction_budget -= 1
                 await self._maybe_transcribe_media_item(
                     chat_id=chat_id,
                     message_id=message_id,
