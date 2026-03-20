@@ -317,6 +317,8 @@ def test_prompt_builder_runtime_context_includes_allowlisted_metadata_only() -> 
             "is_forum": True,
             "callback_signed": True,
             "custom_id": "approve:123",
+            "modal_field_ids": ["subject", "details"],
+            "modal_field_labels": ["Subject", "Details"],
             "media_type": "audio",
             "media_types": ["photo", "voice"],
             "media_present": True,
@@ -335,6 +337,8 @@ def test_prompt_builder_runtime_context_includes_allowlisted_metadata_only() -> 
     assert "Is Forum: true" in context
     assert "Callback Signed: true" in context
     assert "Custom ID: approve:123" in context
+    assert "Modal Field IDs: subject, details" in context
+    assert "Modal Field Labels: Subject, Details" in context
     assert "Media Type: audio" in context
     assert "Media Types: photo, voice" in context
     assert "Media Present: true" in context

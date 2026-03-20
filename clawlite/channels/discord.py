@@ -449,6 +449,72 @@ class DiscordChannel(BaseChannel):
         return f"[{label}]"
 
     @classmethod
+    def _normalize_modal_fields(cls, raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        fields: list[dict[str, Any]] = []
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            components = row.get("components")
+            if not isinstance(components, list):
+                continue
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                value = str(component.get("value", "") or "").strip()
+                label = str(component.get("label", "") or "").strip()
+                custom_id = str(component.get("custom_id", "") or "").strip()
+                if not value and not label and not custom_id:
+                    continue
+                fields.append(
+                    {
+                        "component_type": int(component.get("type", 0) or 0),
+                        "custom_id": custom_id,
+                        "label": label,
+                        "value": value,
+                    }
+                )
+        return fields
+
+    @staticmethod
+    def _modal_field_ids(fields: list[dict[str, Any]]) -> list[str]:
+        return [
+            str(item.get("custom_id", "") or "").strip()
+            for item in fields
+            if str(item.get("custom_id", "") or "").strip()
+        ]
+
+    @staticmethod
+    def _modal_field_labels(fields: list[dict[str, Any]]) -> list[str]:
+        labels: list[str] = []
+        for item in fields:
+            label = str(item.get("label", "") or "").strip()
+            if label:
+                labels.append(label)
+                continue
+            field_id = str(item.get("custom_id", "") or "").strip()
+            if field_id:
+                labels.append(field_id)
+        return labels
+
+    @staticmethod
+    def _modal_event_text(*, custom_id: str, fields: list[dict[str, Any]]) -> str:
+        header = f"[modal_submit:{custom_id}]" if custom_id else "[modal_submit]"
+        if not fields:
+            return header
+        lines: list[str] = [header]
+        for item in fields:
+            value = str(item.get("value", "") or "").strip()
+            if not value:
+                continue
+            label = str(item.get("label", "") or "").strip()
+            field_id = str(item.get("custom_id", "") or "").strip()
+            key = label or field_id or "field"
+            lines.append(f"{key}: {value}")
+        return "\n".join(lines)
+
+    @classmethod
     def _normalize_guild_policies(
         cls, raw: Any
     ) -> dict[str, _DiscordGuildPolicy]:
@@ -1819,6 +1885,40 @@ class DiscordChannel(BaseChannel):
                 "username": username,
                 "text": text,
                 "guild_id": guild_id,
+                "session_key": session_id,
+            }
+            session_id = await self._apply_bound_session(
+                channel_id=channel_id,
+                fallback_session_id=session_id,
+                metadata=metadata,
+            )
+            metadata["session_key"] = session_id
+            await self.emit(
+                session_id=session_id,
+                user_id=user_id,
+                text=text,
+                metadata=metadata,
+            )
+
+        elif interaction_type == 5:
+            # MODAL_SUBMIT
+            custom_id = str(data.get("custom_id", "") or "").strip()
+            modal_fields = self._normalize_modal_fields(data.get("components"))
+            text = self._modal_event_text(custom_id=custom_id, fields=modal_fields)
+            metadata = {
+                "channel": "discord",
+                "channel_id": channel_id,
+                "update_kind": "modal_submit",
+                "custom_id": custom_id,
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "user_id": user_id,
+                "username": username,
+                "text": text,
+                "guild_id": guild_id,
+                "modal_field_ids": self._modal_field_ids(modal_fields),
+                "modal_field_labels": self._modal_field_labels(modal_fields),
+                "modal_fields": modal_fields,
                 "session_key": session_id,
             }
             session_id = await self._apply_bound_session(

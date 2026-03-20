@@ -49,6 +49,8 @@ class PromptBuilder:
         ("custom_id", "Custom ID"),
         ("selected_values", "Selected Values"),
         ("selected_labels", "Selected Labels"),
+        ("modal_field_ids", "Modal Field IDs"),
+        ("modal_field_labels", "Modal Field Labels"),
         ("media_present", "Media Present"),
         ("media_type", "Media Type"),
         ("media_types", "Media Types"),

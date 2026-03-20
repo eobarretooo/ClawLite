@@ -1150,6 +1150,100 @@ def test_discord_handle_interaction_create_user_select_uses_resolved_labels() ->
     assert emitted[0]["metadata"]["selected_labels"] == ["Alice A", "Bobby"]
 
 
+def test_discord_handle_interaction_create_modal_submit_emits_fields() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append({"session_id": session_id, "user_id": user_id, "text": text, "metadata": metadata})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=_on_message)
+    ch._running = True
+
+    payload = {
+        "id": "inter-modal-1",
+        "token": "tok-modal-1",
+        "type": 5,
+        "channel_id": "chan001",
+        "guild_id": "guild-1",
+        "user": {"id": "u1", "username": "bob"},
+        "data": {
+            "custom_id": "ticket_modal",
+            "components": [
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": "subject",
+                            "label": "Subject",
+                            "value": "Need help",
+                        }
+                    ],
+                },
+                {
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 4,
+                            "custom_id": "details",
+                            "label": "Details",
+                            "value": "Please call back",
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+
+    async def _scenario():
+        await ch._handle_interaction_create(payload)
+
+    asyncio.run(_scenario())
+
+    assert emitted[0]["text"] == "[modal_submit:ticket_modal]\nSubject: Need help\nDetails: Please call back"
+    assert emitted[0]["metadata"]["update_kind"] == "modal_submit"
+    assert emitted[0]["metadata"]["custom_id"] == "ticket_modal"
+    assert emitted[0]["metadata"]["modal_field_ids"] == ["subject", "details"]
+    assert emitted[0]["metadata"]["modal_field_labels"] == ["Subject", "Details"]
+    assert emitted[0]["metadata"]["modal_fields"] == [
+        {"component_type": 4, "custom_id": "subject", "label": "Subject", "value": "Need help"},
+        {"component_type": 4, "custom_id": "details", "label": "Details", "value": "Please call back"},
+    ]
+
+
+def test_discord_handle_interaction_create_modal_submit_tolerates_missing_components() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append({"session_id": session_id, "user_id": user_id, "text": text, "metadata": metadata})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=_on_message)
+    ch._running = True
+
+    payload = {
+        "id": "inter-modal-2",
+        "token": "tok-modal-2",
+        "type": 5,
+        "channel_id": "chan001",
+        "user": {"id": "u1", "username": "bob"},
+        "data": {
+            "custom_id": "ticket_modal",
+            "components": [{"type": 1, "components": "invalid"}],
+        },
+    }
+
+    async def _scenario():
+        await ch._handle_interaction_create(payload)
+
+    asyncio.run(_scenario())
+
+    assert emitted[0]["text"] == "[modal_submit:ticket_modal]"
+    assert emitted[0]["metadata"]["update_kind"] == "modal_submit"
+    assert emitted[0]["metadata"]["modal_field_ids"] == []
+    assert emitted[0]["metadata"]["modal_field_labels"] == []
+    assert emitted[0]["metadata"]["modal_fields"] == []
+
+
 def test_discord_handle_interaction_create_slash_can_disable_isolated_sessions() -> None:
     emitted: list[dict[str, Any]] = []
 
