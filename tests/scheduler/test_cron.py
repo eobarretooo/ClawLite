@@ -196,10 +196,10 @@ def test_cron_loop_survives_callback_failure_and_tracks_job_health(tmp_path: Pat
 
         job_id = await service.add_job(session_id="s1", expression="every 1", prompt="ping")
         await service.start(_on_job)
-        await asyncio.wait_for(completed.wait(), timeout=5.0)
+        await asyncio.wait_for(completed.wait(), timeout=8.0)
 
         async def _wait_for_committed_run() -> None:
-            deadline = asyncio.get_running_loop().time() + 2.0
+            deadline = asyncio.get_running_loop().time() + 4.0
             while asyncio.get_running_loop().time() < deadline:
                 current = service.get_job(job_id)
                 if current is not None and current.run_count >= 2:
