@@ -111,6 +111,15 @@ If you want Redis enabled all the time, set those env vars before running `docke
 - If you expose port `8787` beyond local development, configure gateway auth before doing so.
 - `clawlite-cli` shares the gateway network namespace, similar to the convenience pattern used by `ref/openclaw`. Treat that as the same trust boundary.
 
+## CI Coverage
+
+CI now validates:
+
+- `docker compose config`
+- default image build for `clawlite-gateway`
+- browser-enabled image build with `browser` extras plus `CLAWLITE_INSTALL_BROWSER=1`
+- a one-off runtime smoke that confirms the image contains Playwright plus a baked Chromium runtime under `PLAYWRIGHT_BROWSERS_PATH`
+
 ## Current Scope
 
 What this Docker path covers now:
@@ -122,6 +131,7 @@ What this Docker path covers now:
 - optional CLI sidecar container
 - host access to local Ollama/vLLM
 - optional Redis bus profile with persisted Redis data
+- browser-enabled image variant with CI build/runtime smoke coverage
 
 What remains for later parity work:
 

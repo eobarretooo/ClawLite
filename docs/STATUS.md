@@ -22,7 +22,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 - Full suite: `python -m pytest tests/ -q --tb=short` → **1845 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
-- Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, and CI smoke for `docker compose config` plus image build
+- Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
 - Discord parity now includes approval callbacks for gated tools plus static/auto presence with native `/discord-presence` operator controls
 - Discord parity slice 1 is now in the working tree: DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, persisted `/focus` bindings, and automatic idle/max-age expiry for stale Discord bindings
 
@@ -113,7 +113,7 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: Discord policy/routing parity, reply-mode control, isolated slash sessions, persisted `/focus` bindings, automatic idle/max-age expiry, and richer inbound select-menu context
+- Current slice: Docker browser parity plus Discord policy/routing parity, reply-mode control, isolated slash sessions, persisted `/focus` bindings, automatic idle/max-age expiry, and richer inbound select-menu context
 - Next slice: continue Docker/browser operational parity or return to deeper tools and skills governance
 
 ## Delivery Policy
