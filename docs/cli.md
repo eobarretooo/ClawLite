@@ -38,7 +38,7 @@ Notes:
 - `run` does not require the gateway to be running.
 - `hatch` does not require the gateway to be running; it uses the dedicated `hatch:operator` session and only completes bootstrap when a pending hatch exists.
 - `status` includes enabled channels, provider model, heartbeat interval, and bootstrap state.
-- `dashboard` prints the current dashboard URL, a short-lived dashboard handoff URL, bootstrap state, post-onboarding guidance (including web-search hints), and can open the browser unless `--no-open` is passed. The browser uses that handoff only for the initial exchange, then keeps only the derived dashboard session in the current tab after bootstrap.
+- `dashboard` prints the current dashboard URL, a short-lived one-time dashboard handoff URL, bootstrap state, post-onboarding guidance (including web-search hints), and can open the browser unless `--no-open` is passed. The browser uses that handoff only for the initial exchange, then keeps only the derived dashboard session in the current tab after bootstrap.
 - `discord status` reads Discord runtime state from `/api/dashboard/state`; `discord refresh` calls the live gateway transport-refresh control.
 - `telegram status` reads Telegram runtime state from `/api/dashboard/state` and includes operator hints; `telegram refresh`, `telegram offset-commit`, `telegram offset-sync`, and `telegram offset-reset` call the live gateway control endpoints.
 - `jobs list` reads from the persisted job store, `jobs status` inspects one job by id, and `jobs cancel` requires a live runtime because it calls the gateway cancellation path.
