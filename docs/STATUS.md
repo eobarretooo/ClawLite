@@ -19,13 +19,14 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **1856 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **1858 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
 - Discord parity now includes approval callbacks for gated tools plus static/auto presence with native `/discord-presence` operator controls
 - Discord parity slice 1 is now in the working tree: DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session routing, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, persisted `/focus` bindings, and automatic idle/max-age expiry for stale Discord bindings
 - Discord parity now also routes `MODAL_SUBMIT` interactions as inbound turns with compact field text plus allowlisted `modal_field_ids` / `modal_field_labels` runtime hints
+- Discord parity now also supports outbound `discord_modal` trigger buttons that open native Discord text-input forms and keep the trigger click out of the agent loop
 - Gateway chat surfaces now have in-memory fixed-window rate limiting on HTTP and WebSocket paths with `429 + Retry-After` and shared `/v1/chat` / `/api/message` bucketing.
 - `self_evolution` can now stay disabled globally or run in a session-canary mode through `gateway.autonomy.self_evolution_enabled_for_sessions`, while manual forced triggers still work for operator validation.
 - memory quality snapshots now include a compact `trend` block derived from bounded history, so CLI/dashboard/diagnostics can show direction and streaks without recomputing client-side.
@@ -103,7 +104,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 1856 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 1858 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed

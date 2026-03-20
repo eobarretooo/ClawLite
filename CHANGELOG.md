@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Discord inbound interactions now also route modal submissions as fresh turns with compact field text plus allowlisted modal field ids/labels, instead of ignoring `MODAL_SUBMIT` payloads entirely
+- Discord outbound sends now also accept `discord_modal`, which appends a trigger button and opens a native Discord text-input modal on click instead of leaking that trigger as a normal button interaction
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only
 - `stream_run()` now falls back to the full `run()` loop for live-lookup turns, instead of staying on a text-only provider stream path when the answer should be verified with current web/weather data
 - prompt runtime context now includes a few more safe structural channel hints such as message IDs, Slack thread timestamps, Telegram forum state, Discord DM state, signed callback/button ids, and single media-type markers without exposing raw channel payloads
