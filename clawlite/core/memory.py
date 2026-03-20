@@ -1124,9 +1124,13 @@ class MemoryStore:
         backend_connection_ok = False
         backend_vector_extension = False
         backend_vector_version = ""
+        backend_vector_index = False
+        backend_vector_index_kind = ""
+        backend_vector_index_error = ""
 
         def _capture_backend_details() -> None:
-            nonlocal backend_driver, backend_connection_ok, backend_vector_extension, backend_vector_version, backend_init_error
+            nonlocal backend_driver, backend_connection_ok, backend_vector_extension, backend_vector_version
+            nonlocal backend_vector_index, backend_vector_index_kind, backend_vector_index_error, backend_init_error
             details_fn = getattr(self.backend, "diagnostics", None)
             if not callable(details_fn):
                 return
@@ -1142,6 +1146,9 @@ class MemoryStore:
             backend_connection_ok = bool(details.get("connection_ok", False))
             backend_vector_extension = bool(details.get("vector_extension", False))
             backend_vector_version = str(details.get("vector_version", "") or "")
+            backend_vector_index = bool(details.get("vector_index", False))
+            backend_vector_index_kind = str(details.get("vector_index_kind", "") or "")
+            backend_vector_index_error = str(details.get("vector_index_error", "") or "")
             backend_init_error = backend_init_error or str(details.get("last_error", "") or "")
 
         try:
@@ -1167,6 +1174,9 @@ class MemoryStore:
             "backend_connection_ok": backend_connection_ok,
             "backend_vector_extension": backend_vector_extension,
             "backend_vector_version": backend_vector_version,
+            "backend_vector_index": backend_vector_index,
+            "backend_vector_index_kind": backend_vector_index_kind,
+            "backend_vector_index_error": backend_vector_index_error,
         }
         self._privacy_key: bytes | None = None
 

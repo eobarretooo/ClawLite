@@ -734,6 +734,9 @@ class PgvectorMemoryBackend:
             "connection_ok": False,
             "vector_extension": False,
             "vector_version": "",
+            "vector_index": False,
+            "vector_index_kind": "",
+            "vector_index_error": "",
             "sql_similarity_available": False,
             "supported": False,
             "last_error": "",
@@ -874,6 +877,57 @@ class PgvectorMemoryBackend:
             """
         )
 
+    def _detect_embeddings_vector_index(self, cursor: Any) -> str:
+        cursor.execute(
+            """
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND tablename = 'embeddings'
+            """
+        )
+        try:
+            rows = cursor.fetchall()
+        except Exception:
+            rows = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 2:
+                continue
+            index_def = str(row[1] or "").strip().lower()
+            if "vector_cosine_ops" not in index_def:
+                continue
+            if " using hnsw " in f" {index_def} ":
+                return "hnsw"
+            if " using ivfflat " in f" {index_def} ":
+                return "ivfflat"
+        return ""
+
+    def _ensure_embeddings_vector_index(self, cursor: Any) -> tuple[str, bool]:
+        existing = self._detect_embeddings_vector_index(cursor)
+        if existing:
+            return existing, True
+
+        statements = (
+            (
+                "hnsw",
+                "CREATE INDEX IF NOT EXISTS idx_embeddings_embedding_cosine_hnsw "
+                "ON embeddings USING hnsw (embedding vector_cosine_ops)",
+            ),
+            (
+                "ivfflat",
+                "CREATE INDEX IF NOT EXISTS idx_embeddings_embedding_cosine_ivfflat "
+                "ON embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)",
+            ),
+        )
+        errors: list[str] = []
+        for index_kind, statement in statements:
+            try:
+                cursor.execute(statement)
+                return index_kind, True
+            except Exception as exc:
+                errors.append(f"{index_kind}:{exc}")
+        raise RuntimeError("pgvector ANN index unavailable: " + "; ".join(errors))
+
     def _open_connection(self) -> Any | None:
         if not self._is_valid_pg_url():
             self._set_status(
@@ -959,13 +1013,51 @@ class PgvectorMemoryBackend:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_layer_records_updated_at ON layer_records(updated_at)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_created_at ON embeddings(created_at)")
                 conn.commit()
-                self._set_status(sql_similarity_available=True, supported=True, last_error="")
+                self._set_status(
+                    sql_similarity_available=True,
+                    supported=True,
+                    last_error="",
+                    vector_index=False,
+                    vector_index_kind="",
+                    vector_index_error="",
+                )
             except Exception:
                 try:
                     conn.rollback()
                 except Exception:
                     pass
                 raise
+            finally:
+                if cursor is not None:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+            try:
+                cursor = conn.cursor()
+                vector_index_kind, vector_index = self._ensure_embeddings_vector_index(cursor)
+                conn.commit()
+                self._set_status(
+                    sql_similarity_available=True,
+                    supported=True,
+                    last_error="",
+                    vector_index=vector_index,
+                    vector_index_kind=vector_index_kind,
+                    vector_index_error="",
+                )
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                self._set_status(
+                    sql_similarity_available=True,
+                    supported=True,
+                    last_error="",
+                    vector_index=False,
+                    vector_index_kind="",
+                    vector_index_error=str(exc),
+                )
             finally:
                 if cursor is not None:
                     try:

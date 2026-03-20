@@ -397,6 +397,9 @@ def test_pgvector_initialize_migrates_embedding_column_to_vector(monkeypatch, tm
                 return ("text",)
             return None
 
+        def fetchall(self):
+            return []
+
         def close(self) -> None:
             return None
 
@@ -435,7 +438,72 @@ def test_pgvector_initialize_migrates_embedding_column_to_vector(monkeypatch, tm
     init_queries = connections[-1].cursor_instance.queries
     assert any("embedding vector NOT NULL" in query for query in init_queries)
     assert any("ALTER TABLE embeddings" in query for query in init_queries)
+    assert any("USING hnsw" in query for query in init_queries)
     assert connections[-1].commit_calls >= 1
+
+
+def test_pgvector_initialize_keeps_backend_working_when_ann_index_creation_fails(monkeypatch, tmp_path: Path) -> None:
+    backend = resolve_memory_backend(
+        "pgvector",
+        pgvector_url="postgresql://user:pass@localhost:5432/clawlite",
+    )
+
+    class FakeCursor:
+        def __init__(self) -> None:
+            self.last_query = ""
+
+        def execute(self, query: str) -> None:
+            self.last_query = query
+            if "USING hnsw" in query or "USING ivfflat" in query:
+                raise RuntimeError("mixed vector dimensions")
+
+        def fetchone(self):
+            if "SELECT extversion FROM pg_extension" in self.last_query:
+                return ("0.8.1",)
+            if "SELECT udt_name" in self.last_query:
+                return ("vector",)
+            return None
+
+        def fetchall(self):
+            return []
+
+        def close(self) -> None:
+            return None
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.cursor_instance = FakeCursor()
+            self.commit_calls = 0
+            self.rollback_calls = 0
+
+        def cursor(self) -> FakeCursor:
+            return self.cursor_instance
+
+        def commit(self) -> None:
+            self.commit_calls += 1
+
+        def rollback(self) -> None:
+            self.rollback_calls += 1
+
+        def close(self) -> None:
+            return None
+
+    class FakeDriver:
+        @staticmethod
+        def connect(url: str) -> FakeConnection:
+            assert url == "postgresql://user:pass@localhost:5432/clawlite"
+            return FakeConnection()
+
+    monkeypatch.setattr(type(backend), "_detect_driver", lambda self: ("psycopg", FakeDriver))
+
+    backend.initialize(tmp_path)
+
+    details = backend.diagnostics()
+    assert details["supported"] is True
+    assert details["sql_similarity_available"] is True
+    assert details["vector_index"] is False
+    assert details["vector_index_kind"] == ""
+    assert "pgvector ANN index unavailable" in str(details["vector_index_error"])
 
 
 def test_pgvector_upsert_embedding_casts_literal_to_vector(monkeypatch) -> None:

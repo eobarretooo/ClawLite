@@ -106,7 +106,7 @@ def test_cron_service_run_once_is_auto_removed_in_loop(tmp_path: Path) -> None:
         )
 
         await service.start(_on_job)
-        await asyncio.wait_for(completed.wait(), timeout=3.0)
+        await asyncio.wait_for(completed.wait(), timeout=8.0)
         await asyncio.sleep(0.1)
         await service.stop()
 

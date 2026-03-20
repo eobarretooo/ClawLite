@@ -42,10 +42,14 @@ def test_build_memory_diagnostics_shapes_backend_and_runtime_counters() -> None:
             "backend_connection_ok": True,
             "backend_vector_extension": False,
             "backend_vector_version": "",
+            "backend_vector_index": False,
+            "backend_vector_index_kind": "",
+            "backend_vector_index_error": "",
         },
     )
     assert payload["history_read_corrupt_lines"] == 1
     assert payload["backend_name"] == "sqlite"
+    assert payload["backend_vector_index"] is False
     assert payload["last_error"] == "boom"
 
 

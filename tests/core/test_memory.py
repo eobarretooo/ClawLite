@@ -767,6 +767,9 @@ def test_memory_diagnostics_capture_backend_probe_details(tmp_path: Path, monkey
                 "connection_ok": False,
                 "vector_extension": False,
                 "vector_version": "",
+                "vector_index": False,
+                "vector_index_kind": "",
+                "vector_index_error": "pgvector ANN index unavailable",
                 "last_error": "pgvector extension 'vector' is unavailable",
             }
 
@@ -781,6 +784,9 @@ def test_memory_diagnostics_capture_backend_probe_details(tmp_path: Path, monkey
     assert diag["backend_driver"] == "psycopg"
     assert diag["backend_connection_ok"] is False
     assert diag["backend_vector_extension"] is False
+    assert diag["backend_vector_index"] is False
+    assert diag["backend_vector_index_kind"] == ""
+    assert diag["backend_vector_index_error"] == "pgvector ANN index unavailable"
     assert diag["backend_init_error"] == "pgvector extension 'vector' is unavailable"
 
 def test_memory_recover_session_context_uses_history_then_curated_fallback(tmp_path: Path) -> None:

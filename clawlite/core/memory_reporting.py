@@ -46,6 +46,9 @@ def build_memory_diagnostics(*, diagnostics: dict[str, Any], backend_diagnostics
         "backend_connection_ok": _bool_metric(backend_diagnostics, "backend_connection_ok"),
         "backend_vector_extension": _bool_metric(backend_diagnostics, "backend_vector_extension"),
         "backend_vector_version": _str_metric(backend_diagnostics, "backend_vector_version"),
+        "backend_vector_index": _bool_metric(backend_diagnostics, "backend_vector_index"),
+        "backend_vector_index_kind": _str_metric(backend_diagnostics, "backend_vector_index_kind"),
+        "backend_vector_index_error": _str_metric(backend_diagnostics, "backend_vector_index_error"),
     }
 
 
