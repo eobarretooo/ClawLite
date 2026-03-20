@@ -3,6 +3,7 @@ const auth = bootstrap.auth || {};
 const paths = bootstrap.paths || {};
 const tokenStorageKey = "clawlite.dashboard.token";
 const dashboardSessionStorageKey = "clawlite.dashboard.sessionToken";
+const dashboardClientStorageKey = "clawlite.dashboard.clientId";
 const operatorStorageKey = "clawlite.dashboard.operatorId";
 const chatSessionStorageKey = "clawlite.dashboard.chatSessionId";
 const refreshStorageKey = "clawlite.dashboard.refreshMs";
@@ -56,6 +57,24 @@ function storedDashboardSessionToken() {
   return storageGet(window.sessionStorage, dashboardSessionStorageKey).trim();
 }
 
+function createDashboardClientId() {
+  const randomId =
+    window.crypto && typeof window.crypto.randomUUID === "function"
+      ? window.crypto.randomUUID().replace(/-/g, "").slice(0, 20)
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+  return `dshc1.${randomId}`;
+}
+
+function ensureDashboardClientId() {
+  const current = storageGet(window.sessionStorage, dashboardClientStorageKey).trim();
+  if (current) {
+    return current;
+  }
+  const generated = createDashboardClientId();
+  storageSet(window.sessionStorage, dashboardClientStorageKey, generated);
+  return generated;
+}
+
 function createDashboardOperatorId() {
   const randomId =
     window.crypto && typeof window.crypto.randomUUID === "function"
@@ -105,6 +124,7 @@ const state = {
   lastSyncAt: null,
   eventFeed: [],
   wsPreview: "Waiting for live websocket frames...",
+  dashboardClientId: ensureDashboardClientId(),
   operatorId: ensureDashboardOperatorId(),
   sessionId: "",
 };
@@ -116,6 +136,22 @@ function dashboardSessionHeaderName() {
 
 function dashboardSessionQueryParam() {
   return String(auth.dashboard_session_query_param || "dashboard_session").trim() || "dashboard_session";
+}
+
+function dashboardClientHeaderName() {
+  return String(auth.dashboard_client_header_name || "X-ClawLite-Dashboard-Client").trim() || "X-ClawLite-Dashboard-Client";
+}
+
+function dashboardClientQueryParam() {
+  return String(auth.dashboard_client_query_param || "dashboard_client").trim() || "dashboard_client";
+}
+
+function dashboardHandoffHeaderName() {
+  return String(auth.dashboard_handoff_header_name || "X-ClawLite-Dashboard-Handoff").trim() || "X-ClawLite-Dashboard-Handoff";
+}
+
+function dashboardHandoffQueryParam() {
+  return String(auth.dashboard_handoff_query_param || "dashboard_handoff").trim() || "dashboard_handoff";
 }
 
 function rawAuthHeaders(tokenValue) {
@@ -138,7 +174,10 @@ function safeJson(value) {
 
 function authHeaders() {
   if (state.dashboardSessionToken) {
-    return { [dashboardSessionHeaderName()]: state.dashboardSessionToken };
+    return {
+      [dashboardSessionHeaderName()]: state.dashboardSessionToken,
+      [dashboardClientHeaderName()]: state.dashboardClientId,
+    };
   }
   if (!state.token) {
     return {};
@@ -146,13 +185,16 @@ function authHeaders() {
   return rawAuthHeaders(state.token);
 }
 
-function tokenFromLocationHash() {
+function dashboardCredentialFromLocationHash() {
   const raw = String(window.location.hash || "").replace(/^#/, "").trim();
   if (!raw) {
-    return "";
+    return { token: "", handoff: "" };
   }
   const params = new URLSearchParams(raw);
-  return String(params.get("token") || "").trim();
+  return {
+    token: String(params.get("token") || "").trim(),
+    handoff: String(params.get("handoff") || "").trim(),
+  };
 }
 
 function buildWsUrl() {
@@ -160,6 +202,7 @@ function buildWsUrl() {
   const url = new URL(`${protocol}//${window.location.host}${paths.ws || "/ws"}`);
   if (state.dashboardSessionToken) {
     url.searchParams.set(dashboardSessionQueryParam(), state.dashboardSessionToken);
+    url.searchParams.set(dashboardClientQueryParam(), state.dashboardClientId);
   } else if (state.token) {
     url.searchParams.set(auth.query_param || "token", state.token);
   }
@@ -1520,9 +1563,10 @@ function persistToken(nextToken) {
   }
 }
 
-async function exchangeDashboardSession(rawToken, { source = "auth" } = {}) {
+async function exchangeDashboardSession({ rawToken = "", handoffToken = "", source = "auth" } = {}) {
   const token = String(rawToken || "").trim();
-  if (!token) {
+  const handoff = String(handoffToken || "").trim();
+  if (!token && !handoff) {
     persistToken("");
     persistDashboardSession("");
     return false;
@@ -1530,7 +1574,9 @@ async function exchangeDashboardSession(rawToken, { source = "auth" } = {}) {
   const response = await fetch(paths.dashboard_session || "/api/dashboard/session", {
     method: "POST",
     headers: {
-      ...rawAuthHeaders(token),
+      ...(token ? rawAuthHeaders(token) : {}),
+      ...(handoff ? { [dashboardHandoffHeaderName()]: handoff } : {}),
+      [dashboardClientHeaderName()]: state.dashboardClientId,
     },
   });
   const text = await response.text();
@@ -1565,9 +1611,9 @@ async function exchangeDashboardSession(rawToken, { source = "auth" } = {}) {
   return true;
 }
 
-async function bootstrapTokenFromUrl() {
-  const hashToken = tokenFromLocationHash();
-  if (!hashToken) {
+async function bootstrapDashboardCredentialFromUrl() {
+  const credential = dashboardCredentialFromLocationHash();
+  if (!credential.token && !credential.handoff) {
     return false;
   }
   if (window.history && typeof window.history.replaceState === "function") {
@@ -1575,11 +1621,17 @@ async function bootstrapTokenFromUrl() {
   } else {
     window.location.hash = "";
   }
-  await exchangeDashboardSession(hashToken, { source: "auth" });
+  await exchangeDashboardSession({
+    rawToken: credential.token,
+    handoffToken: credential.handoff,
+    source: "auth",
+  });
   recordEvent(
     "ok",
-    "Gateway token bootstrapped",
-    "Loaded token from the dashboard URL fragment, exchanged it for a scoped dashboard session, and removed it from the address bar.",
+    credential.handoff ? "Dashboard handoff bootstrapped" : "Gateway token bootstrapped",
+    credential.handoff
+      ? "Loaded the short-lived dashboard handoff from the URL fragment, exchanged it for a scoped dashboard session, and removed it from the address bar."
+      : "Loaded the legacy gateway token from the dashboard URL fragment, exchanged it for a scoped dashboard session, and removed it from the address bar.",
     "auth",
   );
   return true;
@@ -1589,7 +1641,7 @@ async function migrateLegacyDashboardToken() {
   if (state.dashboardSessionToken || !state.token) {
     return false;
   }
-  await exchangeDashboardSession(state.token, { source: "auth" });
+  await exchangeDashboardSession({ rawToken: state.token, source: "auth" });
   recordEvent(
     "ok",
     "Dashboard token migrated",
@@ -2415,7 +2467,7 @@ async function initializeDashboard() {
   renderAll();
   recordEvent("ok", "Dashboard booted", "Packaged shell loaded with gateway bootstrap metadata.", "ui");
   try {
-    await bootstrapTokenFromUrl();
+    await bootstrapDashboardCredentialFromUrl();
     await migrateLegacyDashboardToken();
   } catch (error) {
     recordEvent("danger", "Dashboard auth bootstrap failed", error.message, "auth");

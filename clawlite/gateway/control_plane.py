@@ -18,9 +18,14 @@ def control_plane_auth_payload(*, auth_guard: Any) -> dict[str, Any]:
         "token_configured": bool(auth_guard.token),
         "header_name": auth_guard.header_name,
         "query_param": auth_guard.query_param,
+        "dashboard_handoff_enabled": bool(auth_guard.token),
+        "dashboard_handoff_header_name": getattr(auth_guard, "dashboard_handoff_header_name", ""),
+        "dashboard_handoff_query_param": getattr(auth_guard, "dashboard_handoff_query_param", ""),
         "dashboard_session_enabled": bool(dashboard_sessions) and bool(auth_guard.token),
         "dashboard_session_header_name": getattr(auth_guard, "dashboard_session_header_name", ""),
         "dashboard_session_query_param": getattr(auth_guard, "dashboard_session_query_param", ""),
+        "dashboard_client_header_name": getattr(auth_guard, "dashboard_client_header_name", ""),
+        "dashboard_client_query_param": getattr(auth_guard, "dashboard_client_query_param", ""),
     }
 
 

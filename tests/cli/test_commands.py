@@ -1203,8 +1203,11 @@ def test_cli_dashboard_no_open_returns_tokenized_handoff_and_bootstrap_state(
     assert payload["open_attempted"] is False
     assert payload["opened"] is False
     assert payload["gateway_url"] == "http://127.0.0.1:8787"
+    assert payload["dashboard_url_with_handoff"].startswith(
+        "http://127.0.0.1:8787#handoff="
+    )
     assert payload["dashboard_url_with_token"].startswith(
-        "http://127.0.0.1:8787#token="
+        "http://127.0.0.1:8787#handoff="
     )
     assert payload["bootstrap_pending"] is True
     assert payload["recommended_first_message"] == "Wake up, my friend!"
@@ -1249,7 +1252,7 @@ def test_cli_dashboard_opens_browser_when_allowed(
     assert payload["hatch_session_id"] == "hatch:operator"
     assert any(item["id"] == "dashboard" for item in payload["guidance"])
     assert opened["url"] == payload["open_target"]
-    assert opened["url"].startswith("http://127.0.0.1:8787#token=")
+    assert opened["url"].startswith("http://127.0.0.1:8787#handoff=")
 
 
 def test_cli_hatch_skips_when_bootstrap_not_pending(

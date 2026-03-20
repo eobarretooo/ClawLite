@@ -17,7 +17,9 @@ class GatewayStatusHandlers:
     dashboard_state_payload_fn: Callable[[], dict[str, Any]]
     diagnostics_payload_fn: Callable[[], Awaitable[Any]]
     token_payload_fn: Callable[[], dict[str, Any]]
-    dashboard_session_payload_fn: Callable[[], dict[str, Any]] = lambda: {"ok": False, "error": "dashboard_session_disabled"}
+    dashboard_session_payload_fn: Callable[..., dict[str, Any]] = (
+        lambda **_kwargs: {"ok": False, "error": "dashboard_session_disabled"}
+    )
 
     def _check(self, request: Request, *, scope: str, allow_dashboard_session: bool = False) -> None:
         self.auth_guard.check_http(
@@ -108,8 +110,15 @@ class GatewayStatusHandlers:
         return self.token_payload_fn()
 
     async def dashboard_session(self, request: Request) -> dict[str, Any]:
-        self.auth_guard.check_http_gateway_token(request=request)
-        return self.dashboard_session_payload_fn()
+        bootstrap_kind = self.auth_guard.check_http_dashboard_bootstrap(request=request)
+        client_id = self.auth_guard._extract_dashboard_client_from_request(request=request)
+        record = self.auth_guard.dashboard_sessions.issue(client_id=client_id) if self.auth_guard.dashboard_sessions else None
+        return self.dashboard_session_payload_fn(
+            request=request,
+            bootstrap_kind=bootstrap_kind,
+            client_id=client_id,
+            record=record,
+        )
 
 
 __all__ = ["GatewayStatusHandlers"]

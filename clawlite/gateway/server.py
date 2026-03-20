@@ -108,9 +108,14 @@ from clawlite.gateway.dashboard_runtime import (
     dashboard_state_payload as _dashboard_state_payload_runtime,
 )
 from clawlite.gateway.dashboard_sessions import (
+    DEFAULT_DASHBOARD_CLIENT_HEADER_NAME,
+    DEFAULT_DASHBOARD_CLIENT_QUERY_PARAM,
+    DEFAULT_DASHBOARD_HANDOFF_HEADER_NAME,
+    DEFAULT_DASHBOARD_HANDOFF_QUERY_PARAM,
     DEFAULT_DASHBOARD_SESSION_HEADER_NAME,
     DEFAULT_DASHBOARD_SESSION_QUERY_PARAM,
     DashboardSessionRegistry,
+    verify_dashboard_handoff,
     dashboard_session_expiry_iso,
 )
 from clawlite.gateway.diagnostics_payload import (
@@ -644,6 +649,10 @@ class GatewayAuthGuard:
     protect_health: bool
     dashboard_session_header_name: str
     dashboard_session_query_param: str
+    dashboard_client_header_name: str
+    dashboard_client_query_param: str
+    dashboard_handoff_header_name: str
+    dashboard_handoff_query_param: str
     dashboard_sessions: DashboardSessionRegistry | None = None
 
     @classmethod
@@ -672,6 +681,10 @@ class GatewayAuthGuard:
             protect_health=bool(auth_cfg.protect_health),
             dashboard_session_header_name=DEFAULT_DASHBOARD_SESSION_HEADER_NAME,
             dashboard_session_query_param=DEFAULT_DASHBOARD_SESSION_QUERY_PARAM,
+            dashboard_client_header_name=DEFAULT_DASHBOARD_CLIENT_HEADER_NAME,
+            dashboard_client_query_param=DEFAULT_DASHBOARD_CLIENT_QUERY_PARAM,
+            dashboard_handoff_header_name=DEFAULT_DASHBOARD_HANDOFF_HEADER_NAME,
+            dashboard_handoff_query_param=DEFAULT_DASHBOARD_HANDOFF_QUERY_PARAM,
             dashboard_sessions=DashboardSessionRegistry() if token else None,
         )
 
@@ -723,18 +736,53 @@ class GatewayAuthGuard:
             return query_value.strip()
         return header_value.strip()
 
-    def _dashboard_session_matches(self, supplied_token: str) -> bool:
-        return bool(self.dashboard_sessions) and self.dashboard_sessions.verify(supplied_token)
+    @staticmethod
+    def _extract_dashboard_client(*, header_value: str, query_value: str) -> str:
+        if query_value:
+            return query_value.strip()
+        return header_value.strip()
 
-    def check_http_gateway_token(self, *, request: Request) -> None:
+    def _dashboard_session_matches(self, supplied_token: str, *, client_id: str) -> bool:
+        return bool(self.dashboard_sessions) and self.dashboard_sessions.verify(supplied_token, client_id=client_id)
+
+    @staticmethod
+    def _extract_dashboard_handoff(*, header_value: str, query_value: str) -> str:
+        if query_value:
+            return query_value.strip()
+        return header_value.strip()
+
+    def _dashboard_handoff_matches(self, supplied_token: str) -> bool:
+        return verify_dashboard_handoff(supplied_token, gateway_token=self.token)
+
+    def _extract_dashboard_client_from_request(self, *, request: Request) -> str:
+        if not self.token or self.dashboard_sessions is None:
+            raise HTTPException(status_code=404, detail="dashboard_session_disabled")
+        client_id = self._extract_dashboard_client(
+            header_value=str(request.headers.get(self.dashboard_client_header_name, "") or ""),
+            query_value="",
+        )
+        if not client_id:
+            raise HTTPException(status_code=400, detail="dashboard_client_required")
+        return client_id
+
+    def check_http_dashboard_bootstrap(self, *, request: Request) -> str:
         if not self.token:
             raise HTTPException(status_code=404, detail="dashboard_session_disabled")
         header_value = str(request.headers.get(self.header_name, "") or "")
         supplied_token = self._extract_token(header_value=header_value, query_value="")
-        if not supplied_token:
-            raise HTTPException(status_code=401, detail="gateway_auth_required")
-        if not self._token_matches(supplied_token):
+        handoff_header = str(request.headers.get(self.dashboard_handoff_header_name, "") or "")
+        handoff_query = str(request.query_params.get(self.dashboard_handoff_query_param, "") or "")
+        supplied_handoff = self._extract_dashboard_handoff(
+            header_value=handoff_header,
+            query_value=handoff_query,
+        )
+        if supplied_token and self._token_matches(supplied_token):
+            return "gateway_token"
+        if supplied_handoff and self._dashboard_handoff_matches(supplied_handoff):
+            return "dashboard_handoff"
+        if supplied_token or supplied_handoff:
             raise HTTPException(status_code=401, detail="gateway_auth_invalid")
+        raise HTTPException(status_code=401, detail="gateway_auth_required")
 
     def check_http(
         self,
@@ -751,28 +799,40 @@ class GatewayAuthGuard:
         supplied_token = self._extract_token(header_value=header_value, query_value=query_value)
         dashboard_header = str(request.headers.get(self.dashboard_session_header_name, "") or "")
         dashboard_query = str(request.query_params.get(self.dashboard_session_query_param, "") or "")
+        dashboard_client_header = str(request.headers.get(self.dashboard_client_header_name, "") or "")
+        dashboard_client_query = str(request.query_params.get(self.dashboard_client_query_param, "") or "")
         dashboard_session = (
             self._extract_dashboard_session(header_value=dashboard_header, query_value=dashboard_query)
             if allow_dashboard_session and scope == "control" and self.token
             else ""
         )
+        dashboard_client = (
+            self._extract_dashboard_client(header_value=dashboard_client_header, query_value=dashboard_client_query)
+            if allow_dashboard_session and scope == "control" and self.token
+            else ""
+        )
         raw_valid = self._token_matches(supplied_token)
-        dashboard_valid = self._dashboard_session_matches(dashboard_session) if dashboard_session else False
+        dashboard_present = bool(dashboard_session or dashboard_client)
+        dashboard_valid = (
+            self._dashboard_session_matches(dashboard_session, client_id=dashboard_client)
+            if dashboard_session and dashboard_client
+            else False
+        )
         if require_token_if_configured and self.token:
             if raw_valid or dashboard_valid:
                 return
-            if supplied_token or dashboard_session:
+            if supplied_token or dashboard_present:
                 raise HTTPException(status_code=401, detail="gateway_auth_invalid")
-            if not supplied_token and not dashboard_session:
+            if not supplied_token and not dashboard_present:
                 raise HTTPException(status_code=401, detail="gateway_auth_required")
         should_require = self._require_for_scope(scope=scope, host=client_host, diagnostics_auth=diagnostics_auth)
         if should_require and not (raw_valid or dashboard_valid):
-            if supplied_token or dashboard_session:
+            if supplied_token or dashboard_present:
                 raise HTTPException(status_code=401, detail="gateway_auth_invalid")
             raise HTTPException(status_code=401, detail="gateway_auth_required")
         if self.mode == "optional" and supplied_token and self.token and not raw_valid:
             raise HTTPException(status_code=401, detail="gateway_auth_invalid")
-        if self.mode == "optional" and dashboard_session and self.token and not dashboard_valid:
+        if self.mode == "optional" and dashboard_present and self.token and not dashboard_valid:
             raise HTTPException(status_code=401, detail="gateway_auth_invalid")
 
     async def check_ws(
@@ -789,26 +849,38 @@ class GatewayAuthGuard:
         supplied_token = self._extract_token(header_value=header_value, query_value=query_value)
         dashboard_header = str(socket.headers.get(self.dashboard_session_header_name, "") or "")
         dashboard_query = str(socket.query_params.get(self.dashboard_session_query_param, "") or "")
+        dashboard_client_header = str(socket.headers.get(self.dashboard_client_header_name, "") or "")
+        dashboard_client_query = str(socket.query_params.get(self.dashboard_client_query_param, "") or "")
         dashboard_session = (
             self._extract_dashboard_session(header_value=dashboard_header, query_value=dashboard_query)
             if allow_dashboard_session and scope == "control" and self.token
             else ""
         )
+        dashboard_client = (
+            self._extract_dashboard_client(header_value=dashboard_client_header, query_value=dashboard_client_query)
+            if allow_dashboard_session and scope == "control" and self.token
+            else ""
+        )
         raw_valid = self._token_matches(supplied_token)
-        dashboard_valid = self._dashboard_session_matches(dashboard_session) if dashboard_session else False
+        dashboard_present = bool(dashboard_session or dashboard_client)
+        dashboard_valid = (
+            self._dashboard_session_matches(dashboard_session, client_id=dashboard_client)
+            if dashboard_session and dashboard_client
+            else False
+        )
         should_require = self._require_for_scope(scope=scope, host=client_host, diagnostics_auth=diagnostics_auth)
         require_token_if_configured = scope == "control" and bool(self.token)
         if require_token_if_configured:
             if raw_valid or dashboard_valid:
                 return True
-            if supplied_token or dashboard_session:
+            if supplied_token or dashboard_present:
                 await socket.close(code=4401, reason="gateway_auth_invalid")
                 return False
-            if not supplied_token and not dashboard_session:
+            if not supplied_token and not dashboard_present:
                 await socket.close(code=4401, reason="gateway_auth_required")
                 return False
         if should_require and not (raw_valid or dashboard_valid):
-            if supplied_token or dashboard_session:
+            if supplied_token or dashboard_present:
                 await socket.close(code=4401, reason="gateway_auth_invalid")
                 return False
             await socket.close(code=4401, reason="gateway_auth_required")
@@ -816,7 +888,7 @@ class GatewayAuthGuard:
         if self.mode == "optional" and supplied_token and self.token and not raw_valid:
             await socket.close(code=4401, reason="gateway_auth_invalid")
             return False
-        if self.mode == "optional" and dashboard_session and self.token and not dashboard_valid:
+        if self.mode == "optional" and dashboard_present and self.token and not dashboard_valid:
             await socket.close(code=4401, reason="gateway_auth_invalid")
             return False
         return True
@@ -3099,23 +3171,38 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "mode": auth_guard.mode,
             "header_name": auth_guard.header_name,
             "query_param": auth_guard.query_param,
+            "dashboard_handoff_enabled": bool(auth_guard.token),
+            "dashboard_handoff_header_name": auth_guard.dashboard_handoff_header_name,
+            "dashboard_handoff_query_param": auth_guard.dashboard_handoff_query_param,
             "dashboard_session_enabled": bool(auth_guard.dashboard_sessions) and bool(auth_guard.token),
             "dashboard_session_header_name": auth_guard.dashboard_session_header_name,
             "dashboard_session_query_param": auth_guard.dashboard_session_query_param,
+            "dashboard_client_header_name": auth_guard.dashboard_client_header_name,
+            "dashboard_client_query_param": auth_guard.dashboard_client_query_param,
         },
-        dashboard_session_payload_fn=lambda: (
+        dashboard_session_payload_fn=lambda **payload: (
             (
-                lambda record: {
+                lambda record, bootstrap_kind, client_id: {
                     "ok": True,
                     "token_type": "dashboard_session",
+                    "bootstrap_kind": bootstrap_kind,
                     "session_token": record.token,
                     "expires_at": dashboard_session_expiry_iso(record),
                     "expires_in_s": auth_guard.dashboard_sessions.ttl_seconds if auth_guard.dashboard_sessions is not None else 0,
                     "header_name": auth_guard.dashboard_session_header_name,
                     "query_param": auth_guard.dashboard_session_query_param,
+                    "client_header_name": auth_guard.dashboard_client_header_name,
+                    "client_query_param": auth_guard.dashboard_client_query_param,
+                    "client_id": client_id,
+                    "handoff_header_name": auth_guard.dashboard_handoff_header_name,
+                    "handoff_query_param": auth_guard.dashboard_handoff_query_param,
                 }
-            )(auth_guard.dashboard_sessions.issue())
-            if auth_guard.dashboard_sessions is not None and auth_guard.token
+            )(
+                payload.get("record"),
+                str(payload.get("bootstrap_kind") or ""),
+                str(payload.get("client_id") or ""),
+            )
+            if auth_guard.dashboard_sessions is not None and auth_guard.token and payload.get("record") is not None
             else {"ok": False, "error": "dashboard_session_disabled"}
         ),
     )

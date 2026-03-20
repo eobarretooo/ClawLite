@@ -250,7 +250,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         config_path=config_path,
         ensure_token=bool(cfg.gateway.auth.mode != "off"),
     )
-    open_target = str(handoff["dashboard_url_with_token"] or handoff["gateway_url"])
+    dashboard_handoff_url = str(handoff.get("dashboard_url_with_handoff") or handoff["dashboard_url_with_token"] or "")
+    open_target = dashboard_handoff_url or str(handoff["gateway_url"])
     open_attempted = not bool(getattr(args, "no_open", False))
     opened = False
     open_error = ""
@@ -263,6 +264,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         {
             "ok": True,
             "gateway_url": handoff["gateway_url"],
+            "dashboard_url_with_handoff": dashboard_handoff_url,
             "dashboard_url_with_token": handoff["dashboard_url_with_token"],
             "gateway_token_masked": handoff["gateway_token_masked"],
             "bootstrap_pending": handoff["bootstrap_pending"],

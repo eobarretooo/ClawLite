@@ -14,6 +14,7 @@ from rich.prompt import Prompt
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import save_config
 from clawlite.config.schema import AppConfig
+from clawlite.gateway.dashboard_sessions import issue_dashboard_handoff
 from clawlite.providers.catalog import ONBOARDING_PROVIDER_ORDER, default_provider_model, provider_profile
 from clawlite.providers.codex import CODEX_DEFAULT_BASE_URL
 from clawlite.providers.codex_auth import load_codex_auth_file
@@ -290,12 +291,13 @@ def ensure_gateway_token(config: AppConfig) -> str:
     return generated
 
 
-def _dashboard_url_with_token(gateway_url: str, token: str) -> str:
+def _dashboard_url_with_handoff(gateway_url: str, token: str) -> str:
     clean_url = str(gateway_url or "").strip().rstrip("/")
     clean_token = str(token or "").strip()
     if not clean_url or not clean_token:
         return clean_url
-    return f"{clean_url}#token={clean_token}"
+    handoff = issue_dashboard_handoff(gateway_token=clean_token)
+    return f"{clean_url}#handoff={handoff.token}"
 
 
 def build_dashboard_handoff(
@@ -314,7 +316,7 @@ def build_dashboard_handoff(
             save_config(config, path=config_path)
 
     gateway_url = f"http://{config.gateway.host}:{config.gateway.port}"
-    dashboard_url_with_token = _dashboard_url_with_token(gateway_url, token)
+    dashboard_url_with_handoff = _dashboard_url_with_handoff(gateway_url, token)
 
     workspace_loader = WorkspaceLoader(workspace_path=config.workspace_path)
     onboarding_status_fn = getattr(workspace_loader, "onboarding_status", None)
@@ -358,7 +360,7 @@ def build_dashboard_handoff(
             "later if you want more controllable search backends."
         )
 
-    dashboard_link = dashboard_url_with_token if include_sensitive else gateway_url
+    dashboard_link = dashboard_url_with_handoff if include_sensitive else gateway_url
 
     guidance: list[dict[str, str]] = [
         {
@@ -373,7 +375,7 @@ def build_dashboard_handoff(
             "title": "Gateway token",
             "body": (
                 "The gateway token is shared auth for the API and dashboard, but the packaged browser shell now exchanges "
-                "that one-time handoff for a scoped dashboard session kept only for the current tab and strips `#token=` "
+                "that short-lived dashboard handoff for a scoped dashboard session kept only for the current tab and strips `#handoff=` "
                 "from the address bar after load."
             ),
         },
@@ -423,7 +425,8 @@ def build_dashboard_handoff(
         "guidance": guidance,
     }
     if include_sensitive:
-        payload["dashboard_url_with_token"] = dashboard_url_with_token
+        payload["dashboard_url_with_handoff"] = dashboard_url_with_handoff
+        payload["dashboard_url_with_token"] = dashboard_url_with_handoff
         payload["gateway_token"] = token
     return payload
 
@@ -1531,7 +1534,7 @@ def run_onboarding_wizard(
             bootstrap_pending_override=generated_bootstrap or None,
         )
         gateway_url = str(handoff["gateway_url"])
-        dashboard_url_with_token = str(handoff["dashboard_url_with_token"])
+        dashboard_url_with_handoff = str(handoff.get("dashboard_url_with_handoff") or handoff["dashboard_url_with_token"])
         onboarding_status = dict(handoff["onboarding"])
         bootstrap_pending = bool(generated_bootstrap or handoff["bootstrap_pending"])
         onboarding_label = "completed" if onboarding_status.get("completed") else "bootstrap pending" if bootstrap_pending else str(handoff["onboarding_label"])
@@ -1561,7 +1564,7 @@ def run_onboarding_wizard(
             f"  [bold]Config saved:[/]  {saved_path}\n\n"
             f"[dim]Start the agent:[/]  [bold cyan]clawlite start[/]\n"
             f"[dim]Dashboard:[/]        [bold cyan]{gateway_url}[/]\n"
-            f"[dim]Dashboard + token:[/] [bold cyan]{dashboard_url_with_token}[/]"
+            f"[dim]Dashboard + handoff:[/] [bold cyan]{dashboard_url_with_handoff}[/]"
         )
 
         console.print(
@@ -1630,7 +1633,8 @@ def run_onboarding_wizard(
             },
             "final": {
                 "gateway_url": gateway_url,
-                "dashboard_url_with_token": dashboard_url_with_token,
+                "dashboard_url_with_handoff": dashboard_url_with_handoff,
+                "dashboard_url_with_token": dashboard_url_with_handoff,
                 "gateway_token": generated_token,
                 "bootstrap_pending": bootstrap_pending,
                 "recommended_first_message": _HATCH_MESSAGE if bootstrap_pending else str(handoff["recommended_first_message"]),
