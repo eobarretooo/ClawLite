@@ -74,6 +74,7 @@ What it supports:
 - Context-aware access policies.
 - Pairing-based DM approval.
 - Typing keepalive during long turns.
+- Media downloads into the Telegram media directory, with saved-file references injected into inbound text.
 - Voice/audio transcription through a Groq-compatible OpenAI endpoint.
 - Reaction forwarding and inline keyboard callbacks.
 - Inline approval/review buttons for approval-gated tools and self-evolution review.

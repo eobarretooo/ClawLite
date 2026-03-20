@@ -58,7 +58,7 @@ This note describes current/expected Telegram delivery behavior for operators.
 - For older Telegram client libraries that do not accept `message_thread_id`, channel send/typing retries gracefully without the thread argument.
 
 ## 9) Media ingest semantics
-- Inbound Telegram media is downloaded to the configured Telegram media directory so later tools can inspect the local file path from metadata.
+- Inbound Telegram media is downloaded to the configured Telegram media directory, and successful downloads also add compact `[type saved: /path]` lines to the forwarded text so the agent can act on the real local file immediately.
 - Voice/audio items can be transcribed during ingress when `transcription_api_key` or `GROQ_API_KEY` is available; successful transcripts are appended to the forwarded text and stored in `media_items[*].transcription`.
 - If download/transcription fails, the inbound turn still proceeds with placeholder text and metadata so the agent can continue operating.
 
