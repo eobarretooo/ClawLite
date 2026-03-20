@@ -1536,6 +1536,54 @@ def test_discord_execute_webhook_sends_message() -> None:
     assert posted[0][1]["content"] == "Hello from webhook!"
 
 
+def test_discord_execute_webhook_targets_thread_and_normalizes_embeds() -> None:
+    posted: list[tuple[str, dict]] = []
+
+    async def _fake_post(url, payload, error_prefix=""):
+        posted.append((url, payload))
+        return _response(status=200, url=url, payload={"id": "msg-wh-thread"})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._post_json = _fake_post  # type: ignore[method-assign]
+
+    out = asyncio.run(
+        ch.execute_webhook(
+            webhook_id="wh002",
+            webhook_token="wht002",
+            text="Threaded webhook",
+            username="Ops Bot",
+            thread_id="thread-77",
+            embeds=[
+                {
+                    "title": "Stats",
+                    "fields": [{"name": "Queue", "value": "4", "inline": "false"}],
+                    "timestamp": "2026-03-20T11:45:00",
+                }
+            ],
+            components=[
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+            ],
+        )
+    )
+
+    assert out == "msg-wh-thread"
+    assert posted[0][0].endswith("?wait=true&thread_id=thread-77")
+    assert posted[0][1]["username"] == "Ops Bot"
+    assert posted[0][1]["embeds"] == [
+        {
+            "title": "Stats",
+            "fields": [{"name": "Queue", "value": "4", "inline": False}],
+            "timestamp": "2026-03-20T11:45:00+00:00",
+        }
+    ]
+    assert len(posted[0][1]["components"]) == 5
+
+
 def test_discord_send_voice_message_builds_correct_payload() -> None:
     """send_voice_message() uploads file and sends message with IS_VOICE_MESSAGE flag."""
     import unittest.mock as mock

@@ -2477,19 +2477,28 @@ class DiscordChannel(BaseChannel):
         avatar_url: str | None = None,
         embeds: list[dict[str, Any]] | None = None,
         components: list[dict[str, Any]] | None = None,
+        thread_id: str | None = None,
+        wait: bool = True,
     ) -> str:
         """Execute (post via) a webhook. Returns message_id or empty string."""
+        import urllib.parse
+
         body: dict[str, Any] = {"content": str(text or "")}
         if username:
             body["username"] = str(username)[:80]
         if avatar_url:
             body["avatar_url"] = str(avatar_url)
-        if embeds:
-            body["embeds"] = embeds
+        normalized_embeds = self._normalize_embed_payloads(embeds)
+        if normalized_embeds:
+            body["embeds"] = normalized_embeds
         if components:
-            body["components"] = components
+            body["components"] = [item for item in components if isinstance(item, dict)][:DISCORD_MAX_COMPONENT_ROWS]
+        query_parts = [f"wait={'true' if wait else 'false'}"]
+        clean_thread_id = str(thread_id or "").strip()
+        if clean_thread_id:
+            query_parts.append(f"thread_id={urllib.parse.quote(clean_thread_id, safe='')}")
         response = await self._post_json(
-            url=f"{self.api_base}/webhooks/{webhook_id}/{webhook_token}?wait=true",
+            url=f"{self.api_base}/webhooks/{webhook_id}/{webhook_token}?{'&'.join(query_parts)}",
             payload=body,
             error_prefix="discord_execute_webhook",
         )
