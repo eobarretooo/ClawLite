@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import clawlite.channels.telegram as telegram_module
@@ -1585,11 +1586,13 @@ def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) ->
 
         assert bot.file_ids == ["p2"]
         assert len(emitted) == 1
+        assert "[telegram media message: photo]" in emitted[0][2]
         media_item = emitted[0][3]["media_items"][0]
         local_path = Path(media_item["local_path"])
         assert local_path.exists()
         assert local_path.read_bytes() == b"img"
         assert local_path.parent == tmp_path / "42"
+        assert f"[photo saved: {local_path}]" in emitted[0][2]
 
     asyncio.run(_scenario())
 
@@ -1670,19 +1673,89 @@ def test_telegram_voice_media_transcription_enriches_text_and_metadata(
         provider_instance.transcribe.assert_awaited_once()
         assert len(emitted) == 1
         _, _, text, metadata = emitted[0]
-        assert text == (
-            "[telegram media message: voice]\n\n"
-            "[voice transcription: hello from voice note]"
-        )
         media_item = metadata["media_items"][0]
         assert media_item["file_id"] == "v1"
         assert media_item["transcription"] == "hello from voice note"
         assert media_item["transcription_language"] == "en"
         assert Path(media_item["local_path"]).parent == tmp_path / "media" / "42"
+        assert text == (
+            "[telegram media message: voice]\n\n"
+            f"[voice saved: {media_item['local_path']}]\n"
+            "[voice transcription: hello from voice note]"
+        )
         signals = channel.signals()
         assert signals["media_download_count"] == 1
         assert signals["media_transcription_count"] == 1
         assert signals["media_transcription_error_count"] == 0
+
+    asyncio.run(_scenario())
+
+
+def test_telegram_document_media_download_enriches_text_with_saved_path(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        emitted: list[tuple[str, str, str, dict]] = []
+
+        async def _on_message(
+            session_id: str, user_id: str, text: str, metadata: dict
+        ) -> None:
+            emitted.append((session_id, user_id, text, metadata))
+
+        channel = TelegramChannel(
+            config={"token": "x:token", "media_download_dir": str(tmp_path / "media")},
+            on_message=_on_message,
+        )
+
+        class FakeRemoteFile:
+            async def download_to_drive(self, path: str) -> None:
+                Path(path).write_bytes(b"pdf")
+
+        class FakeBot:
+            def __init__(self) -> None:
+                self.file_ids: list[str] = []
+
+            async def get_file(self, file_id: str):
+                self.file_ids.append(file_id)
+                return FakeRemoteFile()
+
+        bot = FakeBot()
+        channel.bot = bot
+        user = SimpleNamespace(
+            id=1, username="alice", first_name="Alice", language_code="en"
+        )
+        chat = SimpleNamespace(type="private")
+        message = SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=None,
+            voice=None,
+            audio=None,
+            document=SimpleNamespace(file_id="d1", file_name="brief.pdf", mime_type="application/pdf"),
+            chat_id=42,
+            from_user=user,
+            message_id=17,
+            chat=chat,
+            date=None,
+            edit_date=None,
+            reply_to_message=None,
+        )
+        update = SimpleNamespace(
+            update_id=105,
+            message=message,
+            edited_message=None,
+            effective_message=message,
+        )
+
+        await channel._handle_update(update)
+
+        assert bot.file_ids == ["d1"]
+        assert len(emitted) == 1
+        media_item = emitted[0][3]["media_items"][0]
+        local_path = Path(media_item["local_path"])
+        assert local_path.name.endswith(".pdf")
+        assert emitted[0][2] == (
+            "[telegram media message: document]\n\n"
+            f"[document saved: {local_path}]"
+        )
 
     asyncio.run(_scenario())
 

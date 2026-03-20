@@ -1994,6 +1994,22 @@ class TelegramChannel(BaseChannel):
 
     def _build_media_text_suffix_lines(self, media_info: dict[str, Any]) -> list[str]:
         lines: list[str] = []
+        saved_lines: list[str] = []
+        saved_total = 0
+        for item in media_info.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            local_path = self._compact_text(item.get("local_path", ""), limit=240)
+            if not local_path:
+                continue
+            media_type = str(item.get("type", "media") or "media").strip().lower()
+            saved_total += 1
+            if len(saved_lines) < 4:
+                saved_lines.append(f"[{media_type} saved: {local_path}]")
+        if saved_total > len(saved_lines):
+            remaining = saved_total - len(saved_lines)
+            saved_lines.append(f"[{remaining} more media file(s) saved]")
+        lines.extend(saved_lines)
         for item in media_info.get("items", []):
             if not isinstance(item, dict):
                 continue
