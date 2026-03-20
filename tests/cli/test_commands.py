@@ -2264,6 +2264,9 @@ def test_cli_memory_quality_generates_and_persists_report(
     assert "drift" in report
     assert isinstance(report["recommendations"], list)
     assert payload["state"]["current"]["score"] == report["score"]
+    assert isinstance(payload["state"]["trend"], dict)
+    assert payload["state"]["trend"]["available"] is True
+    assert int(payload["state"]["trend"]["window_points"]) >= 1
     assert Path(payload["quality_state_path"]).exists()
     assert "analysis" in payload
     assert isinstance(payload["analysis"]["reasoning_layers"], dict)

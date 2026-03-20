@@ -2412,6 +2412,9 @@ def test_memory_quality_state_update_persists_report_with_drift_and_recommendati
     assert isinstance(snapshot["current"]["recommendations"], list)
     assert snapshot["current"]["recommendations"]
     assert len(snapshot["history"]) == 2
+    assert snapshot["trend"]["available"] is True
+    assert snapshot["trend"]["window_points"] == 2
+    assert snapshot["trend"]["assessment"] == "degrading"
     assert store.quality_state_path.exists()
 
 

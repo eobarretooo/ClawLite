@@ -5,6 +5,139 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+def _quality_payload_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _quality_float(value: Any) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def _quality_int(value: Any) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+
+def _quality_trend_rows(*, history: list[Any], current: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in history if isinstance(row, dict)]
+    if not current:
+        return rows
+    if not rows:
+        return [dict(current)]
+    last = _quality_payload_dict(rows[-1])
+    current_sampled_at = str(current.get("sampled_at", "") or "")
+    last_sampled_at = str(last.get("sampled_at", "") or "")
+    if current_sampled_at and current_sampled_at != last_sampled_at:
+        rows.append(dict(current))
+    elif not current_sampled_at and current != last:
+        rows.append(dict(current))
+    return rows
+
+
+def _quality_streak(values: list[str], target: str) -> int:
+    count = 0
+    for value in reversed(values):
+        if value != target:
+            break
+        count += 1
+    return count
+
+
+def quality_state_trend(*, history: list[Any], current: dict[str, Any]) -> dict[str, Any]:
+    rows = _quality_trend_rows(history=history, current=current)
+    if not rows:
+        return {
+            "available": False,
+            "assessment": "insufficient_history",
+            "window_points": 0,
+            "window_start_sampled_at": "",
+            "window_end_sampled_at": "",
+            "score_change": 0,
+            "hit_rate_change": 0.0,
+            "semantic_coverage_change": 0.0,
+            "reasoning_balance_change": 0.0,
+            "score_range": {"min": 0, "max": 0},
+            "degrading_streak": 0,
+            "improving_streak": 0,
+            "weakest_layers": {},
+        }
+
+    scores = [_quality_int(row.get("score", 0)) for row in rows]
+    first = _quality_payload_dict(rows[0])
+    last = _quality_payload_dict(rows[-1])
+    first_retrieval = _quality_payload_dict(first.get("retrieval", {}))
+    last_retrieval = _quality_payload_dict(last.get("retrieval", {}))
+    first_semantic = _quality_payload_dict(first.get("semantic", {}))
+    last_semantic = _quality_payload_dict(last.get("semantic", {}))
+    first_reasoning = _quality_payload_dict(first.get("reasoning_layers", {}))
+    last_reasoning = _quality_payload_dict(last.get("reasoning_layers", {}))
+    assessments = [
+        str(_quality_payload_dict(row.get("drift", {})).get("assessment", "") or "").strip().lower()
+        for row in rows
+    ]
+
+    weakest_layers: dict[str, int] = {}
+    for row in rows:
+        weakest = str(_quality_payload_dict(row.get("reasoning_layers", {})).get("weakest_layer", "") or "").strip()
+        if weakest:
+            weakest_layers[weakest] = int(weakest_layers.get(weakest, 0) or 0) + 1
+
+    score_change = _quality_int(last.get("score", 0)) - _quality_int(first.get("score", 0))
+    hit_rate_change = round(_quality_float(last_retrieval.get("hit_rate", 0.0)) - _quality_float(first_retrieval.get("hit_rate", 0.0)), 6)
+    semantic_coverage_change = round(
+        _quality_float(last_semantic.get("coverage_ratio", 0.0)) - _quality_float(first_semantic.get("coverage_ratio", 0.0)),
+        6,
+    )
+    reasoning_balance_change = round(
+        _quality_float(last_reasoning.get("balance_score", 0.0)) - _quality_float(first_reasoning.get("balance_score", 0.0)),
+        6,
+    )
+    degrading_streak = _quality_streak(assessments, "degrading")
+    improving_streak = _quality_streak(assessments, "improving")
+
+    if len(rows) < 2:
+        assessment = "insufficient_history"
+    elif (
+        degrading_streak >= 2
+        or score_change <= -6
+        or hit_rate_change <= -0.08
+        or semantic_coverage_change <= -0.08
+        or reasoning_balance_change <= -0.08
+    ):
+        assessment = "degrading"
+    elif (
+        improving_streak >= 2
+        or score_change >= 6
+        or hit_rate_change >= 0.08
+        or semantic_coverage_change >= 0.08
+        or reasoning_balance_change >= 0.08
+    ):
+        assessment = "improving"
+    else:
+        assessment = "stable"
+
+    return {
+        "available": True,
+        "assessment": assessment,
+        "window_points": len(rows),
+        "window_start_sampled_at": str(first.get("sampled_at", "") or ""),
+        "window_end_sampled_at": str(last.get("sampled_at", "") or ""),
+        "score_change": score_change,
+        "hit_rate_change": hit_rate_change,
+        "semantic_coverage_change": semantic_coverage_change,
+        "reasoning_balance_change": reasoning_balance_change,
+        "score_range": {"min": min(scores), "max": max(scores)},
+        "degrading_streak": degrading_streak,
+        "improving_streak": improving_streak,
+        "weakest_layers": dict(sorted(weakest_layers.items())),
+    }
+
+
 def quality_state_snapshot(
     *,
     quality_state_path: Path,
@@ -24,6 +157,7 @@ def quality_state_snapshot(
         "baseline": baseline,
         "current": current,
         "history": history,
+        "trend": quality_state_trend(history=history, current=current),
         "tuning": tuning,
     }
 
