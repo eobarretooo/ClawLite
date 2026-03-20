@@ -3173,7 +3173,7 @@ class AgentEngine:
                         chat_id=chat_id,
                         runtime_metadata=runtime_metadata,
                         run_log=run_log,
-                        include_tool_guidance=False,
+                        include_tool_guidance=True,
                     )
                     if self._stream_requires_full_run(
                         user_text=user_text,

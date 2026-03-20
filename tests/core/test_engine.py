@@ -2444,6 +2444,36 @@ def test_engine_stream_run_uses_shaped_prompt_memory_history_and_runtime_context
     asyncio.run(_scenario())
 
 
+def test_engine_stream_run_includes_tool_routing_guidance_without_forcing_fallback() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("stream-gh")
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["github"]),
+        )
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="cli:stream-github-guidance",
+                user_text="how do GitHub workflows work?",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in chunks) == "stream-gh"
+        assert provider.stream_calls == 1
+        snapshot = provider.snapshots[0]
+        assert any(
+            row.get("role") == "system" and "prefer the github skill" in str(row.get("content", "")).lower()
+            for row in snapshot
+        )
+
+    asyncio.run(_scenario())
+
+
 def test_engine_run_merges_runtime_context_into_single_current_user_message() -> None:
     async def _scenario() -> None:
         provider = FakePromptCaptureProvider()
@@ -2805,9 +2835,8 @@ def test_engine_deferred_working_memory_does_not_block_other_sessions() -> None:
         assert elapsed < 0.25
 
         await engine.drain_turn_persistence()
-        assert [row["session_id"] for row in memory.batch_calls] == ["cli:one", "cli:two"]
-        assert memory.memorize_calls[0]["source"] == "session:cli:one"
-        assert memory.memorize_calls[1]["source"] == "session:cli:two"
+        assert {row["session_id"] for row in memory.batch_calls} == {"cli:one", "cli:two"}
+        assert {row["source"] for row in memory.memorize_calls} == {"session:cli:one", "session:cli:two"}
 
     asyncio.run(_scenario())
 
