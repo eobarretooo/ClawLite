@@ -939,6 +939,44 @@ async def test_send_with_embeds():
 
 
 @pytest.mark.asyncio
+async def test_send_with_embeds_normalizes_stats_fields_and_timestamp():
+    from clawlite.channels.discord import DiscordChannel
+
+    ch = DiscordChannel(config={"token": "test-token"})
+    ch._running = True
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"id": "msg-stats"}'
+    mock_resp.json = lambda: {"id": "msg-stats"}
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    ch._client = mock_client
+    ch._typing_tasks = {}
+
+    embed = {
+        "title": "Statistics",
+        "fields": [
+            {"name": "Latency", "value": "42ms", "inline": "false"},
+            {"name": "Healthy", "value": "yes", "inline": 1},
+        ],
+        "timestamp": "2026-03-20T10:30:00",
+    }
+    result = await ch.send(
+        target="channel:123",
+        text="Stats snapshot",
+        metadata={"discord_embeds": [embed]},
+    )
+
+    assert result.startswith("discord:sent:")
+    posted = mock_client.post.call_args[1]["json"] if mock_client.post.call_args[1] else mock_client.post.call_args[0][1]
+    assert posted["embeds"][0]["fields"] == [
+        {"name": "Latency", "value": "42ms", "inline": False},
+        {"name": "Healthy", "value": "yes", "inline": True},
+    ]
+    assert posted["embeds"][0]["timestamp"] == "2026-03-20T10:30:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_create_thread_from_message():
     from clawlite.channels.discord import DiscordChannel
     ch = DiscordChannel(config={"token": "test-token"})
@@ -1636,6 +1674,119 @@ def test_discord_send_interaction_reply_uses_original_response_path() -> None:
             "components": [{"type": 1, "components": []}],
             "embeds": [],
             "ephemeral": True,
+        }
+    ]
+
+
+def test_discord_send_interaction_reply_normalizes_embeds() -> None:
+    replies: list[dict[str, Any]] = []
+
+    async def _fake_reply_interaction(
+        *,
+        interaction_id: str,
+        interaction_token: str,
+        text: str,
+        components: list[dict[str, Any]] | None = None,
+        embeds: list[dict[str, Any]] | None = None,
+        ephemeral: bool = False,
+    ) -> str:
+        replies.append(
+            {
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "text": text,
+                "components": list(components or []),
+                "embeds": list(embeds or []),
+                "ephemeral": ephemeral,
+            }
+        )
+        return "original-2"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with patch.object(ch, "reply_interaction", side_effect=_fake_reply_interaction):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Runtime stats",
+                metadata={
+                    "interaction_id": "inter-2",
+                    "interaction_token": "tok-2",
+                    "discord_embeds": [
+                        {
+                            "title": "Stats",
+                            "fields": [
+                                {"name": "Queue", "value": "3", "inline": "false"},
+                                {"name": "Workers", "value": "2", "inline": "true"},
+                            ],
+                            "timestamp": "2026-03-20T10:30:00",
+                        }
+                    ],
+                },
+            )
+        )
+
+    assert out == "discord:interaction:original-2"
+    assert replies[0]["embeds"] == [
+        {
+            "title": "Stats",
+            "fields": [
+                {"name": "Queue", "value": "3", "inline": False},
+                {"name": "Workers", "value": "2", "inline": True},
+            ],
+            "timestamp": "2026-03-20T10:30:00+00:00",
+        }
+    ]
+
+
+def test_discord_reply_interaction_normalizes_embeds_before_patch() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        content = b'{"id": "reply-123"}'
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"id": "reply-123"}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def patch(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _FakeResponse()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._application_id = "app001"
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeClient()):
+        out = asyncio.run(
+            ch.reply_interaction(
+                interaction_id="inter-3",
+                interaction_token="tok-3",
+                text="Stats reply",
+                embeds=[
+                    {
+                        "title": "Stats",
+                        "fields": [{"name": "Uptime", "value": "5m", "inline": "false"}],
+                        "timestamp": "2026-03-20T10:30:00",
+                    }
+                ],
+            )
+        )
+
+    assert out == "reply-123"
+    assert calls[0]["json"]["embeds"] == [
+        {
+            "title": "Stats",
+            "fields": [{"name": "Uptime", "value": "5m", "inline": False}],
+            "timestamp": "2026-03-20T10:30:00+00:00",
         }
     ]
 

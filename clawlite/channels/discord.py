@@ -366,6 +366,123 @@ class DiscordChannel(BaseChannel):
         return values
 
     @staticmethod
+    def _normalize_optional_bool(raw: Any) -> bool | None:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return bool(raw)
+        value = str(raw or "").strip().lower()
+        if not value:
+            return None
+        if value in {"true", "1", "yes", "on"}:
+            return True
+        if value in {"false", "0", "no", "off"}:
+            return False
+        return None
+
+    @staticmethod
+    def _normalize_embed_timestamp(raw: Any) -> str | None:
+        parsed: datetime | None = None
+        if isinstance(raw, datetime):
+            parsed = raw
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            numeric = float(raw)
+            if abs(numeric) >= 1_000_000_000_000:
+                numeric /= 1000.0
+            try:
+                parsed = datetime.fromtimestamp(numeric, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        else:
+            value = str(raw or "").strip()
+            if not value:
+                return None
+            try:
+                numeric = float(value)
+            except ValueError:
+                parsed = _parse_utc_timestamp(value)
+            else:
+                if abs(numeric) >= 1_000_000_000_000:
+                    numeric /= 1000.0
+                try:
+                    parsed = datetime.fromtimestamp(numeric, tz=timezone.utc)
+                except (OverflowError, OSError, ValueError):
+                    return None
+        if parsed is None:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+    @classmethod
+    def _normalize_embed_field(cls, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        name = str(raw.get("name", "") or "").strip()[:256]
+        value = str(raw.get("value", "") or "").strip()[:1024]
+        if not name or not value:
+            return None
+        field: dict[str, Any] = {
+            "name": name,
+            "value": value,
+        }
+        inline = cls._normalize_optional_bool(raw.get("inline"))
+        if inline is not None:
+            field["inline"] = inline
+        return field
+
+    @classmethod
+    def _normalize_embed_fields(cls, raw: Any) -> list[dict[str, Any]]:
+        fields: list[dict[str, Any]] = []
+        if isinstance(raw, dict):
+            for name, value in raw.items():
+                normalized = cls._normalize_embed_field(
+                    {
+                        "name": str(name or "").strip(),
+                        "value": str(value or "").strip(),
+                        "inline": False,
+                    }
+                )
+                if normalized is not None:
+                    fields.append(normalized)
+            return fields
+        if not isinstance(raw, list):
+            return fields
+        for item in raw:
+            normalized = cls._normalize_embed_field(item)
+            if normalized is not None:
+                fields.append(normalized)
+        return fields
+
+    @classmethod
+    def _normalize_embed_payload(cls, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        embed = dict(raw)
+        fields = cls._normalize_embed_fields(raw.get("fields"))
+        if fields:
+            embed["fields"] = fields
+        else:
+            embed.pop("fields", None)
+        timestamp = cls._normalize_embed_timestamp(raw.get("timestamp"))
+        if timestamp:
+            embed["timestamp"] = timestamp
+        else:
+            embed.pop("timestamp", None)
+        return embed
+
+    @classmethod
+    def _normalize_embed_payloads(cls, raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        embeds: list[dict[str, Any]] = []
+        for item in raw:
+            normalized = cls._normalize_embed_payload(item)
+            if normalized is not None:
+                embeds.append(normalized)
+        return embeds[:10]
+
+    @staticmethod
     def _component_kind(component_type: int) -> str:
         return DISCORD_COMPONENT_KIND_BY_TYPE.get(int(component_type or 0), "component")
 
@@ -1387,10 +1504,9 @@ class DiscordChannel(BaseChannel):
 
         # Rich embeds — pass as metadata key "discord_embeds" or "embeds"
         raw_embeds = metadata_payload.get("discord_embeds") or metadata_payload.get("embeds")
-        if isinstance(raw_embeds, list) and raw_embeds:
-            payload["embeds"] = [
-                e for e in raw_embeds if isinstance(e, dict)
-            ][:10]  # Discord max 10 embeds per message
+        normalized_embeds = self._normalize_embed_payloads(raw_embeds)
+        if normalized_embeds:
+            payload["embeds"] = normalized_embeds
 
         # Message components (buttons, select menus) — pass as metadata key "discord_components"
         raw_components = metadata_payload.get("discord_components") or metadata_payload.get("components")
@@ -2174,8 +2290,9 @@ class DiscordChannel(BaseChannel):
         body: dict[str, Any] = {"content": str(text or "")}
         if components:
             body["components"] = components
-        if embeds:
-            body["embeds"] = embeds
+        normalized_embeds = self._normalize_embed_payloads(embeds)
+        if normalized_embeds:
+            body["embeds"] = normalized_embeds
         if ephemeral:
             body["flags"] = 64  # EPHEMERAL
         try:

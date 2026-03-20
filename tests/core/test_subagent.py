@@ -299,11 +299,11 @@ def test_subagent_manager_sweeps_expired_and_orphaned_runs(tmp_path: Path) -> No
         mgr = SubagentManager(
             state_path=tmp_path / "state",
             max_concurrent_runs=1,
-            run_ttl_seconds=0.01,
+            run_ttl_seconds=0.05,
             zombie_grace_seconds=0.0,
         )
         running = await mgr.spawn(session_id="s1", task="expire-me", runner=_blocking_runner)
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.08)
 
         stale_iso = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
         orphaned = SubagentRun(
