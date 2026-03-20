@@ -141,6 +141,33 @@ jobs:
       - name: Build Docker image
         run: docker compose build clawlite-gateway
 
+      - name: Build browser-enabled Docker image
+        env:
+          CLAWLITE_PIP_EXTRAS: browser,telegram,media,observability,runtime
+          CLAWLITE_INSTALL_BROWSER: "1"
+        run: docker compose build clawlite-gateway
+
+      - name: Smoke browser-enabled Docker image
+        env:
+          CLAWLITE_PIP_EXTRAS: browser,telegram,media,observability,runtime
+          CLAWLITE_INSTALL_BROWSER: "1"
+        run: |
+          docker compose run --rm --entrypoint python clawlite-gateway - <<'PY'
+          import os
+          from pathlib import Path
+
+          import playwright  # noqa: F401
+
+          browsers_root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
+          entries = [item.name for item in browsers_root.iterdir()] if browsers_root.exists() else []
+          if not any(name.startswith("chromium-") for name in entries):
+              raise SystemExit(
+                  f"missing chromium runtime under {browsers_root}: {entries}"
+              )
+          print("playwright chromium runtime ok")
+          print(entries)
+          PY
+
   autonomy-contract:
     name: Autonomy control contracts
     runs-on: ubuntu-latest
