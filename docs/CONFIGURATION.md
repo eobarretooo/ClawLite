@@ -185,8 +185,9 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 | `audit_max_entries` | `200` | Max audit log entries |
 | `self_evolution_branch_prefix` | `"self-evolution"` | Prefix used for isolated self-evolution git branches |
 | `self_evolution_require_approval` | `false` | Include approval-ready operator notice payloads for committed self-evolution runs |
+| `self_evolution_enabled_for_sessions` | `[]` | Optional autonomy-session allowlist for canary self-evolution runs; when set, the background loop stays disabled unless `session_id` is listed |
 
-**Advanced tuning fields:** `tuning_loop_enabled`, `tuning_loop_interval_s`, `tuning_loop_timeout_s`, `tuning_loop_cooldown_s`, `tuning_degrading_streak_threshold`, `tuning_recent_actions_limit`, `tuning_error_backoff_s`, `self_evolution_enabled`, `self_evolution_cooldown_s`, `self_evolution_branch_prefix`, `self_evolution_require_approval`.
+**Advanced tuning fields:** `tuning_loop_enabled`, `tuning_loop_interval_s`, `tuning_loop_timeout_s`, `tuning_loop_cooldown_s`, `tuning_degrading_streak_threshold`, `tuning_recent_actions_limit`, `tuning_error_backoff_s`, `self_evolution_enabled`, `self_evolution_cooldown_s`, `self_evolution_branch_prefix`, `self_evolution_require_approval`, `self_evolution_enabled_for_sessions`.
 
 ### `gateway.websocket`
 

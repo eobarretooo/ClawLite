@@ -705,10 +705,10 @@ Purpose: operational visibility for whether inbound dispatch is still draining t
 
 `self_evolution` is additive and reports the self-improvement engine plus its background loop runner:
 
-- engine status: `enabled`, `run_count`, `committed_count`, `dry_run_count`, `last_outcome`, `last_error`, `last_branch`, `last_review_status`, `branch_prefix`, `require_approval`, `cooldown_remaining_s`, `locked`
-- runner status: nested `runner` map with `enabled`, `running`, `cooldown_seconds`, `ticks`, `success_count`, `error_count`, `last_result`, `last_error`, `last_run_iso`
+- engine status: `enabled`, `background_enabled`, `activation_mode`, `activation_reason`, `enabled_for_sessions`, `autonomy_session_id`, `run_count`, `committed_count`, `dry_run_count`, `last_outcome`, `last_error`, `last_branch`, `last_review_status`, `branch_prefix`, `require_approval`, `cooldown_remaining_s`, `locked`
+- runner status: nested `runner` map with `enabled`, `running`, `cooldown_seconds`, `activation_mode`, `activation_reason`, `enabled_for_sessions`, `autonomy_session_id`, `ticks`, `success_count`, `error_count`, `last_result`, `last_error`, `last_run_iso`
 
-Purpose: operational visibility for whether the self-evolution worker is actually alive, not just configured, which isolated branch the latest successful run produced, whether operator approval is expected before merge, and what the latest persisted human review decision was.
+Purpose: operational visibility for whether the self-evolution worker is actually alive, not just configured, which isolated branch the latest successful run produced, whether operator approval is expected before merge, what the latest persisted human review decision was, and whether a session-canary allowlist is keeping the background loop disabled.
 
 `subagents` is additive and reports persisted subagent manager/runtime telemetry:
 

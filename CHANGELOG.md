@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - refreshed README/docs status snapshot to point at the new Docker path and the active parity track
 - Discord policy/routing parity slice now includes DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session keys, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, and persisted thread/channel bindings with idle/max-age expiry
 - Discord operator flows now include native `/discord-status` and `/discord-refresh` commands handled before the agent loop
+- `self_evolution` now supports a canary-style autonomy-session allowlist so the background loop can stay disabled outside explicitly approved runtime sessions while operator-forced dry runs still work
 
 ### Fixed
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only
