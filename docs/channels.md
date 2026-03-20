@@ -271,7 +271,7 @@ Notes:
 - Focus bindings can expire automatically with `thread_binding_idle_timeout_s` and/or `thread_binding_max_age_s`. When a binding goes stale, ClawLite drops it fail-closed and routes the next inbound event back to the live Discord channel session.
 - Attachments are downloaded concurrently from the Discord CDN; raw bytes are available in the `attachment_data` metadata key. Each entry mirrors the `attachments` row with an added `data` field (bytes or `None` on failure).
 - **Reactions**: `add_reaction(channel_id, message_id, emoji)` sends a reaction. Incoming `MESSAGE_REACTION_ADD` events are emitted as metadata-only events with `event_type: "reaction_add"` and `emoji`.
-- **Embeds**: pass a list of embed dicts under `metadata["discord_embeds"]` (or `"embeds"`) in `send()`. Discord accepts up to 10 embeds per message.
+- **Embeds**: pass a list of embed dicts under `metadata["discord_embeds"]` (or `"embeds"`) in `send()`. Discord accepts up to 10 embeds per message, and ClawLite now normalizes embed-field `inline` flags plus embed `timestamp` values before posting/replying so stats-style embeds render consistently.
 - **Modal forms**: pass `metadata["discord_modal"]` with `title`, `fields`, and optional `trigger_label` / `trigger_style`. ClawLite appends a trigger button to the outbound message and opens the modal on click; this slice supports Discord text-input modal fields.
 - **Thread creation**: use `await channel.create_thread(channel_id=..., name=..., message_id=...)`. Omit `message_id` for a standalone (forum-style) thread. Returns the new thread ID or empty string on failure. `auto_archive_duration` defaults to 1440 minutes.
 - Discord-specific send retry knobs exist in code but are not part of the typed schema.
