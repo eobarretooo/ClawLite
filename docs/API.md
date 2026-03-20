@@ -1215,16 +1215,16 @@ Alias compatível: `GET /api/diagnostics` (mesmo payload). When a gateway token 
 Diagnóstico de autenticação do gateway.
 - Nunca retorna token em texto puro.
 - Retorna apenas estado (`token_configured`) e versão mascarada determinística (`token_masked`).
-- Quando o dashboard-session flow estiver habilitado, também informa `dashboard_session_enabled`, `dashboard_session_header_name`, `dashboard_session_query_param`, `dashboard_client_header_name`, e `dashboard_client_query_param`.
+- Quando o dashboard-session flow estiver habilitado, também informa `dashboard_handoff_enabled`, `dashboard_handoff_header_name`, `dashboard_handoff_query_param`, `dashboard_session_enabled`, `dashboard_session_header_name`, `dashboard_session_query_param`, `dashboard_client_header_name`, e `dashboard_client_query_param`.
 - Aceita tanto o gateway token bruto quanto a credencial derivada do dashboard.
 
 ## `POST /api/dashboard/session`
 
-Troca o gateway token bruto por uma credencial derivada e efêmera para o dashboard empacotado.
+Troca um bootstrap de dashboard por uma credencial derivada e efêmera para o dashboard empacotado.
 
-- Requer o gateway token configurado no header normal de autenticação; query-param token bootstrap não é aceito aqui.
+- Aceita preferencialmente o handoff curto do dashboard (`X-ClawLite-Dashboard-Handoff` / `dashboard_handoff`) e ainda aceita o gateway token bruto no header normal de autenticação para flows legados ou manuais; query-param de token bruto não é aceito aqui.
 - Também requer um client id do dashboard no header `X-ClawLite-Dashboard-Client` (ou no nome configurado informado pelo bootstrap).
-- Retorna um `session_token` opaco com `token_type=\"dashboard_session\"`, `expires_at`, `expires_in_s`, e os nomes de header/query aceitos pelo shell do dashboard tanto para a sessão derivada quanto para o client binding.
+- Retorna um `session_token` opaco com `token_type=\"dashboard_session\"`, `bootstrap_kind`, `expires_at`, `expires_in_s`, e os nomes de header/query aceitos pelo shell do dashboard tanto para o handoff bootstrap quanto para a sessão derivada e o client binding.
 - A credencial derivada fica vinculada a esse client id de aba e só é aceita quando o mesmo identificador acompanha os requests HTTP/WS do dashboard.
 - Essa credencial derivada é aceita apenas nas superfícies de dashboard/control-plane que optam por ela (`/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, e `WS /ws`).
 - A mesma credencial não substitui o gateway token bruto em `/v1/status`, `/v1/chat`, `/v1/tools/*`, ou `WS /v1/ws`.
