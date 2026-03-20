@@ -18,7 +18,7 @@ Prompting note: inbound adapters already normalize rich metadata for routing and
 
 | Channel | Inbound | Outbound | Status | Notes |
 | --- | --- | --- | --- | --- |
-| Telegram | Yes | Yes | Most complete | Polling and webhook, pairing, reactions, topics, typing keepalive, voice/audio transcription |
+| Telegram | Yes | Yes | Most complete | Polling and webhook, pairing, reactions, topics, typing keepalive, media download, voice/audio transcription |
 | Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), embeds, thread creation, attachment download, focus bindings |
 | Email | Yes | Yes | Usable | IMAP polling inbound plus SMTP replies |
 | WhatsApp | Yes | Yes | Usable | Inbound webhook, outbound retry, bridge typing keepalive |
@@ -74,7 +74,7 @@ What it supports:
 - Context-aware access policies.
 - Pairing-based DM approval.
 - Typing keepalive during long turns.
-- Media downloads into the Telegram media directory, with saved-file references injected into inbound text.
+- Media downloads into the Telegram media directory, with saved-file references and best-effort OCR/PDF text snippets injected into inbound text when local dependencies are available.
 - Voice/audio transcription through a Groq-compatible OpenAI endpoint.
 - Reaction forwarding and inline keyboard callbacks.
 - Inline approval/review buttons for approval-gated tools and self-evolution review.

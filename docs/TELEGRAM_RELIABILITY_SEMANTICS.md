@@ -59,8 +59,9 @@ This note describes current/expected Telegram delivery behavior for operators.
 
 ## 9) Media ingest semantics
 - Inbound Telegram media is downloaded to the configured Telegram media directory, and successful downloads also add compact `[type saved: /path]` lines to the forwarded text so the agent can act on the real local file immediately.
+- Photo and document items now also attempt compact local text extraction during ingress: OCR for saved images and basic text/PDF extraction for saved documents when optional local dependencies are available.
 - Voice/audio items can be transcribed during ingress when `transcription_api_key` or `GROQ_API_KEY` is available; successful transcripts are appended to the forwarded text and stored in `media_items[*].transcription`.
-- If download/transcription fails, the inbound turn still proceeds with placeholder text and metadata so the agent can continue operating.
+- If download, OCR/PDF extraction, or transcription fails, the inbound turn still proceeds with placeholder text and metadata so the agent can continue operating.
 
 ## 10) Operational signals
 - Channel status may expose Telegram `signals` for runtime reliability diagnostics.
