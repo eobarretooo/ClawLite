@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord outbound sends now also accept `discord_modal`, which appends a trigger button and opens a native Discord text-input modal on click instead of leaking that trigger as a normal button interaction
 - Discord embeds now normalize field `inline` values and embed `timestamp` payloads before send/reply calls, so stats-style embeds stop rendering with broken field layout or naive timestamps
 - Discord webhook execution now accepts `thread_id`, normalizes embeds with the same stats-safe path, and clamps outbound component rows to Discord's five-row limit
+- Discord `send()` now accepts `metadata["discord_voice"]`, routing native voice-note sends through the normal outbound path for channel and DM targets
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only
 - `stream_run()` now falls back to the full `run()` loop for live-lookup turns, instead of staying on a text-only provider stream path when the answer should be verified with current web/weather data
 - prompt runtime context now includes a few more safe structural channel hints such as message IDs, Slack thread timestamps, Telegram forum state, Discord DM state, signed callback/button ids, and single media-type markers without exposing raw channel payloads
