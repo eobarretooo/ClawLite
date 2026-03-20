@@ -6,6 +6,7 @@ from typing import Any
 
 from clawlite.providers.base import LLMProvider, LLMResult
 from clawlite.providers.reliability import classify_provider_error, is_retryable_error
+from clawlite.providers.telemetry import get_telemetry_registry
 
 
 class FailoverCooldownError(RuntimeError):
@@ -26,6 +27,17 @@ class FailoverProvider(LLMProvider):
         "auth": 900.0,
         "config": 900.0,
         "quota": 1800.0,
+    }
+    _ERROR_CLASS_HEALTH_PENALTIES: dict[str, float] = {
+        "auth": 40.0,
+        "config": 35.0,
+        "quota": 35.0,
+        "circuit_open": 25.0,
+        "retry_exhausted": 18.0,
+        "rate_limit": 18.0,
+        "network": 16.0,
+        "http_transient": 14.0,
+        "unknown": 6.0,
     }
 
     def __init__(
@@ -75,6 +87,7 @@ class FailoverProvider(LLMProvider):
             "auth_unavailable_activations": 0,
             "quota_unavailable_activations": 0,
             "config_unavailable_activations": 0,
+            "fallback_health_reorders": 0,
         }
 
     @property
@@ -139,6 +152,184 @@ class FailoverProvider(LLMProvider):
             sanitized[key_text] = value
         return sanitized
 
+    @staticmethod
+    def _provider_diag(candidate: FailoverCandidate) -> dict[str, Any]:
+        diag_fn = getattr(candidate.provider, "diagnostics", None)
+        if not callable(diag_fn):
+            return {}
+        try:
+            diag = diag_fn()
+        except Exception:
+            return {}
+        return dict(diag) if isinstance(diag, dict) else {}
+
+    @staticmethod
+    def _diag_counters(provider_diag: dict[str, Any]) -> dict[str, Any]:
+        counters = provider_diag.get("counters")
+        return dict(counters) if isinstance(counters, dict) else {}
+
+    @classmethod
+    def _provider_error_total(cls, provider_diag: dict[str, Any]) -> int:
+        counters = cls._diag_counters(provider_diag)
+        counts = provider_diag.get("error_class_counts", counters.get("error_class_counts", {}))
+        if isinstance(counts, dict) and counts:
+            total = 0
+            for value in counts.values():
+                try:
+                    total += max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+            return total
+        fallback_keys = ("errors", "http_errors", "network_errors", "auth_errors", "rate_limit_errors", "server_errors")
+        for source in (counters, provider_diag):
+            if not isinstance(source, dict):
+                continue
+            if "errors" in source:
+                try:
+                    return max(0, int(source.get("errors", 0) or 0))
+                except (TypeError, ValueError):
+                    return 0
+        total = 0
+        for source in (counters, provider_diag):
+            if not isinstance(source, dict):
+                continue
+            subtotal = 0
+            found = False
+            for key in fallback_keys[1:]:
+                if key not in source:
+                    continue
+                found = True
+                try:
+                    subtotal += max(0, int(source.get(key, 0) or 0))
+                except (TypeError, ValueError):
+                    continue
+            if found:
+                total = max(total, subtotal)
+        return total
+
+    @classmethod
+    def _provider_request_total(cls, provider_diag: dict[str, Any]) -> int:
+        counters = cls._diag_counters(provider_diag)
+        for source in (counters, provider_diag):
+            if not isinstance(source, dict):
+                continue
+            try:
+                return max(0, int(source.get("requests", 0) or 0))
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    @classmethod
+    def _provider_consecutive_failures(cls, provider_diag: dict[str, Any]) -> int:
+        counters = cls._diag_counters(provider_diag)
+        for source in (counters, provider_diag):
+            if not isinstance(source, dict):
+                continue
+            try:
+                return max(0, int(source.get("consecutive_failures", 0) or 0))
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    @classmethod
+    def _provider_circuit_open(cls, provider_diag: dict[str, Any]) -> bool:
+        counters = cls._diag_counters(provider_diag)
+        for source in (counters, provider_diag):
+            if isinstance(source, dict) and "circuit_open" in source:
+                return bool(source.get("circuit_open", False))
+        return False
+
+    @classmethod
+    def _provider_last_error_class(cls, provider_diag: dict[str, Any]) -> str:
+        counters = cls._diag_counters(provider_diag)
+        for source in (counters, provider_diag):
+            if not isinstance(source, dict):
+                continue
+            value = str(source.get("last_error_class", "") or "").strip().lower()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _provider_latency_p50_ms(model: str) -> float:
+        try:
+            snapshot = get_telemetry_registry().get(model).snapshot()
+        except Exception:
+            return 0.0
+        try:
+            return max(0.0, float(snapshot.get("latency_p50_ms", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _candidate_health(self, *, index: int, now: float | None = None, provider_diag: dict[str, Any] | None = None) -> dict[str, Any]:
+        cursor = self._now() if now is None else float(now)
+        remaining = self._cooldown_remaining(index=index, now=cursor)
+        candidate = self._candidates[index]
+        diag = provider_diag if isinstance(provider_diag, dict) else self._provider_diag(candidate)
+        requests = self._provider_request_total(diag)
+        errors = self._provider_error_total(diag)
+        consecutive_failures = self._provider_consecutive_failures(diag)
+        circuit_open = self._provider_circuit_open(diag)
+        latency_p50_ms = self._provider_latency_p50_ms(candidate.model)
+        error_ratio = min(1.0, float(errors) / float(requests)) if requests > 0 else 0.0
+        error_class = str(candidate.last_error_class or self._provider_last_error_class(diag) or "").strip().lower()
+
+        if remaining > 0:
+            return {
+                "health_score": 0.0,
+                "health_state": "cooldown",
+                "error_ratio": round(error_ratio, 3),
+                "error_count": errors,
+                "request_count": requests,
+                "consecutive_failures": consecutive_failures,
+                "latency_p50_ms": round(latency_p50_ms, 2),
+                "last_error_class": error_class,
+                "circuit_open": circuit_open,
+            }
+
+        score = 100.0
+        score -= min(35.0, error_ratio * 35.0)
+        score -= min(20.0, float(consecutive_failures) * 5.0)
+        score -= min(20.0, latency_p50_ms / 250.0)
+        if circuit_open:
+            score -= 25.0
+        score -= float(self._ERROR_CLASS_HEALTH_PENALTIES.get(error_class, 0.0))
+        score = round(max(0.0, min(100.0, score)), 2)
+
+        if score >= 85.0:
+            state = "healthy"
+        elif score >= 60.0:
+            state = "degraded"
+        else:
+            state = "unstable"
+
+        return {
+            "health_score": score,
+            "health_state": state,
+            "error_ratio": round(error_ratio, 3),
+            "error_count": errors,
+            "request_count": requests,
+            "consecutive_failures": consecutive_failures,
+            "latency_p50_ms": round(latency_p50_ms, 2),
+            "last_error_class": error_class,
+            "circuit_open": circuit_open,
+        }
+
+    def _ordered_ready_indices(self, ready_indices: list[int], *, now: float) -> list[int]:
+        if len(ready_indices) <= 2:
+            return ready_indices
+
+        ordered = [index for index in ready_indices if index == 0]
+        fallback_indices = [index for index in ready_indices if index != 0]
+        sorted_fallbacks = sorted(
+            fallback_indices,
+            key=lambda index: (-self._candidate_health(index=index, now=now)["health_score"], index),
+        )
+        if sorted_fallbacks != fallback_indices:
+            self._diagnostics["fallback_health_reorders"] = int(self._diagnostics["fallback_health_reorders"]) + 1
+        ordered.extend(sorted_fallbacks)
+        return ordered
+
     def diagnostics(self) -> dict[str, Any]:
         now = self._now()
         counters = dict(self._diagnostics)
@@ -166,6 +357,8 @@ class FailoverProvider(LLMProvider):
 
         candidate_rows: list[dict[str, Any]] = []
         for index, candidate in enumerate(self._candidates):
+            provider_diag = self._provider_diag(candidate)
+            health = self._candidate_health(index=index, now=now, provider_diag=provider_diag)
             row: dict[str, Any] = {
                 "index": index,
                 "role": "primary" if index == 0 else "fallback",
@@ -174,17 +367,24 @@ class FailoverProvider(LLMProvider):
                 "in_cooldown": self._cooldown_remaining(index=index, now=now) > 0,
                 "last_error_class": str(candidate.last_error_class or ""),
                 "suppression_reason": str(candidate.suppression_reason or ""),
+                **health,
             }
-            diag_fn = getattr(candidate.provider, "diagnostics", None)
-            if callable(diag_fn):
-                try:
-                    diag = diag_fn()
-                except Exception:
-                    diag = None
-                if isinstance(diag, dict):
-                    row["provider"] = self._sanitize(dict(diag))
+            if provider_diag:
+                row["provider"] = self._sanitize(provider_diag)
             candidate_rows.append(row)
         payload["candidates"] = candidate_rows
+        payload["fallback_health_order"] = [
+            {
+                "index": int(row["index"]),
+                "model": str(row["model"]),
+                "health_score": float(row["health_score"]),
+                "health_state": str(row["health_state"]),
+            }
+            for row in sorted(
+                [row for row in candidate_rows if row.get("role") == "fallback"],
+                key=lambda row: (-float(row.get("health_score", 0.0) or 0.0), int(row.get("index", 0) or 0)),
+            )
+        ]
 
         if candidate_rows:
             primary_row = candidate_rows[0].get("provider")
@@ -281,6 +481,7 @@ class FailoverProvider(LLMProvider):
         if not ready_indices:
             self._diagnostics["both_in_cooldown_fail_fast"] = int(self._diagnostics["both_in_cooldown_fail_fast"]) + 1
             raise self._all_in_cooldown_error(remaining=cooling_indices)
+        ready_indices = self._ordered_ready_indices(ready_indices, now=now)
 
         last_exc: Exception | None = None
         for index in ready_indices:

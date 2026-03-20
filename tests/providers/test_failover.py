@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import patch
 
 from clawlite.providers.base import LLMResult
 from clawlite.providers.failover import FailoverCandidate, FailoverCooldownError, FailoverProvider
+from clawlite.providers.telemetry import TelemetryRegistry
 
 
 class _Provider:
@@ -45,6 +47,26 @@ class _SequenceProvider:
 
     def get_default_model(self) -> str:
         return "test/model"
+
+
+class _HealthProvider(_Provider):
+    def __init__(self, *, model: str, result: str = "", error: str = "", diagnostics_payload: dict[str, object] | None = None) -> None:
+        super().__init__(result=result, error=error)
+        self.model = model
+        self.diagnostics_payload = dict(diagnostics_payload or {})
+
+    def get_default_model(self) -> str:
+        return self.model
+
+    def diagnostics(self) -> dict[str, object]:
+        payload = {
+            "provider": "test",
+            "provider_name": "test",
+            "model": self.model,
+            "counters": {},
+        }
+        payload.update(self.diagnostics_payload)
+        return payload
 
 
 class _Clock:
@@ -141,6 +163,9 @@ def test_failover_provider_diagnostics_contract_and_secret_safety() -> None:
     assert "token" not in diag["fallback"]
     encoded = json.dumps(diag).lower()
     assert "test_token_value" not in encoded
+    assert "fallback_health_order" in diag
+    assert "health_score" in diag["candidates"][0]
+    assert "health_state" in diag["candidates"][0]
 
 
 def test_failover_provider_primary_cooldown_skips_primary_and_uses_fallback() -> None:
@@ -355,3 +380,90 @@ def test_failover_provider_operator_clear_suppression_resets_candidate_state() -
         assert after["candidates"][0]["suppression_reason"] == ""
 
     asyncio.run(_scenario())
+
+
+def test_failover_provider_prefers_healthier_ready_fallback_candidate() -> None:
+    async def _scenario() -> None:
+        telemetry = TelemetryRegistry()
+        primary = _Provider(error="provider_network_error:timeout")
+        fallback_a = _HealthProvider(
+            model="openrouter/openai/gpt-4o-mini-health-a",
+            result="from fallback a",
+            diagnostics_payload={
+                "counters": {
+                    "requests": 12,
+                    "consecutive_failures": 2,
+                    "error_class_counts": {"rate_limit": 4},
+                }
+            },
+        )
+        fallback_b = _HealthProvider(
+            model="groq/llama-3.3-70b-health-b",
+            result="from fallback b",
+            diagnostics_payload={
+                "counters": {
+                    "requests": 12,
+                    "consecutive_failures": 0,
+                    "error_class_counts": {"rate_limit": 1},
+                }
+            },
+        )
+        telemetry.record("openrouter/openai/gpt-4o-mini-health-a", latency_ms=2400.0, error=True)
+        telemetry.record("openrouter/openai/gpt-4o-mini-health-a", latency_ms=2100.0)
+        telemetry.record("groq/llama-3.3-70b-health-b", latency_ms=140.0)
+        telemetry.record("groq/llama-3.3-70b-health-b", latency_ms=120.0)
+
+        provider = FailoverProvider(
+            candidates=[
+                FailoverCandidate(provider=primary, model="openai/gpt-4.1"),
+                FailoverCandidate(provider=fallback_a, model="openrouter/openai/gpt-4o-mini-health-a"),
+                FailoverCandidate(provider=fallback_b, model="groq/llama-3.3-70b-health-b"),
+            ]
+        )
+
+        with patch("clawlite.providers.failover.get_telemetry_registry", return_value=telemetry):
+            out = await provider.complete(messages=[{"role": "user", "content": "hi"}], tools=[])
+            diag = provider.diagnostics()
+
+        assert out.text == "from fallback b"
+        assert fallback_a.calls == 0
+        assert fallback_b.calls == 1
+        assert diag["fallback_health_reorders"] == 1
+        assert diag["fallback_health_order"][0]["model"] == "groq/llama-3.3-70b-health-b"
+        assert diag["fallback_health_order"][1]["model"] == "openrouter/openai/gpt-4o-mini-health-a"
+
+    asyncio.run(_scenario())
+
+
+def test_failover_provider_diagnostics_surface_candidate_health_details() -> None:
+    telemetry = TelemetryRegistry()
+    telemetry.record("openrouter/openai/gpt-4o-mini-health-diag", latency_ms=500.0)
+    provider = FailoverProvider(
+        candidates=[
+            FailoverCandidate(provider=_Provider(result="p"), model="openai/gpt-4.1"),
+            FailoverCandidate(
+                provider=_HealthProvider(
+                    model="openrouter/openai/gpt-4o-mini-health-diag",
+                    result="f",
+                    diagnostics_payload={
+                        "counters": {
+                            "requests": 10,
+                            "consecutive_failures": 1,
+                            "error_class_counts": {"network": 2},
+                        }
+                    },
+                ),
+                model="openrouter/openai/gpt-4o-mini-health-diag",
+            ),
+        ]
+    )
+
+    with patch("clawlite.providers.failover.get_telemetry_registry", return_value=telemetry):
+        diag = provider.diagnostics()
+
+    fallback_row = diag["candidates"][1]
+    assert fallback_row["health_state"] in {"degraded", "unstable", "healthy"}
+    assert fallback_row["health_score"] < 100.0
+    assert fallback_row["latency_p50_ms"] == 500.0
+    assert fallback_row["error_count"] == 2
+    assert diag["fallback_health_order"][0]["health_score"] == fallback_row["health_score"]
