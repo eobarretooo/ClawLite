@@ -1341,6 +1341,104 @@ def test_discord_send_includes_components_from_metadata() -> None:
     assert len(posted[0]["components"][0]["components"]) == 2
 
 
+def test_discord_send_with_modal_metadata_adds_trigger_button() -> None:
+    posted: list[dict[str, Any]] = []
+
+    async def _fake_post(url, payload, error_prefix=""):
+        posted.append(payload)
+        return _response(status=200, url=url, payload={"id": "msg-modal"})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._post_json = _fake_post  # type: ignore[method-assign]
+
+    async def _scenario():
+        return await ch.send(
+            target="#chan001",
+            text="Open the details form",
+            metadata={
+                "discord_modal": {
+                    "title": "Details",
+                    "trigger_label": "Open details",
+                    "fields": [
+                        {"label": "Subject", "custom_id": "subject"},
+                        {"label": "Details", "custom_id": "details", "style": "paragraph"},
+                    ],
+                }
+            },
+        )
+
+    asyncio.run(_scenario())
+
+    assert len(posted) == 1
+    assert "components" in posted[0]
+    trigger = posted[0]["components"][-1]["components"][0]
+    assert trigger["type"] == 2
+    assert trigger["label"] == "Open details"
+    assert trigger["custom_id"].startswith("clawlite:modal:open:")
+
+
+def test_discord_modal_trigger_interaction_opens_registered_modal_without_emitting_message() -> None:
+    emitted: list[dict[str, Any]] = []
+    interaction_callbacks: list[dict[str, Any]] = []
+    message_posts: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append({"session_id": session_id, "user_id": user_id, "text": text, "metadata": metadata})
+
+    async def _fake_post(url, payload, error_prefix=""):
+        if "/interactions/" in url:
+            interaction_callbacks.append(payload)
+            return _response(status=204, url=url)
+        message_posts.append(payload)
+        return _response(status=200, url=url, payload={"id": "msg-modal"})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=_on_message)
+    ch._running = True
+    ch._post_json = _fake_post  # type: ignore[method-assign]
+    ch._ack_interaction = AsyncMock()  # type: ignore[method-assign]
+
+    async def _scenario():
+        await ch.send(
+            target="#chan001",
+            text="Open the details form",
+            metadata={
+                "discord_modal": {
+                    "title": "Details",
+                    "fields": [
+                        {"label": "Subject", "custom_id": "subject"},
+                        {"label": "Details", "custom_id": "details", "style": "paragraph"},
+                    ],
+                }
+            },
+        )
+        trigger_custom_id = message_posts[0]["components"][-1]["components"][0]["custom_id"]
+        await ch._handle_interaction_create(
+            {
+                "id": "inter-modal-open-1",
+                "token": "tok-modal-open-1",
+                "type": 3,
+                "channel_id": "chan001",
+                "guild_id": "guild-1",
+                "user": {"id": "u1", "username": "bob"},
+                "data": {"custom_id": trigger_custom_id, "component_type": 2},
+                "message": {"id": "msg001"},
+            }
+        )
+
+    asyncio.run(_scenario())
+
+    assert emitted == []
+    assert ch._ack_interaction.await_count == 0
+    assert len(interaction_callbacks) == 1
+    assert interaction_callbacks[0]["type"] == 9
+    modal_data = interaction_callbacks[0]["data"]
+    assert modal_data["title"] == "Details"
+    assert modal_data["custom_id"].startswith("clawlite:modal:submit:")
+    assert modal_data["components"][0]["components"][0]["label"] == "Subject"
+    assert modal_data["components"][1]["components"][0]["style"] == 2
+
+
 def test_discord_send_with_poll_metadata() -> None:
     """send() includes poll field when metadata has discord_poll."""
     posted: list[dict] = []

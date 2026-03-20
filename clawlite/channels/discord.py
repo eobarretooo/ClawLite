@@ -23,6 +23,8 @@ DISCORD_DEFAULT_GATEWAY_INTENTS = 46593
 DISCORD_TYPING_INTERVAL_S = 8.0
 DISCORD_VOICE_MESSAGE_FLAG = 1 << 13  # 8192 — IS_VOICE_MESSAGE
 DISCORD_VOICE_WAVEFORM_SAMPLES = 256
+DISCORD_MAX_COMPONENT_ROWS = 5
+DISCORD_MAX_MODAL_FIELDS = 5
 DISCORD_COMPONENT_KIND_BY_TYPE: dict[int, str] = {
     2: "button",
     3: "select",
@@ -296,6 +298,7 @@ class DiscordChannel(BaseChannel):
         self._presence_last_sent_at = 0.0
         self._presence_last_error = ""
         self._presence_last_state = ""
+        self._registered_modals: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _normalize_allow_from(raw: Any) -> list[str]:
@@ -513,6 +516,134 @@ class DiscordChannel(BaseChannel):
             key = label or field_id or "field"
             lines.append(f"{key}: {value}")
         return "\n".join(lines)
+
+    @classmethod
+    def _normalize_outbound_modal_field(
+        cls,
+        raw: Any,
+        *,
+        index: int,
+    ) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        label = str(raw.get("label", "") or "").strip()[:45]
+        custom_id = str(raw.get("custom_id", raw.get("id", "")) or "").strip()[:100]
+        placeholder = str(raw.get("placeholder", "") or "").strip()[:100]
+        value = str(raw.get("value", "") or "").strip()[:4000]
+        if not label:
+            return None
+        if not custom_id:
+            custom_id = f"field_{index + 1}"
+        style_raw = str(raw.get("style", "") or "").strip().lower()
+        style = 2 if style_raw in {"paragraph", "long", "2"} else 1
+        field: dict[str, Any] = {
+            "type": 4,
+            "custom_id": custom_id,
+            "label": label,
+            "style": style,
+        }
+        if placeholder:
+            field["placeholder"] = placeholder
+        if value:
+            field["value"] = value
+        if "required" in raw:
+            field["required"] = bool(raw.get("required"))
+        min_length = raw.get("min_length", raw.get("minLength"))
+        max_length = raw.get("max_length", raw.get("maxLength"))
+        if isinstance(min_length, (int, float)):
+            field["min_length"] = max(0, min(4000, int(min_length)))
+        if isinstance(max_length, (int, float)):
+            field["max_length"] = max(1, min(4000, int(max_length)))
+        return field
+
+    @classmethod
+    def _normalize_outbound_modal(cls, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        title = str(raw.get("title", "") or "").strip()[:45]
+        if not title:
+            return None
+        fields_raw = raw.get("fields")
+        if not isinstance(fields_raw, list):
+            return None
+        fields: list[dict[str, Any]] = []
+        for index, item in enumerate(fields_raw[:DISCORD_MAX_MODAL_FIELDS]):
+            normalized = cls._normalize_outbound_modal_field(item, index=index)
+            if normalized is not None:
+                fields.append(normalized)
+        if not fields:
+            return None
+        trigger_label = str(
+            raw.get("trigger_label", raw.get("triggerLabel", "Open form")) or "Open form"
+        ).strip()[:80]
+        trigger_style_raw = str(
+            raw.get("trigger_style", raw.get("triggerStyle", "primary")) or "primary"
+        ).strip().lower()
+        trigger_style = 1
+        if trigger_style_raw in {"secondary", "gray", "grey", "2"}:
+            trigger_style = 2
+        elif trigger_style_raw in {"success", "green", "3"}:
+            trigger_style = 3
+        elif trigger_style_raw in {"danger", "red", "4"}:
+            trigger_style = 4
+        custom_id = str(raw.get("custom_id", raw.get("customId", "")) or "").strip()[:100]
+        return {
+            "title": title,
+            "trigger_label": trigger_label or "Open form",
+            "trigger_style": trigger_style,
+            "custom_id": custom_id,
+            "fields": fields,
+        }
+
+    def _register_outbound_modal(self, modal: dict[str, Any]) -> dict[str, Any]:
+        seed = json.dumps(
+            {
+                "title": modal.get("title", ""),
+                "custom_id": modal.get("custom_id", ""),
+                "fields": modal.get("fields", []),
+                "time_ns": time.time_ns(),
+            },
+            sort_keys=True,
+        ).encode("utf-8", errors="replace")
+        digest = hashlib.sha1(seed).hexdigest()[:12]
+        trigger_custom_id = f"clawlite:modal:open:{digest}"
+        submit_custom_id = str(modal.get("custom_id", "") or "").strip() or f"clawlite:modal:submit:{digest}"
+        modal_data = {
+            "custom_id": submit_custom_id,
+            "title": str(modal.get("title", "") or "").strip()[:45],
+            "components": [
+                {"type": 1, "components": [dict(field)]}
+                for field in list(modal.get("fields", []))[:DISCORD_MAX_MODAL_FIELDS]
+            ],
+        }
+        self._registered_modals[trigger_custom_id] = {
+            "trigger_custom_id": trigger_custom_id,
+            "submit_custom_id": submit_custom_id,
+            "data": modal_data,
+            "registered_at": time.time(),
+        }
+        if len(self._registered_modals) > 128:
+            oldest = min(
+                self._registered_modals.items(),
+                key=lambda item: float(item[1].get("registered_at", 0.0) or 0.0),
+            )[0]
+            if oldest != trigger_custom_id:
+                self._registered_modals.pop(oldest, None)
+        return dict(self._registered_modals[trigger_custom_id])
+
+    @staticmethod
+    def _modal_trigger_component(*, custom_id: str, label: str, style: int) -> dict[str, Any]:
+        return {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": min(4, max(1, int(style or 1))),
+                    "label": str(label or "Open form")[:80],
+                    "custom_id": str(custom_id or "")[:100],
+                }
+            ],
+        }
 
     @classmethod
     def _normalize_guild_policies(
@@ -1264,7 +1395,27 @@ class DiscordChannel(BaseChannel):
         # Message components (buttons, select menus) — pass as metadata key "discord_components"
         raw_components = metadata_payload.get("discord_components") or metadata_payload.get("components")
         if isinstance(raw_components, list) and raw_components:
-            payload["components"] = [c for c in raw_components if isinstance(c, dict)][:5]  # Discord max 5 action rows
+            payload["components"] = [
+                c for c in raw_components if isinstance(c, dict)
+            ][:DISCORD_MAX_COMPONENT_ROWS]
+
+        raw_modal = metadata_payload.get("discord_modal")
+        normalized_modal = self._normalize_outbound_modal(raw_modal)
+        if raw_modal is not None and normalized_modal is None:
+            raise ValueError("discord_modal requires title and at least one valid field")
+        if normalized_modal is not None:
+            registered_modal = self._register_outbound_modal(normalized_modal)
+            components = list(payload.get("components") or [])
+            if len(components) >= DISCORD_MAX_COMPONENT_ROWS:
+                raise ValueError("discord modal trigger requires an available action row")
+            components.append(
+                self._modal_trigger_component(
+                    custom_id=str(registered_modal.get("trigger_custom_id", "") or ""),
+                    label=str(normalized_modal.get("trigger_label", "Open form") or "Open form"),
+                    style=int(normalized_modal.get("trigger_style", 1) or 1),
+                )
+            )
+            payload["components"] = components
 
         # Poll — pass as metadata key "discord_poll": {"question": str, "answers": [str, ...], "duration_hours": int}
         raw_poll = metadata_payload.get("discord_poll")
@@ -1794,9 +1945,6 @@ class DiscordChannel(BaseChannel):
         if not interaction_id or not interaction_token:
             return
 
-        # ACK the interaction immediately (type 5 = deferred channel message)
-        asyncio.create_task(self._ack_interaction(interaction_id, interaction_token))
-
         if not self._is_payload_authorized(
             payload=payload,
             user_id=user_id,
@@ -1816,6 +1964,22 @@ class DiscordChannel(BaseChannel):
             user_id=user_id,
             interaction_type=interaction_type,
         )
+
+        if interaction_type == 3 and isinstance(data, dict):
+            modal_trigger_id = str(data.get("custom_id", "") or "").strip()
+            registered_modal = self._registered_modals.get(modal_trigger_id)
+            if registered_modal is not None:
+                opened = await self.open_interaction_modal(
+                    interaction_id=interaction_id,
+                    interaction_token=interaction_token,
+                    modal_data=dict(registered_modal.get("data", {}) or {}),
+                )
+                if not opened:
+                    await self._ack_interaction(interaction_id, interaction_token)
+                return
+
+        # ACK the interaction immediately (type 5 = deferred channel message)
+        asyncio.create_task(self._ack_interaction(interaction_id, interaction_token))
 
         if interaction_type == 2:
             # APPLICATION_COMMAND (slash command)
@@ -2025,6 +2189,24 @@ class DiscordChannel(BaseChannel):
             return str(data.get("id", "") or "")
         except Exception:
             return ""
+
+    async def open_interaction_modal(
+        self,
+        *,
+        interaction_id: str,
+        interaction_token: str,
+        modal_data: dict[str, Any],
+    ) -> bool:
+        try:
+            await self._post_json(
+                url=f"{self.api_base}/interactions/{interaction_id}/{interaction_token}/callback",
+                payload={"type": 9, "data": modal_data},
+                error_prefix="discord_interaction_modal",
+            )
+            return True
+        except Exception as exc:
+            self._last_error = str(exc)
+            return False
 
     @staticmethod
     def _generate_placeholder_waveform() -> str:
