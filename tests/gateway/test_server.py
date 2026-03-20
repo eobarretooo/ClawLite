@@ -2908,6 +2908,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert 'const dashboardClientStorageKey = "clawlite.dashboard.clientId"' in js.text
     assert "exchangeDashboardSession" in js.text
     assert '"/api/dashboard/session"' in js.text
+    assert 'exchangeDashboardSession({ rawToken: byId("token-input").value, source: "auth" })' in js.text
+    assert 'exchangeDashboardSession(byId("token-input").value, { source: "auth" })' not in js.text
     assert "X-ClawLite-Dashboard-Handoff" in js.text
     assert "X-ClawLite-Dashboard-Session" in js.text
     assert "X-ClawLite-Dashboard-Client" in js.text
@@ -4619,6 +4621,58 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         )
         assert v1_chat.status_code == 401
         assert v1_chat.json()["error"] == "gateway_auth_required"
+
+
+def test_gateway_dashboard_handoff_is_single_use(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "secret-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        handoff = issue_dashboard_handoff(gateway_token="secret-token")
+
+        first = client.post(
+            "/api/dashboard/session",
+            headers={
+                "X-ClawLite-Dashboard-Handoff": handoff.token,
+                "X-ClawLite-Dashboard-Client": "dshc1.alpha-client",
+            },
+        )
+        assert first.status_code == 200
+        assert first.json()["bootstrap_kind"] == "dashboard_handoff"
+
+        replay_same_client = client.post(
+            "/api/dashboard/session",
+            headers={
+                "X-ClawLite-Dashboard-Handoff": handoff.token,
+                "X-ClawLite-Dashboard-Client": "dshc1.alpha-client",
+            },
+        )
+        assert replay_same_client.status_code == 401
+        assert replay_same_client.json()["error"] == "gateway_auth_invalid"
+
+        replay_other_client = client.post(
+            "/api/dashboard/session",
+            headers={
+                "X-ClawLite-Dashboard-Handoff": handoff.token,
+                "X-ClawLite-Dashboard-Client": "dshc1.beta-client",
+            },
+        )
+        assert replay_other_client.status_code == 401
+        assert replay_other_client.json()["error"] == "gateway_auth_invalid"
 
 
 def test_gateway_dashboard_session_alias_ws_only_and_not_chainable(tmp_path: Path) -> None:

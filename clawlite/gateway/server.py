@@ -114,9 +114,10 @@ from clawlite.gateway.dashboard_sessions import (
     DEFAULT_DASHBOARD_HANDOFF_QUERY_PARAM,
     DEFAULT_DASHBOARD_SESSION_HEADER_NAME,
     DEFAULT_DASHBOARD_SESSION_QUERY_PARAM,
+    DashboardHandoffRegistry,
     DashboardSessionRegistry,
-    verify_dashboard_handoff,
     dashboard_session_expiry_iso,
+    verify_dashboard_handoff,
 )
 from clawlite.gateway.diagnostics_payload import (
     diagnostics_payload as _diagnostics_payload_builder,
@@ -654,6 +655,7 @@ class GatewayAuthGuard:
     dashboard_handoff_header_name: str
     dashboard_handoff_query_param: str
     dashboard_sessions: DashboardSessionRegistry | None = None
+    dashboard_handoffs: DashboardHandoffRegistry | None = None
 
     @classmethod
     def from_config(cls, config: AppConfig) -> GatewayAuthGuard:
@@ -686,6 +688,7 @@ class GatewayAuthGuard:
             dashboard_handoff_header_name=DEFAULT_DASHBOARD_HANDOFF_HEADER_NAME,
             dashboard_handoff_query_param=DEFAULT_DASHBOARD_HANDOFF_QUERY_PARAM,
             dashboard_sessions=DashboardSessionRegistry() if token else None,
+            dashboard_handoffs=DashboardHandoffRegistry() if token else None,
         )
 
     def posture(self) -> str:
@@ -754,6 +757,13 @@ class GatewayAuthGuard:
     def _dashboard_handoff_matches(self, supplied_token: str) -> bool:
         return verify_dashboard_handoff(supplied_token, gateway_token=self.token)
 
+    def _consume_dashboard_handoff(self, supplied_token: str) -> bool:
+        if not self.token:
+            return False
+        if self.dashboard_handoffs is None:
+            return self._dashboard_handoff_matches(supplied_token)
+        return self.dashboard_handoffs.verify_and_consume(supplied_token, gateway_token=self.token)
+
     def _extract_dashboard_client_from_request(self, *, request: Request) -> str:
         if not self.token or self.dashboard_sessions is None:
             raise HTTPException(status_code=404, detail="dashboard_session_disabled")
@@ -778,7 +788,7 @@ class GatewayAuthGuard:
         )
         if supplied_token and self._token_matches(supplied_token):
             return "gateway_token"
-        if supplied_handoff and self._dashboard_handoff_matches(supplied_handoff):
+        if supplied_handoff and self._consume_dashboard_handoff(supplied_handoff):
             return "dashboard_handoff"
         if supplied_token or supplied_handoff:
             raise HTTPException(status_code=401, detail="gateway_auth_invalid")

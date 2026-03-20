@@ -87,6 +87,35 @@ class DashboardSessionRegistry:
             return hmac.compare_digest(str(row.client_id), normalized_client_id)
 
 
+class DashboardHandoffRegistry:
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._consumed: dict[str, float] = {}
+
+    def _purge_expired_locked(self, *, now: float) -> None:
+        expired = [token for token, expires_at in self._consumed.items() if expires_at <= now]
+        for token in expired:
+            self._consumed.pop(token, None)
+
+    @staticmethod
+    def _key(token: str) -> str:
+        return hashlib.sha256(str(token or "").strip().encode("utf-8")).hexdigest()
+
+    def verify_and_consume(self, token: str, *, gateway_token: str) -> bool:
+        record = parse_dashboard_handoff(token, gateway_token=gateway_token)
+        if record is None:
+            return False
+        now = time.time()
+        key = self._key(token)
+        with self._lock:
+            self._purge_expired_locked(now=now)
+            expires_at = float(self._consumed.get(key, 0.0) or 0.0)
+            if expires_at > now:
+                return False
+            self._consumed[key] = record.expires_at
+            return True
+
+
 def dashboard_session_expiry_iso(record: DashboardSessionRecord) -> str:
     return dt.datetime.fromtimestamp(record.expires_at, tz=dt.timezone.utc).isoformat(timespec="seconds")
 
@@ -134,12 +163,16 @@ def issue_dashboard_handoff(
 
 
 def verify_dashboard_handoff(token: str, *, gateway_token: str) -> bool:
+    return parse_dashboard_handoff(token, gateway_token=gateway_token) is not None
+
+
+def parse_dashboard_handoff(token: str, *, gateway_token: str) -> DashboardHandoffRecord | None:
     clean_token = str(token or "").strip()
     signing_key = str(gateway_token or "").strip()
     if not clean_token or not signing_key:
-        return False
+        return None
     if not clean_token.startswith("dshh1."):
-        return False
+        return None
     try:
         _, payload_b64, signature_b64 = clean_token.split(".", 2)
         payload = _urlsafe_b64_decode(payload_b64).decode("utf-8")
@@ -150,15 +183,21 @@ def verify_dashboard_handoff(token: str, *, gateway_token: str) -> bool:
         ).digest()
         supplied_signature = _urlsafe_b64_decode(signature_b64)
     except Exception:
-        return False
+        return None
     if not hmac.compare_digest(supplied_signature, expected_signature):
-        return False
+        return None
     try:
         expires_raw, _nonce = payload.split(":", 1)
         expires_at = float(expires_raw)
     except Exception:
-        return False
-    return expires_at > time.time()
+        return None
+    if expires_at <= time.time():
+        return None
+    return DashboardHandoffRecord(
+        token=clean_token,
+        issued_at=max(0.0, expires_at - float(DEFAULT_DASHBOARD_HANDOFF_TTL_SECONDS)),
+        expires_at=expires_at,
+    )
 
 
 __all__ = [
@@ -170,11 +209,13 @@ __all__ = [
     "DEFAULT_DASHBOARD_SESSION_HEADER_NAME",
     "DEFAULT_DASHBOARD_SESSION_QUERY_PARAM",
     "DEFAULT_DASHBOARD_SESSION_TTL_SECONDS",
+    "DashboardHandoffRegistry",
     "DashboardHandoffRecord",
     "DashboardSessionRecord",
     "DashboardSessionRegistry",
     "dashboard_handoff_expiry_iso",
     "dashboard_session_expiry_iso",
     "issue_dashboard_handoff",
+    "parse_dashboard_handoff",
     "verify_dashboard_handoff",
 ]

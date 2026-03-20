@@ -1563,13 +1563,16 @@ function persistToken(nextToken) {
   }
 }
 
-async function exchangeDashboardSession({ rawToken = "", handoffToken = "", source = "auth" } = {}) {
-  const token = String(rawToken || "").trim();
-  const handoff = String(handoffToken || "").trim();
+async function exchangeDashboardSession(params = {}) {
+  if (typeof params === "string") {
+    params = { rawToken: params, source: "auth" };
+  }
+  const options = params && typeof params === "object" ? params : {};
+  const token = String(options.rawToken || "").trim();
+  const handoff = String(options.handoffToken || "").trim();
+  const source = String(options.source || "auth");
   if (!token && !handoff) {
-    persistToken("");
-    persistDashboardSession("");
-    return false;
+    throw new Error("dashboard_auth_required");
   }
   const response = await fetch(paths.dashboard_session || "/api/dashboard/session", {
     method: "POST",
@@ -2367,7 +2370,7 @@ function bindEvents() {
 
   byId("save-token").addEventListener("click", async () => {
     try {
-      await exchangeDashboardSession(byId("token-input").value, { source: "auth" });
+      await exchangeDashboardSession({ rawToken: byId("token-input").value, source: "auth" });
       connectWs();
       await refreshAll("token-save");
     } catch (error) {
