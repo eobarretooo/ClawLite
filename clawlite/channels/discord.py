@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import time
@@ -481,6 +482,43 @@ class DiscordChannel(BaseChannel):
             if normalized is not None:
                 embeds.append(normalized)
         return embeds[:10]
+
+    @staticmethod
+    def _normalize_voice_bytes(raw: Any) -> bytes | None:
+        if isinstance(raw, bytes):
+            return raw
+        if isinstance(raw, bytearray):
+            return bytes(raw)
+        if isinstance(raw, memoryview):
+            return raw.tobytes()
+        value = str(raw or "").strip()
+        if not value:
+            return None
+        try:
+            return base64.b64decode(value, validate=True)
+        except Exception:
+            return None
+
+    @classmethod
+    def _normalize_outbound_voice(cls, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        audio_bytes = cls._normalize_voice_bytes(
+            raw.get("audio_bytes", raw.get("audioBytes", raw.get("audio_base64", raw.get("audioBase64"))))
+        )
+        if not audio_bytes:
+            return None
+        try:
+            duration_secs = max(0.0, float(raw.get("duration_secs", raw.get("durationSecs", 0.0)) or 0.0))
+        except Exception:
+            return None
+        waveform = str(raw.get("waveform", "") or "").strip() or None
+        return {
+            "audio_bytes": audio_bytes,
+            "duration_secs": duration_secs,
+            "waveform": waveform,
+            "silent": bool(raw.get("silent", False)),
+        }
 
     @staticmethod
     def _component_kind(component_type: int) -> str:
@@ -1495,6 +1533,23 @@ class DiscordChannel(BaseChannel):
             )
             or ""
         ).strip()
+        raw_voice = metadata_payload.get("discord_voice")
+        normalized_voice = self._normalize_outbound_voice(raw_voice)
+        if raw_voice is not None and normalized_voice is None:
+            raise ValueError("discord_voice requires audio bytes and duration_secs")
+        if normalized_voice is not None:
+            if resolved_target.kind == "user":
+                voice_channel_id = await self._ensure_dm_channel_id(resolved_target.value)
+            else:
+                voice_channel_id = resolved_target.value
+            return await self.send_voice_message(
+                channel_id=voice_channel_id,
+                audio_bytes=normalized_voice["audio_bytes"],
+                duration_secs=float(normalized_voice["duration_secs"]),
+                waveform=normalized_voice["waveform"],
+                reply_to_message_id=reply_to_message_id or None,
+                silent=bool(normalized_voice["silent"]),
+            )
         if reply_to_message_id:
             payload["message_reference"] = {
                 "message_id": reply_to_message_id,

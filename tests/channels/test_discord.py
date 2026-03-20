@@ -1638,6 +1638,101 @@ def test_discord_send_voice_message_builds_correct_payload() -> None:
     assert msg_posts[0][2]["flags"] == 8192
 
 
+def test_discord_send_routes_discord_voice_metadata_to_voice_message() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_send_voice_message(**kwargs):
+        calls.append(dict(kwargs))
+        return "discord:voice:voice-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch.object(ch, "send_voice_message", side_effect=_fake_send_voice_message):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "reply_to_message_id": "msg-parent",
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x00" * 16,
+                        "duration_secs": 3.25,
+                        "waveform": "AAAA",
+                        "silent": True,
+                    },
+                },
+            )
+        )
+
+    assert out == "discord:voice:voice-1"
+    assert calls == [
+        {
+            "channel_id": "chan001",
+            "audio_bytes": b"\x4f\x67\x67\x53" + b"\x00" * 16,
+            "duration_secs": 3.25,
+            "waveform": "AAAA",
+            "reply_to_message_id": "msg-parent",
+            "silent": True,
+        }
+    ]
+
+
+def test_discord_send_routes_discord_voice_metadata_to_dm_channel() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_send_voice_message(**kwargs):
+        calls.append(dict(kwargs))
+        return "discord:voice:voice-dm"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch.object(ch, "_ensure_dm_channel_id", new=AsyncMock(return_value="dm-voice-1")):
+        with patch.object(ch, "send_voice_message", side_effect=_fake_send_voice_message):
+            out = asyncio.run(
+                ch.send(
+                    target="user:user-1",
+                    text="",
+                    metadata={
+                        "discord_voice": {
+                            "audio_base64": "T2dnUwAAAAA=",
+                            "duration_secs": 1.5,
+                        }
+                    },
+                )
+            )
+
+    assert out == "discord:voice:voice-dm"
+    assert calls == [
+        {
+            "channel_id": "dm-voice-1",
+            "audio_bytes": b"OggS\x00\x00\x00\x00",
+            "duration_secs": 1.5,
+            "waveform": None,
+            "reply_to_message_id": None,
+            "silent": False,
+        }
+    ]
+
+
+def test_discord_send_rejects_invalid_voice_metadata() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={"discord_voice": {"audio_base64": "not-base64", "duration_secs": 1}},
+            )
+        )
+        raise AssertionError("expected invalid discord_voice metadata to fail")
+    except ValueError as exc:
+        assert "discord_voice requires audio bytes and duration_secs" in str(exc)
+
+
 def test_discord_send_streaming_edits_message_in_place() -> None:
     """send_streaming() creates a message then edits it as chunks arrive."""
     from clawlite.core.engine import ProviderChunk
