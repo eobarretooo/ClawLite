@@ -78,7 +78,7 @@ bash scripts/docker_setup.sh
 | Channel | Status |
 |---|---|
 | **Telegram** | ✅ Complete — polling + webhook, streaming, reactions, topics, keyboards |
-| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons/selects, streaming |
+| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons/selects/modals, streaming |
 | **Email** | 🟡 Usable — IMAP inbound + SMTP outbound |
 | **WhatsApp** | 🟡 Usable — webhook inbound, outbound retry |
 | **Slack** | 🟡 Usable — Socket Mode, working indicator |
@@ -123,7 +123,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (1854 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (1856 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
