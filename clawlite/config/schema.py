@@ -364,6 +364,26 @@ class GatewayWebSocketConfig(Base):
         return self
 
 
+class GatewayRateLimitConfig(Base):
+    enabled: bool = True
+    window_s: float = 60.0
+    chat_requests_per_window: int = 60
+    ws_chat_requests_per_window: int = 60
+    exempt_loopback: bool = False
+
+    @field_validator("window_s", mode="before")
+    @classmethod
+    def _window_default(cls, v: Any) -> float:
+        value = v if v not in (None, "") else 60.0
+        return max(1.0, float(value))
+
+    @field_validator("chat_requests_per_window", "ws_chat_requests_per_window", mode="before")
+    @classmethod
+    def _request_limit_default(cls, v: Any) -> int:
+        value = v if v not in (None, "") else 60
+        return max(0, int(value))
+
+
 class GatewayConfig(Base):
     host: str = "127.0.0.1"
     port: int = 8787
@@ -377,6 +397,7 @@ class GatewayConfig(Base):
     supervisor: GatewaySupervisorConfig = Field(default_factory=GatewaySupervisorConfig)
     autonomy: GatewayAutonomyConfig = Field(default_factory=GatewayAutonomyConfig)
     websocket: GatewayWebSocketConfig = Field(default_factory=GatewayWebSocketConfig)
+    rate_limit: GatewayRateLimitConfig = Field(default_factory=GatewayRateLimitConfig)
 
     @field_validator("host", mode="before")
     @classmethod

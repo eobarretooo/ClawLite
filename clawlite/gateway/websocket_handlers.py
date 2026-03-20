@@ -31,13 +31,20 @@ class GatewayWebSocketHandlers:
     build_tools_catalog_payload_fn: Callable[..., dict[str, Any]]
     parse_include_schema_flag_fn: Callable[[Any], bool]
     utc_now_iso_fn: Callable[[], str]
+    rate_limiter: Any | None = None
     coalesce_enabled: bool = True
     coalesce_min_chars: int = _STREAM_COALESCE_DEFAULT_MIN_CHARS
     coalesce_max_chars: int = _STREAM_COALESCE_DEFAULT_MAX_CHARS
     coalesce_profile: str = "compact"
 
     @staticmethod
-    def _envelope_error(*, error: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
+    def _envelope_error(
+        *,
+        error: str,
+        status_code: int,
+        request_id: str | None = None,
+        retry_after_s: float = 0.0,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "type": "error",
             "error": str(error or "invalid_request"),
@@ -45,6 +52,8 @@ class GatewayWebSocketHandlers:
         }
         if request_id:
             payload["request_id"] = request_id
+        if retry_after_s > 0:
+            payload["retry_after_s"] = round(float(retry_after_s), 3)
         return payload
 
     @staticmethod
@@ -54,8 +63,9 @@ class GatewayWebSocketHandlers:
         code: str,
         message: str,
         status_code: int,
+        retry_after_s: float = 0.0,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "type": "res",
             "id": request_id,
             "ok": False,
@@ -65,6 +75,9 @@ class GatewayWebSocketHandlers:
                 "status_code": int(status_code),
             },
         }
+        if retry_after_s > 0:
+            payload["error"]["retry_after_s"] = round(float(retry_after_s), 3)
+        return payload
 
     @staticmethod
     def _coerce_req_id(value: Any) -> str | int | None:
@@ -110,6 +123,61 @@ class GatewayWebSocketHandlers:
         if isinstance(raw_runtime_metadata, dict) and raw_runtime_metadata:
             runtime_metadata = dict(raw_runtime_metadata)
         return channel, chat_id, runtime_metadata
+
+    def _socket_credential(self, *, socket: WebSocket, allow_dashboard_session: bool) -> str:
+        header_name = getattr(self.auth_guard, "header_name", "Authorization")
+        query_param = getattr(self.auth_guard, "query_param", "token")
+        extract_token = getattr(self.auth_guard, "_extract_token", None)
+        if callable(extract_token):
+            raw_token = extract_token(
+                header_value=str(socket.headers.get(header_name, "") or ""),
+                query_value=str(socket.query_params.get(query_param, "") or ""),
+            )
+            if raw_token:
+                return str(raw_token)
+        if allow_dashboard_session:
+            dashboard_header_name = getattr(self.auth_guard, "dashboard_session_header_name", "")
+            dashboard_query_param = getattr(self.auth_guard, "dashboard_session_query_param", "")
+            extract_dashboard_session = getattr(self.auth_guard, "_extract_dashboard_session", None)
+            if callable(extract_dashboard_session):
+                dashboard_session = extract_dashboard_session(
+                    header_value=str(socket.headers.get(dashboard_header_name, "") or ""),
+                    query_value=str(socket.query_params.get(dashboard_query_param, "") or ""),
+                )
+                if dashboard_session:
+                    return str(dashboard_session)
+        return ""
+
+    def _ws_chat_rate_limit_error(
+        self,
+        *,
+        socket: WebSocket,
+        request_id: str | int | None,
+        legacy_envelope: bool,
+        allow_dashboard_session: bool,
+    ) -> dict[str, Any] | None:
+        if self.rate_limiter is None:
+            return None
+        decision = self.rate_limiter.consume_ws_chat(
+            client_ip=socket.client.host if socket.client is not None else None,
+            credential=self._socket_credential(socket=socket, allow_dashboard_session=allow_dashboard_session),
+        )
+        if decision.allowed:
+            return None
+        if legacy_envelope:
+            return self._envelope_error(
+                error="gateway_rate_limited",
+                status_code=429,
+                request_id=str(request_id or "").strip() or None,
+                retry_after_s=decision.retry_after_s,
+            )
+        return self._req_error(
+            request_id=request_id,
+            code="gateway_rate_limited",
+            message="gateway chat rate limit exceeded; retry shortly",
+            status_code=429,
+            retry_after_s=decision.retry_after_s,
+        )
 
     def _should_flush_stream_buffer(self, text: str, *, done: bool) -> bool:
         content = str(text or "")
@@ -205,10 +273,12 @@ class GatewayWebSocketHandlers:
     async def _run_chat_stream_request(
         self,
         *,
+        socket: WebSocket,
         request_id: str | int | None,
         params: dict[str, Any],
         send_ws_fn: Callable[[Any], Awaitable[None]],
         legacy_envelope: bool = False,
+        allow_dashboard_session: bool = False,
     ) -> bool:
         session_id = str(params.get("session_id") or params.get("sessionId") or "").strip()
         text = str(params.get("text") or "").strip()
@@ -231,6 +301,15 @@ class GatewayWebSocketHandlers:
                     )
                 )
             return False
+        rate_limit_error = self._ws_chat_rate_limit_error(
+            socket=socket,
+            request_id=request_id,
+            legacy_envelope=legacy_envelope,
+            allow_dashboard_session=allow_dashboard_session,
+        )
+        if rate_limit_error is not None:
+            await send_ws_fn(rate_limit_error)
+            return True
         if self.stream_engine_with_timeout_fn is None:
             return False
 
@@ -502,12 +581,23 @@ class GatewayWebSocketHandlers:
                         if normalized_method in {"chat.send", "message.send"}:
                             if self._coerce_stream_flag(params):
                                 handled = await self._run_chat_stream_request(
+                                    socket=socket,
                                     request_id=request_id,
                                     params=params,
                                     send_ws_fn=_send_ws,
+                                    allow_dashboard_session=allow_dashboard_session,
                                 )
                                 if handled:
                                     continue
+                            rate_limit_error = self._ws_chat_rate_limit_error(
+                                socket=socket,
+                                request_id=request_id,
+                                legacy_envelope=False,
+                                allow_dashboard_session=allow_dashboard_session,
+                            )
+                            if rate_limit_error is not None:
+                                await _send_ws(rate_limit_error)
+                                continue
                             await _send_ws(await self._run_chat_request(request_id=request_id, params=params))
                             continue
 
@@ -558,13 +648,24 @@ class GatewayWebSocketHandlers:
 
                     if self._coerce_stream_flag(payload):
                         handled = await self._run_chat_stream_request(
+                            socket=socket,
                             request_id=request_id,
                             params=payload,
                             send_ws_fn=_send_ws,
                             legacy_envelope=True,
+                            allow_dashboard_session=allow_dashboard_session,
                         )
                         if handled:
                             continue
+                    rate_limit_error = self._ws_chat_rate_limit_error(
+                        socket=socket,
+                        request_id=request_id,
+                        legacy_envelope=True,
+                        allow_dashboard_session=allow_dashboard_session,
+                    )
+                    if rate_limit_error is not None:
+                        await _send_ws(rate_limit_error)
+                        continue
 
                     channel, chat_id, runtime_metadata = self._coerce_chat_context(payload)
                     try:
@@ -607,6 +708,15 @@ class GatewayWebSocketHandlers:
                 text = str(payload.get("text", "")).strip()
                 if not session_id or not text:
                     await _send_ws({"error": "session_id and text are required"})
+                    continue
+                rate_limit_error = self._ws_chat_rate_limit_error(
+                    socket=socket,
+                    request_id=None,
+                    legacy_envelope=True,
+                    allow_dashboard_session=allow_dashboard_session,
+                )
+                if rate_limit_error is not None:
+                    await _send_ws(rate_limit_error)
                     continue
                 channel, chat_id, runtime_metadata = self._coerce_chat_context(payload)
                 try:

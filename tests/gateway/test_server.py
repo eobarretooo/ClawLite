@@ -620,6 +620,69 @@ def test_gateway_chat_endpoint_forwards_optional_context(tmp_path: Path) -> None
     ]
 
 
+def test_gateway_chat_rate_limit_blocks_repeated_http_chat_requests(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "rate_limit": {
+                "window_s": 60,
+                "chat_requests_per_window": 1,
+                "ws_chat_requests_per_window": 0,
+            }
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        first = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
+        assert first.status_code == 200
+
+        second = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping again"})
+        assert second.status_code == 429
+        payload = second.json()
+        assert payload["error"] == "gateway_rate_limited"
+        assert payload["code"] == "gateway_rate_limited"
+        assert payload["retry_after_s"] > 0
+        assert second.headers["Retry-After"] == "60"
+
+
+def test_gateway_chat_rate_limit_shares_bucket_with_api_message_alias(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "secret-token",
+                "allow_loopback_without_auth": False,
+            },
+            "rate_limit": {
+                "window_s": 60,
+                "chat_requests_per_window": 1,
+                "ws_chat_requests_per_window": 0,
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer secret-token"}
+        first = client.post("/v1/chat", headers=headers, json={"session_id": "cli:1", "text": "ping"})
+        assert first.status_code == 200
+
+        second = client.post("/api/message", headers=headers, json={"session_id": "cli:1", "text": "ping again"})
+        assert second.status_code == 429
+        assert second.json()["error"] == "gateway_rate_limited"
+
+
 def test_gateway_chat_endpoint_timeout_returns_provider_style_code(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
@@ -4884,6 +4947,38 @@ def test_gateway_ws_alias_behaves_like_v1_ws(tmp_path: Path) -> None:
             socket_alias.send_json({"session_id": "cli:ws", "text": "ping"})
             payload_alias = socket_alias.receive_json()
             assert payload_alias["text"] == "pong"
+
+
+def test_gateway_ws_chat_rate_limit_blocks_second_legacy_message(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "rate_limit": {
+                "window_s": 60,
+                "chat_requests_per_window": 0,
+                "ws_chat_requests_per_window": 1,
+            }
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/ws") as socket:
+            _assert_connect_challenge(socket)
+            socket.send_json({"session_id": "cli:ws", "text": "ping"})
+            first = socket.receive_json()
+            assert first["text"] == "pong"
+
+            socket.send_json({"session_id": "cli:ws", "text": "ping again"})
+            blocked = socket.receive_json()
+            assert blocked["type"] == "error"
+            assert blocked["error"] == "gateway_rate_limited"
+            assert blocked["status_code"] == 429
+            assert blocked["retry_after_s"] > 0
 
 
 def test_gateway_ws_alias_respects_auth_guard(tmp_path: Path) -> None:

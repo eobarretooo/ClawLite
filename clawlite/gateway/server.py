@@ -4,6 +4,7 @@ import asyncio
 import datetime as dt
 import hmac
 import json
+import math
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -37,6 +38,7 @@ from clawlite.runtime import (
 from clawlite.gateway.control_handlers import GatewayControlHandlers
 from clawlite.gateway.status_handlers import GatewayStatusHandlers
 from clawlite.gateway.request_handlers import GatewayRequestHandlers
+from clawlite.gateway.rate_limit import GatewayRateLimiter
 from clawlite.gateway.autonomy_notice import (
     default_heartbeat_route as _default_heartbeat_route_helper,
     latest_memory_route as _latest_memory_route_helper,
@@ -902,6 +904,59 @@ class GatewayAuthGuard:
             await socket.close(code=4401, reason="gateway_auth_invalid")
             return False
         return True
+
+
+def _request_rate_limit_credential(
+    *,
+    request: Request,
+    auth_guard: GatewayAuthGuard,
+    allow_dashboard_session: bool = False,
+) -> str:
+    header_value = str(request.headers.get(auth_guard.header_name, "") or "")
+    query_value = str(request.query_params.get(auth_guard.query_param, "") or "")
+    supplied_token = auth_guard._extract_token(header_value=header_value, query_value=query_value)
+    if supplied_token:
+        return supplied_token
+    if allow_dashboard_session:
+        dashboard_header = str(request.headers.get(auth_guard.dashboard_session_header_name, "") or "")
+        dashboard_query = str(request.query_params.get(auth_guard.dashboard_session_query_param, "") or "")
+        dashboard_session = auth_guard._extract_dashboard_session(header_value=dashboard_header, query_value=dashboard_query)
+        if dashboard_session:
+            return dashboard_session
+    return ""
+
+
+def _http_chat_rate_limit_response(
+    *,
+    request: Request,
+    auth_guard: GatewayAuthGuard,
+    rate_limiter: GatewayRateLimiter | None,
+    allow_dashboard_session: bool = False,
+) -> JSONResponse | None:
+    if rate_limiter is None:
+        return None
+    decision = rate_limiter.consume_http_chat(
+        client_ip=request.client.host if request.client is not None else None,
+        credential=_request_rate_limit_credential(
+            request=request,
+            auth_guard=auth_guard,
+            allow_dashboard_session=allow_dashboard_session,
+        ),
+    )
+    if decision.allowed:
+        return None
+    retry_after_s = max(1, int(math.ceil(float(decision.retry_after_s or 0.0))))
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "gateway_rate_limited",
+            "code": "gateway_rate_limited",
+            "status": 429,
+            "message": "gateway chat rate limit exceeded; retry shortly",
+            "retry_after_s": round(float(decision.retry_after_s or 0.0), 3),
+        },
+        headers={"Retry-After": str(retry_after_s)},
+    )
 
 
 async def _route_cron_job(runtime: RuntimeContainer, job) -> str | None:
@@ -2877,6 +2932,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.auth_guard = auth_guard
     app.state.http_telemetry = http_telemetry
     app.state.ws_telemetry = ws_telemetry
+    rate_limit_cfg = cfg.gateway.rate_limit
+    gateway_rate_limiter = GatewayRateLimiter(
+        enabled=bool(rate_limit_cfg.enabled),
+        window_s=float(rate_limit_cfg.window_s),
+        chat_requests_per_window=int(rate_limit_cfg.chat_requests_per_window),
+        ws_chat_requests_per_window=int(rate_limit_cfg.ws_chat_requests_per_window),
+        exempt_loopback=bool(rate_limit_cfg.exempt_loopback),
+    )
+    app.state.gateway_rate_limiter = gateway_rate_limiter
     telegram_webhook_path = _normalize_webhook_path(cfg.channels.telegram.webhook_path)
     whatsapp_webhook_path = _normalize_webhook_path(
         getattr(cfg.channels.whatsapp, "webhook_path", "/api/webhooks/whatsapp"),
@@ -3223,6 +3287,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         lifecycle=lifecycle,
         ws_telemetry=ws_telemetry,
         contract_version=GATEWAY_CONTRACT_VERSION,
+        rate_limiter=gateway_rate_limiter,
         run_engine_with_timeout_fn=lambda session_id, user_text, **context: _run_engine_with_timeout(
             engine=runtime.engine,
             session_id=session_id,
@@ -3493,10 +3558,23 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/v1/chat", response_model=ChatResponse)
     async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+        if blocked := _http_chat_rate_limit_response(
+            request=request,
+            auth_guard=auth_guard,
+            rate_limiter=gateway_rate_limiter,
+        ):
+            return blocked
         return ChatResponse(**(await request_handlers.chat(req, request)))
 
     @app.post("/api/message", response_model=ChatResponse)
     async def api_message(req: ChatRequest, request: Request) -> ChatResponse:
+        if blocked := _http_chat_rate_limit_response(
+            request=request,
+            auth_guard=auth_guard,
+            rate_limiter=gateway_rate_limiter,
+            allow_dashboard_session=True,
+        ):
+            return blocked
         return ChatResponse(**(await request_handlers.chat(req, request, allow_dashboard_session=True)))
 
     @app.get("/v1/tools/catalog")
