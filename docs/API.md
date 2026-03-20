@@ -1175,6 +1175,11 @@ Nota operacional: o tool `message` suporta acoes Telegram (`send`, `reply`, `edi
 
 If a gateway token is configured, this endpoint requires that token even when the gateway is otherwise open on loopback.
 
+Rate limiting:
+- When `gateway.rate_limit.enabled=true`, `POST /v1/chat`, `POST /api/message`, and WebSocket chat sends may return `429` / `gateway_rate_limited`.
+- HTTP responses set `Retry-After` and include `retry_after_s` in the JSON payload.
+- Relevant config fields today: `gateway.rate_limit.window_s`, `gateway.rate_limit.chat_requests_per_window`, `gateway.rate_limit.ws_chat_requests_per_window`, and `gateway.rate_limit.exempt_loopback`.
+
 ## `GET /v1/status`
 
 Estado do control-plane do gateway.
