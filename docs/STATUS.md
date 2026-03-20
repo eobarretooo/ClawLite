@@ -19,7 +19,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **1843 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **1845 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, and CI smoke for `docker compose config` plus image build
@@ -65,7 +65,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 | Channel | Status |
 |---------|--------|
 | **Telegram** | ✅ Complete — polling + webhook, reactions, topics, reply keyboards, streaming, offset safety, pairing, dedupe, circuit breaker |
-| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons, voice messages, webhooks, polls, streaming, embeds, threads, attachments, focus bindings |
+| **Discord** | 🟡 Usable — gateway WS, slash commands, buttons/selects, voice messages, webhooks, polls, streaming, embeds, threads, attachments, focus bindings |
 | **Email** | 🟡 Usable — IMAP inbound + SMTP outbound |
 | **WhatsApp** | 🟡 Usable — webhook inbound, outbound retry, bridge typing keepalive |
 | **Slack** | 🟡 Usable — Socket Mode inbound, outbound retry, reversible working indicator |
@@ -99,7 +99,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 1843 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 1845 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -113,7 +113,7 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: Discord policy/routing parity, reply-mode control, isolated slash sessions, persisted `/focus` bindings, and automatic idle/max-age expiry
+- Current slice: Discord policy/routing parity, reply-mode control, isolated slash sessions, persisted `/focus` bindings, automatic idle/max-age expiry, and richer inbound select-menu context
 - Next slice: continue Docker/browser operational parity or return to deeper tools and skills governance
 
 ## Delivery Policy
