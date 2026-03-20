@@ -120,6 +120,7 @@ class GatewayAutonomyConfig(Base):
     self_evolution_cooldown_s: int = 3600
     self_evolution_branch_prefix: str = "self-evolution"
     self_evolution_require_approval: bool = False
+    self_evolution_enabled_for_sessions: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -331,6 +332,18 @@ class GatewayAutonomyConfig(Base):
     def _branch_prefix_default(cls, v: Any) -> str:
         value = str(v or "self-evolution").strip()
         return value or "self-evolution"
+
+    @field_validator("self_evolution_enabled_for_sessions", mode="before")
+    @classmethod
+    def _normalize_self_evolution_enabled_for_sessions(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        result: list[str] = []
+        for item in v:
+            normalized = str(item or "").strip()
+            if normalized and normalized not in result:
+                result.append(normalized)
+        return result
 
 
 class GatewayWebSocketConfig(Base):

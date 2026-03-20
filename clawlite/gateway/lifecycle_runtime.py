@@ -174,6 +174,14 @@ async def start_subsystems(
     record_autonomy_event: Callable[..., None],
     send_autonomy_notice: Callable[..., Awaitable[None]],
 ) -> None:
+    self_evolution_enabled = False
+    if runtime.self_evolution is not None:
+        background_enabled = getattr(runtime.self_evolution, "background_enabled", None)
+        if callable(background_enabled):
+            self_evolution_enabled = bool(background_enabled())
+        else:
+            self_evolution_enabled = bool(cfg.gateway.autonomy.self_evolution_enabled)
+
     started: list[tuple[str, Callable[[], Awaitable[Any]]]] = []
     steps: list[tuple[str, Callable[[], Awaitable[Any]], Callable[[], Awaitable[Any]], bool]] = [
         ("skills_watcher", lambda: runtime.skills_loader.start_watcher(), lambda: runtime.skills_loader.stop_watcher(), True),
@@ -186,7 +194,7 @@ async def start_subsystems(
         ("autonomy", lambda: runtime.autonomy.start(), lambda: runtime.autonomy.stop(), bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
         ("proactive_monitor", start_proactive_monitor, stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
         ("memory_quality_tuning", start_memory_quality_tuning, stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
-        ("self_evolution", start_self_evolution, stop_self_evolution, bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None)),
+        ("self_evolution", start_self_evolution, stop_self_evolution, bool(runtime.self_evolution is not None and self_evolution_enabled)),
         ("supervisor", lambda: runtime.supervisor.start(), lambda: runtime.supervisor.stop(), bool(cfg.gateway.supervisor.enabled)),
     ]
 
@@ -287,6 +295,14 @@ async def stop_subsystems(
     stop_memory_quality_tuning: Callable[[], Awaitable[None]],
     stop_self_evolution: Callable[[], Awaitable[None]],
 ) -> None:
+    self_evolution_enabled = False
+    if runtime.self_evolution is not None:
+        background_enabled = getattr(runtime.self_evolution, "background_enabled", None)
+        if callable(background_enabled):
+            self_evolution_enabled = bool(background_enabled())
+        else:
+            self_evolution_enabled = bool(cfg.gateway.autonomy.self_evolution_enabled)
+
     steps: list[tuple[str, Callable[[], Awaitable[Any]], bool]] = [
         ("supervisor", lambda: runtime.supervisor.stop(), bool(cfg.gateway.supervisor.enabled)),
         ("autonomy", lambda: runtime.autonomy.stop(), bool(runtime.autonomy is not None and cfg.gateway.autonomy.enabled)),
@@ -294,7 +310,7 @@ async def stop_subsystems(
         ("subagent_maintenance", stop_subagent_maintenance, True),
         ("proactive_monitor", stop_proactive_monitor, bool(runtime.memory_monitor is not None)),
         ("memory_quality_tuning", stop_memory_quality_tuning, bool(cfg.gateway.autonomy.tuning_loop_enabled)),
-        ("self_evolution", stop_self_evolution, bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None)),
+        ("self_evolution", stop_self_evolution, bool(runtime.self_evolution is not None and self_evolution_enabled)),
         ("cron", lambda: runtime.cron.stop(), True),
         ("autonomy_wake", lambda: runtime.autonomy_wake.stop(), True),
         ("channels", lambda: runtime.channels.stop(), True),

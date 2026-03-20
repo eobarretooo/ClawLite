@@ -1457,9 +1457,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     self_evolution_task: asyncio.Task[Any] | None = None
     self_evolution_running = False
     self_evolution_stop_event = asyncio.Event()
+    self_evolution_status = runtime.self_evolution.status() if runtime.self_evolution is not None else {}
     self_evolution_runner_state = _build_self_evolution_runner_state(
-        enabled=bool(cfg.gateway.autonomy.self_evolution_enabled and runtime.self_evolution is not None),
+        enabled=bool(self_evolution_status.get("background_enabled", self_evolution_status.get("enabled", False))),
         cooldown_seconds=float(getattr(runtime.self_evolution, "cooldown_s", 3600.0)) if runtime.self_evolution is not None else 0.0,
+        activation_mode=str(self_evolution_status.get("activation_mode", "") or ""),
+        activation_reason=str(self_evolution_status.get("activation_reason", "") or ""),
+        enabled_for_sessions=list(self_evolution_status.get("enabled_for_sessions", []) or []),
+        autonomy_session_id=str(self_evolution_status.get("autonomy_session_id", "") or ""),
     )
     subagent_maintenance_interval_seconds = max(1.0, float(runtime.engine.subagents.maintenance_interval_seconds()))
     subagent_maintenance_task: asyncio.Task[Any] | None = None
@@ -1917,7 +1922,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             running=bool(self_evolution_runner_state.get("enabled", False) and self_evolution_state == "running"),
             error=(
                 self_evolution_error
-                or ("disabled" if not self_evolution_runner_state.get("enabled", False) else "")
+                or (
+                    str(self_evolution_runner_state.get("activation_reason", "") or "disabled")
+                    if not self_evolution_runner_state.get("enabled", False)
+                    else ""
+                )
             ),
         )
 
@@ -2486,12 +2495,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         nonlocal self_evolution_task, self_evolution_running
         if runtime.self_evolution is None:
             return
-        self_evolution_runner_state["enabled"] = bool(getattr(runtime.self_evolution, "enabled", False))
+        status = runtime.self_evolution.status()
+        self_evolution_runner_state["enabled"] = bool(status.get("background_enabled", status.get("enabled", False)))
         self_evolution_runner_state["cooldown_seconds"] = float(getattr(runtime.self_evolution, "cooldown_s", 3600.0))
+        self_evolution_runner_state["activation_mode"] = str(status.get("activation_mode", "") or "")
+        self_evolution_runner_state["activation_reason"] = str(status.get("activation_reason", "") or "")
+        self_evolution_runner_state["enabled_for_sessions"] = list(status.get("enabled_for_sessions", []) or [])
+        self_evolution_runner_state["autonomy_session_id"] = str(status.get("autonomy_session_id", "") or "")
         if not self_evolution_runner_state["enabled"]:
             self_evolution_running = False
             self_evolution_runner_state["running"] = False
-            lifecycle.mark_component("self_evolution", running=False, error="disabled")
+            lifecycle.mark_component(
+                "self_evolution",
+                running=False,
+                error=str(self_evolution_runner_state.get("activation_reason", "") or "disabled"),
+            )
             return
         if self_evolution_task is not None and not self_evolution_task.done():
             self_evolution_running = True
@@ -2535,7 +2553,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         lifecycle.mark_component(
             "self_evolution",
             running=False,
-            error=("disabled" if not self_evolution_runner_state.get("enabled", False) else str(self_evolution_runner_state.get("last_error", "") or "")),
+            error=(
+                str(self_evolution_runner_state.get("activation_reason", "") or "disabled")
+                if not self_evolution_runner_state.get("enabled", False)
+                else str(self_evolution_runner_state.get("last_error", "") or "")
+            ),
         )
         bind_event("self_evolution.lifecycle").info("self_evolution loop stopped")
 

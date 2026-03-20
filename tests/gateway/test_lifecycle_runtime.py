@@ -115,3 +115,107 @@ def test_start_subsystems_continues_after_component_startup_timeout() -> None:
         assert lifecycle.startup_error == ""
 
     asyncio.run(_scenario())
+
+
+def test_start_subsystems_skips_self_evolution_when_session_canary_is_not_active() -> None:
+    async def _scenario() -> None:
+        cfg = AppConfig(
+            gateway={
+                "heartbeat": {"enabled": False},
+                "supervisor": {"enabled": False},
+                "autonomy": {
+                    "enabled": False,
+                    "tuning_loop_enabled": False,
+                    "self_evolution_enabled": True,
+                    "self_evolution_enabled_for_sessions": ["autonomy:canary"],
+                },
+            }
+        )
+        lifecycle = _Lifecycle()
+        start_calls: list[str] = []
+
+        class _Skills:
+            async def start_watcher(self) -> None:
+                return None
+
+            async def stop_watcher(self) -> None:
+                return None
+
+        class _Channels:
+            async def start(self, _cfg: dict[str, object]) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+            def startup_replay_status(self) -> dict[str, object]:
+                return {"enabled": True, "running": False, "last_error": "", "replayed": 0, "failed": 0, "skipped": 0}
+
+            def startup_inbound_replay_status(self) -> dict[str, object]:
+                return {"enabled": True, "running": False, "last_error": "", "replayed": 0, "remaining": 0}
+
+        class _AutonomyWake:
+            async def start(self, _dispatch) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+            def status(self) -> dict[str, object]:
+                return {"restored": 0, "journal_entries": 0, "last_journal_error": ""}
+
+        class _Cron:
+            async def start(self, _submit) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+        runtime = SimpleNamespace(
+            skills_loader=_Skills(),
+            channels=_Channels(),
+            autonomy_wake=_AutonomyWake(),
+            cron=_Cron(),
+            job_queue=None,
+            heartbeat=SimpleNamespace(start=lambda _submit: None, stop=lambda: None),
+            autonomy=None,
+            memory_monitor=None,
+            self_evolution=SimpleNamespace(background_enabled=lambda: False),
+            supervisor=SimpleNamespace(start=lambda: None, stop=lambda: None),
+        )
+
+        async def _noop(*args, **kwargs):
+            del args, kwargs
+            return None
+
+        async def _start_self_evolution() -> None:
+            start_calls.append("self_evolution")
+
+        await start_subsystems(
+            cfg=cfg,
+            runtime=runtime,
+            lifecycle=lifecycle,
+            dispatch_autonomy_wake=lambda *args, **kwargs: _noop(*args, **kwargs),
+            submit_cron_wake=lambda *args, **kwargs: _noop(*args, **kwargs),
+            submit_heartbeat_wake=lambda: _noop(),
+            start_subagent_maintenance=lambda: _noop(),
+            stop_subagent_maintenance=lambda: _noop(),
+            start_job_workers=lambda: _noop(),
+            stop_job_workers=lambda: _noop(),
+            start_proactive_monitor=lambda: _noop(),
+            stop_proactive_monitor=lambda: _noop(),
+            start_memory_quality_tuning=lambda: _noop(),
+            stop_memory_quality_tuning=lambda: _noop(),
+            start_self_evolution=_start_self_evolution,
+            stop_self_evolution=lambda: _noop(),
+            resume_recoverable_subagents=lambda: _noop(),
+            run_startup_bootstrap_cycle=lambda: _noop(),
+            record_autonomy_event=lambda *args, **kwargs: None,
+            send_autonomy_notice=_noop,
+        )
+
+        assert start_calls == []
+        assert lifecycle.components["self_evolution"]["enabled"] is False
+        assert lifecycle.components["self_evolution"]["last_error"] == "disabled"
+
+    asyncio.run(_scenario())

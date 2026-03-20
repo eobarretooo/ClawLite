@@ -504,6 +504,45 @@ def test_self_evolution_no_gaps_respects_cooldown_and_force(tmp_path: Path, monk
     assert third["last_branch"] == ""
 
 
+def test_self_evolution_session_canary_blocks_background_runs_but_not_force(tmp_path: Path, monkeypatch) -> None:
+    project_root, source_root, target_file, original = _build_sample_self_evolution_project(tmp_path)
+
+    async def _fake_llm(prompt: str) -> str:
+        del prompt
+        return (
+            "DESCRIPTION: implement target\n"
+            "```python\n"
+            "def target():\n"
+            "    return 42\n"
+            "```\n"
+        )
+
+    engine = SelfEvolutionEngine(
+        project_root=project_root,
+        source_root=source_root,
+        run_llm=_fake_llm,
+        enabled=True,
+        enabled_for_sessions=["autonomy:canary"],
+        autonomy_session_id="autonomy:system",
+        log_path=tmp_path / "evolution-log.json",
+    )
+    monkeypatch.setattr(self_evolution_module.Validator, "run_ruff", lambda self: (True, "ok"))
+    monkeypatch.setattr(self_evolution_module.Validator, "run_pytest", lambda self: (True, "ok"))
+
+    blocked = asyncio.run(engine.run_once())
+    forced = asyncio.run(engine.run_once(force=True))
+
+    assert blocked["enabled"] is True
+    assert blocked["background_enabled"] is False
+    assert blocked["activation_mode"] == "session_canary"
+    assert blocked["activation_reason"] == "autonomy_session_not_allowlisted"
+    assert blocked["run_count"] == 0
+    assert forced["last_outcome"] == "committed"
+    assert forced["run_count"] == 1
+    assert str(forced["last_branch"]).startswith("self-evolution/evo-")
+    assert target_file.read_text(encoding="utf-8") == original
+
+
 def test_self_evolution_first_run_ignores_cooldown_when_monotonic_is_low(tmp_path: Path, monkeypatch) -> None:
     project_root, source_root, _target_file, _original = _build_sample_self_evolution_project(tmp_path)
     engine = SelfEvolutionEngine(

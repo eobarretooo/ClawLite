@@ -99,11 +99,23 @@ def build_tuning_runner_state(
     }
 
 
-def build_self_evolution_runner_state(*, enabled: bool, cooldown_seconds: float) -> dict[str, Any]:
+def build_self_evolution_runner_state(
+    *,
+    enabled: bool,
+    cooldown_seconds: float,
+    activation_mode: str = "",
+    activation_reason: str = "",
+    enabled_for_sessions: list[str] | None = None,
+    autonomy_session_id: str = "",
+) -> dict[str, Any]:
     return {
         "enabled": bool(enabled),
         "running": False,
         "cooldown_seconds": float(cooldown_seconds),
+        "activation_mode": str(activation_mode or ""),
+        "activation_reason": str(activation_reason or ""),
+        "enabled_for_sessions": list(enabled_for_sessions or []),
+        "autonomy_session_id": str(autonomy_session_id or ""),
         "ticks": 0,
         "success_count": 0,
         "error_count": 0,

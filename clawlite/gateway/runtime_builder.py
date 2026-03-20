@@ -588,6 +588,8 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
         enabled=bool(config.gateway.autonomy.self_evolution_enabled),
         branch_prefix=str(config.gateway.autonomy.self_evolution_branch_prefix or "self-evolution"),
         require_approval=bool(config.gateway.autonomy.self_evolution_require_approval),
+        enabled_for_sessions=list(config.gateway.autonomy.self_evolution_enabled_for_sessions),
+        autonomy_session_id=str(config.gateway.autonomy.session_id or "autonomy:system"),
         log_path=Path(config.state_path) / "evolution-log.json",
     )
 

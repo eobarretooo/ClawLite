@@ -670,6 +670,8 @@ class SelfEvolutionEngine:
         enabled: bool = False,
         branch_prefix: str = "self-evolution",
         require_approval: bool = False,
+        enabled_for_sessions: list[str] | None = None,
+        autonomy_session_id: str = "autonomy:system",
         log_path: str | Path | None = None,
     ) -> None:
         self.project_root = Path(project_root).resolve()
@@ -684,6 +686,8 @@ class SelfEvolutionEngine:
         self.enabled = bool(enabled)
         self.branch_prefix = self._normalize_branch_prefix(branch_prefix)
         self.require_approval = bool(require_approval)
+        self.enabled_for_sessions = self._normalize_session_ids(enabled_for_sessions)
+        self.autonomy_session_id = str(autonomy_session_id or "autonomy:system").strip() or "autonomy:system"
 
         log_file = Path(log_path) if log_path else self.project_root / "memory" / "evolution-log.json"
         self.log = EvolutionLog(log_file)
@@ -710,12 +714,44 @@ class SelfEvolutionEngine:
         return normalized or "self-evolution"
 
     @staticmethod
+    def _normalize_session_ids(values: list[str] | None) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        result: list[str] = []
+        for item in values:
+            normalized = str(item or "").strip()
+            if normalized and normalized not in result:
+                result.append(normalized)
+        return result
+
+    @staticmethod
     def _utc_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
     @staticmethod
     def _now_monotonic() -> float:
         return time.monotonic()
+
+    def background_enabled(self) -> bool:
+        if not self.enabled:
+            return False
+        if not self.enabled_for_sessions:
+            return True
+        return self.autonomy_session_id in self.enabled_for_sessions
+
+    def activation_mode(self) -> str:
+        if not self.enabled:
+            return "disabled"
+        if self.enabled_for_sessions:
+            return "session_canary"
+        return "global"
+
+    def activation_reason(self) -> str:
+        if not self.enabled:
+            return "disabled_by_config"
+        if self.enabled_for_sessions and self.autonomy_session_id not in self.enabled_for_sessions:
+            return "autonomy_session_not_allowlisted"
+        return ""
 
     def _create_git_sandbox(self, run_id: str) -> tuple[_GitSandbox | None, str]:
         dirty, detail = _git_is_dirty(self.project_root)
@@ -857,7 +893,7 @@ class SelfEvolutionEngine:
         }
 
     async def run_once(self, *, force: bool = False, dry_run: bool = False) -> dict[str, Any]:
-        if not self.enabled and not force:
+        if not force and not self.background_enabled():
             return self.status()
 
         now = self._now_monotonic()
@@ -1200,6 +1236,11 @@ class SelfEvolutionEngine:
             )
         return {
             "enabled": self.enabled,
+            "background_enabled": self.background_enabled(),
+            "activation_mode": self.activation_mode(),
+            "activation_reason": self.activation_reason(),
+            "enabled_for_sessions": list(self.enabled_for_sessions),
+            "autonomy_session_id": self.autonomy_session_id,
             "run_count": self._run_count,
             "committed_count": self._committed_count,
             "dry_run_count": self._dry_run_count,

@@ -280,6 +280,10 @@ def test_load_config_gateway_startup_timeouts_and_self_evolution_controls(tmp_pa
                 "  autonomy:",
                 "    self_evolution_branch_prefix: review-queue",
                 "    self_evolution_require_approval: true",
+                "    self_evolution_enabled_for_sessions:",
+                "      - autonomy:canary",
+                "      - autonomy:canary",
+                "      - \"\"",
                 "",
             ]
         ),
@@ -293,6 +297,7 @@ def test_load_config_gateway_startup_timeouts_and_self_evolution_controls(tmp_pa
     assert cfg.gateway.startup_timeout_supervisor_s == 4
     assert cfg.gateway.autonomy.self_evolution_branch_prefix == "review-queue"
     assert cfg.gateway.autonomy.self_evolution_require_approval is True
+    assert cfg.gateway.autonomy.self_evolution_enabled_for_sessions == ["autonomy:canary"]
 
 
 def test_load_config_channel_runtime_fields_for_slack_whatsapp_and_irc(tmp_path: Path) -> None:

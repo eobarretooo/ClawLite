@@ -278,15 +278,29 @@ class RecoveringGatewayChannel(BaseChannel):
 
 
 class FakeSelfEvolutionEngine:
-    def __init__(self, *, enabled: bool = True, cooldown_s: float = 9999.0) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        cooldown_s: float = 9999.0,
+        background_enabled: bool | None = None,
+        enabled_for_sessions: list[str] | None = None,
+        autonomy_session_id: str = "autonomy:system",
+    ) -> None:
         self.enabled = enabled
         self.cooldown_s = float(cooldown_s)
+        self._background_enabled = bool(enabled if background_enabled is None else background_enabled)
+        self.enabled_for_sessions = list(enabled_for_sessions or [])
+        self.autonomy_session_id = str(autonomy_session_id or "autonomy:system")
         self._run_count = 0
         self._committed_count = 0
         self._dry_run_count = 0
         self._last_outcome = ""
         self._last_error = ""
         self.log = SimpleNamespace(recent=lambda _n=10: [{"outcome": self._last_outcome}] if self._run_count else [])
+
+    def background_enabled(self) -> bool:
+        return self._background_enabled
 
     async def run_once(self, *, force: bool = False, dry_run: bool = False) -> dict[str, object]:
         self._run_count += 1
@@ -301,6 +315,11 @@ class FakeSelfEvolutionEngine:
     def status(self) -> dict[str, object]:
         return {
             "enabled": self.enabled,
+            "background_enabled": self._background_enabled,
+            "activation_mode": "global" if self.enabled and self._background_enabled else "session_canary",
+            "activation_reason": "" if self._background_enabled else "autonomy_session_not_allowlisted",
+            "enabled_for_sessions": list(self.enabled_for_sessions),
+            "autonomy_session_id": self.autonomy_session_id,
             "run_count": self._run_count,
             "committed_count": self._committed_count,
             "dry_run_count": self._dry_run_count,
@@ -2454,6 +2473,45 @@ def test_gateway_self_evolution_trigger_accepts_dry_run_payload(tmp_path: Path) 
     assert payload["ok"] is True
     assert payload["status"]["last_outcome"] == "dry_run"
     assert payload["status"]["dry_run_count"] == 1
+
+
+def test_gateway_self_evolution_status_reports_session_canary_when_background_disabled(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "supervisor": {"enabled": False},
+            "autonomy": {
+                "self_evolution_enabled": True,
+                "self_evolution_enabled_for_sessions": ["autonomy:canary"],
+            },
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.self_evolution = FakeSelfEvolutionEngine(
+        enabled=True,
+        background_enabled=False,
+        enabled_for_sessions=["autonomy:canary"],
+        autonomy_session_id="autonomy:system",
+    )
+    app.state.runtime.workspace.should_run = lambda: False
+
+    with TestClient(app) as client:
+        status_payload = client.get("/v1/self-evolution/status").json()
+        diagnostics_payload = client.get("/v1/diagnostics").json()
+
+    assert status_payload["enabled"] is True
+    assert status_payload["status"]["background_enabled"] is False
+    assert status_payload["status"]["activation_mode"] == "session_canary"
+    assert status_payload["status"]["activation_reason"] == "autonomy_session_not_allowlisted"
+    assert status_payload["status"]["enabled_for_sessions"] == ["autonomy:canary"]
+    assert diagnostics_payload["self_evolution"]["background_enabled"] is False
+    assert diagnostics_payload["self_evolution"]["runner"]["enabled"] is False
+    assert diagnostics_payload["control_plane"]["components"]["self_evolution"]["last_error"] == "autonomy_session_not_allowlisted"
 
 
 def test_gateway_supervisor_recovers_crashed_subagent_maintenance_task(tmp_path: Path) -> None:
