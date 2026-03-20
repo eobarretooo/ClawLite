@@ -19,7 +19,7 @@ Prompting note: inbound adapters already normalize rich metadata for routing and
 | Channel | Inbound | Outbound | Status | Notes |
 | --- | --- | --- | --- | --- |
 | Telegram | Yes | Yes | Most complete | Polling and webhook, pairing, reactions, topics, typing keepalive, media download, voice/audio transcription |
-| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), buttons/select menus, embeds, thread creation, attachment download, focus bindings |
+| Discord | Yes | Yes | Usable | Gateway websocket inbound, REST outbound, reactions (send+receive), buttons/select menus, embeds, thread creation, attachment download, voice/audio transcription, focus bindings |
 | Email | Yes | Yes | Usable | IMAP polling inbound plus SMTP replies |
 | WhatsApp | Yes | Yes | Usable | Inbound webhook, outbound retry, bridge typing keepalive |
 | Slack | Yes | Yes | Usable | Socket Mode inbound, outbound `chat.postMessage`, reversible working indicator |
@@ -190,6 +190,8 @@ Important config keys:
 - `gateway_intents`
 - `gateway_backoff_base_s`, `gateway_backoff_max_s`
 - `typing_enabled`, `typing_interval_s`
+- `transcribe_voice`, `transcribe_audio`
+- `transcription_api_key`, `transcription_base_url`, `transcription_model`, `transcription_language`, `transcription_timeout_s`
 - `allow_from`
 - `dm_policy`
 - `group_policy`
@@ -218,6 +220,13 @@ Example config:
       "gateway_backoff_max_s": 30.0,
       "typing_enabled": true,
       "typing_interval_s": 8.0,
+      "transcribe_voice": true,
+      "transcribe_audio": true,
+      "transcription_api_key": "",
+      "transcription_base_url": "https://api.groq.com/openai/v1",
+      "transcription_model": "whisper-large-v3-turbo",
+      "transcription_language": "pt",
+      "transcription_timeout_s": 90.0,
       "allow_from": ["123456789012345678", "@ownername"],
       "dm_policy": "allowlist",
       "group_policy": "allowlist",
@@ -270,6 +279,7 @@ Notes:
 - By default, `ChannelManager` injects `thread_binding_state_path` under `state_path/channels/discord-thread-bindings.json` when the path is not set explicitly.
 - Focus bindings can expire automatically with `thread_binding_idle_timeout_s` and/or `thread_binding_max_age_s`. When a binding goes stale, ClawLite drops it fail-closed and routes the next inbound event back to the live Discord channel session.
 - Attachments are downloaded concurrently from the Discord CDN; raw bytes are available in the `attachment_data` metadata key. Each entry mirrors the `attachments` row with an added `data` field (bytes or `None` on failure).
+- Inbound Discord audio/voice attachments can now reuse the same Groq-compatible transcription path as Telegram. When `transcribe_voice` or `transcribe_audio` is enabled and a `transcription_api_key` (or `GROQ_API_KEY`) is available, ClawLite appends compact `[voice transcription: ...]` or `[audio transcription: ...]` lines to the inbound turn and exposes `media_transcription_count` / `media_transcription_error_count` in Discord operator status.
 - **Reactions**: `add_reaction(channel_id, message_id, emoji)` sends a reaction. Incoming `MESSAGE_REACTION_ADD` events are emitted as metadata-only events with `event_type: "reaction_add"` and `emoji`.
 - **Embeds**: pass a list of embed dicts under `metadata["discord_embeds"]` (or `"embeds"`) in `send()`. Discord accepts up to 10 embeds per message, and ClawLite now normalizes embed-field `inline` flags plus embed `timestamp` values before posting/replying so stats-style embeds render consistently.
 - **Webhooks**: `execute_webhook(...)` now also accepts `thread_id` for thread-targeted delivery, reuses the same embed normalization path, and clamps component rows to Discord's five-row limit.

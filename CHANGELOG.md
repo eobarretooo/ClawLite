@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord operator flows now include native `/discord-status` and `/discord-refresh` commands handled before the agent loop
 - `self_evolution` now supports a canary-style autonomy-session allowlist so the background loop can stay disabled outside explicitly approved runtime sessions while operator-forced dry runs still work
 - memory quality snapshots now expose a bounded-history `trend` summary so dashboard, diagnostics, and `clawlite memory quality` can report direction and streaks without replaying the full history client-side
+- Discord inbound audio/voice attachments can now reuse the same Groq-compatible transcription path as Telegram, appending compact transcription lines to inbound turns and surfacing transcription counters in Discord operator status
 
 ### Fixed
 - Discord inbound interactions now also route modal submissions as fresh turns with compact field text plus allowlisted modal field ids/labels, instead of ignoring `MODAL_SUBMIT` payloads entirely

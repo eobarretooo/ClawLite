@@ -228,6 +228,13 @@ These settings are applied by the live gateway runtime. `fallback_model` is hono
 | `token` | `""` | Bot token |
 | `allow_from` | `[]` | Allowed user/guild IDs |
 | `typing_enabled` | `true` | Send typing indicators |
+| `transcribe_voice` | `true` | Transcribe inbound Discord voice-note style attachments |
+| `transcribe_audio` | `true` | Transcribe inbound Discord audio attachments |
+| `transcription_api_key` | `""` | Groq-compatible transcription API key (falls back to `GROQ_API_KEY`) |
+| `transcription_base_url` | `"https://api.groq.com/openai/v1"` | Base URL for the transcription endpoint |
+| `transcription_model` | `"whisper-large-v3-turbo"` | Model sent to the transcription endpoint |
+| `transcription_language` | `"pt"` | Default language hint for Discord attachment transcription |
+| `transcription_timeout_s` | `90.0` | Timeout for attachment transcription requests |
 | `status` | `""` | Optional static Discord presence status: `online`, `idle`, `dnd`, or `invisible` |
 | `activity` | `""` | Optional Discord activity text |
 | `activity_type` | `4` | Discord activity type (`0-5`); `4` is custom status |

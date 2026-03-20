@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -274,6 +275,53 @@ class DiscordChannel(BaseChannel):
                 or 0.0
             ),
         )
+        self.transcribe_voice = bool(
+            config.get("transcribe_voice", config.get("transcribeVoice", True))
+        )
+        self.transcribe_audio = bool(
+            config.get("transcribe_audio", config.get("transcribeAudio", True))
+        )
+        configured_transcription_key = str(
+            config.get(
+                "transcription_api_key",
+                config.get("transcriptionApiKey", ""),
+            )
+            or ""
+        ).strip()
+        self.transcription_api_key = configured_transcription_key or str(
+            os.getenv("GROQ_API_KEY", "") or ""
+        ).strip()
+        self.transcription_base_url = str(
+            config.get(
+                "transcription_base_url",
+                config.get("transcriptionBaseUrl", ""),
+            )
+            or "https://api.groq.com/openai/v1"
+        ).strip()
+        self.transcription_model = str(
+            config.get(
+                "transcription_model",
+                config.get("transcriptionModel", ""),
+            )
+            or "whisper-large-v3-turbo"
+        ).strip()
+        self.transcription_language = str(
+            config.get(
+                "transcription_language",
+                config.get("transcriptionLanguage", ""),
+            )
+            or "pt"
+        ).strip()
+        self.transcription_timeout_s = max(
+            0.1,
+            float(
+                config.get(
+                    "transcription_timeout_s",
+                    config.get("transcriptionTimeoutS", 90.0),
+                )
+                or 90.0
+            ),
+        )
         self._headers = {
             "Authorization": f"Bot {self.token}",
             "Content-Type": "application/json",
@@ -300,6 +348,16 @@ class DiscordChannel(BaseChannel):
         self._presence_last_error = ""
         self._presence_last_state = ""
         self._registered_modals: dict[str, dict[str, Any]] = {}
+        self._transcription_provider: Any | None = None
+        self._media_transcription_count = 0
+        self._media_transcription_error_count = 0
+
+    @staticmethod
+    def _coerce_float(raw: Any, default: float = 0.0) -> float:
+        try:
+            return float(raw if raw not in (None, "") else default)
+        except Exception:
+            return float(default)
 
     @staticmethod
     def _normalize_allow_from(raw: Any) -> list[str]:
@@ -1052,7 +1110,7 @@ class DiscordChannel(BaseChannel):
         async with self._thread_bindings_lock:
             if self._thread_bindings_loaded:
                 return
-            self._thread_bindings = await asyncio.to_thread(self._load_thread_bindings)
+            self._thread_bindings = self._load_thread_bindings()
             self._thread_bindings_loaded = True
 
     def resolve_bound_session(self, channel_id: str) -> dict[str, str] | None:
@@ -1097,10 +1155,7 @@ class DiscordChannel(BaseChannel):
                 return self._binding_expiration_reason(current)
             self._thread_bindings.pop(channel_id, None)
             if self.thread_binding_state_path is not None:
-                await asyncio.to_thread(
-                    self._write_thread_bindings,
-                    dict(self._thread_bindings),
-                )
+                self._write_thread_bindings(dict(self._thread_bindings))
         return reason
 
     async def bind_thread(
@@ -1135,10 +1190,7 @@ class DiscordChannel(BaseChannel):
             changed = previous != entry
             self._thread_bindings[clean_channel_id] = entry
             if self.thread_binding_state_path is not None:
-                await asyncio.to_thread(
-                    self._write_thread_bindings,
-                    dict(self._thread_bindings),
-                )
+                self._write_thread_bindings(dict(self._thread_bindings))
         return {
             "ok": True,
             "changed": changed,
@@ -1155,10 +1207,7 @@ class DiscordChannel(BaseChannel):
         async with self._thread_bindings_lock:
             previous = self._thread_bindings.pop(clean_channel_id, None)
             if self.thread_binding_state_path is not None:
-                await asyncio.to_thread(
-                    self._write_thread_bindings,
-                    dict(self._thread_bindings),
-                )
+                self._write_thread_bindings(dict(self._thread_bindings))
         return {
             "ok": True,
             "changed": previous is not None,
@@ -1199,10 +1248,7 @@ class DiscordChannel(BaseChannel):
                     updated_binding["updated_at"] = now
                     self._thread_bindings[clean_channel_id] = updated_binding
                     if self.thread_binding_state_path is not None:
-                        await asyncio.to_thread(
-                            self._write_thread_bindings,
-                            dict(self._thread_bindings),
-                        )
+                        self._write_thread_bindings(dict(self._thread_bindings))
                     binding = updated_binding
         metadata["discord_binding_active"] = True
         metadata["discord_binding_channel_id"] = clean_channel_id
@@ -1937,9 +1983,169 @@ class DiscordChannel(BaseChannel):
                         item.get("content_type", item.get("contentType", "")) or ""
                     ).strip(),
                     "size": int(item.get("size", 0) or 0),
+                    "duration_secs": DiscordChannel._coerce_float(
+                        item.get("duration_secs", item.get("durationSecs", 0.0))
+                    ),
+                    "waveform": str(item.get("waveform", "") or "").strip(),
                 }
             )
         return attachments
+
+    @staticmethod
+    def _compact_text(value: Any, *, limit: int = 1600) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if limit > 3 and len(text) > limit:
+            return text[: limit - 3].rstrip() + "..."
+        return text
+
+    def _transcription_requested_for(self, media_type: str) -> bool:
+        normalized = str(media_type or "").strip().lower()
+        if normalized == "voice":
+            return self.transcribe_voice
+        if normalized == "audio":
+            return self.transcribe_audio
+        return False
+
+    def _resolve_transcription_provider(self) -> Any | None:
+        if not self.transcription_api_key:
+            return None
+        if self._transcription_provider is not None:
+            return self._transcription_provider
+        from clawlite.providers.transcription import TranscriptionProvider
+
+        self._transcription_provider = TranscriptionProvider(
+            api_key=self.transcription_api_key,
+            base_url=self.transcription_base_url,
+            model=self.transcription_model,
+            timeout_s=self.transcription_timeout_s,
+        )
+        return self._transcription_provider
+
+    @staticmethod
+    def _attachment_media_type(item: dict[str, Any]) -> str:
+        content_type = str(item.get("content_type", "") or "").strip().lower()
+        filename = str(item.get("filename", "") or "").strip().lower()
+        if content_type:
+            if not content_type.startswith("audio/"):
+                return ""
+        elif not filename.endswith(
+            (".ogg", ".oga", ".opus", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".webm")
+        ):
+            return ""
+        if (
+            bool(item.get("waveform"))
+            or float(item.get("duration_secs", 0.0) or 0.0) > 0.0
+            or filename.startswith("voice")
+            or filename.startswith("ptt")
+        ):
+            return "voice"
+        return "audio"
+
+    @staticmethod
+    def _attachment_temp_suffix(item: dict[str, Any]) -> str:
+        filename = str(item.get("filename", "") or "").strip()
+        suffix = Path(filename).suffix.strip().lower()
+        if suffix:
+            return suffix
+        content_type = str(item.get("content_type", "") or "").strip().lower()
+        if content_type == "audio/ogg":
+            return ".ogg"
+        if content_type in {"audio/opus", "audio/ogg; codecs=opus"}:
+            return ".opus"
+        if content_type == "audio/mpeg":
+            return ".mp3"
+        if content_type in {"audio/mp4", "audio/x-m4a"}:
+            return ".m4a"
+        if content_type in {"audio/wav", "audio/x-wav"}:
+            return ".wav"
+        if content_type == "audio/webm":
+            return ".webm"
+        return ".bin"
+
+    @staticmethod
+    def _write_temp_attachment_bytes(data: bytes, *, suffix: str) -> Path:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=suffix or ".bin", delete=False) as handle:
+            handle.write(data)
+            return Path(handle.name)
+
+    @staticmethod
+    def _remove_temp_attachment(path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            return
+
+    async def _maybe_transcribe_attachment_item(
+        self,
+        *,
+        message_id: str = "",
+        item: dict[str, Any],
+    ) -> None:
+        del message_id
+        media_type = self._attachment_media_type(item)
+        if not self._transcription_requested_for(media_type):
+            return
+        data = item.get("data")
+        if not isinstance(data, bytes) or not data:
+            return
+        provider = self._resolve_transcription_provider()
+        if provider is None:
+            return
+        local_path = self._write_temp_attachment_bytes(
+            data,
+            suffix=self._attachment_temp_suffix(item),
+        )
+        try:
+            transcript = await provider.transcribe(
+                local_path,
+                language=self.transcription_language or "pt",
+            )
+        except Exception as exc:
+            item["transcription_error"] = exc.__class__.__name__
+            self._media_transcription_error_count += 1
+            return
+        finally:
+            self._remove_temp_attachment(local_path)
+        cleaned = self._compact_text(transcript)
+        if not cleaned:
+            return
+        item["transcription"] = cleaned
+        item["transcription_language"] = self.transcription_language or "pt"
+        item["media_type"] = media_type
+        self._media_transcription_count += 1
+
+    def _attachment_transcription_lines(
+        self,
+        attachment_data: list[dict[str, Any]],
+    ) -> list[str]:
+        lines: list[str] = []
+        for item in attachment_data:
+            if not isinstance(item, dict):
+                continue
+            transcript = self._compact_text(item.get("transcription", ""))
+            if not transcript:
+                continue
+            media_type = str(item.get("media_type", "") or "").strip().lower() or "audio"
+            lines.append(f"[{media_type} transcription: {transcript}]")
+        return lines
+
+    def _attachment_media_types(
+        self,
+        attachment_data: list[dict[str, Any]],
+    ) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for item in attachment_data:
+            if not isinstance(item, dict):
+                continue
+            media_type = self._attachment_media_type(item)
+            if not media_type or media_type in seen:
+                continue
+            seen.add(media_type)
+            ordered.append(media_type)
+        return ordered
 
     async def _download_attachment(self, url: str, filename: str = "") -> bytes | None:
         """Download an attachment from Discord CDN. Returns raw bytes or None on failure."""
@@ -1982,49 +2188,62 @@ class DiscordChannel(BaseChannel):
             return
         self._policy_allowed_count += 1
 
-        attachments = self._normalize_attachment_rows(payload.get("attachments"))
-        content = str(payload.get("content", "") or "").strip()
-
-        # Download attachment bytes concurrently
-        attachment_data: list[dict[str, Any]] = []
-        if attachments:
-            download_tasks = [
-                self._download_attachment(row["url"], row["filename"])
-                for row in attachments
-            ]
-            results = await asyncio.gather(*download_tasks, return_exceptions=True)
-            for row, data in zip(attachments, results):
-                entry = dict(row)
-                entry["data"] = data if isinstance(data, bytes) else None
-                attachment_data.append(entry)
-
-        # Build text
-        attachment_desc = " ".join(
-            row["filename"] or row["id"] or "file"
-            for row in attachments
-            if row.get("filename") or row.get("id")
-        )
-        if content:
-            text = content
-        elif attachment_desc:
-            text = f"[attachments: {attachment_desc}]"
-        else:
-            text = "[attachment]"
-
-        metadata = {
-            "channel": "discord",
-            "channel_id": channel_id,
-            "guild_id": str(payload.get("guild_id", "") or "").strip(),
-            "message_id": str(payload.get("id", "") or "").strip(),
-            "author_username": username,
-            "author_global_name": str(author.get("global_name", "") or "").strip(),
-            "attachments": attachments,
-            "attachment_data": attachment_data,
-            "is_dm": not bool(payload.get("guild_id")),
-        }
-
         await self._start_typing(channel_id)
         try:
+            attachments = self._normalize_attachment_rows(payload.get("attachments"))
+            content = str(payload.get("content", "") or "").strip()
+
+            # Download attachment bytes concurrently
+            attachment_data: list[dict[str, Any]] = []
+            if attachments:
+                download_tasks = [
+                    self._download_attachment(row["url"], row["filename"])
+                    for row in attachments
+                ]
+                results = await asyncio.gather(*download_tasks, return_exceptions=True)
+                for row, data in zip(attachments, results):
+                    entry = dict(row)
+                    entry["data"] = data if isinstance(data, bytes) else None
+                    attachment_data.append(entry)
+                for entry in attachment_data:
+                    await self._maybe_transcribe_attachment_item(item=entry)
+
+            # Build text
+            attachment_desc = " ".join(
+                row["filename"] or row["id"] or "file"
+                for row in attachments
+                if row.get("filename") or row.get("id")
+            )
+            if content:
+                text = content
+            elif attachment_desc:
+                text = f"[attachments: {attachment_desc}]"
+            else:
+                text = "[attachment]"
+            transcription_lines = self._attachment_transcription_lines(attachment_data)
+            if transcription_lines:
+                if text:
+                    text = f"{text}\n\n" + "\n".join(transcription_lines)
+                else:
+                    text = "\n".join(transcription_lines)
+
+            media_types = self._attachment_media_types(attachment_data)
+            metadata = {
+                "channel": "discord",
+                "channel_id": channel_id,
+                "guild_id": str(payload.get("guild_id", "") or "").strip(),
+                "message_id": str(payload.get("id", "") or "").strip(),
+                "author_username": username,
+                "author_global_name": str(author.get("global_name", "") or "").strip(),
+                "attachments": attachments,
+                "attachment_data": attachment_data,
+                "is_dm": not bool(payload.get("guild_id")),
+                "media_present": bool(attachments),
+                "media_types": media_types,
+            }
+            if len(media_types) == 1:
+                metadata["media_type"] = media_types[0]
+
             session_id = self._derive_session_id(
                 channel_id=channel_id,
                 guild_id=metadata["guild_id"],
@@ -2756,6 +2975,10 @@ class DiscordChannel(BaseChannel):
             "thread_binding_idle_timeout_s": self.thread_binding_idle_timeout_s,
             "thread_binding_max_age_s": self.thread_binding_max_age_s,
             "thread_binding_count": len(self._thread_bindings),
+            "transcribe_voice": self.transcribe_voice,
+            "transcribe_audio": self.transcribe_audio,
+            "media_transcription_count": self._media_transcription_count,
+            "media_transcription_error_count": self._media_transcription_error_count,
             "hints": hints,
         }
 

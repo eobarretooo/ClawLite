@@ -348,49 +348,215 @@ def test_discord_message_create_filters_self_and_acl() -> None:
         )
         channel._bot_user_id = "bot-1"
 
-        with patch.object(channel, "_start_typing", AsyncMock()):
-            with patch.object(channel, "_stop_typing", AsyncMock()):
-                await channel._handle_message_create(
-                    {
-                        "id": "m1",
-                        "channel_id": "123",
-                        "content": "blocked",
-                        "attachments": [],
-                        "author": {
-                            "id": "bot-1",
-                            "username": "clawlite",
-                            "bot": False,
-                        },
-                    }
-                )
-                await channel._handle_message_create(
-                    {
-                        "id": "m2",
-                        "channel_id": "123",
-                        "content": "blocked acl",
-                        "attachments": [],
-                        "author": {"id": "u-2", "username": "bob", "bot": False},
-                    }
-                )
-                await channel._handle_message_create(
-                    {
-                        "id": "m3",
-                        "channel_id": "123",
-                        "content": "",
-                        "attachments": [{"id": "a1", "filename": "image.png", "url": "https://cdn.example/image.png"}],
-                        "author": {
-                            "id": "u-3",
-                            "username": "allowed",
-                            "bot": False,
-                        },
-                    }
-                )
+        async def _to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with patch.object(channel, "_download_attachment", AsyncMock(return_value=None)):
+            with patch("clawlite.channels.discord.asyncio.to_thread", new=_to_thread):
+                with patch.object(channel, "_start_typing", AsyncMock()):
+                    with patch.object(channel, "_stop_typing", AsyncMock()):
+                        await channel._handle_message_create(
+                            {
+                                "id": "m1",
+                                "channel_id": "123",
+                                "content": "blocked",
+                                "attachments": [],
+                                "author": {
+                                    "id": "bot-1",
+                                    "username": "clawlite",
+                                    "bot": False,
+                                },
+                            }
+                        )
+                        await channel._handle_message_create(
+                            {
+                                "id": "m2",
+                                "channel_id": "123",
+                                "content": "blocked acl",
+                                "attachments": [],
+                                "author": {"id": "u-2", "username": "bob", "bot": False},
+                            }
+                        )
+                        await channel._handle_message_create(
+                            {
+                                "id": "m3",
+                                "channel_id": "123",
+                                "content": "",
+                                "attachments": [{"id": "a1", "filename": "image.png", "url": "https://cdn.example/image.png"}],
+                                "author": {
+                                    "id": "u-3",
+                                    "username": "allowed",
+                                    "bot": False,
+                                },
+                            }
+                        )
 
         assert len(emitted) == 1
         assert emitted[0][2] == "[attachments: image.png]"
         assert emitted[0][3]["attachments"][0]["filename"] == "image.png"
 
     asyncio.run(_scenario())
+
+
+@pytest.mark.asyncio
+async def test_discord_inbound_voice_attachment_transcription_enriches_text_and_metadata() -> None:
+    emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+    async def _on_message(
+        session_id: str,
+        user_id: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        emitted.append((session_id, user_id, text, metadata))
+
+    provider_instance = MagicMock()
+    provider_instance.transcribe = AsyncMock(
+        return_value="hello from discord voice note"
+    )
+
+    channel = DiscordChannel(
+        config={
+            "token": "bot-token",
+            "transcription_api_key": "gkey",
+            "transcription_language": "en",
+            "transcribe_voice": True,
+        },
+        on_message=_on_message,
+    )
+    channel._bot_user_id = "bot-1"
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with patch.object(
+        channel,
+        "_download_attachment",
+        AsyncMock(return_value=b"OggS" + b"\x00" * 32),
+    ):
+        with patch(
+            "clawlite.providers.transcription.TranscriptionProvider",
+            return_value=provider_instance,
+        ):
+            with patch("clawlite.channels.discord.asyncio.to_thread", new=_to_thread):
+                with patch.object(channel, "_start_typing", AsyncMock()):
+                    with patch.object(channel, "_stop_typing", AsyncMock()):
+                        await channel._handle_message_create(
+                            {
+                                "id": "m-voice-1",
+                                "channel_id": "123",
+                                "guild_id": "guild-1",
+                                "content": "",
+                                "attachments": [
+                                    {
+                                        "id": "a-voice-1",
+                                        "filename": "voice-message.ogg",
+                                        "url": "https://cdn.example/voice-message.ogg",
+                                        "content_type": "audio/ogg",
+                                        "duration_secs": 2.4,
+                                        "waveform": "AAAA",
+                                    }
+                                ],
+                                "author": {
+                                    "id": "u-voice-1",
+                                    "username": "alice",
+                                    "bot": False,
+                                },
+                            }
+                        )
+
+    assert len(emitted) == 1
+    assert emitted[0][2] == (
+        "[attachments: voice-message.ogg]\n\n"
+        "[voice transcription: hello from discord voice note]"
+    )
+    metadata = emitted[0][3]
+    assert metadata["media_present"] is True
+    assert metadata["media_type"] == "voice"
+    assert metadata["media_types"] == ["voice"]
+    attachment = metadata["attachment_data"][0]
+    assert attachment["transcription"] == "hello from discord voice note"
+    assert attachment["transcription_language"] == "en"
+    assert attachment["media_type"] == "voice"
+    status = channel.operator_status()
+    assert status["media_transcription_count"] == 1
+    assert status["media_transcription_error_count"] == 0
+    provider_instance.transcribe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discord_inbound_voice_attachment_transcription_failures_do_not_block_message() -> None:
+    emitted: list[tuple[str, str, str, dict[str, Any]]] = []
+
+    async def _on_message(
+        session_id: str,
+        user_id: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        emitted.append((session_id, user_id, text, metadata))
+
+    provider_instance = MagicMock()
+    provider_instance.transcribe = AsyncMock(side_effect=RuntimeError("boom"))
+
+    channel = DiscordChannel(
+        config={
+            "token": "bot-token",
+            "transcription_api_key": "gkey",
+            "transcription_language": "pt",
+            "transcribe_voice": True,
+        },
+        on_message=_on_message,
+    )
+    channel._bot_user_id = "bot-1"
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with patch.object(
+        channel,
+        "_download_attachment",
+        AsyncMock(return_value=b"OggS" + b"\x00" * 32),
+    ):
+        with patch(
+            "clawlite.providers.transcription.TranscriptionProvider",
+            return_value=provider_instance,
+        ):
+            with patch("clawlite.channels.discord.asyncio.to_thread", new=_to_thread):
+                with patch.object(channel, "_start_typing", AsyncMock()):
+                    with patch.object(channel, "_stop_typing", AsyncMock()):
+                        await channel._handle_message_create(
+                            {
+                                "id": "m-voice-2",
+                                "channel_id": "123",
+                                "guild_id": "guild-1",
+                                "content": "",
+                                "attachments": [
+                                    {
+                                        "id": "a-voice-2",
+                                        "filename": "voice-message.ogg",
+                                        "url": "https://cdn.example/voice-message.ogg",
+                                        "content_type": "audio/ogg",
+                                        "duration_secs": 2.4,
+                                        "waveform": "AAAA",
+                                    }
+                                ],
+                                "author": {
+                                    "id": "u-voice-2",
+                                    "username": "alice",
+                                    "bot": False,
+                                },
+                            }
+                        )
+
+    assert len(emitted) == 1
+    assert emitted[0][2] == "[attachments: voice-message.ogg]"
+    attachment = emitted[0][3]["attachment_data"][0]
+    assert attachment["transcription_error"] == "RuntimeError"
+    assert "transcription" not in attachment
+    status = channel.operator_status()
+    assert status["media_transcription_count"] == 0
+    assert status["media_transcription_error_count"] == 1
 
 
 def test_discord_dm_policy_disabled_blocks_private_message() -> None:
@@ -1028,6 +1194,28 @@ async def test_download_attachment_returns_none_for_non_https():
 
     result2 = await ch._download_attachment("")
     assert result2 is None
+
+
+def test_discord_attachment_media_type_ignores_non_audio_webm() -> None:
+    ch = DiscordChannel(config={"token": "test-token"})
+
+    assert ch._attachment_media_type(
+        {"filename": "clip.webm", "content_type": "video/webm"}
+    ) == ""
+
+
+@pytest.mark.asyncio
+async def test_discord_thread_bindings_load_inline_without_state_path() -> None:
+    ch = DiscordChannel(config={"token": "test-token"})
+
+    with patch(
+        "clawlite.channels.discord.asyncio.to_thread",
+        new=AsyncMock(side_effect=AssertionError("unexpected to_thread")),
+    ):
+        await ch._ensure_thread_bindings_loaded()
+
+    assert ch._thread_bindings_loaded is True
+    assert ch._thread_bindings == {}
 
 
 # ─── Interaction / slash / button tests ──────────────────────────────────────

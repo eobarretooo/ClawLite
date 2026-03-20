@@ -955,6 +955,13 @@ class DiscordChannelConfig(Base):
     gateway_backoff_max_s: float = 30.0
     typing_enabled: bool = True
     typing_interval_s: float = 8.0
+    transcribe_voice: bool = True
+    transcribe_audio: bool = True
+    transcription_api_key: str = ""
+    transcription_base_url: str = "https://api.groq.com/openai/v1"
+    transcription_model: str = "whisper-large-v3-turbo"
+    transcription_language: str = "pt"
+    transcription_timeout_s: float = 90.0
     dm_policy: str = "open"
     group_policy: str = "open"
     allow_bots: str = "disabled"
@@ -971,6 +978,13 @@ class DiscordChannelConfig(Base):
     thread_binding_state_path: str = ""
     thread_binding_idle_timeout_s: float = 0.0
     thread_binding_max_age_s: float = 0.0
+    transcribe_voice: bool = True
+    transcribe_audio: bool = True
+    transcription_api_key: str = ""
+    transcription_base_url: str = "https://api.groq.com/openai/v1"
+    transcription_model: str = "whisper-large-v3-turbo"
+    transcription_language: str = "pt"
+    transcription_timeout_s: float = 90.0
     auto_presence: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("allow_from", mode="before")

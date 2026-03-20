@@ -291,6 +291,13 @@ def test_channels_config_supports_discord_policy_and_guild_allowlists() -> None:
                     "threadBindingStatePath": " /tmp/discord-bindings.json ",
                     "threadBindingIdleTimeoutS": 900,
                     "threadBindingMaxAgeS": 7200,
+                    "transcribeVoice": False,
+                    "transcribeAudio": True,
+                    "transcriptionApiKey": "discord-groq",
+                    "transcriptionBaseUrl": "https://api.groq.com/openai/v1",
+                    "transcriptionModel": "whisper-large-v3-turbo",
+                    "transcriptionLanguage": "en",
+                    "transcriptionTimeoutS": 45,
                     "guilds": {
                         "guild-1": {
                             "requireMention": False,
@@ -326,6 +333,13 @@ def test_channels_config_supports_discord_policy_and_guild_allowlists() -> None:
     assert cfg.channels.discord.thread_binding_state_path == "/tmp/discord-bindings.json"
     assert cfg.channels.discord.thread_binding_idle_timeout_s == 900.0
     assert cfg.channels.discord.thread_binding_max_age_s == 7200.0
+    assert cfg.channels.discord.transcribe_voice is False
+    assert cfg.channels.discord.transcribe_audio is True
+    assert cfg.channels.discord.transcription_api_key == "discord-groq"
+    assert cfg.channels.discord.transcription_base_url == "https://api.groq.com/openai/v1"
+    assert cfg.channels.discord.transcription_model == "whisper-large-v3-turbo"
+    assert cfg.channels.discord.transcription_language == "en"
+    assert cfg.channels.discord.transcription_timeout_s == 45.0
     assert cfg.channels.discord.guilds["guild-1"]["channels"]["chan-1"]["roles"] == ["role-1"]
 
 
