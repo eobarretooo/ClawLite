@@ -503,6 +503,11 @@ class AgentEngine:
         r"\buse\s+the\s+summarize\s+(?:skill|tool)\b",
         re.IGNORECASE,
     )
+    _EXPLICIT_CAPABILITY_ROUTE_PREFIX_RE = re.compile(
+        r"(?:^|[.;]\s*|\b(?:please|can you|could you|go ahead and|then|and then|next)\s+)"
+        r"(?:use|run|call|invoke|start with)\s+",
+        re.IGNORECASE,
+    )
     _SUMMARY_SOURCE_ROOTED_PATH_RE = re.compile(
         r"^(?:[A-Za-z]:[\\/]|/|\.{1,2}/|~/)",
         re.IGNORECASE,
@@ -1164,6 +1169,12 @@ class AgentEngine:
         rows = read_fn(session_id, limit=limit)
         return list(rows) if isinstance(rows, list) else []
 
+    async def _read_session_history_messages_async(self, session_id: str, *, limit: int) -> list[dict[str, Any]]:
+        if not self._supports_session_persistence_offload():
+            return self._read_session_history_messages(session_id, limit=limit)
+        rows = await asyncio.to_thread(self._read_session_history_messages, session_id, limit=limit)
+        return list(rows) if isinstance(rows, list) else []
+
     @staticmethod
     def _current_turn_messages(messages: list[dict[str, Any]], *, turn_start_index: int) -> list[dict[str, Any]]:
         start = max(0, int(turn_start_index) + 1)
@@ -1673,7 +1684,7 @@ class AgentEngine:
     ) -> _PreparedTurnPrompt:
         runtime_channel, runtime_chat_id = self._resolve_runtime_context(session_id, channel, chat_id)
         await self._await_turn_persistence(session_id)
-        history = self._read_session_history_messages(session_id, limit=self.memory_window)
+        history = await self._read_session_history_messages_async(session_id, limit=self.memory_window)
         memory_policy = await self._memory_integration_policy_async(actor="agent", session_id=session_id)
         allow_memory_write = bool(memory_policy.get("allow_memory_write", True))
         proactive_snippets: list[str] = []
@@ -2919,11 +2930,75 @@ class AgentEngine:
             )
         ):
             return True
+        generic_skill_names = skill_names.difference({"github", "github-issues", "gh-issues", "docker", "summarize"})
+        if cls._message_explicitly_routes_named_capability(
+            compact,
+            names=generic_skill_names,
+            capability_kind="skill",
+        ):
+            return True
+        generic_tool_names = tool_names.difference({"web_search"})
+        if cls._message_explicitly_routes_named_capability(
+            compact,
+            names=generic_tool_names,
+            capability_kind="tool",
+        ):
+            return True
+        return False
+
+    @classmethod
+    def _message_explicitly_routes_named_capability(
+        cls,
+        compact_text: str,
+        *,
+        names: set[str],
+        capability_kind: str,
+    ) -> bool:
+        lowered = " ".join(str(compact_text or "").split()).strip().lower()
+        if not lowered:
+            return False
+        kind = str(capability_kind or "").strip().lower()
+        if kind not in {"skill", "tool"}:
+            return False
+        for name in names:
+            clean_name = str(name or "").strip().lower()
+            if not clean_name:
+                continue
+            for variant in cls._explicit_route_name_variants(clean_name):
+                escaped = re.escape(variant)
+                if re.search(
+                    rf"{cls._EXPLICIT_CAPABILITY_ROUTE_PREFIX_RE.pattern}(?:the\s+)?{escaped}\s+{kind}\b",
+                    lowered,
+                    re.IGNORECASE,
+                ):
+                    return True
+                if any(marker in clean_name for marker in {"_", "-"}):
+                    if re.search(
+                        rf"{cls._EXPLICIT_CAPABILITY_ROUTE_PREFIX_RE.pattern}(?:the\s+)?{escaped}\b",
+                        lowered,
+                        re.IGNORECASE,
+                    ):
+                        return True
         return False
 
     @staticmethod
+    def _explicit_route_name_variants(name: str) -> tuple[str, ...]:
+        clean = str(name or "").strip().lower()
+        if not clean:
+            return ()
+        variants: list[str] = [clean]
+        spaced_underscore = clean.replace("_", " ")
+        spaced_hyphen = clean.replace("-", " ")
+        mixed_spaced = clean.replace("_", " ").replace("-", " ")
+        for candidate in (spaced_underscore, spaced_hyphen, mixed_spaced):
+            if candidate not in variants:
+                variants.append(candidate)
+        return tuple(variants)
+
+    @staticmethod
     def _stream_accumulated_has_visible_text(*, text: str = "", accumulated: str = "") -> bool:
-        return bool(str(accumulated or "").strip() or str(text or "").strip())
+        visible = f"{str(accumulated or '')}{str(text or '')}"
+        return any(char.isalnum() for char in visible)
 
     @classmethod
     def _routing_notice_for_turn(
@@ -3120,6 +3195,7 @@ class AgentEngine:
                     cancelled = False
                     final_error = ""
                     visible_text_emitted = False
+                    pending_prelude = ""
                     stream_kwargs: dict[str, Any] = {"messages": messages}
                     if prepared.tool_schema and self._accepts_parameter(stream_fn, "tools"):
                         stream_kwargs["tools"] = prepared.tool_schema
@@ -3180,11 +3256,30 @@ class AgentEngine:
                             if chunk.requires_full_run and not visible_text_emitted:
                                 await queue.put(("fallback", None))
                                 return
-                            accumulated = chunk.accumulated or (accumulated + chunk.text)
-                            if self._stream_accumulated_has_visible_text(
+                            next_accumulated = chunk.accumulated or (accumulated + chunk.text)
+                            has_visible_text = self._stream_accumulated_has_visible_text(
                                 text=chunk.text,
-                                accumulated=accumulated,
-                            ):
+                                accumulated=next_accumulated,
+                            )
+                            accumulated = next_accumulated
+                            if not visible_text_emitted and not has_visible_text and not chunk.done:
+                                pending_prelude = accumulated
+                                if chunk.error:
+                                    final_error = str(chunk.error)
+                                continue
+                            if pending_prelude and has_visible_text and not visible_text_emitted:
+                                chunk = ProviderChunk(
+                                    text=f"{pending_prelude}{chunk.text}",
+                                    accumulated=accumulated,
+                                    done=chunk.done,
+                                    error=chunk.error,
+                                    degraded=chunk.degraded,
+                                    requires_full_run=chunk.requires_full_run,
+                                )
+                                pending_prelude = ""
+                            elif pending_prelude and chunk.done and not has_visible_text:
+                                pending_prelude = ""
+                            if has_visible_text:
                                 visible_text_emitted = True
                             if chunk.error:
                                 final_error = str(chunk.error)
@@ -3823,7 +3918,7 @@ class AgentEngine:
                         "tool_calls": self._assistant_tool_calls(step.tool_calls, tool_call_ids=normalized_tool_call_ids),
                     }
                 )
-                self._append_session_message(
+                await self._append_session_message_async(
                     session_id,
                     "assistant",
                     step.text or "",
@@ -4167,7 +4262,7 @@ class AgentEngine:
                             "content": normalized_result,
                         }
                     )
-                    self._append_session_message(
+                    await self._append_session_message_async(
                         session_id,
                         "tool",
                         normalized_result,

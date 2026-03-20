@@ -179,6 +179,83 @@ async def test_stream_emits_full_run_signal_after_whitespace_only_prelude() -> N
 
 
 @pytest.mark.asyncio
+async def test_stream_emits_full_run_signal_after_punctuation_only_prelude() -> None:
+    provider = _make_provider()
+
+    async def fake_aiter_lines():
+        yield 'data: {"choices":[{"delta":{"content":"...\\n"},"finish_reason":null}]}'
+        yield (
+            'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"docs\\"}"}}]},"finish_reason":null}]}'
+        )
+        yield 'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}'
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.aiter_lines = fake_aiter_lines
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("clawlite.providers.litellm.httpx.AsyncClient", return_value=mock_client):
+        chunks = await _collect_chunks(
+            provider.stream(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "web_search", "description": "search", "arguments": {"query": "string"}}],
+            )
+        )
+
+    assert chunks == [
+        ProviderChunk(text="...\n", accumulated="...\n", done=False),
+        ProviderChunk(text="", accumulated="", done=True, requires_full_run=True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_reroute_after_visible_unicode_prelude() -> None:
+    provider = _make_provider()
+
+    async def fake_aiter_lines():
+        yield 'data: {"choices":[{"delta":{"content":"検索"},"finish_reason":null}]}'
+        yield (
+            'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"docs\\"}"}}]},"finish_reason":null}]}'
+        )
+        yield 'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}'
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.aiter_lines = fake_aiter_lines
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("clawlite.providers.litellm.httpx.AsyncClient", return_value=mock_client):
+        chunks = await _collect_chunks(
+            provider.stream(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "web_search", "description": "search", "arguments": {"query": "string"}}],
+            )
+        )
+
+    assert chunks[0] == ProviderChunk(text="検索", accumulated="検索", done=False)
+    assert chunks[-1].done is True
+    assert chunks[-1].accumulated == "検索"
+    assert chunks[-1].requires_full_run is False
+
+@pytest.mark.asyncio
 async def test_stream_error_before_any_chunks_propagates_as_error_chunk():
     """Error before any content yields error chunk without degraded."""
     provider = _make_provider()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -287,6 +288,11 @@ class LiteLLMProvider(LLMProvider):
             arguments = cls._parse_arguments(fn_payload.get("arguments", row.get("arguments", {})))
             parsed.append(ToolCall(id=call_id, name=name, arguments=arguments))
         return parsed
+
+    @staticmethod
+    def _has_visible_stream_text(*, text: str = "", accumulated: str = "") -> bool:
+        visible = f"{str(accumulated or '')}{str(text or '')}"
+        return any(char.isalnum() for char in visible)
 
     @staticmethod
     def _anthropic_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -749,7 +755,7 @@ class LiteLLMProvider(LLMProvider):
                                     text = str(delta.get("content") or "")
                                     finish_reason = choice.get("finish_reason")
                                     streamed_tool_calls = delta.get("tool_calls")
-                                    if not accumulated.strip() and not text.strip() and (
+                                    if not self._has_visible_stream_text(accumulated=accumulated, text=text) and (
                                         (isinstance(streamed_tool_calls, list) and streamed_tool_calls)
                                         or finish_reason == "tool_calls"
                                     ):

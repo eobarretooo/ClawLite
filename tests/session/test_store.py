@@ -176,6 +176,34 @@ def test_session_store_batches_compaction_for_larger_limits(tmp_path: Path) -> N
     assert rows[-1]["content"] == "m129"
 
 
+def test_session_store_reuses_cached_line_estimate_between_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(root=tmp_path / "sessions", max_messages_per_session=100)
+    estimate_calls = {"count": 0}
+    original_get_line_estimate = store._get_line_estimate
+
+    def _counting_get_line_estimate(path: Path) -> int:
+        estimate_calls["count"] += 1
+        return original_get_line_estimate(path)
+
+    monkeypatch.setattr(store, "_get_line_estimate", _counting_get_line_estimate)
+
+    store.append("telegram:cached", "user", "one")
+    store.append_many(
+        "telegram:cached",
+        [
+            {"role": "assistant", "content": "two", "metadata": {}},
+            {"role": "user", "content": "three", "metadata": {}},
+        ],
+    )
+
+    assert estimate_calls["count"] == 1
+    rows = store.read("telegram:cached", limit=10)
+    assert [row["content"] for row in rows] == ["one", "two", "three"]
+
+
 def test_session_store_prune_expired_deletes_stale_session_files(tmp_path: Path) -> None:
     store = SessionStore(root=tmp_path / "sessions", session_retention_ttl_s=60)
     store.append("telegram:stale", "user", "old")

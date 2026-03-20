@@ -273,6 +273,24 @@ class FakeWhitespacePreludeToolSignalProvider(FakeStreamingToolSignalProvider):
         yield ProviderChunk(text="", accumulated=" \n\t", done=True, requires_full_run=True)
 
 
+class FakePunctuationPreludeToolSignalProvider(FakeStreamingToolSignalProvider):
+    async def stream(self, *, messages, tools=None, max_tokens=None, temperature=None):
+        del messages, max_tokens, temperature
+        self.stream_calls += 1
+        self.tools_seen = list(tools or [])
+        yield ProviderChunk(text="...\n", accumulated="...\n", done=False)
+        yield ProviderChunk(text="", accumulated="...\n", done=True, requires_full_run=True)
+
+
+class FakeUnicodePreludeToolSignalProvider(FakeStreamingToolSignalProvider):
+    async def stream(self, *, messages, tools=None, max_tokens=None, temperature=None):
+        del messages, max_tokens, temperature
+        self.stream_calls += 1
+        self.tools_seen = list(tools or [])
+        yield ProviderChunk(text="検索", accumulated="検索", done=False)
+        yield ProviderChunk(text="", accumulated="検索", done=True, requires_full_run=True)
+
+
 class FakeWebSearchTools:
     async def execute(
         self,
@@ -612,8 +630,11 @@ class FakeSlowSessionStore:
         self.append_many_calls: list[str] = []
         self.append_started = threading.Event()
         self.append_finished = threading.Event()
+        self.single_append_started = threading.Event()
+        self.single_append_finished = threading.Event()
 
     def append(self, session_id: str, role: str, content: str, *, metadata: dict[str, Any] | None = None) -> None:
+        self.single_append_started.set()
         time.sleep(self.delay_s)
         self.rows.setdefault(str(session_id or ""), []).append(
             {
@@ -622,6 +643,7 @@ class FakeSlowSessionStore:
                 "metadata": dict(metadata or {}),
             }
         )
+        self.single_append_finished.set()
 
     def append_many(self, session_id: str, rows: list[dict[str, Any]]) -> None:
         self.append_many_calls.append(str(session_id or ""))
@@ -641,6 +663,42 @@ class FakeSlowSessionStore:
         self.append_finished.set()
 
     def read_messages(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        return [dict(item) for item in self.rows.get(str(session_id or ""), [])[-max(0, int(limit)) :]]
+
+
+class FakeSlowReadableSessionStore:
+    supports_async_offload = True
+
+    def __init__(self, *, delay_s: float = 0.35) -> None:
+        self.delay_s = max(0.0, float(delay_s))
+        self.rows: dict[str, list[dict[str, Any]]] = {}
+        self.read_calls: list[str] = []
+
+    def append(self, session_id: str, role: str, content: str, *, metadata: dict[str, Any] | None = None) -> None:
+        self.rows.setdefault(str(session_id or ""), []).append(
+            {
+                "role": str(role or ""),
+                "content": str(content or ""),
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+    def append_many(self, session_id: str, rows: list[dict[str, Any]]) -> None:
+        bucket = self.rows.setdefault(str(session_id or ""), [])
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            bucket.append(
+                {
+                    "role": str(row.get("role", "") or ""),
+                    "content": str(row.get("content", "") or ""),
+                    "metadata": dict(row.get("metadata") or {}),
+                }
+            )
+
+    def read_messages(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        self.read_calls.append(str(session_id or ""))
+        time.sleep(self.delay_s)
         return [dict(item) for item in self.rows.get(str(session_id or ""), [])[-max(0, int(limit)) :]]
 
 
@@ -687,6 +745,16 @@ class FakeMemoryWithContextKwargs(FakeMemory):
             }
         )
         return {"status": "ok"}
+
+
+class FakeNotifyingFixedTextProvider(FakeFixedTextProvider):
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.started = asyncio.Event()
+
+    async def complete(self, *, messages, tools):
+        self.started.set()
+        return await super().complete(messages=messages, tools=tools)
 
 
 class FakeMemoryWithWorkingSetCapture(FakeMemory):
@@ -2771,6 +2839,71 @@ def test_engine_file_backed_session_appends_do_not_block_other_sessions() -> Non
     asyncio.run(_scenario())
 
 
+def test_engine_file_backed_session_reads_do_not_block_other_sessions() -> None:
+    async def _scenario() -> None:
+        provider = FakeFixedTextProvider("pong")
+        sessions = FakeSlowReadableSessionStore(delay_s=0.35)
+        sessions.append("cli:one", "user", "previous one")
+        sessions.append("cli:two", "user", "previous two")
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        started_at = time.perf_counter()
+        first_task = asyncio.create_task(engine.run(session_id="cli:one", user_text="first"))
+        await asyncio.sleep(0)
+        second_task = asyncio.create_task(engine.run(session_id="cli:two", user_text="second"))
+        first, second = await asyncio.gather(first_task, second_task)
+        elapsed = time.perf_counter() - started_at
+
+        assert first.text == "pong"
+        assert second.text == "pong"
+        assert elapsed < 0.6
+        assert sessions.read_calls == ["cli:one", "cli:two"]
+        assert {row["content"] for row in sessions.read_messages("cli:one", limit=10)} >= {"previous one", "first", "pong"}
+        assert {row["content"] for row in sessions.read_messages("cli:two", limit=10)} >= {"previous two", "second", "pong"}
+
+    asyncio.run(_scenario())
+
+
+def test_engine_tool_loop_session_appends_do_not_block_other_sessions() -> None:
+    async def _scenario() -> None:
+        sessions = FakeSlowSessionStore(delay_s=0.35)
+        tool_engine = AgentEngine(
+            provider=FakeProvider(),
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+        second_provider = FakeNotifyingFixedTextProvider("pong")
+        second_engine = AgentEngine(
+            provider=second_provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        first_task = asyncio.create_task(tool_engine.run(session_id="cli:tool-one", user_text="first"))
+        while not sessions.single_append_started.is_set():
+            await asyncio.sleep(0.01)
+
+        second_task = asyncio.create_task(second_engine.run(session_id="cli:two", user_text="second"))
+        await asyncio.wait_for(second_provider.started.wait(), timeout=0.15)
+
+        first, second = await asyncio.gather(first_task, second_task)
+
+        assert first.text == "final answer"
+        assert second.text == "pong"
+        tool_rows = sessions.read_messages("cli:tool-one", limit=10)
+        assert any(row["role"] == "assistant" and row["content"] == "tool please" for row in tool_rows)
+        assert any(row["role"] == "tool" and row["content"] == "echo:hello:cli:tool-one" for row in tool_rows)
+
+    asyncio.run(_scenario())
+
+
 def test_engine_cancelled_offloaded_session_append_waits_for_write() -> None:
     async def _scenario() -> None:
         provider = FakeFixedTextProvider("pong")
@@ -3230,10 +3363,7 @@ def test_engine_stream_run_falls_back_after_whitespace_only_prelude() -> None:
 
         assert provider.stream_calls == 1
         assert provider.tools_seen == FakeWebSearchTools().schema()
-        assert chunks == [
-            ProviderChunk(text=" \n\t", accumulated=" \n\t", done=False),
-            ProviderChunk(text="tool-result", accumulated="tool-result", done=True),
-        ]
+        assert chunks == [ProviderChunk(text="tool-result", accumulated="tool-result", done=True)]
         assert seen == [
             {
                 "session_id": "cli:stream-tools-whitespace",
@@ -3242,6 +3372,108 @@ def test_engine_stream_run_falls_back_after_whitespace_only_prelude() -> None:
                 "chat_id": "42",
                 "runtime_metadata": {"reply_to_message_id": "11"},
             }
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_falls_back_after_punctuation_only_prelude() -> None:
+    async def _scenario() -> None:
+        provider = FakePunctuationPreludeToolSignalProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeWebSearchTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+        )
+        seen: list[dict[str, Any]] = []
+
+        async def _fallback_run(
+            *,
+            session_id: str,
+            user_text: str,
+            channel: str | None = None,
+            chat_id: str | None = None,
+            runtime_metadata: dict[str, Any] | None = None,
+        ) -> ProviderResult:
+            seen.append(
+                {
+                    "session_id": session_id,
+                    "user_text": user_text,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "runtime_metadata": runtime_metadata,
+                }
+            )
+            return ProviderResult(text="tool-result", tool_calls=[], model="fake/model")
+
+        engine.run = _fallback_run  # type: ignore[method-assign]
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="cli:stream-punctuation-reroute",
+                user_text="look it up",
+                channel="telegram",
+                chat_id="42",
+                runtime_metadata={"reply_to_message_id": "11"},
+            )
+        ]
+
+        assert provider.stream_calls == 1
+        assert chunks == [ProviderChunk(text="tool-result", accumulated="tool-result", done=True)]
+        assert seen == [
+            {
+                "session_id": "cli:stream-punctuation-reroute",
+                "user_text": "look it up",
+                "channel": "telegram",
+                "chat_id": "42",
+                "runtime_metadata": {"reply_to_message_id": "11"},
+            }
+        ]
+
+    asyncio.run(_scenario())
+
+
+def test_engine_stream_run_keeps_visible_unicode_prelude_in_stream_mode() -> None:
+    async def _scenario() -> None:
+        provider = FakeUnicodePreludeToolSignalProvider()
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeWebSearchTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+        )
+        fallback_calls = 0
+
+        async def _fallback_run(
+            *,
+            session_id: str,
+            user_text: str,
+            channel: str | None = None,
+            chat_id: str | None = None,
+            runtime_metadata: dict[str, Any] | None = None,
+        ) -> ProviderResult:
+            del session_id, user_text, channel, chat_id, runtime_metadata
+            nonlocal fallback_calls
+            fallback_calls += 1
+            return ProviderResult(text="tool-result", tool_calls=[], model="fake/model")
+
+        engine.run = _fallback_run  # type: ignore[method-assign]
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="cli:stream-unicode-visible",
+                user_text="search for OpenClaw docs",
+            )
+        ]
+
+        assert provider.stream_calls == 1
+        assert fallback_calls == 0
+        assert chunks == [
+            ProviderChunk(text="検索", accumulated="検索", done=False),
+            ProviderChunk(text="", accumulated="検索", done=True, requires_full_run=True),
         ]
 
     asyncio.run(_scenario())
@@ -3335,6 +3567,25 @@ def test_engine_stream_run_keeps_provider_stream_for_explanatory_github_and_dock
         assert "".join(chunk.text for chunk in web_search_chunks) == "stream-web"
         assert web_search_provider.stream_calls == 1
 
+        notion_provider = FakeStreamingPromptCaptureProvider("stream-notion")
+        notion_engine = AgentEngine(
+            provider=notion_provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["notion"]),
+        )
+        notion_chunks = [
+            chunk
+            async for chunk in await notion_engine.stream_run(
+                session_id="cli:stream-notion-topic",
+                user_text="can you explain when to use the notion skill?",
+            )
+        ]
+
+        assert "".join(chunk.text for chunk in notion_chunks) == "stream-notion"
+        assert notion_provider.stream_calls == 1
+
     asyncio.run(_scenario())
 
 
@@ -3374,6 +3625,16 @@ def test_engine_stream_requires_full_run_for_live_lookup_and_explicit_skill_rout
         available_tool_names={"web_search"},
         available_skill_names={"web-search"},
     )
+    assert AgentEngine._stream_requires_full_run(
+        user_text="please use the notion skill to update the release page",
+        live_lookup_required=False,
+        available_skill_names={"notion"},
+    )
+    assert AgentEngine._stream_requires_full_run(
+        user_text="start with web_fetch",
+        live_lookup_required=False,
+        available_tool_names={"web_fetch"},
+    )
     assert not AgentEngine._stream_requires_full_run(
         user_text="how do GitHub workflows work?",
         live_lookup_required=False,
@@ -3400,6 +3661,70 @@ def test_engine_stream_requires_full_run_for_live_lookup_and_explicit_skill_rout
         available_tool_names={"web_search"},
         available_skill_names={"web-search"},
     )
+    assert not AgentEngine._stream_requires_full_run(
+        user_text="can you explain when to use the notion skill?",
+        live_lookup_required=False,
+        available_skill_names={"notion"},
+    )
+
+
+def test_engine_stream_run_falls_back_for_explicit_generic_skill_route() -> None:
+    async def _scenario() -> None:
+        provider = FakeStreamingPromptCaptureProvider("stream-notion")
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+            skills_loader=FakeSkillsLoader(names=["notion"]),
+        )
+        seen: list[dict[str, Any]] = []
+
+        async def _fallback_run(
+            *,
+            session_id: str,
+            user_text: str,
+            channel: str | None = None,
+            chat_id: str | None = None,
+            runtime_metadata: dict[str, Any] | None = None,
+        ) -> ProviderResult:
+            seen.append(
+                {
+                    "session_id": session_id,
+                    "user_text": user_text,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "runtime_metadata": runtime_metadata,
+                }
+            )
+            return ProviderResult(text="notion-result", tool_calls=[], model="fake/model")
+
+        engine.run = _fallback_run  # type: ignore[method-assign]
+
+        chunks = [
+            chunk
+            async for chunk in await engine.stream_run(
+                session_id="cli:stream-notion",
+                user_text="please use the notion skill to update the release page",
+                channel="telegram",
+                chat_id="42",
+                runtime_metadata={"reply_to_message_id": "12"},
+            )
+        ]
+
+        assert provider.stream_calls == 0
+        assert chunks == [ProviderChunk(text="notion-result", accumulated="notion-result", done=True)]
+        assert seen == [
+            {
+                "session_id": "cli:stream-notion",
+                "user_text": "please use the notion skill to update the release page",
+                "channel": "telegram",
+                "chat_id": "42",
+                "runtime_metadata": {"reply_to_message_id": "12"},
+            }
+        ]
+
+    asyncio.run(_scenario())
 
 
 def test_engine_formats_memory_snippets_with_ref_and_source_marker() -> None:

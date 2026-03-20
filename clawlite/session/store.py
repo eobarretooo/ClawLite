@@ -429,7 +429,9 @@ class SessionStore:
                 self._session_line_estimates[path] = new_count
             return
 
-        estimated_count = self._get_line_estimate(path)
+        estimated_count = self._session_line_estimates.get(path)
+        if estimated_count is None:
+            estimated_count = self._get_line_estimate(path)
         overflow = estimated_count - limit
         if overflow < self._overflow_budget(limit):
             return
