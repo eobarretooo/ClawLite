@@ -340,6 +340,7 @@ What exists in code today:
 - Retryable 429s and 5xx/network errors back off with jitter.
 - Hard quota-style 429s fail fast instead of retrying.
 - `build_provider()` supports `fallback_model`, `fallback_models`, and `fallbacks`, building a `FailoverProvider` with per-candidate cooldowns.
+- When multiple fallback candidates are ready, `FailoverProvider` now ranks them by a lightweight health score derived from recent error rate, consecutive failures, cooldown state, and provider latency telemetry instead of always trying them in static order.
 
 What you can persist in config today:
 

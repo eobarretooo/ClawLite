@@ -173,6 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `clawlite start` and `clawlite gateway` so `--config` now flows into the runtime instead of silently falling back to the default config file.
 - Bootstrap completion is now gated behind the dedicated hatch session, and `clawlite hatch` provides a terminal-first way to run that first defining turn safely.
 - Failover diagnostics now keep auth/quota suppression reasons visible and apply longer cooldown windows so broken or exhausted providers are not hammered repeatedly.
+- Failover now ranks ready fallback candidates by lightweight health scoring from recent errors and provider latency telemetry instead of using only static fallback order, and diagnostics expose `health_score`/`fallback_health_order` for operators.
 - The dashboard automation view now surfaces provider suppression/cooldown candidates as operator cards instead of only raw JSON.
 - The dashboard automation view now also surfaces delivery queues, dead-letter pressure, channel recovery loops, and supervisor recovery budgets as operator cards.
 - Operators can now trigger live dead-letter replay from the control plane via `POST /v1/control/channels/replay` and the dashboard automation view.

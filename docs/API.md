@@ -658,6 +658,7 @@ Scheduler diagnostics/status payloads are additive and include reliability telem
 - `autonomy` may also include `skipped_no_progress`, `no_progress_reason`, `no_progress_streak`, and `no_progress_backoff_remaining_s` when the continuous loop is intentionally paused after repeated identical `AUTONOMY_IDLE` outcomes on an unchanged runtime snapshot.
 - `last_snapshot.provider` may include `suppression_reason`, `suppression_backoff_s`, and `suppression_hint` when autonomy is intentionally holding off on provider calls.
 - provider summary payloads may also include `suppressed_candidates` when failover candidates are in longer auth/quota/config suppression windows instead of a short transient cooldown.
+- failover provider payloads may also include per-candidate `health_score`, `health_state`, `error_ratio`, `latency_p50_ms`, and top-level `fallback_health_order` to explain which ready fallback will be preferred next.
 - `supervisor` may include per-component recovery budgets and cooldown telemetry in `component_recovery`, plus aggregate `recovery_skipped_budget` counters.
 - control-plane `components` may include `subagent_maintenance`, a background sweeper loop that keeps subagent queue/run state fresh and recoverable.
 
