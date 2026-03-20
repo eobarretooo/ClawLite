@@ -211,9 +211,13 @@ def test_email_send_falls_back_from_ssl_to_starttls() -> None:
             smtp_instances.append(instance)
             return instance
 
+        async def _to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
         with patch.object(email_module.smtplib, "SMTP_SSL", FailingSMTPSSL):
             with patch.object(email_module.smtplib, "SMTP", side_effect=_smtp_factory):
-                out = await channel.send(target="alice@example.com", text="reply body")
+                with patch.object(email_module.asyncio, "to_thread", new=_to_thread):
+                    out = await channel.send(target="alice@example.com", text="reply body")
 
         assert out.startswith("email:sent:")
         assert len(smtp_instances) == 1
