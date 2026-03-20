@@ -57,9 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stream_run()` now also falls back to the full `run()` loop for explicit `web_search` / `web-search` routing requests instead of staying on a raw provider stream when the operator already asked for a live search path
 - OpenAI-compatible provider streaming now advertises pre-text tool-call turns back to the engine, so `stream_run()` can fall back to the full tool loop before emitting visible text instead of getting stuck on a text-only stream path
 - whitespace-only prelude chunks no longer count as visible text for streamed tool-call reroutes, so both the engine and OpenAI-compatible provider streaming still escalate into the full tool loop when a provider emits blank content just before `tool_calls`
+- `stream_run()` now also falls back to the full `run()` loop for explicit named skill/tool requests such as `use the notion skill` or `start with web_fetch`, reducing another class of text-only streaming divergence without broadly disabling provider streaming
+- streamed reroute visibility now treats Unicode alphanumeric text as genuinely visible output, so non-Latin preludes such as Japanese no longer get mistaken for blank prelude noise
 - when a gateway token is configured, the broader control-plane surface now requires it even on loopback, including `status`, dashboard state, chat, cron/control mutations, approvals/grants, and gateway WebSocket chat, while root/assets/health stay open unless separately protected
 - authenticated dashboard state now redacts raw handoff secrets, keeping only `gateway_url` and a masked token preview instead of echoing `gateway_token` or tokenized dashboard URLs back through the runtime API
 - the packaged dashboard now treats `#token=` as a one-time bootstrap input: it exchanges the raw gateway token for a scoped dashboard-session credential, clears any legacy raw token copy on load/clear, keeps only that derived credential in the current tab, accepts it only on dashboard-scoped `/api/*`, `/v1/control/*`, and `WS /ws` surfaces instead of generic `/v1/*` routes, and defaults live chat to a per-tab `dashboard:operator:<id>` session instead of a shared browser-wide operator route
+- derived dashboard-session credentials are now also bound to a per-tab dashboard client id, so replaying a copied session token from a different tab/client no longer works on the dashboard-scoped HTTP/WS surfaces
+- `SessionStore` now reuses its cached line estimate during append-time compaction checks instead of rereading the whole session file after each cached write, trimming redundant I/O from the transcript write path
+- blocking tool-loop transcript appends now also run off the event loop on compatible session stores, so one session's assistant/tool history persistence no longer stalls unrelated sessions while preserving append ordering and durability
 
 ## [v0.7.0-beta.0] - 2026-03-17
 

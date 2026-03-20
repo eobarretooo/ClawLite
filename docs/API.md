@@ -9,7 +9,7 @@ Default base URL: `http://127.0.0.1:8787`
 - `gateway.auth.mode=required`: requires token (except loopback when `allow_loopback_without_auth=true`).
 - Token can be sent via configurable header (default `Authorization`, with or without `Bearer ` prefix) or configurable query param (default `token`).
 - If a gateway token is configured, the control-plane routes (`/v1/status`, `/v1/dashboard/state`, `/v1/chat`, control mutations, approvals/grants, and `WS /v1/ws`) require that token even when the gateway is otherwise open on loopback.
-- The packaged dashboard can exchange that raw gateway token once at `POST /api/dashboard/session` and then use the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, and `WS /ws`. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token.
+- The packaged dashboard can exchange that raw gateway token once at `POST /api/dashboard/session` and then use the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token.
 - `/health` only requires auth when `gateway.auth.protect_health=true` and mode is `required`.
 - `/v1/diagnostics` depends on `gateway.diagnostics.enabled` and may require auth with `gateway.diagnostics.require_auth=true`.
 
@@ -17,7 +17,7 @@ Default base URL: `http://127.0.0.1:8787`
 
 Entrypoint do dashboard local do gateway. Serve um shell HTML/CSS/JS empacotado com visão operacional para status, diagnostics, sessions, automation, tools e chat ao vivo.
 
-The packaged dashboard treats tokenized URLs as a one-time bootstrap path: it scrubs `#token=` from the address bar after load, exchanges the raw gateway token for a scoped dashboard-session credential, keeps only that derived session in the current browser tab, and seeds live chat with a per-tab `dashboard:operator:<id>` session instead of a fixed shared browser identity.
+The packaged dashboard treats tokenized URLs as a one-time bootstrap path: it scrubs `#token=` from the address bar after load, exchanges the raw gateway token for a scoped dashboard-session credential, keeps only that derived session plus its per-tab dashboard client id in the current browser tab, and seeds live chat with a per-tab `dashboard:operator:<id>` session instead of a fixed shared browser identity.
 
 ## `GET /v1/dashboard/state`
 
@@ -1215,7 +1215,7 @@ Alias compatível: `GET /api/diagnostics` (mesmo payload). When a gateway token 
 Diagnóstico de autenticação do gateway.
 - Nunca retorna token em texto puro.
 - Retorna apenas estado (`token_configured`) e versão mascarada determinística (`token_masked`).
-- Quando o dashboard-session flow estiver habilitado, também informa `dashboard_session_enabled`, `dashboard_session_header_name`, e `dashboard_session_query_param`.
+- Quando o dashboard-session flow estiver habilitado, também informa `dashboard_session_enabled`, `dashboard_session_header_name`, `dashboard_session_query_param`, `dashboard_client_header_name`, e `dashboard_client_query_param`.
 - Aceita tanto o gateway token bruto quanto a credencial derivada do dashboard.
 
 ## `POST /api/dashboard/session`
@@ -1223,7 +1223,9 @@ Diagnóstico de autenticação do gateway.
 Troca o gateway token bruto por uma credencial derivada e efêmera para o dashboard empacotado.
 
 - Requer o gateway token configurado no header normal de autenticação; query-param token bootstrap não é aceito aqui.
-- Retorna um `session_token` opaco com `token_type=\"dashboard_session\"`, `expires_at`, `expires_in_s`, e os nomes de header/query aceitos pelo shell do dashboard.
+- Também requer um client id do dashboard no header `X-ClawLite-Dashboard-Client` (ou no nome configurado informado pelo bootstrap).
+- Retorna um `session_token` opaco com `token_type=\"dashboard_session\"`, `expires_at`, `expires_in_s`, e os nomes de header/query aceitos pelo shell do dashboard tanto para a sessão derivada quanto para o client binding.
+- A credencial derivada fica vinculada a esse client id de aba e só é aceita quando o mesmo identificador acompanha os requests HTTP/WS do dashboard.
 - Essa credencial derivada é aceita apenas nas superfícies de dashboard/control-plane que optam por ela (`/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, e `WS /ws`).
 - A mesma credencial não substitui o gateway token bruto em `/v1/status`, `/v1/chat`, `/v1/tools/*`, ou `WS /v1/ws`.
 
