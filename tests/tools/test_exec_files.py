@@ -103,6 +103,69 @@ def test_exec_tool_blocks_dangerous_env_overrides() -> None:
     asyncio.run(_scenario())
 
 
+@pytest.mark.skipif(os.name == "nt", reason="shell wrapper env policy is covered on unix-like runtimes")
+def test_exec_tool_blocks_non_allowlisted_env_override_for_shell_wrapper() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": "sh -lc 'echo ok'", "env": {"BASH_ENV": "/tmp/pwn.sh"}},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:env_override:BASH_ENV" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_blocks_python_env_override_prefix() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": 'python3 -c "print(1)"', "env": {"PYTHONPATH": "/tmp/pwn"}},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:env_override:PYTHONPATH" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_blocks_java_tool_options_env_override() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": 'python3 -c "print(1)"', "env": {"JAVA_TOOL_OPTIONS": "-javaagent:/tmp/pwn.jar"}},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:env_override:JAVA_TOOL_OPTIONS" in out
+
+    asyncio.run(_scenario())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="inline env assignment coverage is unix-specific")
+def test_exec_tool_blocks_inline_dangerous_env_assignments() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": '/usr/bin/env BASH_ENV=/tmp/pwn.sh bash -lc "echo hi"'},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:env_override:BASH_ENV" in out
+
+    asyncio.run(_scenario())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="env split-string coverage is unix-specific")
+def test_exec_tool_blocks_split_string_dangerous_env_assignments() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": '/usr/bin/env -S "BASH_ENV=/tmp/pwn.sh bash -lc \'echo hi\'"'},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:env_override:BASH_ENV" in out
+
+    asyncio.run(_scenario())
+
+
 def test_exec_tool_supports_cwd_override(tmp_path: Path) -> None:
     async def _scenario() -> None:
         subdir = tmp_path / "nested"
@@ -179,6 +242,30 @@ def test_exec_tool_blocks_internal_network_fetch_target() -> None:
     asyncio.run(_scenario())
 
 
+def test_exec_tool_blocks_metadata_service_ip_outside_builtin_private_sets() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": "curl http://100.100.100.200/latest/meta-data"},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:internal_url:100.100.100.200" in out
+
+    asyncio.run(_scenario())
+
+
+def test_exec_tool_blocks_legacy_ipv4_loopback_literal_in_fetch_command() -> None:
+    async def _scenario() -> None:
+        out = await ExecTool().run(
+            {"command": "curl http://2130706433/latest/meta-data"},
+            ToolContext(session_id="s"),
+        )
+        assert "exit=-1" in out
+        assert "stderr=blocked_by_policy:internal_url:2130706433" in out
+
+    asyncio.run(_scenario())
+
+
 def test_exec_tool_blocks_localhost_network_fetch_target() -> None:
     async def _scenario() -> None:
         out = await ExecTool().run(
@@ -189,6 +276,14 @@ def test_exec_tool_blocks_localhost_network_fetch_target() -> None:
         assert "stderr=blocked_by_policy:internal_url:localhost" in out
 
     asyncio.run(_scenario())
+
+
+def test_exec_tool_blocks_cgnat_resolved_network_fetch_target() -> None:
+    command = "curl https://service.example.com/data"
+    cgnat_dns = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.0.10", 0))]
+    with patch("clawlite.tools.exec.socket.getaddrinfo", return_value=cgnat_dns):
+        guard_error = ExecTool()._guard_command(command, shlex.split(command), Path.cwd().resolve())
+    assert guard_error == "blocked_by_policy:internal_url:service.example.com"
 
 
 def test_exec_tool_blocks_internal_network_fetch_inside_shell_composition() -> None:

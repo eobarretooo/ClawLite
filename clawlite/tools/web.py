@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from clawlite.tools.base import Tool, ToolContext
+from clawlite.tools.network_safety import is_blocked_host, is_blocked_network_address, parse_ip_literal
 from clawlite.utils.logging import bind_event, setup_logging
 
 setup_logging()
@@ -159,6 +160,8 @@ class WebFetchTool(Tool):
         host = (parsed.hostname or "").strip().lower()
         if not host:
             raise ValueError("missing host")
+        if is_blocked_host(host):
+            raise ValueError("target resolves to private or local address")
 
         ip_literal = _ip_literal(host)
         hostname_based_target = ip_literal is None
@@ -171,7 +174,7 @@ class WebFetchTool(Tool):
 
         if self.block_private_addresses:
             for ip in ips:
-                if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                if is_blocked_network_address(ip):
                     raise ValueError("target resolves to private or local address")
 
         return host, ips, hostname_based_target
@@ -339,10 +342,7 @@ async def _resolve_ips_async(host: str) -> list[ipaddress._BaseAddress]:
 
 
 def _ip_literal(value: str) -> ipaddress._BaseAddress | None:
-    try:
-        return ipaddress.ip_address(value)
-    except ValueError:
-        return None
+    return parse_ip_literal(value)
 
 
 def _matches_rules(*, host: str, ips: list[ipaddress._BaseAddress], rules: list[str]) -> bool:

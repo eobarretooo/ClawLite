@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import time
 from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
+from clawlite.tools.network_safety import is_blocked_host, is_blocked_network_address, parse_ip_literal
 from clawlite.utils.logging import bind_event, setup_logging
 
 setup_logging()
@@ -49,17 +50,54 @@ class ExecTool(Tool):
     _SHELL_META_RE = re.compile(r"(^|[^\\])(?:\|\||&&|[|<>;`])")
     _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     _BLOCKED_ENV_OVERRIDE_EXACT = {
+        "BASH_ENV",
         "BROWSER",
+        "CDPATH",
+        "CURL_HOME",
+        "DOTNET_ADDITIONAL_DEPS",
+        "DOTNET_STARTUP_HOOKS",
         "EDITOR",
+        "ENV",
+        "GIT_PAGER",
         "GIT_EXTERNAL_DIFF",
+        "GIT_ASKPASS",
+        "GIT_EXEC_PATH",
+        "GIT_PROXY_COMMAND",
+        "GIT_SSH",
+        "GLIBC_TUNABLES",
         "GIT_SSH_COMMAND",
+        "HOME",
+        "IFS",
+        "JAVA_TOOL_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "LESSCLOSE",
+        "LESSOPEN",
+        "MANPAGER",
         "NODE_OPTIONS",
+        "NODE_PATH",
+        "OPENSSL_CONF",
+        "OPENSSL_ENGINES",
         "PAGER",
         "PATH",
+        "PERL5DB",
+        "PERL5DBCMD",
+        "PERL5LIB",
+        "PERL5OPT",
+        "PROMPT_COMMAND",
         "PS4",
+        "PYTHONBREAKPOINT",
+        "PYTHONHOME",
+        "PYTHONINSPECT",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
         "RUBYOPT",
+        "RUBYLIB",
         "SHELLOPTS",
+        "SSH_ASKPASS",
         "VISUAL",
+        "WGETRC",
+        "ZDOTDIR",
+        "_JAVA_OPTIONS",
     }
     _BLOCKED_ENV_OVERRIDE_PREFIXES = (
         "DYLD_",
@@ -385,14 +423,7 @@ class ExecTool(Tool):
 
     @staticmethod
     def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
-        return (
-            ip.is_loopback
-            or ip.is_link_local
-            or ip.is_private
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        )
+        return is_blocked_network_address(ip)
 
     @classmethod
     def _validate_network_fetch_url(cls, raw_url: str) -> str | None:
@@ -408,13 +439,10 @@ class ExecTool(Tool):
         host = str(parsed.hostname or "").strip().lower()
         if not host:
             return "blocked_by_policy:internal_url:missing_host"
-        if host == "localhost" or host.endswith(".localhost") or host.endswith(".local") or host.endswith(".internal"):
+        if is_blocked_host(host):
             return f"blocked_by_policy:internal_url:{host}"
 
-        try:
-            literal = ipaddress.ip_address(host)
-        except ValueError:
-            literal = None
+        literal = parse_ip_literal(host)
 
         if literal is not None:
             if cls._is_blocked_ip(literal):
@@ -433,6 +461,67 @@ class ExecTool(Tool):
                 continue
             if cls._is_blocked_ip(resolved):
                 return f"blocked_by_policy:internal_url:{host}"
+        return None
+
+    @classmethod
+    def _iter_inline_env_assignments(cls, argv: list[str], *, recursion_depth: int = 0) -> list[tuple[str, str]]:
+        if recursion_depth >= 4:
+            return []
+        assignments: list[tuple[str, str]] = []
+        index = 0
+        while index < len(argv):
+            token = str(argv[index] or "").strip()
+            if not token:
+                index += 1
+                continue
+            if token in cls._SHELL_CONTROL_TOKENS:
+                break
+            if cls._is_env_assignment(token):
+                key, value = token.split("=", 1)
+                assignments.append((key, value))
+                index += 1
+                continue
+            wrapper = cls._transparent_runtime_wrapper_name(token)
+            if not wrapper:
+                break
+            index += 1
+            while index < len(argv):
+                inner = str(argv[index] or "").strip()
+                lower = inner.lower()
+                if not inner:
+                    index += 1
+                    continue
+                if inner in cls._SHELL_CONTROL_TOKENS:
+                    return assignments
+                if wrapper == "env" and cls._is_env_assignment(inner):
+                    key, value = inner.split("=", 1)
+                    assignments.append((key, value))
+                    index += 1
+                    continue
+                if wrapper == "env" and lower in {"-s", "--split-string"} and index + 1 < len(argv):
+                    payload = str(argv[index + 1] or "").strip()
+                    if payload:
+                        try:
+                            nested_argv = shlex.split(payload)
+                        except ValueError:
+                            return assignments
+                        assignments.extend(
+                            cls._iter_inline_env_assignments(nested_argv, recursion_depth=recursion_depth + 1)
+                        )
+                    index += 2
+                    continue
+                consumption = cls._transparent_runtime_wrapper_flag_consumption(wrapper, inner)
+                if consumption is None:
+                    break
+                index += 1 + consumption
+        return assignments
+
+    @classmethod
+    def _guard_inline_env_assignments(cls, argv: list[str]) -> str | None:
+        for env_key, env_value in cls._iter_inline_env_assignments(argv):
+            _overrides, env_error = cls._normalize_env_overrides({env_key: env_value})
+            if env_error:
+                return env_error
         return None
 
     @classmethod
@@ -746,6 +835,10 @@ class ExecTool(Tool):
             return "blocked_by_policy:deny_pattern"
         if self.allow_patterns and (not self._match_any(self.allow_patterns, cmd)):
             return "blocked_by_policy:not_in_allow_patterns"
+
+        inline_env_error = self._guard_inline_env_assignments(argv)
+        if inline_env_error:
+            return inline_env_error
 
         network_error = self._guard_network_fetch_targets(argv)
         if network_error:

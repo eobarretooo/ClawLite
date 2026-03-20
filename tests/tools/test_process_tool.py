@@ -92,6 +92,21 @@ def test_process_start_blocks_internal_network_fetch_target(tmp_path: Path) -> N
     asyncio.run(_scenario())
 
 
+def test_process_start_blocks_inline_dangerous_env_assignments(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        tool = ProcessTool(workspace_path=tmp_path, restrict_to_workspace=True)
+        payload = _loads(
+            await tool.run(
+                {"action": "start", "command": '/usr/bin/env BASH_ENV=/tmp/pwn.sh bash -lc "echo hi"'},
+                ToolContext(session_id="s"),
+            )
+        )
+        assert payload["status"] == "failed"
+        assert payload["error"] == "blocked_by_policy:env_override:BASH_ENV"
+
+    asyncio.run(_scenario())
+
+
 def test_process_start_blocks_internal_network_fetch_in_python_inline_runtime(tmp_path: Path) -> None:
     async def _scenario() -> None:
         tool = ProcessTool(workspace_path=tmp_path, restrict_to_workspace=True)

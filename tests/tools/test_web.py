@@ -93,6 +93,40 @@ def test_web_fetch_blocks_private_target() -> None:
     asyncio.run(_scenario())
 
 
+def test_web_fetch_blocks_metadata_service_ip_outside_builtin_private_sets() -> None:
+    async def _scenario() -> None:
+        out = await WebFetchTool().run({"url": "http://100.100.100.200/latest/meta-data"}, ToolContext(session_id="s"))
+        payload = json.loads(out)
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "blocked_url"
+
+    asyncio.run(_scenario())
+
+
+def test_web_fetch_blocks_legacy_ipv4_loopback_literal() -> None:
+    async def _scenario() -> None:
+        out = await WebFetchTool().run({"url": "http://127.1/latest/meta-data"}, ToolContext(session_id="s"))
+        payload = json.loads(out)
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "blocked_url"
+
+    asyncio.run(_scenario())
+
+
+def test_web_fetch_blocks_cgnat_resolved_target() -> None:
+    async def _scenario() -> None:
+        with patch(
+            "clawlite.tools.web.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("100.64.0.10", 0))],
+        ):
+            out = await WebFetchTool().run({"url": "https://service.example.com/path"}, ToolContext(session_id="s"))
+            payload = json.loads(out)
+            assert payload["ok"] is False
+            assert payload["error"]["code"] == "blocked_url"
+
+    asyncio.run(_scenario())
+
+
 def test_web_fetch_redirect_limit() -> None:
     async def _scenario() -> None:
         responses = [

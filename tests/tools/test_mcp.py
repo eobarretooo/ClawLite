@@ -172,6 +172,23 @@ def test_mcp_tool_blocks_private_resolved_ip() -> None:
     asyncio.run(_scenario())
 
 
+def test_mcp_tool_blocks_metadata_service_ip_outside_builtin_private_sets() -> None:
+    async def _scenario() -> None:
+        tool = MCPTool(
+            MCPToolConfig(
+                policy=MCPTransportPolicyConfig(allowed_schemes=["https"]),
+                servers={"local": MCPServerConfig(url="https://100.100.100.200/call", timeout_s=1)},
+            )
+        )
+        try:
+            await tool.run({"tool": "local::skill.test", "arguments": {}}, ToolContext(session_id="s"))
+            raise AssertionError("expected metadata IP block")
+        except ValueError as exc:
+            assert "denied resolved address" in str(exc)
+
+    asyncio.run(_scenario())
+
+
 def test_mcp_tool_retries_with_single_client_instance() -> None:
     async def _scenario() -> None:
         fake_response = AsyncMock()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import sys
 import types
 
@@ -172,6 +173,28 @@ async def test_browser_tool_blocks_private_or_local_targets(
 
     tool = BrowserTool()
     result = await tool.run({"action": "navigate", "url": "http://127.0.0.1:8080"}, ToolContext(session_id="browser:test"))
+
+    assert result == "browser_error: target resolves to private or local address"
+    assert tool._playwright is None
+    assert tool._browser is None
+    assert tool._page is None
+
+
+@pytest.mark.asyncio
+async def test_browser_tool_blocks_cgnat_resolved_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_runtime = FakePlaywrightRuntime(FakeChromium())
+    _install_fake_playwright(monkeypatch, [first_runtime])
+
+    async def _fake_resolve(host: str):
+        del host
+        return [ipaddress.ip_address("100.64.0.10")]
+
+    monkeypatch.setattr("clawlite.tools.browser._resolve_ips_async", _fake_resolve)
+
+    tool = BrowserTool()
+    result = await tool.run({"action": "navigate", "url": "https://service.example.com"}, ToolContext(session_id="browser:test"))
 
     assert result == "browser_error: target resolves to private or local address"
     assert tool._playwright is None

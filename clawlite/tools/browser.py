@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
+from clawlite.tools.network_safety import is_blocked_host, is_blocked_network_address
 from clawlite.tools.web import _ip_literal
 from clawlite.tools.web import _matches_rules
 from clawlite.tools.web import _resolve_ips_async
@@ -111,6 +112,8 @@ class BrowserTool(Tool):
         host = (parsed.hostname or "").strip().lower()
         if not host:
             raise ValueError("missing host")
+        if is_blocked_host(host):
+            raise ValueError("target resolves to private or local address")
 
         ip_literal = _ip_literal(host)
         ips = [ip_literal] if ip_literal is not None else await _resolve_ips_async(host)
@@ -122,7 +125,7 @@ class BrowserTool(Tool):
 
         if self.block_private_addresses:
             for ip in ips:
-                if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                if is_blocked_network_address(ip):
                     raise ValueError("target resolves to private or local address")
 
     async def _close_runtime(self) -> None:

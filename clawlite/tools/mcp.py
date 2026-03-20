@@ -10,6 +10,7 @@ from clawlite.config.schema import MCPServerConfig, MCPToolConfig, MCPTransportP
 
 import time
 from clawlite.tools.base import Tool, ToolContext, ToolHealthResult
+from clawlite.tools.network_safety import is_blocked_network_address, parse_ip_literal
 from clawlite.utils.logging import bind_event
 
 
@@ -261,10 +262,7 @@ def _rule_matches(*, rule: str, host: str, ips: list[ipaddress._BaseAddress]) ->
 
 
 def _ip_literal(value: str) -> ipaddress._BaseAddress | None:
-    try:
-        return ipaddress.ip_address(value)
-    except ValueError:
-        return None
+    return parse_ip_literal(value)
 
 
 def _resolve_ips(host: str) -> list[ipaddress._BaseAddress]:
@@ -288,4 +286,4 @@ async def _resolve_ips_async(host: str) -> list[ipaddress._BaseAddress]:
 
 
 def _is_private_or_local(ip: ipaddress._BaseAddress) -> bool:
-    return ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    return is_blocked_network_address(ip)
