@@ -123,6 +123,7 @@ This powers:
 ### Quality state
 
 `quality-state.json` tracks memory quality over time. The runtime uses it to decide whether memory writes, skill execution, and subagent spawning should stay fully enabled, become restricted, or be blocked.
+The snapshot now also includes a compact `trend` summary derived from the bounded history window, so dashboard, diagnostics, and CLI flows can show whether quality is improving, stable, or degrading without recomputing the full history client-side.
 
 ### Emotional/profile state
 

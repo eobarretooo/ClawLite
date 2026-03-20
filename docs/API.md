@@ -723,6 +723,13 @@ Memory quality tuning diagnostics (stages 15-18) are additive and may appear in:
 - top-level `engine.memory_quality`: persisted quality/tuning state summary
 - top-level `memory_quality_tuning`: runtime tuning loop snapshot/counters
 
+When available, `engine.memory_quality.state.trend` is an additive summary over the bounded quality history window and may include:
+
+- `assessment`: `improving`, `stable`, `degrading`, or `insufficient_history`
+- `window_points`, `window_start_sampled_at`, `window_end_sampled_at`
+- `score_change`, `hit_rate_change`, `semantic_coverage_change`, `reasoning_balance_change`
+- `score_range`, `degrading_streak`, `improving_streak`, `weakest_layers`
+
 `environment` telemetry remains separate from the memory quality payload and is gated by `gateway.diagnostics.include_config=true`.
 
 Expected additive keys include quality layer scores and stage18 tuning telemetry/action metadata:
