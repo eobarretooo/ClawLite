@@ -23,6 +23,14 @@ DISCORD_DEFAULT_GATEWAY_INTENTS = 46593
 DISCORD_TYPING_INTERVAL_S = 8.0
 DISCORD_VOICE_MESSAGE_FLAG = 1 << 13  # 8192 — IS_VOICE_MESSAGE
 DISCORD_VOICE_WAVEFORM_SAMPLES = 256
+DISCORD_COMPONENT_KIND_BY_TYPE: dict[int, str] = {
+    2: "button",
+    3: "select",
+    5: "user_select",
+    6: "role_select",
+    7: "mentionable_select",
+    8: "channel_select",
+}
 
 
 @dataclass(slots=True, frozen=True)
@@ -342,6 +350,103 @@ class DiscordChannel(BaseChannel):
             if value:
                 values.append(value)
         return tuple(values)
+
+    @staticmethod
+    def _normalize_component_values(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        values: list[str] = []
+        for item in raw:
+            value = str(item or "").strip()
+            if value:
+                values.append(value)
+        return values
+
+    @staticmethod
+    def _component_kind(component_type: int) -> str:
+        return DISCORD_COMPONENT_KIND_BY_TYPE.get(int(component_type or 0), "component")
+
+    @classmethod
+    def _component_update_kind(cls, component_type: int) -> str:
+        if int(component_type or 0) == 2:
+            return "button_click"
+        kind = cls._component_kind(component_type)
+        if kind == "select":
+            return "string_select"
+        if kind.endswith("_select"):
+            return kind
+        return "component_interaction"
+
+    @staticmethod
+    def _resolved_user_label(value: str, resolved: dict[str, Any]) -> str:
+        users = resolved.get("users")
+        members = resolved.get("members")
+        user = users.get(value) if isinstance(users, dict) else None
+        member = members.get(value) if isinstance(members, dict) else None
+        if isinstance(member, dict):
+            nickname = str(member.get("nick", "") or "").strip()
+            if nickname:
+                return nickname
+        if isinstance(user, dict):
+            for key in ("global_name", "display_name", "username"):
+                label = str(user.get(key, "") or "").strip()
+                if label:
+                    return label
+        return ""
+
+    @classmethod
+    def _component_selected_labels(
+        cls,
+        *,
+        component_type: int,
+        values: list[str],
+        data: dict[str, Any],
+    ) -> list[str]:
+        if not values:
+            return []
+        normalized_component_type = int(component_type or 0)
+        if normalized_component_type == 3:
+            return list(values)
+        resolved = data.get("resolved")
+        if not isinstance(resolved, dict):
+            return list(values)
+        labels: list[str] = []
+        for value in values:
+            label = ""
+            if normalized_component_type in {5, 7}:
+                label = cls._resolved_user_label(value, resolved)
+            if not label and normalized_component_type in {6, 7}:
+                roles = resolved.get("roles")
+                role = roles.get(value) if isinstance(roles, dict) else None
+                if isinstance(role, dict):
+                    role_name = str(role.get("name", "") or "").strip()
+                    if role_name:
+                        label = f"@{role_name}"
+            if not label and normalized_component_type == 8:
+                channels = resolved.get("channels")
+                channel = channels.get(value) if isinstance(channels, dict) else None
+                if isinstance(channel, dict):
+                    channel_name = str(channel.get("name", "") or "").strip()
+                    if channel_name:
+                        label = f"#{channel_name}"
+            labels.append(label or value)
+        return labels
+
+    @classmethod
+    def _component_event_text(
+        cls,
+        *,
+        component_type: int,
+        custom_id: str,
+        values: list[str],
+        labels: list[str],
+    ) -> str:
+        kind = cls._component_kind(component_type)
+        label = f"{kind}:{custom_id}" if custom_id else kind
+        rendered_values = labels or values
+        if rendered_values:
+            return f"[{label} {', '.join(rendered_values)}]"
+        return f"[{label}]"
 
     @classmethod
     def _normalize_guild_policies(
@@ -1682,18 +1787,31 @@ class DiscordChannel(BaseChannel):
             )
 
         elif interaction_type == 3:
-            # MESSAGE_COMPONENT (button click)
+            # MESSAGE_COMPONENT (buttons and selects)
             custom_id = str(data.get("custom_id", "") or "").strip()
             component_type = int(data.get("component_type", 0) or 0)
+            selected_values = self._normalize_component_values(data.get("values"))
+            selected_labels = self._component_selected_labels(
+                component_type=component_type,
+                values=selected_values,
+                data=data if isinstance(data, dict) else {},
+            )
             message = payload.get("message") or {}
             message_id = str(message.get("id", "") or "").strip()
-            text = f"[button:{custom_id}]"
+            text = self._component_event_text(
+                component_type=component_type,
+                custom_id=custom_id,
+                values=selected_values,
+                labels=selected_labels,
+            )
             metadata = {
                 "channel": "discord",
                 "channel_id": channel_id,
-                "update_kind": "button_click",
+                "update_kind": self._component_update_kind(component_type),
                 "custom_id": custom_id,
                 "component_type": component_type,
+                "selected_values": list(selected_values),
+                "selected_labels": list(selected_labels),
                 "message_id": message_id,
                 "interaction_id": interaction_id,
                 "interaction_token": interaction_token,

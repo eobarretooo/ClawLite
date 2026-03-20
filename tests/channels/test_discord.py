@@ -1070,6 +1070,86 @@ def test_discord_handle_interaction_create_button_emits_message() -> None:
     assert emitted[0]["metadata"]["custom_id"] == "confirm_action"
 
 
+def test_discord_handle_interaction_create_string_select_emits_selected_values() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append({"session_id": session_id, "user_id": user_id, "text": text, "metadata": metadata})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=_on_message)
+    ch._running = True
+
+    payload = {
+        "id": "inter-select-1",
+        "token": "tok-select-1",
+        "type": 3,
+        "channel_id": "chan001",
+        "guild_id": "guild-1",
+        "user": {"id": "u1", "username": "bob"},
+        "data": {
+            "custom_id": "priority",
+            "component_type": 3,
+            "values": ["high", "low"],
+        },
+        "message": {"id": "msg001"},
+    }
+
+    async def _scenario():
+        await ch._handle_interaction_create(payload)
+
+    asyncio.run(_scenario())
+
+    assert emitted[0]["text"] == "[select:priority high, low]"
+    assert emitted[0]["metadata"]["update_kind"] == "string_select"
+    assert emitted[0]["metadata"]["custom_id"] == "priority"
+    assert emitted[0]["metadata"]["selected_values"] == ["high", "low"]
+    assert emitted[0]["metadata"]["selected_labels"] == ["high", "low"]
+
+
+def test_discord_handle_interaction_create_user_select_uses_resolved_labels() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    async def _on_message(session_id, user_id, text, metadata):
+        emitted.append({"session_id": session_id, "user_id": user_id, "text": text, "metadata": metadata})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=_on_message)
+    ch._running = True
+
+    payload = {
+        "id": "inter-select-2",
+        "token": "tok-select-2",
+        "type": 3,
+        "channel_id": "chan001",
+        "guild_id": "guild-1",
+        "user": {"id": "u1", "username": "bob"},
+        "data": {
+            "custom_id": "assign",
+            "component_type": 5,
+            "values": ["u-1", "u-2"],
+            "resolved": {
+                "users": {
+                    "u-1": {"id": "u-1", "username": "alice", "global_name": "Alice A"},
+                    "u-2": {"id": "u-2", "username": "bob"},
+                },
+                "members": {
+                    "u-2": {"nick": "Bobby"},
+                },
+            },
+        },
+        "message": {"id": "msg001"},
+    }
+
+    async def _scenario():
+        await ch._handle_interaction_create(payload)
+
+    asyncio.run(_scenario())
+
+    assert emitted[0]["text"] == "[user_select:assign Alice A, Bobby]"
+    assert emitted[0]["metadata"]["update_kind"] == "user_select"
+    assert emitted[0]["metadata"]["selected_values"] == ["u-1", "u-2"]
+    assert emitted[0]["metadata"]["selected_labels"] == ["Alice A", "Bobby"]
+
+
 def test_discord_handle_interaction_create_slash_can_disable_isolated_sessions() -> None:
     emitted: list[dict[str, Any]] = []
 

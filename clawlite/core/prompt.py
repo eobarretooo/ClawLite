@@ -47,6 +47,8 @@ class PromptBuilder:
         ("callback_data", "Callback Data"),
         ("callback_signed", "Callback Signed"),
         ("custom_id", "Custom ID"),
+        ("selected_values", "Selected Values"),
+        ("selected_labels", "Selected Labels"),
         ("media_present", "Media Present"),
         ("media_type", "Media Type"),
         ("media_types", "Media Types"),
