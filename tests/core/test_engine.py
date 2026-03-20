@@ -5,6 +5,7 @@ import asyncio
 import copy
 import gc
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -600,6 +601,47 @@ class FakeMemoryWithWorkingSetBatchCapture(FakeMemory):
 
     def remember_working_set(self, *args, **kwargs) -> None:
         raise AssertionError("remember_working_set fallback should not be used when batch API is available")
+
+
+class FakeSlowSessionStore:
+    supports_async_offload = True
+
+    def __init__(self, *, delay_s: float = 0.35) -> None:
+        self.delay_s = max(0.0, float(delay_s))
+        self.rows: dict[str, list[dict[str, Any]]] = {}
+        self.append_many_calls: list[str] = []
+        self.append_started = threading.Event()
+        self.append_finished = threading.Event()
+
+    def append(self, session_id: str, role: str, content: str, *, metadata: dict[str, Any] | None = None) -> None:
+        time.sleep(self.delay_s)
+        self.rows.setdefault(str(session_id or ""), []).append(
+            {
+                "role": str(role or ""),
+                "content": str(content or ""),
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+    def append_many(self, session_id: str, rows: list[dict[str, Any]]) -> None:
+        self.append_many_calls.append(str(session_id or ""))
+        self.append_started.set()
+        time.sleep(self.delay_s)
+        bucket = self.rows.setdefault(str(session_id or ""), [])
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            bucket.append(
+                {
+                    "role": str(row.get("role", "") or ""),
+                    "content": str(row.get("content", "") or ""),
+                    "metadata": dict(row.get("metadata") or {}),
+                }
+            )
+        self.append_finished.set()
+
+    def read_messages(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        return [dict(item) for item in self.rows.get(str(session_id or ""), [])[-max(0, int(limit)) :]]
 
 
 class FakeMemoryWithContextKwargs(FakeMemory):
@@ -2698,6 +2740,65 @@ def test_engine_deferred_working_memory_does_not_block_other_sessions() -> None:
         assert [row["session_id"] for row in memory.batch_calls] == ["cli:one", "cli:two"]
         assert memory.memorize_calls[0]["source"] == "session:cli:one"
         assert memory.memorize_calls[1]["source"] == "session:cli:two"
+
+    asyncio.run(_scenario())
+
+
+def test_engine_file_backed_session_appends_do_not_block_other_sessions() -> None:
+    async def _scenario() -> None:
+        provider = FakeFixedTextProvider("pong")
+        sessions = FakeSlowSessionStore(delay_s=0.35)
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        started_at = time.perf_counter()
+        first_task = asyncio.create_task(engine.run(session_id="cli:one", user_text="first"))
+        await asyncio.sleep(0)
+        second_task = asyncio.create_task(engine.run(session_id="cli:two", user_text="second"))
+        first, second = await asyncio.gather(first_task, second_task)
+        elapsed = time.perf_counter() - started_at
+
+        assert first.text == "pong"
+        assert second.text == "pong"
+        assert elapsed < 0.6
+        assert {row["content"] for row in sessions.read_messages("cli:one", limit=10)} == {"first", "pong"}
+        assert {row["content"] for row in sessions.read_messages("cli:two", limit=10)} == {"second", "pong"}
+
+    asyncio.run(_scenario())
+
+
+def test_engine_cancelled_offloaded_session_append_waits_for_write() -> None:
+    async def _scenario() -> None:
+        provider = FakeFixedTextProvider("pong")
+        sessions = FakeSlowSessionStore(delay_s=0.25)
+        engine = AgentEngine(
+            provider=provider,
+            tools=FakeTools(),
+            sessions=sessions,
+            memory=FakeMemory(),
+        )
+
+        task = asyncio.create_task(engine.run(session_id="cli:one", user_text="first"))
+        while not sessions.append_started.is_set():
+            await asyncio.sleep(0.01)
+
+        started_at = time.perf_counter()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("expected CancelledError")
+        elapsed = time.perf_counter() - started_at
+
+        assert elapsed >= 0.2
+        assert sessions.append_finished.is_set() is True
+        assert {row["content"] for row in sessions.read_messages("cli:one", limit=10)} == {"first", "pong"}
 
     asyncio.run(_scenario())
 

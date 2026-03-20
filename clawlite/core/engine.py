@@ -1594,6 +1594,29 @@ class AgentEngine:
             return await result
         return result
 
+    async def _call_session_persistence_side_effect(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if inspect.iscoroutinefunction(fn):
+            return await fn(*args, **kwargs)
+        if not self._supports_session_persistence_offload():
+            result = fn(*args, **kwargs)
+        else:
+            worker = asyncio.create_task(asyncio.to_thread(fn, *args, **kwargs))
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(worker)
+                raise
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     @staticmethod
     def _clamp_memory_search_limit(raw: Any, *, default: int = 6) -> int:
         try:
@@ -3182,7 +3205,7 @@ class AgentEngine:
                                 session_id or "-",
                                 final_error,
                             )
-                            self._append_session_message(session_id, "user", user_text)
+                            await self._append_session_message_async(session_id, "user", user_text)
                         else:
                             await self._persist_completed_turn(
                                 session_id=session_id,
@@ -3195,7 +3218,7 @@ class AgentEngine:
                             )
                     elif cancelled:
                         run_log.info("stream cancelled before completion session={}", session_id or "-")
-                        self._append_session_message(session_id, "user", user_text)
+                        await self._append_session_message_async(session_id, "user", user_text)
                 except Exception as exc:
                     await queue.put(("error", exc))
                 finally:
@@ -3278,6 +3301,40 @@ class AgentEngine:
                 str(row.get("content", "") or ""),
                 metadata=dict(row.get("metadata") or {}),
             )
+
+    def _supports_session_persistence_offload(self) -> bool:
+        return isinstance(self.sessions, SessionStore) or bool(
+            getattr(self.sessions, "supports_async_offload", False)
+        )
+
+    async def _append_session_message_async(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        require_metadata_support: bool = False,
+    ) -> None:
+        await self._call_session_persistence_side_effect(
+            self._append_session_message,
+            session_id,
+            role,
+            content,
+            metadata=metadata,
+            require_metadata_support=require_metadata_support,
+        )
+
+    async def _append_session_messages_async(
+        self,
+        session_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        await self._call_session_persistence_side_effect(
+            self._append_session_messages,
+            session_id,
+            rows,
+        )
 
     def _supports_deferred_turn_persistence(self) -> bool:
         return bool(getattr(self.memory, "supports_deferred_turn_persistence", False))
@@ -3481,10 +3538,10 @@ class AgentEngine:
     ) -> None:
         session_rows = [{"role": "user", "content": user_text, "metadata": {}}]
         if assistant_text is None:
-            self._append_session_messages(session_id, session_rows)
+            await self._append_session_messages_async(session_id, session_rows)
             return
         session_rows.append({"role": "assistant", "content": assistant_text, "metadata": {}})
-        self._append_session_messages(session_id, session_rows)
+        await self._append_session_messages_async(session_id, session_rows)
         if self._supports_deferred_turn_persistence():
             self._queue_turn_persistence(
                 session_id=session_id,
@@ -4303,10 +4360,10 @@ class AgentEngine:
                 run_log=run_log,
             )
         elif not graceful_error:
-            self._append_session_message(session_id, "user", user_text)
+            await self._append_session_message_async(session_id, "user", user_text)
             run_log.warning("assistant persistence blocked by identity enforcement session={}", session_id or "-")
         else:
-            self._append_session_message(session_id, "user", user_text)
+            await self._append_session_message_async(session_id, "user", user_text)
             run_log.info("skipping assistant persistence after provider failure")
         if final.model == "engine/stop":
             turn_outcome = "cancelled"
