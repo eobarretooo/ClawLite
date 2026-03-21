@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord now also reuses `application_id` from interaction payloads and dispatch metadata, so reply/edit follow-up paths still work before the runtime has learned the app id from `READY`
 - Discord now also ACKs built-in operator slash commands plus approval/self-evolution button interactions as ephemeral deferred responses, avoiding a public deferred placeholder before the private follow-up path
 - Discord webhook execution now accepts `thread_id`, normalizes embeds with the same stats-safe path, and clamps outbound component rows to Discord's five-row limit
+- Discord `send()` now also accepts `metadata["discord_webhook"]`, routing normal outbound messages through the webhook path with normalized embeds, clamped component rows, optional thread targeting, and explicit rejection of unsupported reply-reference/poll features
 - Discord `send()` now accepts `metadata["discord_voice"]`, routing native voice-note sends through the normal outbound path for channel and DM targets
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only
 - `stream_run()` now falls back to the full `run()` loop for live-lookup turns, instead of staying on a text-only provider stream path when the answer should be verified with current web/weather data
