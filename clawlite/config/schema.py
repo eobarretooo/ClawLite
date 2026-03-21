@@ -420,7 +420,8 @@ class GatewayConfig(Base):
     @field_validator("port", mode="before")
     @classmethod
     def _port_default(cls, v: Any) -> int:
-        return int(v or 8787)
+        value = 8787 if v in (None, "") else v
+        return int(value)
 
     @field_validator(
         "startup_timeout_default_s",

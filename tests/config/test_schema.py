@@ -67,6 +67,14 @@ def test_snake_case_input():
     assert cfg.tools.web.search_timeout == 8.0
 
 
+def test_gateway_port_preserves_explicit_zero():
+    cfg = AppConfig.model_validate({
+        "gateway": {"port": 0},
+    })
+
+    assert cfg.gateway.port == 0
+
+
 # ---------------------------------------------------------------------------
 # 3. camelCase input works
 # ---------------------------------------------------------------------------
