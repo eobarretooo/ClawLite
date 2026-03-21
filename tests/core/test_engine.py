@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import clawlite.core.engine as engine_module
 from clawlite.config.schema import ToolSafetyPolicyConfig
 from clawlite.core.engine import (
@@ -469,6 +471,62 @@ class FakeMemoryWithAsyncMemorize(FakeMemory):
         del messages, source
         self.consolidate_calls += 1
         return None
+
+
+class _EngineDefaultMemoryStore(FakeMemory):
+    def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
+        super().__init__(rows)
+        self.memorize_calls: list[dict[str, Any]] = []
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        user_id: str = "",
+        session_id: str = "",
+        include_shared: bool = False,
+    ) -> list[MemoryRecord]:
+        del query, user_id, session_id, include_shared
+        return self.rows[:limit]
+
+    async def memorize(
+        self,
+        *,
+        messages=None,
+        text: str | None = None,
+        source: str = "session",
+        user_id: str = "",
+        shared: bool = False,
+        metadata: dict[str, Any] | None = None,
+        reasoning_layer: str | None = None,
+        memory_type: str | None = None,
+        happened_at: str | None = None,
+    ) -> dict[str, Any]:
+        self.memorize_calls.append(
+            {
+                "messages": messages,
+                "text": text,
+                "source": source,
+                "user_id": user_id,
+                "shared": shared,
+                "metadata": dict(metadata or {}),
+                "reasoning_layer": reasoning_layer,
+                "memory_type": memory_type,
+                "happened_at": happened_at,
+            }
+        )
+        return {"status": "ok"}
+
+    def integration_policy(self, actor: str, *, session_id: str = "") -> dict[str, Any]:
+        del actor, session_id
+        return {"allow_memory_write": True}
+
+
+@pytest.fixture(autouse=True)
+def _patch_engine_default_stores(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(engine_module, "MemoryStore", _EngineDefaultMemoryStore)
+    monkeypatch.setattr(engine_module, "SessionStore", InMemorySessionStore)
 
 
 class FakeMemoryWithDeferredTurnPersistence(FakeMemory):
@@ -1817,7 +1875,12 @@ def test_engine_normalizes_dict_provider_payloads_and_tuple_tool_calls() -> None
     async def _scenario() -> None:
         provider = FakeDictProviderPayloadProvider()
         tools = ExecuteCaptureTools()
-        engine = AgentEngine(provider=provider, tools=tools)
+        engine = AgentEngine(
+            provider=provider,
+            tools=tools,
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+        )
 
         out = await engine.run(session_id="cli:dict-provider", user_text="say hi")
         assert out.text == "done"
@@ -1840,7 +1903,12 @@ def test_engine_normalizes_dict_provider_payloads_and_tuple_tool_calls() -> None
 def test_engine_ignores_invalid_tool_call_containers_from_provider() -> None:
     async def _scenario() -> None:
         tools = ExecuteCaptureTools()
-        engine = AgentEngine(provider=FakeInvalidToolCallsContainerProvider(), tools=tools)
+        engine = AgentEngine(
+            provider=FakeInvalidToolCallsContainerProvider(),
+            tools=tools,
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
+        )
 
         out = await engine.run(session_id="cli:bad-tool-calls", user_text="say hi")
         assert out.text == "done"
@@ -1896,6 +1964,7 @@ def test_engine_identity_guard_normalizes_provider_intro_on_identity_question() 
             provider=FakeFixedTextProvider(provider_text),
             tools=FakeTools(),
             memory=memory,
+            sessions=InMemorySessionStore(),
         )
         out = await engine.run(session_id="cli:identity-q", user_text="Who are you?")
         assert out.text == (
@@ -1915,6 +1984,8 @@ def test_engine_identity_guard_prepends_identity_on_question_when_no_provider_in
         engine = AgentEngine(
             provider=FakeFixedTextProvider(provider_text),
             tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
         )
         out = await engine.run(session_id="cli:identity-prepend", user_text="What are you?")
         assert out.text == (
@@ -1931,6 +2002,8 @@ def test_engine_identity_guard_keeps_identity_question_output_when_clawlite_alre
         engine = AgentEngine(
             provider=FakeFixedTextProvider(provider_text),
             tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
         )
         out = await engine.run(session_id="cli:identity-already", user_text="Who are you?")
         assert out.text == provider_text
@@ -1944,6 +2017,8 @@ def test_engine_identity_guard_rewrites_provider_intro_without_identity_question
         engine = AgentEngine(
             provider=FakeFixedTextProvider(provider_text),
             tools=FakeTools(),
+            memory=FakeMemory(),
+            sessions=InMemorySessionStore(),
         )
         out = await engine.run(session_id="cli:identity-intro", user_text="Summarize deployment notes")
         assert out.text == "I am ClawLite, a self-hosted autonomous AI agent. I can help with this summary."
@@ -1959,6 +2034,7 @@ def test_engine_identity_guard_rewrites_embedded_provider_clause_and_persists_cl
             provider=FakeFixedTextProvider(provider_text),
             tools=FakeTools(),
             memory=memory,
+            sessions=InMemorySessionStore(),
         )
         out = await engine.run(session_id="cli:identity-embedded", user_text="Summarize deployment notes")
         assert out.text == (
@@ -1980,6 +2056,7 @@ def test_engine_identity_guard_rewrites_provider_self_sentence_before_persisting
             provider=FakeFixedTextProvider(provider_text),
             tools=FakeTools(),
             memory=memory,
+            sessions=InMemorySessionStore(),
         )
         out = await engine.run(session_id="cli:identity-sentence", user_text="Summarize deployment notes")
         assert out.text == (
