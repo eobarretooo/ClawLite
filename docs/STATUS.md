@@ -19,7 +19,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **1882 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **1884 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -30,6 +30,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 - Discord embeds now normalize stats-style field `inline` flags and embed `timestamp` values before POST/PATCH calls, so operator/status embeds render with the expected layout and UTC-aware time payloads.
 - Discord webhook execution now also accepts `thread_id`, reuses embed normalization, and clamps outbound component rows to Discord's five-row limit for thread-targeted webhook sends.
 - Discord `send()` now also accepts `metadata["discord_voice"]`, so channel and DM sends can route native voice-note payloads through the same outbound path instead of requiring a separate direct call to `send_voice_message()`.
+- Discord `discord_voice` metadata now also accepts local `audio_path` / `path`, so saved OGG files can be sent directly without pre-encoding them to bytes/base64 first while missing files fail closed.
 - Discord inbound audio/voice attachments can now reuse the same Groq-compatible transcription path as Telegram, appending compact transcription lines to inbound turns and exposing transcription counters in operator status.
 - Discord interaction replies now route ephemeral responses through the follow-up webhook path, so operator/status replies and explicit `discord_ephemeral` sends use a valid `flags=64` delivery path instead of relying on a late `@original` edit.
 - Discord now also caches `application_id` from interaction payloads and propagates it through dispatch metadata, so interaction replies can still use the webhook response path even when the runtime has not learned the app id from a prior `READY` event.
@@ -113,7 +114,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 1882 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 1884 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
