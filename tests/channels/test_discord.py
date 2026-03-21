@@ -2688,10 +2688,69 @@ def test_discord_send_interaction_followup_flag_preserves_ephemeral() -> None:
     ]
 
 
+def test_discord_send_interaction_followup_retries_429_using_retry_after(monkeypatch) -> None:
+    url = "https://discord.com/api/v10/webhooks/app001/tok-followup-retry?wait=true"
+    first = httpx.Response(
+        429,
+        headers={"Retry-After": "0.75"},
+        json={"retry_after": 0.75},
+        request=httpx.Request("POST", url),
+    )
+    second = httpx.Response(
+        200,
+        json={"id": "followup-retry-1"},
+        request=httpx.Request("POST", url),
+    )
+    calls: list[dict[str, Any]] = []
+
+    class _FakeClient:
+        def __init__(self, responses: list[httpx.Response]) -> None:
+            self._responses = list(responses)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            if not self._responses:
+                raise AssertionError("unexpected post")
+            return self._responses.pop(0)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeClient([first, second]),
+    )
+
+    ch = DiscordChannel(config={"token": "tok", "send_retry_attempts": 2}, on_message=None)
+    ch._application_id = "app001"
+
+    sleep_mock = AsyncMock()
+    with patch("clawlite.channels.discord.asyncio.sleep", new=sleep_mock):
+        out = asyncio.run(
+            ch.send_interaction_followup(
+                interaction_id="inter-followup-retry",
+                interaction_token="tok-followup-retry",
+                text="Retry follow-up",
+            )
+        )
+
+    assert out == "followup-retry-1"
+    assert len(calls) == 2
+    assert calls[0]["url"] == url
+    assert calls[0]["headers"] == {"Content-Type": "application/json"}
+    assert sleep_mock.await_count == 1
+    assert sleep_mock.await_args.args == (0.75,)
+
+
 def test_discord_send_interaction_reply_uses_application_id_from_metadata_without_ready() -> None:
     calls: list[dict[str, Any]] = []
 
     class _FakeResponse:
+        status_code = 200
         content = b'{"id": "reply-app-1"}'
 
         @staticmethod
@@ -2743,6 +2802,7 @@ def test_discord_reply_interaction_normalizes_embeds_before_patch() -> None:
     calls: list[dict[str, Any]] = []
 
     class _FakeResponse:
+        status_code = 200
         content = b'{"id": "reply-123"}'
 
         @staticmethod
@@ -2787,6 +2847,63 @@ def test_discord_reply_interaction_normalizes_embeds_before_patch() -> None:
             "timestamp": "2026-03-20T10:30:00+00:00",
         }
     ]
+
+
+def test_discord_reply_interaction_retries_429_using_retry_after(monkeypatch) -> None:
+    url = "https://discord.com/api/v10/webhooks/app001/tok-retry/messages/@original"
+    first = httpx.Response(
+        429,
+        headers={"Retry-After": "0.5"},
+        json={"retry_after": 0.5},
+        request=httpx.Request("PATCH", url),
+    )
+    second = httpx.Response(
+        200,
+        json={"id": "reply-retry-1"},
+        request=httpx.Request("PATCH", url),
+    )
+    calls: list[dict[str, Any]] = []
+
+    class _FakeClient:
+        def __init__(self, responses: list[httpx.Response]) -> None:
+            self._responses = list(responses)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def patch(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            if not self._responses:
+                raise AssertionError("unexpected patch")
+            return self._responses.pop(0)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeClient([first, second]),
+    )
+
+    ch = DiscordChannel(config={"token": "tok", "send_retry_attempts": 2}, on_message=None)
+    ch._application_id = "app001"
+
+    sleep_mock = AsyncMock()
+    with patch("clawlite.channels.discord.asyncio.sleep", new=sleep_mock):
+        out = asyncio.run(
+            ch.reply_interaction(
+                interaction_id="inter-retry-1",
+                interaction_token="tok-retry",
+                text="Retry me",
+            )
+        )
+
+    assert out == "reply-retry-1"
+    assert len(calls) == 2
+    assert calls[0]["url"] == url
+    assert sleep_mock.await_count == 1
+    assert sleep_mock.await_args.args == (0.5,)
 
 
 def test_discord_ack_interaction_ephemeral_sets_flags() -> None:

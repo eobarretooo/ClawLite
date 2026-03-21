@@ -1629,6 +1629,41 @@ class DiscordChannel(BaseChannel):
 
         raise RuntimeError(f"{error_prefix}_rate_limited")
 
+    async def _post_json_noauth(
+        self,
+        *,
+        url: str,
+        payload: dict[str, Any],
+        error_prefix: str,
+    ) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+            for attempt in range(1, self.send_retry_attempts + 1):
+                try:
+                    response = await client.post(
+                        url,
+                        json=payload,
+                        headers={"Content-Type": "application/json"},
+                    )
+                except httpx.HTTPError as exc:
+                    self._last_error = str(exc)
+                    raise RuntimeError(f"{error_prefix}_request_error") from exc
+
+                if response.status_code == 429:
+                    self._last_error = "http:429"
+                    if attempt >= self.send_retry_attempts:
+                        raise RuntimeError(f"{error_prefix}_rate_limited")
+                    retry_after = self._extract_retry_after(response)
+                    await asyncio.sleep(retry_after)
+                    continue
+
+                if response.status_code < 200 or response.status_code >= 300:
+                    self._last_error = f"http:{response.status_code}"
+                    raise RuntimeError(f"{error_prefix}_http_{response.status_code}")
+
+                return response
+
+        raise RuntimeError(f"{error_prefix}_rate_limited")
+
     async def _ensure_dm_channel_id(self, user_id: str) -> str:
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
@@ -2770,12 +2805,11 @@ class DiscordChannel(BaseChannel):
         if normalized_embeds:
             body["embeds"] = normalized_embeds
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                response = await client.patch(
-                    url,
-                    json=body,
-                    headers={"Authorization": f"Bot {self.token}", "Content-Type": "application/json"},
-                )
+            response = await self._patch_json(
+                url=url,
+                payload=body,
+                error_prefix="discord_interaction_reply",
+            )
             data = response.json() if response.content else {}
             return str(data.get("id", "") or "")
         except Exception:
@@ -2808,14 +2842,11 @@ class DiscordChannel(BaseChannel):
         if ephemeral:
             body["flags"] = 64  # EPHEMERAL
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                response = await client.post(
-                    url,
-                    json=body,
-                    headers={"Content-Type": "application/json"},
-                )
-            if response.status_code < 200 or response.status_code >= 300:
-                return ""
+            response = await self._post_json_noauth(
+                url=url,
+                payload=body,
+                error_prefix="discord_interaction_followup",
+            )
             data = response.json() if response.content else {}
             return str(data.get("id", "") or "")
         except Exception:
@@ -3055,14 +3086,44 @@ class DiscordChannel(BaseChannel):
         except Exception:
             return ""
 
-    async def _patch_json(self, *, url: str, payload: dict[str, Any]) -> httpx.Response:
-        """PATCH JSON to Discord API with auth headers."""
+    async def _patch_json(
+        self,
+        *,
+        url: str,
+        payload: dict[str, Any],
+        error_prefix: str = "discord_patch",
+    ) -> httpx.Response:
+        """PATCH JSON to Discord API with auth headers and basic rate-limit retry."""
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            return await client.patch(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bot {self.token}", "Content-Type": "application/json"},
-            )
+            for attempt in range(1, self.send_retry_attempts + 1):
+                try:
+                    response = await client.patch(
+                        url,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bot {self.token}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                except httpx.HTTPError as exc:
+                    self._last_error = str(exc)
+                    raise RuntimeError(f"{error_prefix}_request_error") from exc
+
+                if response.status_code == 429:
+                    self._last_error = "http:429"
+                    if attempt >= self.send_retry_attempts:
+                        raise RuntimeError(f"{error_prefix}_rate_limited")
+                    retry_after = self._extract_retry_after(response)
+                    await asyncio.sleep(retry_after)
+                    continue
+
+                if response.status_code < 200 or response.status_code >= 300:
+                    self._last_error = f"http:{response.status_code}"
+                    raise RuntimeError(f"{error_prefix}_http_{response.status_code}")
+
+                return response
+
+        raise RuntimeError(f"{error_prefix}_rate_limited")
 
     async def send_streaming(
         self,
