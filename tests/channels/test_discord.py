@@ -2122,6 +2122,148 @@ def test_discord_reply_interaction_normalizes_embeds_before_patch() -> None:
     ]
 
 
+def test_discord_reply_interaction_ephemeral_uses_followup_webhook() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        status_code = 200
+        content = b'{"id": "reply-ephemeral-1"}'
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"id": "reply-ephemeral-1"}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def patch(self, url, json, headers):
+            raise AssertionError("ephemeral replies should use follow-up webhook POST")
+
+        async def post(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _FakeResponse()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._application_id = "app001"
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeClient()):
+        out = asyncio.run(
+            ch.reply_interaction(
+                interaction_id="inter-ephemeral-1",
+                interaction_token="tok-ephemeral-1",
+                text="Secret status",
+                components=[
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                ],
+                embeds=[
+                    {
+                        "title": "Stats",
+                        "fields": [{"name": "Queue", "value": "4", "inline": "false"}],
+                        "timestamp": "2026-03-20T11:45:00",
+                    }
+                ],
+                ephemeral=True,
+            )
+        )
+
+    assert out == "reply-ephemeral-1"
+    assert calls == [
+        {
+            "url": "https://discord.com/api/v10/webhooks/app001/tok-ephemeral-1?wait=true",
+            "json": {
+                "content": "Secret status",
+                "components": [
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                ],
+                "embeds": [
+                    {
+                        "title": "Stats",
+                        "fields": [{"name": "Queue", "value": "4", "inline": False}],
+                        "timestamp": "2026-03-20T11:45:00+00:00",
+                    }
+                ],
+                "flags": 64,
+            },
+            "headers": {"Content-Type": "application/json"},
+        }
+    ]
+
+
+def test_discord_send_interaction_reply_ephemeral_uses_followup_webhook() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        status_code = 200
+        content = b'{"id": "reply-ephemeral-2"}'
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"id": "reply-ephemeral-2"}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def patch(self, url, json, headers):
+            raise AssertionError("send(..., discord_ephemeral=True) should not PATCH @original")
+
+        async def post(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _FakeResponse()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeClient()):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Operator note",
+                metadata={
+                    "interaction_id": "inter-ephemeral-2",
+                    "interaction_token": "tok-ephemeral-2",
+                    "discord_ephemeral": True,
+                    "discord_embeds": [
+                        {
+                            "title": "Status",
+                            "timestamp": "2026-03-20T12:00:00",
+                        }
+                    ],
+                },
+            )
+        )
+
+    assert out == "discord:interaction:reply-ephemeral-2"
+    assert calls == [
+        {
+            "url": "https://discord.com/api/v10/webhooks/app001/tok-ephemeral-2?wait=true",
+            "json": {
+                "content": "Operator note",
+                "embeds": [{"title": "Status", "timestamp": "2026-03-20T12:00:00+00:00"}],
+                "flags": 64,
+            },
+            "headers": {"Content-Type": "application/json"},
+        }
+    ]
+
+
 def test_discord_placeholder_waveform_is_base64() -> None:
     """_generate_placeholder_waveform() returns valid base64 of 256 bytes."""
     import base64

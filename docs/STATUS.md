@@ -31,6 +31,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 - Discord webhook execution now also accepts `thread_id`, reuses embed normalization, and clamps outbound component rows to Discord's five-row limit for thread-targeted webhook sends.
 - Discord `send()` now also accepts `metadata["discord_voice"]`, so channel and DM sends can route native voice-note payloads through the same outbound path instead of requiring a separate direct call to `send_voice_message()`.
 - Discord inbound audio/voice attachments can now reuse the same Groq-compatible transcription path as Telegram, appending compact transcription lines to inbound turns and exposing transcription counters in operator status.
+- Discord interaction replies now route ephemeral responses through the follow-up webhook path, so operator/status replies and explicit `discord_ephemeral` sends use a valid `flags=64` delivery path instead of relying on a late `@original` edit.
 - Gateway chat surfaces now have in-memory fixed-window rate limiting on HTTP and WebSocket paths with `429 + Retry-After` and shared `/v1/chat` / `/api/message` bucketing.
 - `self_evolution` can now stay disabled globally or run in a session-canary mode through `gateway.autonomy.self_evolution_enabled_for_sessions`, while manual forced triggers still work for operator validation.
 - memory quality snapshots now include a compact `trend` block derived from bounded history, so CLI/dashboard/diagnostics can show direction and streaks without recomputing client-side.

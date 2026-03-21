@@ -2560,15 +2560,24 @@ class DiscordChannel(BaseChannel):
         ephemeral: bool = False,
     ) -> str:
         """Edit the deferred interaction reply (follow-up to ACK type 5)."""
+        if ephemeral:
+            return await self.send_interaction_followup(
+                interaction_id=interaction_id,
+                interaction_token=interaction_token,
+                text=text,
+                components=components,
+                embeds=embeds,
+                ephemeral=True,
+            )
         url = f"{self.api_base}/webhooks/{self._application_id}/{interaction_token}/messages/@original"
         body: dict[str, Any] = {"content": str(text or "")}
         if components:
-            body["components"] = components
+            body["components"] = [
+                item for item in components if isinstance(item, dict)
+            ][:DISCORD_MAX_COMPONENT_ROWS]
         normalized_embeds = self._normalize_embed_payloads(embeds)
         if normalized_embeds:
             body["embeds"] = normalized_embeds
-        if ephemeral:
-            body["flags"] = 64  # EPHEMERAL
         try:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:
                 response = await client.patch(
@@ -2576,6 +2585,46 @@ class DiscordChannel(BaseChannel):
                     json=body,
                     headers={"Authorization": f"Bot {self.token}", "Content-Type": "application/json"},
                 )
+            data = response.json() if response.content else {}
+            return str(data.get("id", "") or "")
+        except Exception:
+            return ""
+
+    async def send_interaction_followup(
+        self,
+        *,
+        interaction_id: str,
+        interaction_token: str,
+        text: str,
+        components: list[dict[str, Any]] | None = None,
+        embeds: list[dict[str, Any]] | None = None,
+        ephemeral: bool = False,
+    ) -> str:
+        """Send an interaction follow-up message via the webhook token path."""
+        del interaction_id
+        application_id = str(self._application_id or "").strip()
+        if not application_id:
+            return ""
+        url = f"{self.api_base}/webhooks/{application_id}/{interaction_token}?wait=true"
+        body: dict[str, Any] = {"content": str(text or "")}
+        if components:
+            body["components"] = [
+                item for item in components if isinstance(item, dict)
+            ][:DISCORD_MAX_COMPONENT_ROWS]
+        normalized_embeds = self._normalize_embed_payloads(embeds)
+        if normalized_embeds:
+            body["embeds"] = normalized_embeds
+        if ephemeral:
+            body["flags"] = 64  # EPHEMERAL
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                response = await client.post(
+                    url,
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                )
+            if response.status_code < 200 or response.status_code >= 300:
+                return ""
             data = response.json() if response.content else {}
             return str(data.get("id", "") or "")
         except Exception:
