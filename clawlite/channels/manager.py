@@ -48,6 +48,16 @@ class EngineProtocol:
 
     def request_stop(self, session_id: str) -> bool: ...
 
+    async def stream_run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ): ...
+
 
 @dataclass(slots=True)
 class _SessionDispatchSlot:
@@ -1529,6 +1539,105 @@ class ChannelManager:
             return True
         return await self._retry_send(channel=channel, event=event) is not None
 
+    async def _publish_and_stream_discord(
+        self,
+        *,
+        event: OutboundEvent,
+        chunks: Any,
+    ) -> str:
+        channel = self._channels.get(event.channel)
+        if str(event.channel or "").strip().lower() != "discord" or channel is None:
+            return ""
+        stream_fn = getattr(channel, "send_streaming", None)
+        if not callable(stream_fn):
+            return ""
+        if not self._delivery_allowed(channel=channel, event=event):
+            self._inc_delivery(channel=event.channel, key="policy_dropped")
+            bind_event("channel.send", session=event.session_id, channel=event.channel).debug(
+                "dispatch streaming dropped by delivery policy target={}",
+                event.target,
+            )
+            return ""
+
+        attempt_event, idempotency_key = self._ensure_delivery_idempotency_key(event)
+        if self._is_delivery_idempotency_suppressed(idempotency_key):
+            self._inc_delivery(channel=event.channel, key="idempotency_suppressed")
+            self._record_delivery_recent(
+                event=replace(
+                    attempt_event,
+                    attempt=0,
+                    max_attempts=1,
+                    retryable=False,
+                    dead_lettered=False,
+                    dead_letter_reason="",
+                    last_error="",
+                ),
+                outcome="idempotency_suppressed",
+                idempotency_key=idempotency_key,
+            )
+            return ""
+
+        stream_event = replace(
+            attempt_event,
+            attempt=1,
+            max_attempts=1,
+            retryable=False,
+            dead_lettered=False,
+            dead_letter_reason="",
+            last_error="",
+        )
+        await self.bus.publish_outbound(stream_event)
+        self._inc_delivery(channel=event.channel, key="attempts")
+        try:
+            send_result = await stream_fn(
+                channel_id=event.target,
+                chunks=chunks,
+                metadata=self._prepare_outbound_metadata(
+                    channel_name=event.channel,
+                    target=event.target,
+                    metadata=event.metadata,
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._inc_delivery(channel=event.channel, key="failures")
+            bind_event("channel.send", session=event.session_id, channel=event.channel).warning(
+                "dispatch streaming failed target={} error={}",
+                event.target,
+                exc,
+            )
+            return ""
+
+        if not send_result:
+            self._inc_delivery(channel=event.channel, key="failures")
+            bind_event("channel.send", session=event.session_id, channel=event.channel).warning(
+                "dispatch streaming produced no send result target={}",
+                event.target,
+            )
+            return ""
+
+        self._inc_delivery(channel=event.channel, key="success")
+        self._inc_delivery(channel=event.channel, key="delivery_confirmed")
+        self._remember_delivery_idempotency(idempotency_key)
+        await self._sync_delivery_idempotency_persistence()
+        self._record_delivery_recent(
+            event=stream_event,
+            outcome="delivery_confirmed",
+            idempotency_key=idempotency_key,
+            send_result=send_result,
+        )
+        dispatch_context = self._dispatch_context.get()
+        if isinstance(dispatch_context, dict):
+            sent_targets = dispatch_context.get("sent_targets")
+            if isinstance(sent_targets, set):
+                sent_targets.add((str(event.channel), str(event.target)))
+        bind_event("channel.send", session=event.session_id, channel=event.channel).info(
+            "dispatch streamed target={}",
+            event.target,
+        )
+        return send_result
+
     async def replay_dead_letters(
         self,
         *,
@@ -1828,17 +1937,60 @@ class ChannelManager:
         )
         suppress_final_reply = False
         pending_tool_approvals: list[dict[str, Any]] = []
+        result_text = ""
+        result_model = ""
         try:
             try:
-                result = await self.engine.run(
-                    session_id=event.session_id,
-                    user_text=event.text,
-                    channel=event.channel,
-                    chat_id=target,
-                    runtime_metadata=event.metadata,
-                    progress_hook=_progress_hook,
-                    stop_event=self.bus.stop_event(event.session_id),
+                stream_run = getattr(self.engine, "stream_run", None)
+                channel_instance = self._channels.get(event.channel)
+                can_stream_discord_interaction = (
+                    str(event.channel or "").strip().lower() == "discord"
+                    and channel_instance is not None
+                    and callable(getattr(channel_instance, "send_streaming", None))
+                    and callable(stream_run)
+                    and bool(str(response_metadata.get("interaction_token", "") or "").strip())
                 )
+                stream_attempted = False
+                if can_stream_discord_interaction:
+                    stream_attempted = True
+                    final_state: dict[str, str] = {"text": ""}
+
+                    async def _observed_chunks():
+                        async for chunk in await stream_run(
+                            session_id=event.session_id,
+                            user_text=event.text,
+                            channel=event.channel,
+                            chat_id=target,
+                            runtime_metadata=event.metadata,
+                        ):
+                            if chunk.text or chunk.accumulated:
+                                final_state["text"] = chunk.accumulated or (final_state["text"] + chunk.text)
+                            yield chunk
+
+                    await self._publish_and_stream_discord(
+                        event=OutboundEvent(
+                            channel=event.channel,
+                            session_id=event.session_id,
+                            target=target,
+                            text="",
+                            metadata=response_metadata | reply_metadata,
+                        ),
+                        chunks=_observed_chunks(),
+                    )
+                    result_text = final_state["text"]
+
+                if not stream_attempted:
+                    result = await self.engine.run(
+                        session_id=event.session_id,
+                        user_text=event.text,
+                        channel=event.channel,
+                        chat_id=target,
+                        runtime_metadata=event.metadata,
+                        progress_hook=_progress_hook,
+                        stop_event=self.bus.stop_event(event.session_id),
+                    )
+                    result_text = result.text
+                    result_model = getattr(result, "model", "")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1897,8 +2049,8 @@ class ChannelManager:
                 )
                 return
 
-            final_text = result.text
-            final_metadata: dict[str, Any] = {"model": getattr(result, "model", "")} | response_metadata | reply_metadata
+            final_text = result_text
+            final_metadata: dict[str, Any] = {"model": result_model} | response_metadata | reply_metadata
             if pending_tool_approvals:
                 final_text = build_tool_approval_notice(pending_tool_approvals, base_text=final_text)
                 final_metadata = final_metadata | build_tool_approval_metadata(pending_tool_approvals)

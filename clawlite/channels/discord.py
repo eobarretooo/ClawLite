@@ -3033,6 +3033,7 @@ class DiscordChannel(BaseChannel):
         *,
         channel_id: str,
         chunks: Any,  # AsyncGenerator[ProviderChunk, None]
+        metadata: dict[str, Any] | None = None,
         min_edit_interval_s: float = 0.8,
     ) -> str:
         """Stream response to Discord: create placeholder message, edit as chunks arrive.
@@ -3040,30 +3041,80 @@ class DiscordChannel(BaseChannel):
         Args:
             channel_id: target Discord channel
             chunks: async generator yielding ProviderChunk objects
+            metadata: optional outbound metadata, including Discord interaction context
             min_edit_interval_s: minimum seconds between edits (avoid rate limits)
         Returns:
             discord:streamed:{message_id}
         """
         clean_channel = str(channel_id).strip()
-
-        # Create initial placeholder
-        response = await self._post_json(
-            url=f"{self.api_base}/channels/{clean_channel}/messages",
-            payload={"content": "…"},
-            error_prefix="discord_stream_create",
+        metadata_payload = dict(metadata or {})
+        interaction_token = str(metadata_payload.get("interaction_token", "") or "").strip()
+        interaction_application_id = str(
+            metadata_payload.get("application_id", metadata_payload.get("discord_application_id", ""))
+            or ""
+        ).strip()
+        interaction_followup = bool(
+            self._normalize_optional_bool(
+                metadata_payload.get(
+                    "discord_followup",
+                    metadata_payload.get("followup", False),
+                )
+            )
         )
-        try:
-            msg_id = str((response.json() if response.content else {}).get("id", "") or "")
-        except Exception:
-            msg_id = ""
+        if interaction_application_id and not self._application_id:
+            self._application_id = interaction_application_id
 
-        if not msg_id:
-            return ""
+        interaction_original_url = ""
+        msg_id = ""
+        if interaction_token and self._application_id:
+            if interaction_followup:
+                raise ValueError("discord streaming does not support discord_followup interaction replies")
+            interaction_original_url = (
+                f"{self.api_base}/webhooks/{self._application_id}/{interaction_token}/messages/@original"
+            )
+            msg_id = "@original"
+        else:
+            # Create initial placeholder
+            response = await self._post_json(
+                url=f"{self.api_base}/channels/{clean_channel}/messages",
+                payload={"content": "…"},
+                error_prefix="discord_stream_create",
+            )
+            try:
+                msg_id = str((response.json() if response.content else {}).get("id", "") or "")
+            except Exception:
+                msg_id = ""
+
+            if not msg_id:
+                return ""
 
         accumulated = ""
         last_edit_time = 0.0
-        last_sent_text = "…"
-        edit_url = f"{self.api_base}/channels/{clean_channel}/messages/{msg_id}"
+        last_sent_text = "" if interaction_original_url else "…"
+        edit_url = interaction_original_url or f"{self.api_base}/channels/{clean_channel}/messages/{msg_id}"
+        patch_succeeded = False
+
+        async def _edit_stream_text(source_text: str) -> bool:
+            nonlocal msg_id, patch_succeeded
+            attempts = 4 if interaction_original_url and not patch_succeeded else 1
+            for attempt in range(attempts):
+                try:
+                    response = await self._patch_json(url=edit_url, payload={"content": source_text})
+                except Exception:
+                    response = None
+                if response is not None and 200 <= response.status_code < 300:
+                    patch_succeeded = True
+                    try:
+                        data = response.json() if response.content else {}
+                    except Exception:
+                        data = {}
+                    response_message_id = str(data.get("id", "") or "").strip()
+                    if response_message_id:
+                        msg_id = response_message_id
+                    return True
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(0.05 * (attempt + 1))
+            return False
 
         async for chunk in chunks:
             if chunk.text:
@@ -3074,22 +3125,18 @@ class DiscordChannel(BaseChannel):
                 and (chunk.done or (now - last_edit_time) >= min_edit_interval_s)
             )
             if should_edit and accumulated:
-                try:
-                    await self._patch_json(url=edit_url, payload={"content": accumulated})
+                if await _edit_stream_text(accumulated):
                     last_sent_text = accumulated
                     last_edit_time = now
-                except Exception:
-                    pass
             if chunk.done:
                 break
 
         # Final edit to ensure complete text
         if accumulated and accumulated != last_sent_text:
-            try:
-                await self._patch_json(url=edit_url, payload={"content": accumulated})
-            except Exception:
-                pass
+            await _edit_stream_text(accumulated)
 
+        if not patch_succeeded:
+            return ""
         return f"discord:streamed:{msg_id}"
 
     async def _typing_loop(self, channel_id: str) -> None:

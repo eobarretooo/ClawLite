@@ -2341,6 +2341,74 @@ def test_discord_send_streaming_edits_message_in_place() -> None:
     assert patches[-1][2]["content"] == "Hello world!"
 
 
+def test_discord_send_streaming_uses_interaction_original_response_path() -> None:
+    from clawlite.core.engine import ProviderChunk
+
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def _fake_patch(url, payload):
+        calls.append(("PATCH", url, payload))
+        return _response(status=200, url=url, payload={"id": "reply-stream-1"})
+
+    async def fake_chunks():
+        yield ProviderChunk(text="Hello ", accumulated="Hello ", done=False)
+        yield ProviderChunk(text="world", accumulated="Hello world", done=True)
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+    ch._patch_json = _fake_patch  # type: ignore[method-assign]
+
+    out = asyncio.run(
+        ch.send_streaming(
+            channel_id="chan001",
+            chunks=fake_chunks(),
+            metadata={
+                "interaction_token": "tok-stream-1",
+                "application_id": "app001",
+            },
+        )
+    )
+
+    assert out == "discord:streamed:reply-stream-1"
+    assert calls == [
+        (
+            "PATCH",
+            "https://discord.com/api/v10/webhooks/app001/tok-stream-1/messages/@original",
+            {"content": "Hello "},
+        ),
+        (
+            "PATCH",
+            "https://discord.com/api/v10/webhooks/app001/tok-stream-1/messages/@original",
+            {"content": "Hello world"},
+        ),
+    ]
+
+
+def test_discord_send_streaming_rejects_interaction_followup_mode() -> None:
+    from clawlite.core.engine import ProviderChunk
+
+    async def fake_chunks():
+        yield ProviderChunk(text="Hello", accumulated="Hello", done=True)
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with pytest.raises(ValueError, match="discord streaming does not support discord_followup interaction replies"):
+        asyncio.run(
+            ch.send_streaming(
+                channel_id="chan001",
+                chunks=fake_chunks(),
+                metadata={
+                    "interaction_token": "tok-stream-followup",
+                    "application_id": "app001",
+                    "discord_followup": True,
+                },
+            )
+        )
+
+
 def test_discord_send_interaction_reply_uses_original_response_path() -> None:
     replies: list[dict[str, Any]] = []
 

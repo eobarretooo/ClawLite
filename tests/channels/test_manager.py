@@ -11,6 +11,7 @@ from clawlite.bus.events import InboundEvent, OutboundEvent
 from clawlite.bus.queue import MessageQueue
 from clawlite.channels.base import BaseChannel, ChannelCapabilities
 from clawlite.channels.manager import ChannelManager
+from clawlite.core.engine import ProviderChunk
 
 
 @dataclass
@@ -166,6 +167,49 @@ class TypingLifecycleEngine(FakeEngine):
         return _Result(text=f"reply:{session_id}:{user_text}")
 
 
+class StreamEngine(FakeEngine):
+    def __init__(self) -> None:
+        self.stream_calls: list[dict[str, Any]] = []
+
+    async def run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+        progress_hook=None,
+        stop_event=None,
+    ):
+        raise AssertionError("unexpected blocking run path")
+
+    async def stream_run(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ):
+        self.stream_calls.append(
+            {
+                "session_id": session_id,
+                "user_text": user_text,
+                "channel": channel,
+                "chat_id": chat_id,
+                "runtime_metadata": dict(runtime_metadata or {}),
+            }
+        )
+
+        async def _gen():
+            yield ProviderChunk(text="stream ", accumulated="stream ", done=False)
+            yield ProviderChunk(text="reply", accumulated="stream reply", done=True)
+
+        return _gen()
+
+
 class SubagentStub:
     def __init__(self, cancelled: int) -> None:
         self.cancelled = cancelled
@@ -229,6 +273,26 @@ class FakeChannel(BaseChannel):
 class FakeChannelWithSignals(FakeChannel):
     def signals(self) -> dict[str, Any]:
         return {"foo": 1, "bar": 2}
+
+
+class FakeStreamingDiscordChannel(FakeChannel):
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        on_message=None,
+    ):
+        super().__init__(config=config, on_message=on_message)
+        self.streamed: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def send_streaming(self, *, channel_id: str, chunks: Any, metadata=None) -> str:
+        payload = dict(metadata or {})
+        accumulated = ""
+        async for chunk in chunks:
+            if chunk.text or chunk.accumulated:
+                accumulated = chunk.accumulated or (accumulated + chunk.text)
+        self.streamed.append((channel_id, accumulated, payload))
+        return "discord:streamed:stream-1"
 
 
 class FakeTelegramTypingChannel(FakeChannel):
@@ -914,6 +978,61 @@ def test_channel_manager_dispatch_carries_discord_interaction_reply_context() ->
         assert discord.sent[0][2]["interaction_id"] == "inter-1"
         assert discord.sent[0][2]["interaction_token"] == "tok-1"
         assert discord.sent[0][2]["application_id"] == "app-1"
+
+        await mgr.stop()
+
+    asyncio.run(_scenario())
+
+
+def test_channel_manager_dispatch_streams_discord_interaction_replies() -> None:
+    async def _scenario() -> None:
+        bus = MessageQueue()
+        engine = StreamEngine()
+        mgr = ChannelManager(bus=bus, engine=engine)
+        mgr.register("discord", FakeStreamingDiscordChannel)
+        await mgr.start({"channels": {"discord": {"enabled": True}}})
+
+        discord = mgr._channels["discord"]
+        assert isinstance(discord, FakeStreamingDiscordChannel)
+        await discord.emit(
+            session_id="discord:guild:guild-1:channel:112233445566778899:slash:owner-user",
+            user_id="owner-user",
+            text="/ping",
+            metadata={
+                "channel": "discord",
+                "channel_id": "112233445566778899",
+                "interaction_id": "inter-stream-1",
+                "interaction_token": "tok-stream-1",
+                "application_id": "app-stream-1",
+            },
+        )
+        await asyncio.sleep(0.1)
+
+        assert engine.stream_calls == [
+            {
+                "session_id": "discord:guild:guild-1:channel:112233445566778899:slash:owner-user",
+                "user_text": "/ping",
+                "channel": "discord",
+                "chat_id": "112233445566778899",
+                "runtime_metadata": {
+                    "channel": "discord",
+                    "channel_id": "112233445566778899",
+                    "interaction_id": "inter-stream-1",
+                    "interaction_token": "tok-stream-1",
+                    "application_id": "app-stream-1",
+                },
+            }
+        ]
+        assert len(discord.streamed) == 1
+        streamed_target, streamed_text, streamed_metadata = discord.streamed[0]
+        assert streamed_target == "112233445566778899"
+        assert streamed_text == "stream reply"
+        assert streamed_metadata == {
+            "interaction_id": "inter-stream-1",
+            "interaction_token": "tok-stream-1",
+            "application_id": "app-stream-1",
+        }
+        assert discord.sent == []
 
         await mgr.stop()
 
