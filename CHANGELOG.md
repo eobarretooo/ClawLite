@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord `send()` now also accepts `metadata["discord_webhook"]`, routing normal outbound messages through the webhook path with normalized embeds, clamped component rows, optional thread targeting, and explicit rejection of unsupported reply-reference/poll features
 - Discord `send()` now accepts `metadata["discord_voice"]`, routing native voice-note sends through the normal outbound path for channel and DM targets
 - Discord voice-note metadata now also accepts local `audio_path` / `path`, so operators and skills can send saved OGG audio without pre-encoding bytes/base64 and get explicit failures for missing or unreadable files
+- Discord interaction replies can now opt into a real follow-up message via `metadata["discord_followup"]`, so callers can send an additional interaction message without always editing `@original`
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only
 - `stream_run()` now falls back to the full `run()` loop for live-lookup turns, instead of staying on a text-only provider stream path when the answer should be verified with current web/weather data
 - prompt runtime context now includes a few more safe structural channel hints such as message IDs, Slack thread timestamps, Telegram forum state, Discord DM state, signed callback/button ids, and single media-type markers without exposing raw channel payloads

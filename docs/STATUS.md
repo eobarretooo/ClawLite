@@ -19,7 +19,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **1884 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **1886 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -35,6 +35,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 - Discord interaction replies now route ephemeral responses through the follow-up webhook path, so operator/status replies and explicit `discord_ephemeral` sends use a valid `flags=64` delivery path instead of relying on a late `@original` edit.
 - Discord now also caches `application_id` from interaction payloads and propagates it through dispatch metadata, so interaction replies can still use the webhook response path even when the runtime has not learned the app id from a prior `READY` event.
 - Discord now also ACKs built-in operator slash commands and approval/self-evolution button interactions as ephemeral deferred responses, avoiding a public deferred placeholder before the eventual private follow-up.
+- Discord interaction sends can now opt into an explicit follow-up message via `metadata["discord_followup"]`, so runtime callers can post an additional interaction response without always editing the original deferred message.
 - Discord `send()` now also accepts `metadata["discord_webhook"]`, routing normal outbound messages through Discord webhooks with the same embed normalization, component row clamp, and optional thread targeting already used by the lower-level webhook helper.
 - Gateway chat surfaces now have in-memory fixed-window rate limiting on HTTP and WebSocket paths with `429 + Retry-After` and shared `/v1/chat` / `/api/message` bucketing.
 - `self_evolution` can now stay disabled globally or run in a session-canary mode through `gateway.autonomy.self_evolution_enabled_for_sessions`, while manual forced triggers still work for operator validation.
@@ -114,7 +115,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 1884 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 1886 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
