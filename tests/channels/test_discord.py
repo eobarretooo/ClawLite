@@ -2366,6 +2366,118 @@ def test_discord_send_interaction_reply_normalizes_embeds() -> None:
     ]
 
 
+def test_discord_send_interaction_followup_flag_uses_followup_path() -> None:
+    replies: list[dict[str, Any]] = []
+
+    async def _fake_followup(
+        *,
+        interaction_id: str,
+        interaction_token: str,
+        text: str,
+        components: list[dict[str, Any]] | None = None,
+        embeds: list[dict[str, Any]] | None = None,
+        ephemeral: bool = False,
+    ) -> str:
+        replies.append(
+            {
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "text": text,
+                "components": list(components or []),
+                "embeds": list(embeds or []),
+                "ephemeral": ephemeral,
+            }
+        )
+        return "followup-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with patch.object(ch, "reply_interaction", side_effect=AssertionError("unexpected original reply path")):
+        with patch.object(ch, "send_interaction_followup", side_effect=_fake_followup):
+            out = asyncio.run(
+                ch.send(
+                    target="channel:chan001",
+                    text="Additional status",
+                    metadata={
+                        "interaction_id": "inter-followup-1",
+                        "interaction_token": "tok-followup-1",
+                        "discord_followup": True,
+                        "discord_embeds": [{"title": "Status"}],
+                    },
+                )
+            )
+
+    assert out == "discord:interaction:followup-1"
+    assert replies == [
+        {
+            "interaction_id": "inter-followup-1",
+            "interaction_token": "tok-followup-1",
+            "text": "Additional status",
+            "components": [],
+            "embeds": [{"title": "Status"}],
+            "ephemeral": False,
+        }
+    ]
+
+
+def test_discord_send_interaction_followup_flag_preserves_ephemeral() -> None:
+    replies: list[dict[str, Any]] = []
+
+    async def _fake_followup(
+        *,
+        interaction_id: str,
+        interaction_token: str,
+        text: str,
+        components: list[dict[str, Any]] | None = None,
+        embeds: list[dict[str, Any]] | None = None,
+        ephemeral: bool = False,
+    ) -> str:
+        replies.append(
+            {
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "text": text,
+                "components": list(components or []),
+                "embeds": list(embeds or []),
+                "ephemeral": ephemeral,
+            }
+        )
+        return "followup-ephemeral-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with patch.object(ch, "reply_interaction", side_effect=AssertionError("unexpected original reply path")):
+        with patch.object(ch, "send_interaction_followup", side_effect=_fake_followup):
+            out = asyncio.run(
+                ch.send(
+                    target="channel:chan001",
+                    text="Private follow-up",
+                    metadata={
+                        "interaction_id": "inter-followup-2",
+                        "interaction_token": "tok-followup-2",
+                        "discord_followup": True,
+                        "discord_ephemeral": True,
+                    },
+                )
+            )
+
+    assert out == "discord:interaction:followup-ephemeral-1"
+    assert replies == [
+        {
+            "interaction_id": "inter-followup-2",
+            "interaction_token": "tok-followup-2",
+            "text": "Private follow-up",
+            "components": [],
+            "embeds": [],
+            "ephemeral": True,
+        }
+    ]
+
+
 def test_discord_send_interaction_reply_uses_application_id_from_metadata_without_ready() -> None:
     calls: list[dict[str, Any]] = []
 

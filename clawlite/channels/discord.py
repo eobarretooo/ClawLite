@@ -1639,6 +1639,14 @@ class DiscordChannel(BaseChannel):
             metadata_payload.get("application_id", metadata_payload.get("discord_application_id", ""))
             or ""
         ).strip()
+        interaction_followup = bool(
+            self._normalize_optional_bool(
+                metadata_payload.get(
+                    "discord_followup",
+                    metadata_payload.get("followup", False),
+                )
+            )
+        )
         if interaction_application_id and not self._application_id:
             self._application_id = interaction_application_id
         reply_to_message_id = str(
@@ -1722,21 +1730,27 @@ class DiscordChannel(BaseChannel):
             }
 
         if interaction_token and self._application_id:
-            reply_id = await self.reply_interaction(
-                interaction_id=interaction_id,
-                interaction_token=interaction_token,
-                text=str(text or ""),
-                components=payload.get("components"),
-                embeds=payload.get("embeds"),
-                ephemeral=bool(
+            reply_kwargs = {
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "text": str(text or ""),
+                "components": payload.get("components"),
+                "embeds": payload.get("embeds"),
+                "ephemeral": bool(
                     metadata_payload.get(
                         "discord_ephemeral",
                         metadata_payload.get("ephemeral", False),
                     )
                 ),
-            )
+            }
+            if interaction_followup:
+                reply_id = await self.send_interaction_followup(**reply_kwargs)
+            else:
+                reply_id = await self.reply_interaction(**reply_kwargs)
             if reply_id:
                 return f"discord:interaction:{reply_id}"
+            if interaction_followup:
+                raise RuntimeError("discord_interaction_followup_failed")
             raise RuntimeError("discord_interaction_reply_failed")
 
         if normalized_webhook is not None:
