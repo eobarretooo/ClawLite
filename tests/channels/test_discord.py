@@ -1863,26 +1863,14 @@ def test_discord_execute_webhook_targets_thread_and_normalizes_embeds() -> None:
 
 def test_discord_send_voice_message_builds_correct_payload() -> None:
     """send_voice_message() uploads file and sends message with IS_VOICE_MESSAGE flag."""
-    import unittest.mock as mock
-
     http_calls: list[tuple[str, str, Any]] = []
 
-    class _FakeVoiceClient:
+    class _FakeVoiceUploadClient:
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, *a):
             pass
-
-        async def post(self, url, *, json=None, headers=None, content=None):
-            http_calls.append(("POST", url, json or content))
-            if "attachments" in url:
-                return _response(
-                    status=200,
-                    url=url,
-                    payload={"attachments": [{"id": 0, "upload_url": "https://cdn/upload", "upload_filename": "voice.ogg"}]},
-                )
-            return _response(status=200, url=url, payload={"id": "msg001"})
 
         async def put(self, url, *, headers=None, content=None):
             http_calls.append(("PUT", url, None))
@@ -1893,11 +1881,17 @@ def test_discord_send_voice_message_builds_correct_payload() -> None:
 
     async def _fake_post_json(url, payload, error_prefix=""):
         http_calls.append(("POST", url, payload))
+        if "attachments" in url:
+            return _response(
+                status=200,
+                url=url,
+                payload={"attachments": [{"id": 0, "upload_url": "https://cdn/upload", "upload_filename": "voice.ogg"}]},
+            )
         return _response(status=200, url=url, payload={"id": "msg001"})
 
     ch._post_json = _fake_post_json  # type: ignore[method-assign]
 
-    with mock.patch("httpx.AsyncClient", return_value=_FakeVoiceClient()):
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeVoiceUploadClient()):
         async def _scenario():
             return await ch.send_voice_message(
                 channel_id="chan001",
@@ -1913,6 +1907,61 @@ def test_discord_send_voice_message_builds_correct_payload() -> None:
     msg_posts = [c for c in http_calls if c[0] == "POST" and "messages" in c[1]]
     assert msg_posts
     assert msg_posts[0][2]["flags"] == 8192
+
+
+def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> None:
+    http_calls: list[tuple[str, str, Any]] = []
+
+    class _FakeVoiceUploadRetryClient:
+        def __init__(self) -> None:
+            self._responses = [
+                _response(status=429, url="https://cdn/upload", payload={"retry_after": 0.75}),
+                _response(status=200, url="https://cdn/upload"),
+            ]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def put(self, url, *, headers=None, content=None):
+            http_calls.append(("PUT", url, None))
+            if not self._responses:
+                raise AssertionError("unexpected voice upload put")
+            return self._responses.pop(0)
+
+    ch = DiscordChannel(config={"token": "tok", "send_retry_attempts": 2}, on_message=None)
+    ch._running = True
+
+    async def _fake_post_json(url, payload, error_prefix=""):
+        http_calls.append(("POST", url, payload))
+        if "attachments" in url:
+            return _response(
+                status=200,
+                url=url,
+                payload={"attachments": [{"id": 0, "upload_url": "https://cdn/upload", "upload_filename": "voice.ogg"}]},
+            )
+        return _response(status=200, url=url, payload={"id": "msg-upload-retry"})
+
+    ch._post_json = _fake_post_json  # type: ignore[method-assign]
+    sleep_mock = AsyncMock()
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeVoiceUploadRetryClient()):
+        with patch("clawlite.channels.discord.asyncio.sleep", new=sleep_mock):
+            out = asyncio.run(
+                ch.send_voice_message(
+                    channel_id="chan001",
+                    audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 32,
+                    duration_secs=1.0,
+                    waveform="AAAA",
+                )
+            )
+
+    assert out == "discord:voice:msg-upload-retry"
+    assert [call[0] for call in http_calls].count("PUT") == 2
+    assert sleep_mock.await_count == 1
+    assert sleep_mock.await_args.args == (0.75,)
 
 
 def test_discord_send_routes_discord_webhook_metadata_to_execute_webhook() -> None:

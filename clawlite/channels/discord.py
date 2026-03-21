@@ -1595,6 +1595,40 @@ class DiscordChannel(BaseChannel):
 
         raise RuntimeError(f"{error_prefix}_rate_limited")
 
+    async def _put_content(
+        self,
+        *,
+        url: str,
+        content: bytes,
+        headers: dict[str, str],
+        error_prefix: str,
+        timeout_s: float | None = None,
+    ) -> httpx.Response:
+        request_timeout = float(timeout_s or self.timeout_s or 0.0)
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            for attempt in range(1, self.send_retry_attempts + 1):
+                try:
+                    response = await client.put(url, content=content, headers=headers)
+                except httpx.HTTPError as exc:
+                    self._last_error = str(exc)
+                    raise RuntimeError(f"{error_prefix}_request_error") from exc
+
+                if response.status_code == 429:
+                    self._last_error = "http:429"
+                    if attempt >= self.send_retry_attempts:
+                        raise RuntimeError(f"{error_prefix}_rate_limited")
+                    retry_after = self._extract_retry_after(response)
+                    await asyncio.sleep(retry_after)
+                    continue
+
+                if response.status_code < 200 or response.status_code >= 300:
+                    self._last_error = f"http:{response.status_code}"
+                    raise RuntimeError(f"{error_prefix}_http_{response.status_code}")
+
+                return response
+
+        raise RuntimeError(f"{error_prefix}_rate_limited")
+
     async def _ensure_dm_channel_id(self, user_id: str) -> str:
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
@@ -2880,13 +2914,11 @@ class DiscordChannel(BaseChannel):
         resolved_waveform = waveform or await self._generate_waveform_from_audio(audio_bytes)
 
         # Step 1: Request upload URL
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            r1 = await client.post(
-                f"{self.api_base}/channels/{clean_channel}/attachments",
-                json={"files": [{"filename": "voice-message.ogg", "file_size": len(audio_bytes), "id": "0"}]},
-                headers={"Authorization": f"Bot {self.token}", "Content-Type": "application/json"},
-            )
-        r1.raise_for_status()
+        r1 = await self._post_json(
+            url=f"{self.api_base}/channels/{clean_channel}/attachments",
+            payload={"files": [{"filename": "voice-message.ogg", "file_size": len(audio_bytes), "id": "0"}]},
+            error_prefix="discord_voice_attachment",
+        )
         attachment_info = r1.json().get("attachments", [{}])[0]
         upload_url = str(attachment_info.get("upload_url", "") or "")
         upload_filename = str(attachment_info.get("upload_filename", "") or "")
@@ -2894,9 +2926,13 @@ class DiscordChannel(BaseChannel):
             raise RuntimeError("discord_voice_upload_url_missing")
 
         # Step 2: Upload the audio
-        async with httpx.AsyncClient(timeout=max(30.0, self.timeout_s)) as client:
-            r2 = await client.put(upload_url, content=audio_bytes, headers={"Content-Type": "audio/ogg"})
-        r2.raise_for_status()
+        await self._put_content(
+            url=upload_url,
+            content=audio_bytes,
+            headers={"Content-Type": "audio/ogg"},
+            error_prefix="discord_voice_upload",
+            timeout_s=max(30.0, self.timeout_s),
+        )
 
         # Step 3: Send message with voice flag
         flags = DISCORD_VOICE_MESSAGE_FLAG
