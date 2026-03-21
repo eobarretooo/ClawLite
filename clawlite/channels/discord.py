@@ -27,6 +27,18 @@ DISCORD_VOICE_MESSAGE_FLAG = 1 << 13  # 8192 — IS_VOICE_MESSAGE
 DISCORD_VOICE_WAVEFORM_SAMPLES = 256
 DISCORD_MAX_COMPONENT_ROWS = 5
 DISCORD_MAX_MODAL_FIELDS = 5
+DISCORD_EPHEMERAL_OPERATOR_COMMANDS = {
+    "focus",
+    "unfocus",
+    "discord-status",
+    "discord-refresh",
+    "discord-presence",
+    "discord-presence-refresh",
+}
+DISCORD_EPHEMERAL_CUSTOM_ID_PREFIXES = (
+    "tool_approval:",
+    "self_evolution:",
+)
 DISCORD_COMPONENT_KIND_BY_TYPE: dict[int, str] = {
     2: "button",
     3: "select",
@@ -592,6 +604,16 @@ class DiscordChannel(BaseChannel):
         if kind.endswith("_select"):
             return kind
         return "component_interaction"
+
+    @staticmethod
+    def _interaction_prefers_ephemeral(*, interaction_type: int, data: dict[str, Any]) -> bool:
+        if int(interaction_type or 0) == 2:
+            command_name = str(data.get("name", "") or "").strip().lower()
+            return command_name in DISCORD_EPHEMERAL_OPERATOR_COMMANDS
+        if int(interaction_type or 0) == 3:
+            custom_id = str(data.get("custom_id", "") or "").strip().lower()
+            return any(custom_id.startswith(prefix) for prefix in DISCORD_EPHEMERAL_CUSTOM_ID_PREFIXES)
+        return False
 
     @staticmethod
     def _resolved_user_label(value: str, resolved: dict[str, Any]) -> str:
@@ -2379,7 +2401,16 @@ class DiscordChannel(BaseChannel):
                 return
 
         # ACK the interaction immediately (type 5 = deferred channel message)
-        asyncio.create_task(self._ack_interaction(interaction_id, interaction_token))
+        asyncio.create_task(
+            self._ack_interaction(
+                interaction_id,
+                interaction_token,
+                ephemeral=self._interaction_prefers_ephemeral(
+                    interaction_type=interaction_type,
+                    data=data if isinstance(data, dict) else {},
+                ),
+            )
+        )
 
         if interaction_type == 2:
             # APPLICATION_COMMAND (slash command)
@@ -2501,12 +2532,21 @@ class DiscordChannel(BaseChannel):
                 metadata=metadata,
             )
 
-    async def _ack_interaction(self, interaction_id: str, interaction_token: str) -> None:
+    async def _ack_interaction(
+        self,
+        interaction_id: str,
+        interaction_token: str,
+        *,
+        ephemeral: bool = False,
+    ) -> None:
         """Immediately ACK a Discord interaction with deferred response (type 5)."""
+        payload: dict[str, Any] = {"type": 5}
+        if ephemeral:
+            payload["data"] = {"flags": 64}
         try:
             await self._post_json(
                 url=f"{self.api_base}/interactions/{interaction_id}/{interaction_token}/callback",
-                payload={"type": 5},
+                payload=payload,
                 error_prefix="discord_interaction_ack",
             )
         except Exception:

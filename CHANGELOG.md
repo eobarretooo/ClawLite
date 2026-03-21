@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord embeds now normalize field `inline` values and embed `timestamp` payloads before send/reply calls, so stats-style embeds stop rendering with broken field layout or naive timestamps
 - Discord ephemeral interaction replies now use the follow-up webhook route, so operator/status responses and explicit `discord_ephemeral` sends apply `flags=64` on a valid Discord path instead of relying on a late `@original` edit
 - Discord now also reuses `application_id` from interaction payloads and dispatch metadata, so reply/edit follow-up paths still work before the runtime has learned the app id from `READY`
+- Discord now also ACKs built-in operator slash commands plus approval/self-evolution button interactions as ephemeral deferred responses, avoiding a public deferred placeholder before the private follow-up path
 - Discord webhook execution now accepts `thread_id`, normalizes embeds with the same stats-safe path, and clamps outbound component rows to Discord's five-row limit
 - Discord `send()` now accepts `metadata["discord_voice"]`, routing native voice-note sends through the normal outbound path for channel and DM targets
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only

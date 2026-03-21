@@ -1298,6 +1298,93 @@ def test_discord_handle_interaction_create_button_emits_message() -> None:
     assert emitted[0]["metadata"]["custom_id"] == "confirm_action"
 
 
+def test_discord_handle_interaction_create_status_command_acknowledges_ephemeral() -> None:
+    async def _scenario() -> None:
+        ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+        ch._running = True
+        ack_mock = AsyncMock()
+        with patch.object(ch, "_ack_interaction", ack_mock):
+            await ch._handle_interaction_create(
+                {
+                    "id": "inter-status-1",
+                    "token": "tok-status-1",
+                    "type": 2,
+                    "application_id": "app001",
+                    "channel_id": "chan001",
+                    "guild_id": "guild-1",
+                    "user": {"id": "u1", "username": "bob"},
+                    "data": {"name": "discord-status", "options": []},
+                }
+            )
+            await asyncio.sleep(0)
+
+        ack_mock.assert_awaited_once_with(
+            "inter-status-1",
+            "tok-status-1",
+            ephemeral=True,
+        )
+
+    asyncio.run(_scenario())
+
+
+def test_discord_handle_interaction_create_tool_approval_button_acknowledges_ephemeral() -> None:
+    async def _scenario() -> None:
+        ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+        ch._running = True
+        ack_mock = AsyncMock()
+        with patch.object(ch, "_ack_interaction", ack_mock):
+            await ch._handle_interaction_create(
+                {
+                    "id": "inter-approval-1",
+                    "token": "tok-approval-1",
+                    "type": 3,
+                    "channel_id": "chan001",
+                    "guild_id": "guild-1",
+                    "user": {"id": "u1", "username": "bob"},
+                    "data": {"custom_id": "tool_approval:approve:req-1", "component_type": 2},
+                    "message": {"id": "msg001"},
+                }
+            )
+            await asyncio.sleep(0)
+
+        ack_mock.assert_awaited_once_with(
+            "inter-approval-1",
+            "tok-approval-1",
+            ephemeral=True,
+        )
+
+    asyncio.run(_scenario())
+
+
+def test_discord_handle_interaction_create_generic_slash_keeps_public_ack() -> None:
+    async def _scenario() -> None:
+        ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+        ch._running = True
+        ack_mock = AsyncMock()
+        with patch.object(ch, "_ack_interaction", ack_mock):
+            await ch._handle_interaction_create(
+                {
+                    "id": "inter-public-1",
+                    "token": "tok-public-1",
+                    "type": 2,
+                    "application_id": "app001",
+                    "channel_id": "chan001",
+                    "guild_id": "guild-1",
+                    "user": {"id": "u1", "username": "bob"},
+                    "data": {"name": "ping", "options": []},
+                }
+            )
+            await asyncio.sleep(0)
+
+        ack_mock.assert_awaited_once_with(
+            "inter-public-1",
+            "tok-public-1",
+            ephemeral=False,
+        )
+
+    asyncio.run(_scenario())
+
+
 def test_discord_handle_interaction_create_string_select_emits_selected_values() -> None:
     emitted: list[dict[str, Any]] = []
 
@@ -2171,6 +2258,33 @@ def test_discord_reply_interaction_normalizes_embeds_before_patch() -> None:
             "title": "Stats",
             "fields": [{"name": "Uptime", "value": "5m", "inline": False}],
             "timestamp": "2026-03-20T10:30:00+00:00",
+        }
+    ]
+
+
+def test_discord_ack_interaction_ephemeral_sets_flags() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_post(url, payload, error_prefix=""):
+        calls.append({"url": url, "payload": payload, "error_prefix": error_prefix})
+        return _response(status=204, url=url)
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._post_json = _fake_post  # type: ignore[method-assign]
+
+    asyncio.run(
+        ch._ack_interaction(
+            "inter-ack-1",
+            "tok-ack-1",
+            ephemeral=True,
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "https://discord.com/api/v10/interactions/inter-ack-1/tok-ack-1/callback",
+            "payload": {"type": 5, "data": {"flags": 64}},
+            "error_prefix": "discord_interaction_ack",
         }
     ]
 
