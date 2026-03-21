@@ -576,7 +576,9 @@ class DiscordChannel(BaseChannel):
         audio_bytes = cls._normalize_voice_bytes(
             raw.get("audio_bytes", raw.get("audioBytes", raw.get("audio_base64", raw.get("audioBase64"))))
         )
-        if not audio_bytes:
+        audio_path_raw = raw.get("audio_path", raw.get("audioPath", raw.get("path", raw.get("file_path", ""))))
+        audio_path = Path(str(audio_path_raw or "").strip()).expanduser() if audio_path_raw else None
+        if not audio_bytes and audio_path is None:
             return None
         try:
             duration_secs = max(0.0, float(raw.get("duration_secs", raw.get("durationSecs", 0.0)) or 0.0))
@@ -585,10 +587,29 @@ class DiscordChannel(BaseChannel):
         waveform = str(raw.get("waveform", "") or "").strip() or None
         return {
             "audio_bytes": audio_bytes,
+            "audio_path": audio_path,
             "duration_secs": duration_secs,
             "waveform": waveform,
             "silent": bool(raw.get("silent", False)),
         }
+
+    @staticmethod
+    async def _resolve_outbound_voice_bytes(normalized_voice: dict[str, Any]) -> bytes:
+        audio_bytes = normalized_voice.get("audio_bytes")
+        if isinstance(audio_bytes, bytes) and audio_bytes:
+            return audio_bytes
+        audio_path = normalized_voice.get("audio_path")
+        if isinstance(audio_path, Path):
+            try:
+                loaded = await asyncio.to_thread(audio_path.read_bytes)
+            except FileNotFoundError as exc:
+                raise ValueError(f"discord_voice audio_path not found: {audio_path}") from exc
+            except OSError as exc:
+                raise ValueError(f"discord_voice audio_path unreadable: {audio_path}") from exc
+            if loaded:
+                return loaded
+            raise ValueError(f"discord_voice audio_path is empty: {audio_path}")
+        raise ValueError("discord_voice requires audio bytes and duration_secs")
 
     @classmethod
     def _normalize_outbound_webhook(cls, raw: Any) -> dict[str, Any] | None:
@@ -1632,13 +1653,14 @@ class DiscordChannel(BaseChannel):
         if raw_voice is not None and normalized_voice is None:
             raise ValueError("discord_voice requires audio bytes and duration_secs")
         if normalized_voice is not None:
+            resolved_audio_bytes = await self._resolve_outbound_voice_bytes(normalized_voice)
             if resolved_target.kind == "user":
                 voice_channel_id = await self._ensure_dm_channel_id(resolved_target.value)
             else:
                 voice_channel_id = resolved_target.value
             return await self.send_voice_message(
                 channel_id=voice_channel_id,
-                audio_bytes=normalized_voice["audio_bytes"],
+                audio_bytes=resolved_audio_bytes,
                 duration_secs=float(normalized_voice["duration_secs"]),
                 waveform=normalized_voice["waveform"],
                 reply_to_message_id=reply_to_message_id or None,

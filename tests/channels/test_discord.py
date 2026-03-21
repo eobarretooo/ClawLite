@@ -2128,6 +2128,76 @@ def test_discord_send_routes_discord_voice_metadata_to_dm_channel() -> None:
     ]
 
 
+def test_discord_send_routes_discord_voice_audio_path_to_voice_message(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+    audio_path = tmp_path / "voice-message.ogg"
+    audio_path.write_bytes(b"\x4f\x67\x67\x53" + b"\x01" * 12)
+
+    async def _fake_send_voice_message(**kwargs):
+        calls.append(dict(kwargs))
+        return "discord:voice:voice-path-1"
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch("clawlite.channels.discord.asyncio.to_thread", new=_to_thread):
+        with patch.object(ch, "send_voice_message", side_effect=_fake_send_voice_message):
+            out = asyncio.run(
+                ch.send(
+                    target="channel:chan001",
+                    text="",
+                    metadata={
+                        "discord_voice": {
+                            "audio_path": str(audio_path),
+                            "duration_secs": 2.0,
+                        }
+                    },
+                )
+            )
+
+    assert out == "discord:voice:voice-path-1"
+    assert calls == [
+        {
+            "channel_id": "chan001",
+            "audio_bytes": b"\x4f\x67\x67\x53" + b"\x01" * 12,
+            "duration_secs": 2.0,
+            "waveform": None,
+            "reply_to_message_id": None,
+            "silent": False,
+        }
+    ]
+
+
+def test_discord_send_rejects_missing_voice_audio_path(tmp_path: Path) -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    missing = tmp_path / "missing.ogg"
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    try:
+        with patch("clawlite.channels.discord.asyncio.to_thread", new=_to_thread):
+            asyncio.run(
+                ch.send(
+                    target="channel:chan001",
+                    text="",
+                    metadata={
+                        "discord_voice": {
+                            "audio_path": str(missing),
+                            "duration_secs": 1,
+                        }
+                    },
+                )
+            )
+        raise AssertionError("expected missing discord_voice audio_path to fail")
+    except ValueError as exc:
+        assert "discord_voice audio_path not found" in str(exc)
+
+
 def test_discord_send_rejects_invalid_voice_metadata() -> None:
     ch = DiscordChannel(config={"token": "tok"}, on_message=None)
     ch._running = True
