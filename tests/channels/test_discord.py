@@ -2171,6 +2171,47 @@ def test_discord_send_routes_discord_voice_audio_path_to_voice_message(tmp_path:
     ]
 
 
+def test_discord_send_voice_interaction_uses_message_id_as_reply_reference() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_send_voice_message(**kwargs):
+        calls.append(dict(kwargs))
+        return "discord:voice:voice-interaction-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    with patch.object(ch, "send_voice_message", side_effect=_fake_send_voice_message):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "interaction_id": "inter-voice-1",
+                    "interaction_token": "tok-voice-1",
+                    "message_id": "msg-component-1",
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x02" * 10,
+                        "duration_secs": 1.25,
+                    },
+                },
+            )
+        )
+
+    assert out == "discord:voice:voice-interaction-1"
+    assert calls == [
+        {
+            "channel_id": "chan001",
+            "audio_bytes": b"\x4f\x67\x67\x53" + b"\x02" * 10,
+            "duration_secs": 1.25,
+            "waveform": None,
+            "reply_to_message_id": "msg-component-1",
+            "silent": False,
+        }
+    ]
+
+
 def test_discord_send_rejects_missing_voice_audio_path(tmp_path: Path) -> None:
     ch = DiscordChannel(config={"token": "tok"}, on_message=None)
     ch._running = True
@@ -2196,6 +2237,58 @@ def test_discord_send_rejects_missing_voice_audio_path(tmp_path: Path) -> None:
         raise AssertionError("expected missing discord_voice audio_path to fail")
     except ValueError as exc:
         assert "discord_voice audio_path not found" in str(exc)
+
+
+def test_discord_send_voice_rejects_ephemeral_interaction_reply() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "interaction_id": "inter-voice-2",
+                    "interaction_token": "tok-voice-2",
+                    "discord_ephemeral": True,
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x03" * 8,
+                        "duration_secs": 1.0,
+                    },
+                },
+            )
+        )
+        raise AssertionError("expected discord_voice ephemeral interaction reply to fail")
+    except ValueError as exc:
+        assert "discord_voice does not support ephemeral interaction replies" in str(exc)
+
+
+def test_discord_send_voice_rejects_followup_interaction_reply() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._application_id = "app001"
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "interaction_id": "inter-voice-3",
+                    "interaction_token": "tok-voice-3",
+                    "discord_followup": True,
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x04" * 8,
+                        "duration_secs": 1.0,
+                    },
+                },
+            )
+        )
+        raise AssertionError("expected discord_voice followup interaction reply to fail")
+    except ValueError as exc:
+        assert "discord_voice does not support discord_followup interaction replies" in str(exc)
 
 
 def test_discord_send_rejects_invalid_voice_metadata() -> None:

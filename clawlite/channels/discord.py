@@ -1647,6 +1647,12 @@ class DiscordChannel(BaseChannel):
                 )
             )
         )
+        interaction_ephemeral = bool(
+            metadata_payload.get(
+                "discord_ephemeral",
+                metadata_payload.get("ephemeral", False),
+            )
+        )
         if interaction_application_id and not self._application_id:
             self._application_id = interaction_application_id
         reply_to_message_id = str(
@@ -1661,6 +1667,12 @@ class DiscordChannel(BaseChannel):
         if raw_voice is not None and normalized_voice is None:
             raise ValueError("discord_voice requires audio bytes and duration_secs")
         if normalized_voice is not None:
+            if interaction_token and interaction_ephemeral:
+                raise ValueError("discord_voice does not support ephemeral interaction replies")
+            if interaction_token and interaction_followup:
+                raise ValueError("discord_voice does not support discord_followup interaction replies")
+            if not reply_to_message_id and interaction_token:
+                reply_to_message_id = str(metadata_payload.get("message_id", "") or "").strip()
             resolved_audio_bytes = await self._resolve_outbound_voice_bytes(normalized_voice)
             if resolved_target.kind == "user":
                 voice_channel_id = await self._ensure_dm_channel_id(resolved_target.value)
@@ -1736,12 +1748,7 @@ class DiscordChannel(BaseChannel):
                 "text": str(text or ""),
                 "components": payload.get("components"),
                 "embeds": payload.get("embeds"),
-                "ephemeral": bool(
-                    metadata_payload.get(
-                        "discord_ephemeral",
-                        metadata_payload.get("ephemeral", False),
-                    )
-                ),
+                "ephemeral": interaction_ephemeral,
             }
             if interaction_followup:
                 reply_id = await self.send_interaction_followup(**reply_kwargs)
