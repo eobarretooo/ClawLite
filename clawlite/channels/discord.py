@@ -595,7 +595,7 @@ class DiscordChannel(BaseChannel):
             "audio_path": audio_path,
             "duration_secs": duration_secs,
             "waveform": waveform,
-            "silent": bool(raw.get("silent", False)),
+            "silent": bool(cls._normalize_optional_bool(raw.get("silent"))),
         }
 
     @staticmethod

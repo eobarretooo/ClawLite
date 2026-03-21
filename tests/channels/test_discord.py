@@ -2266,6 +2266,54 @@ def test_discord_send_routes_discord_voice_metadata_to_dm_channel() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("raw_silent", "expected_silent"),
+    [
+        ("false", False),
+        ("true", True),
+    ],
+)
+def test_discord_send_coerces_discord_voice_silent_flag(
+    raw_silent: str,
+    expected_silent: bool,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_send_voice_message(**kwargs):
+        calls.append(dict(kwargs))
+        return "discord:voice:voice-silent-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch.object(ch, "send_voice_message", side_effect=_fake_send_voice_message):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x09" * 16,
+                        "duration_secs": 1.0,
+                        "silent": raw_silent,
+                    }
+                },
+            )
+        )
+
+    assert out == "discord:voice:voice-silent-1"
+    assert calls == [
+        {
+            "channel_id": "chan001",
+            "audio_bytes": b"\x4f\x67\x67\x53" + b"\x09" * 16,
+            "duration_secs": 1.0,
+            "waveform": None,
+            "reply_to_message_id": None,
+            "silent": expected_silent,
+        }
+    ]
+
+
 def test_discord_send_routes_discord_voice_audio_path_to_voice_message(tmp_path: Path) -> None:
     calls: list[dict[str, Any]] = []
     audio_path = tmp_path / "voice-message.ogg"
