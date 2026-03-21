@@ -590,6 +590,26 @@ class DiscordChannel(BaseChannel):
             "silent": bool(raw.get("silent", False)),
         }
 
+    @classmethod
+    def _normalize_outbound_webhook(cls, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        webhook_id = str(raw.get("id", raw.get("webhook_id", raw.get("webhookId", ""))) or "").strip()
+        webhook_token = str(
+            raw.get("token", raw.get("webhook_token", raw.get("webhookToken", ""))) or ""
+        ).strip()
+        if not webhook_id or not webhook_token:
+            return None
+        wait = cls._normalize_optional_bool(raw.get("wait"))
+        return {
+            "webhook_id": webhook_id,
+            "webhook_token": webhook_token,
+            "username": str(raw.get("username", "") or "").strip() or None,
+            "avatar_url": str(raw.get("avatar_url", raw.get("avatarUrl", "")) or "").strip() or None,
+            "thread_id": str(raw.get("thread_id", raw.get("threadId", "")) or "").strip() or None,
+            "wait": True if wait is None else wait,
+        }
+
     @staticmethod
     def _component_kind(component_type: int) -> str:
         return DISCORD_COMPONENT_KIND_BY_TYPE.get(int(component_type or 0), "component")
@@ -1631,6 +1651,11 @@ class DiscordChannel(BaseChannel):
             }
             payload["allowed_mentions"] = {"replied_user": False}
 
+        raw_webhook = metadata_payload.get("discord_webhook")
+        normalized_webhook = self._normalize_outbound_webhook(raw_webhook)
+        if raw_webhook is not None and normalized_webhook is None:
+            raise ValueError("discord_webhook requires webhook id and token")
+
         # Rich embeds — pass as metadata key "discord_embeds" or "embeds"
         raw_embeds = metadata_payload.get("discord_embeds") or metadata_payload.get("embeds")
         normalized_embeds = self._normalize_embed_payloads(raw_embeds)
@@ -1691,6 +1716,42 @@ class DiscordChannel(BaseChannel):
             if reply_id:
                 return f"discord:interaction:{reply_id}"
             raise RuntimeError("discord_interaction_reply_failed")
+
+        if normalized_webhook is not None:
+            unsupported_webhook_features: list[str] = []
+            if "message_reference" in payload:
+                unsupported_webhook_features.append("reply_to_message_id")
+            if "poll" in payload:
+                unsupported_webhook_features.append("discord_poll")
+            if unsupported_webhook_features:
+                raise ValueError(
+                    "discord_webhook does not support "
+                    + ", ".join(unsupported_webhook_features)
+                )
+            message_id = await self.execute_webhook(
+                webhook_id=str(normalized_webhook.get("webhook_id", "") or ""),
+                webhook_token=str(normalized_webhook.get("webhook_token", "") or ""),
+                text=str(text or ""),
+                username=str(normalized_webhook.get("username", "") or "") or None,
+                avatar_url=str(normalized_webhook.get("avatar_url", "") or "") or None,
+                embeds=payload.get("embeds"),
+                components=payload.get("components"),
+                thread_id=str(normalized_webhook.get("thread_id", "") or "") or None,
+                wait=bool(normalized_webhook.get("wait", True)),
+            )
+            if not message_id and bool(normalized_webhook.get("wait", True)):
+                raise RuntimeError("discord_webhook_send_failed")
+            if not message_id:
+                digest = hashlib.sha256(
+                    (
+                        f"{normalized_webhook.get('webhook_id', '')}:"
+                        f"{normalized_webhook.get('thread_id', '')}:"
+                        f"{text}"
+                    ).encode("utf-8")
+                ).hexdigest()[:16]
+                message_id = f"webhook-{digest}"
+            self._last_error = ""
+            return f"discord:sent:{message_id}"
 
         channel_id = ""
         try:

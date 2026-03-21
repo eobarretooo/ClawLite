@@ -1915,6 +1915,141 @@ def test_discord_send_voice_message_builds_correct_payload() -> None:
     assert msg_posts[0][2]["flags"] == 8192
 
 
+def test_discord_send_routes_discord_webhook_metadata_to_execute_webhook() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_execute_webhook(**kwargs):
+        calls.append(dict(kwargs))
+        return "msg-webhook-1"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch.object(ch, "execute_webhook", side_effect=_fake_execute_webhook):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Hello from webhook route",
+                metadata={
+                    "discord_webhook": {
+                        "id": "wh-1",
+                        "token": "tok-1",
+                        "username": "Ops Bot",
+                        "avatar_url": "https://cdn.example/avatar.png",
+                        "thread_id": "thread-55",
+                    },
+                    "discord_embeds": [
+                        {
+                            "title": "Stats",
+                            "fields": [{"name": "Queue", "value": "4", "inline": "false"}],
+                            "timestamp": "2026-03-20T11:45:00",
+                        }
+                    ],
+                    "discord_components": [
+                        {"type": 1, "components": []},
+                        {"type": 1, "components": []},
+                        {"type": 1, "components": []},
+                        {"type": 1, "components": []},
+                        {"type": 1, "components": []},
+                        {"type": 1, "components": []},
+                    ],
+                },
+            )
+        )
+
+    assert out == "discord:sent:msg-webhook-1"
+    assert calls == [
+        {
+            "webhook_id": "wh-1",
+            "webhook_token": "tok-1",
+            "text": "Hello from webhook route",
+            "username": "Ops Bot",
+            "avatar_url": "https://cdn.example/avatar.png",
+            "embeds": [
+                {
+                    "title": "Stats",
+                    "fields": [{"name": "Queue", "value": "4", "inline": False}],
+                    "timestamp": "2026-03-20T11:45:00+00:00",
+                }
+            ],
+            "components": [
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+                {"type": 1, "components": []},
+            ],
+            "thread_id": "thread-55",
+            "wait": True,
+        }
+    ]
+
+
+def test_discord_send_webhook_metadata_wait_false_returns_fallback_id() -> None:
+    async def _fake_execute_webhook(**kwargs):
+        return ""
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch.object(ch, "execute_webhook", side_effect=_fake_execute_webhook):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Fire and forget",
+                metadata={
+                    "discord_webhook": {
+                        "id": "wh-2",
+                        "token": "tok-2",
+                        "wait": False,
+                    }
+                },
+            )
+        )
+
+    assert out.startswith("discord:sent:webhook-")
+
+
+def test_discord_send_rejects_invalid_webhook_metadata() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Hello",
+                metadata={"discord_webhook": {"id": "wh-only"}},
+            )
+        )
+        raise AssertionError("expected invalid discord_webhook metadata to fail")
+    except ValueError as exc:
+        assert "discord_webhook requires webhook id and token" in str(exc)
+
+
+def test_discord_send_rejects_reply_reference_on_webhook_route() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Reply via webhook",
+                metadata={
+                    "reply_to_message_id": "msg-parent",
+                    "discord_webhook": {
+                        "id": "wh-3",
+                        "token": "tok-3",
+                    },
+                },
+            )
+        )
+        raise AssertionError("expected discord_webhook reply references to fail")
+    except ValueError as exc:
+        assert "discord_webhook does not support reply_to_message_id" in str(exc)
+
+
 def test_discord_send_routes_discord_voice_metadata_to_voice_message() -> None:
     calls: list[dict[str, Any]] = []
 
