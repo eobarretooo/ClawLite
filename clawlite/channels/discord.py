@@ -1572,6 +1572,12 @@ class DiscordChannel(BaseChannel):
         metadata_payload = dict(metadata or {})
         interaction_id = str(metadata_payload.get("interaction_id", "") or "").strip()
         interaction_token = str(metadata_payload.get("interaction_token", "") or "").strip()
+        interaction_application_id = str(
+            metadata_payload.get("application_id", metadata_payload.get("discord_application_id", ""))
+            or ""
+        ).strip()
+        if interaction_application_id and not self._application_id:
+            self._application_id = interaction_application_id
         reply_to_message_id = str(
             metadata_payload.get(
                 "reply_to_message_id",
@@ -2325,12 +2331,16 @@ class DiscordChannel(BaseChannel):
         interaction_id = str(payload.get("id", "") or "").strip()
         interaction_token = str(payload.get("token", "") or "").strip()
         interaction_type = int(payload.get("type", 0) or 0)
+        application_id = str(payload.get("application_id", "") or "").strip()
         channel_id = str(payload.get("channel_id", "") or "").strip()
         data = payload.get("data") or {}
         member = payload.get("member") or {}
         user = payload.get("user") or member.get("user") or {}
         user_id = str(user.get("id", "") or "").strip()
         username = str(user.get("username", "") or "").strip()
+
+        if application_id and not self._application_id:
+            self._application_id = application_id
 
         if not interaction_id or not interaction_token:
             return
@@ -2387,6 +2397,7 @@ class DiscordChannel(BaseChannel):
                 "command_options": options,
                 "interaction_id": interaction_id,
                 "interaction_token": interaction_token,
+                "application_id": application_id,
                 "user_id": user_id,
                 "username": username,
                 "text": text,
@@ -2435,6 +2446,7 @@ class DiscordChannel(BaseChannel):
                 "message_id": message_id,
                 "interaction_id": interaction_id,
                 "interaction_token": interaction_token,
+                "application_id": application_id,
                 "user_id": user_id,
                 "username": username,
                 "text": text,
@@ -2466,6 +2478,7 @@ class DiscordChannel(BaseChannel):
                 "custom_id": custom_id,
                 "interaction_id": interaction_id,
                 "interaction_token": interaction_token,
+                "application_id": application_id,
                 "user_id": user_id,
                 "username": username,
                 "text": text,

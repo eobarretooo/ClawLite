@@ -905,6 +905,7 @@ def test_channel_manager_dispatch_carries_discord_interaction_reply_context() ->
                 "channel_id": "112233445566778899",
                 "interaction_id": "inter-1",
                 "interaction_token": "tok-1",
+                "application_id": "app-1",
             },
         )
         await asyncio.sleep(0.1)
@@ -912,6 +913,7 @@ def test_channel_manager_dispatch_carries_discord_interaction_reply_context() ->
         assert discord.sent
         assert discord.sent[0][2]["interaction_id"] == "inter-1"
         assert discord.sent[0][2]["interaction_token"] == "tok-1"
+        assert discord.sent[0][2]["application_id"] == "app-1"
 
         await mgr.stop()
 

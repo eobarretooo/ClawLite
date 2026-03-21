@@ -2234,6 +2234,7 @@ class ChannelManager:
         clean = dict(metadata)
         clean.pop("interaction_id", None)
         clean.pop("interaction_token", None)
+        clean.pop("application_id", None)
         clean.pop("discord_ephemeral", None)
         clean.pop("ephemeral", None)
         return clean
@@ -2272,6 +2273,9 @@ class ChannelManager:
             "interaction_id": interaction_id,
             "interaction_token": interaction_token,
         }
+        application_id = str(metadata.get("application_id", "") or "").strip()
+        if application_id:
+            response_metadata["application_id"] = application_id
         if "discord_ephemeral" in metadata:
             response_metadata["discord_ephemeral"] = bool(metadata.get("discord_ephemeral"))
         if "ephemeral" in metadata:

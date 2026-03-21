@@ -1259,7 +1259,9 @@ def test_discord_handle_interaction_create_slash_emits_message() -> None:
     assert meta["command_name"] == "ping"
     assert meta["interaction_id"] == "inter001"
     assert meta["interaction_token"] == "intertoken"
+    assert meta["application_id"] == "app001"
     assert meta["session_key"] == "discord:guild:guild-1:channel:chan001:slash:user001"
+    assert ch._application_id == "app001"
 
 
 def test_discord_handle_interaction_create_button_emits_message() -> None:
@@ -2068,6 +2070,57 @@ def test_discord_send_interaction_reply_normalizes_embeds() -> None:
                 {"name": "Workers", "value": "2", "inline": True},
             ],
             "timestamp": "2026-03-20T10:30:00+00:00",
+        }
+    ]
+
+
+def test_discord_send_interaction_reply_uses_application_id_from_metadata_without_ready() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        content = b'{"id": "reply-app-1"}'
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"id": "reply-app-1"}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def patch(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _FakeResponse()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeClient()):
+        out = asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="Slash reply",
+                metadata={
+                    "interaction_id": "inter-app-1",
+                    "interaction_token": "tok-app-1",
+                    "application_id": "app-from-metadata",
+                },
+            )
+        )
+
+    assert out == "discord:interaction:reply-app-1"
+    assert ch._application_id == "app-from-metadata"
+    assert calls == [
+        {
+            "url": "https://discord.com/api/v10/webhooks/app-from-metadata/tok-app-1/messages/@original",
+            "json": {"content": "Slash reply"},
+            "headers": {
+                "Authorization": "Bot tok",
+                "Content-Type": "application/json",
+            },
         }
     ]
 
