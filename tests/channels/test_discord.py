@@ -2446,6 +2446,78 @@ def test_discord_send_rejects_invalid_voice_metadata() -> None:
         assert "discord_voice requires audio bytes and duration_secs" in str(exc)
 
 
+def test_discord_send_rejects_non_ogg_voice_bytes() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "discord_voice": {
+                        "audio_bytes": b"ID3" + b"\x00" * 12,
+                        "duration_secs": 1.0,
+                    }
+                },
+            )
+        )
+        raise AssertionError("expected non-ogg discord_voice bytes to fail")
+    except ValueError as exc:
+        assert "discord_voice requires OGG/Opus audio data" in str(exc)
+
+
+def test_discord_send_rejects_non_positive_voice_duration() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x06" * 8,
+                        "duration_secs": 0,
+                    }
+                },
+            )
+        )
+        raise AssertionError("expected non-positive discord_voice duration to fail")
+    except ValueError as exc:
+        assert "discord_voice requires positive duration_secs" in str(exc)
+
+
+def test_discord_send_rejects_non_ogg_voice_audio_path(tmp_path: Path) -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    audio_path = tmp_path / "voice-message.mp3"
+    audio_path.write_bytes(b"ID3" + b"\x00" * 16)
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    try:
+        with patch("clawlite.channels.discord.asyncio.to_thread", new=_to_thread):
+            asyncio.run(
+                ch.send(
+                    target="channel:chan001",
+                    text="",
+                    metadata={
+                        "discord_voice": {
+                            "audio_path": str(audio_path),
+                            "duration_secs": 1.0,
+                        }
+                    },
+                )
+            )
+        raise AssertionError("expected non-ogg discord_voice audio_path to fail")
+    except ValueError as exc:
+        assert "discord_voice requires OGG/Opus audio data" in str(exc)
+
+
 @pytest.mark.parametrize(
     ("text", "extra_metadata", "expected_fragment"),
     [
@@ -2484,6 +2556,38 @@ def test_discord_send_voice_rejects_unsupported_extra_features(
         raise AssertionError("expected unsupported discord_voice combo to fail")
     except ValueError as exc:
         assert expected_fragment in str(exc)
+
+
+def test_discord_send_voice_message_rejects_non_ogg_audio() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+
+    try:
+        asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"ID3" + b"\x00" * 8,
+                duration_secs=1.0,
+            )
+        )
+        raise AssertionError("expected direct non-ogg voice send to fail")
+    except ValueError as exc:
+        assert "discord voice messages require OGG/Opus audio" in str(exc)
+
+
+def test_discord_send_voice_message_rejects_non_positive_duration() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+
+    try:
+        asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"\x4f\x67\x67\x53" + b"\x07" * 8,
+                duration_secs=0.0,
+            )
+        )
+        raise AssertionError("expected non-positive direct voice duration to fail")
+    except ValueError as exc:
+        assert "duration_secs must be positive" in str(exc)
 
 
 def test_discord_send_streaming_edits_message_in_place() -> None:

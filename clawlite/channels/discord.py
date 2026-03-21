@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -568,6 +569,10 @@ class DiscordChannel(BaseChannel):
             return base64.b64decode(value, validate=True)
         except Exception:
             return None
+
+    @staticmethod
+    def _looks_like_voice_ogg(audio_bytes: bytes) -> bool:
+        return isinstance(audio_bytes, bytes) and len(audio_bytes) >= 4 and audio_bytes.startswith(b"OggS")
 
     @classmethod
     def _normalize_outbound_voice(cls, raw: Any) -> dict[str, Any] | None:
@@ -1781,6 +1786,11 @@ class DiscordChannel(BaseChannel):
             if not reply_to_message_id and interaction_token:
                 reply_to_message_id = str(metadata_payload.get("message_id", "") or "").strip()
             resolved_audio_bytes = await self._resolve_outbound_voice_bytes(normalized_voice)
+            if not self._looks_like_voice_ogg(resolved_audio_bytes):
+                raise ValueError("discord_voice requires OGG/Opus audio data")
+            resolved_duration_secs = float(normalized_voice["duration_secs"])
+            if not math.isfinite(resolved_duration_secs) or resolved_duration_secs <= 0.0:
+                raise ValueError("discord_voice requires positive duration_secs")
             if resolved_target.kind == "user":
                 voice_channel_id = await self._ensure_dm_channel_id(resolved_target.value)
             else:
@@ -1788,7 +1798,7 @@ class DiscordChannel(BaseChannel):
             return await self.send_voice_message(
                 channel_id=voice_channel_id,
                 audio_bytes=resolved_audio_bytes,
-                duration_secs=float(normalized_voice["duration_secs"]),
+                duration_secs=resolved_duration_secs,
                 waveform=normalized_voice["waveform"],
                 reply_to_message_id=reply_to_message_id or None,
                 silent=bool(normalized_voice["silent"]),
@@ -2977,6 +2987,13 @@ class DiscordChannel(BaseChannel):
         """
         if not channel_id:
             raise ValueError("channel_id is required")
+        if not isinstance(audio_bytes, bytes) or not audio_bytes:
+            raise ValueError("audio_bytes must be non-empty")
+        if not self._looks_like_voice_ogg(audio_bytes):
+            raise ValueError("discord voice messages require OGG/Opus audio")
+        resolved_duration_secs = float(duration_secs or 0.0)
+        if not math.isfinite(resolved_duration_secs) or resolved_duration_secs <= 0.0:
+            raise ValueError("duration_secs must be positive")
         clean_channel = str(channel_id).strip()
         resolved_waveform = waveform or await self._generate_waveform_from_audio(audio_bytes)
 
@@ -3011,7 +3028,7 @@ class DiscordChannel(BaseChannel):
                 "id": "0",
                 "filename": "voice-message.ogg",
                 "uploaded_filename": upload_filename,
-                "duration_secs": round(float(duration_secs or 0), 2),
+                "duration_secs": round(resolved_duration_secs, 2),
                 "waveform": resolved_waveform,
             }],
         }
