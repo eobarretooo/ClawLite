@@ -2876,12 +2876,15 @@ class DiscordChannel(BaseChannel):
         application_id = str(self._application_id or "").strip()
         if not application_id:
             return ""
-        url = f"{self.api_base}/webhooks/{application_id}/{interaction_token}?wait=true"
         body: dict[str, Any] = {"content": str(text or "")}
         if components:
             body["components"] = [
                 item for item in components if isinstance(item, dict)
             ][:DISCORD_MAX_COMPONENT_ROWS]
+        query_parts = ["wait=true"]
+        if body.get("components"):
+            query_parts.append("with_components=true")
+        url = f"{self.api_base}/webhooks/{application_id}/{interaction_token}?{'&'.join(query_parts)}"
         normalized_embeds = self._normalize_embed_payloads(embeds)
         if normalized_embeds:
             body["embeds"] = normalized_embeds

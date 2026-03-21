@@ -2979,6 +2979,67 @@ def test_discord_send_interaction_followup_retries_429_using_retry_after(monkeyp
     assert sleep_mock.await_args.args == (0.75,)
 
 
+def test_discord_send_interaction_followup_adds_with_components_flag() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        status_code = 200
+        content = b'{"id": "followup-components-1"}'
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"id": "followup-components-1"}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return _FakeResponse()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._application_id = "app001"
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeClient()):
+        out = asyncio.run(
+            ch.send_interaction_followup(
+                interaction_id="inter-followup-components",
+                interaction_token="tok-followup-components",
+                text="Follow-up with actions",
+                components=[
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                ],
+            )
+        )
+
+    assert out == "followup-components-1"
+    assert calls == [
+        {
+            "url": "https://discord.com/api/v10/webhooks/app001/tok-followup-components?wait=true&with_components=true",
+            "json": {
+                "content": "Follow-up with actions",
+                "components": [
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                    {"type": 1, "components": []},
+                ],
+            },
+            "headers": {"Content-Type": "application/json"},
+        }
+    ]
+
+
 def test_discord_send_interaction_reply_uses_application_id_from_metadata_without_ready() -> None:
     calls: list[dict[str, Any]] = []
 
@@ -3222,7 +3283,7 @@ def test_discord_reply_interaction_ephemeral_uses_followup_webhook() -> None:
     assert out == "reply-ephemeral-1"
     assert calls == [
         {
-            "url": "https://discord.com/api/v10/webhooks/app001/tok-ephemeral-1?wait=true",
+            "url": "https://discord.com/api/v10/webhooks/app001/tok-ephemeral-1?wait=true&with_components=true",
             "json": {
                 "content": "Secret status",
                 "components": [
