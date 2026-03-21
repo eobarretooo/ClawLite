@@ -3139,7 +3139,7 @@ class TelegramChannel(BaseChannel):
         safe_chat_id = re.sub(r"[^0-9A-Za-z_-]+", "_", chat_id or "") or "chat"
         chat_dir = base_dir / safe_chat_id
         try:
-            await asyncio.to_thread(chat_dir.mkdir, parents=True, exist_ok=True)
+            chat_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             logger.debug(
                 "telegram media download mkdir failed chat={} error={}", chat_id, exc

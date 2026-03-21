@@ -3140,7 +3140,7 @@ def memory_suggest_snapshot(config: AppConfig, refresh: bool = True) -> dict[str
         source = "pending"
         if refresh:
             try:
-                suggestions = asyncio.run(monitor.scan())
+                suggestions = monitor.scan_sync()
                 source = "scan"
             except Exception:
                 suggestions = monitor.pending()

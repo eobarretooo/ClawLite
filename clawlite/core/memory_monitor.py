@@ -557,22 +557,37 @@ class MemoryMonitor:
             merged.sort(key=lambda row: str(row.get("created_at", "")))
             self._write_pending_payload(merged)
 
-    async def scan(self) -> list[MemorySuggestion]:
-        self._telemetry["scans"] += 1
-        now = datetime.now(timezone.utc)
-        records = await asyncio.to_thread(self._all_records)
+    def _scan_suggestions(self, *, now: datetime, records: list[MemoryRecord]) -> list[MemorySuggestion]:
         suggestions: list[MemorySuggestion] = []
         suggestions.extend(self._trigger_upcoming_events(records, now))
         suggestions.extend(self._trigger_pending_tasks(records, now))
         suggestions.extend(self._trigger_repeated_topics(records, now))
         suggestions.extend(self._trigger_recurring_birthdays(records, now))
         self._telemetry["generated"] += len(suggestions)
-        await asyncio.to_thread(self._persist_pending, suggestions)
-        # TTL purge (best-effort)
+        return suggestions
+
+    def _purge_expired_records(self) -> None:
         try:
             purge_fn = getattr(self.store, "purge_expired_records", None)
             if callable(purge_fn):
-                await asyncio.to_thread(purge_fn)
+                purge_fn()
         except Exception:
             pass
+
+    async def scan(self) -> list[MemorySuggestion]:
+        self._telemetry["scans"] += 1
+        now = datetime.now(timezone.utc)
+        records = await asyncio.to_thread(self._all_records)
+        suggestions = self._scan_suggestions(now=now, records=records)
+        await asyncio.to_thread(self._persist_pending, suggestions)
+        await asyncio.to_thread(self._purge_expired_records)
         return await asyncio.to_thread(self.deliverable)
+
+    def scan_sync(self) -> list[MemorySuggestion]:
+        self._telemetry["scans"] += 1
+        now = datetime.now(timezone.utc)
+        records = self._all_records()
+        suggestions = self._scan_suggestions(now=now, records=records)
+        self._persist_pending(suggestions)
+        self._purge_expired_records()
+        return self.deliverable()

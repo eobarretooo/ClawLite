@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord inbound audio/voice attachments can now reuse the same Groq-compatible transcription path as Telegram, appending compact transcription lines to inbound turns and surfacing transcription counters in Discord operator status
 
 ### Fixed
+- Telegram inbound media download now creates its local chat directory inline before best-effort OCR/PDF enrichment, and the Telegram media regression tests now keep OCR/PDF work hermetic instead of relying on real `asyncio.to_thread(...)` behavior in the test harness
+- `clawlite memory suggest` now uses a synchronous `MemoryMonitor.scan_sync()` path in CLI snapshots, avoiding another `asyncio.to_thread(...)` hang on empty/local stores while keeping the async runtime scan path unchanged
 - Discord inbound interactions now also route modal submissions as fresh turns with compact field text plus allowlisted modal field ids/labels, instead of ignoring `MODAL_SUBMIT` payloads entirely
 - Discord outbound sends now also accept `discord_modal`, which appends a trigger button and opens a native Discord text-input modal on click instead of leaking that trigger as a normal button interaction
 - Discord embeds now normalize field `inline` values and embed `timestamp` payloads before send/reply calls, so stats-style embeds stop rendering with broken field layout or naive timestamps

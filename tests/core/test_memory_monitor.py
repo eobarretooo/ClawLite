@@ -125,6 +125,30 @@ def test_memory_monitor_pending_persistence_and_mark_delivered(tmp_path: Path) -
     asyncio.run(_scenario())
 
 
+def test_memory_monitor_scan_sync_persists_pending_without_asyncio_threads(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.jsonl")
+    now = datetime.now(timezone.utc)
+    _seed_history(
+        store,
+        [
+            {
+                "id": "evt-sync",
+                "text": f"travel para Recife em {(now + timedelta(days=2)).date().isoformat()}",
+                "source": "session:event",
+                "created_at": now.isoformat(),
+            }
+        ],
+    )
+
+    monitor = MemoryMonitor(store)
+    pending = monitor.scan_sync()
+
+    assert pending
+    payload = json.loads(monitor.suggestions_path.read_text(encoding="utf-8"))
+    assert payload
+    assert payload[0]["status"] == "pending"
+
+
 def test_memory_monitor_dedupe_and_cooldown_controls(tmp_path: Path) -> None:
     async def _scenario() -> None:
         store = MemoryStore(tmp_path / "memory.jsonl")

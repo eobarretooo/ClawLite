@@ -34,6 +34,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 - Gateway chat surfaces now have in-memory fixed-window rate limiting on HTTP and WebSocket paths with `429 + Retry-After` and shared `/v1/chat` / `/api/message` bucketing.
 - `self_evolution` can now stay disabled globally or run in a session-canary mode through `gateway.autonomy.self_evolution_enabled_for_sessions`, while manual forced triggers still work for operator validation.
 - memory quality snapshots now include a compact `trend` block derived from bounded history, so CLI/dashboard/diagnostics can show direction and streaks without recomputing client-side.
+- the current validation-hardening slice also removes an unnecessary executor hop from Telegram inbound media directory creation, keeps Telegram media OCR/PDF regressions hermetic in the test harness, and gives `clawlite memory suggest` a synchronous scan path for local CLI snapshots so sandboxed validation no longer stalls on `asyncio.to_thread(...)` for empty/local stores.
 
 ## Robustness Milestone Progress
 

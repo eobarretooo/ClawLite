@@ -1582,7 +1582,12 @@ def test_telegram_media_downloads_largest_photo_to_local_path(tmp_path: Path) ->
             effective_message=message,
         )
 
-        await channel._handle_update(update)
+        async def _to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with patch.object(telegram_module, "_try_ocr_image_text", return_value=""):
+            with patch.object(telegram_module.asyncio, "to_thread", new=_to_thread):
+                await channel._handle_update(update)
 
         assert bot.file_ids == ["p2"]
         assert len(emitted) == 1
@@ -1744,12 +1749,16 @@ def test_telegram_photo_media_ocr_enriches_text_and_metadata(tmp_path: Path) -> 
             effective_message=message,
         )
 
+        async def _to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
         with patch.object(
             telegram_module,
             "_try_ocr_image_text",
             return_value="release board checklist",
         ):
-            await channel._handle_update(update)
+            with patch.object(telegram_module.asyncio, "to_thread", new=_to_thread):
+                await channel._handle_update(update)
 
         assert len(emitted) == 1
         _, _, text, metadata = emitted[0]
@@ -1819,7 +1828,16 @@ def test_telegram_document_media_download_enriches_text_with_saved_path(tmp_path
             effective_message=message,
         )
 
-        await channel._handle_update(update)
+        async def _to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with patch.object(
+            telegram_module,
+            "_extract_telegram_document_text",
+            return_value=("", ""),
+        ):
+            with patch.object(telegram_module.asyncio, "to_thread", new=_to_thread):
+                await channel._handle_update(update)
 
         assert bot.file_ids == ["d1"]
         assert len(emitted) == 1
@@ -1887,12 +1905,16 @@ def test_telegram_document_media_pdf_extract_enriches_text_with_excerpt(tmp_path
             effective_message=message,
         )
 
+        async def _to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
         with patch.object(
             telegram_module,
             "_extract_telegram_document_text",
             return_value=("Quarterly launch plan", "pdf"),
         ):
-            await channel._handle_update(update)
+            with patch.object(telegram_module.asyncio, "to_thread", new=_to_thread):
+                await channel._handle_update(update)
 
         assert len(emitted) == 1
         _, _, text, metadata = emitted[0]
