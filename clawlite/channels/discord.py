@@ -622,12 +622,27 @@ class DiscordChannel(BaseChannel):
         if not webhook_id or not webhook_token:
             return None
         wait = cls._normalize_optional_bool(raw.get("wait"))
+        thread_id = str(raw.get("thread_id", raw.get("threadId", "")) or "").strip() or None
+        thread_name = str(raw.get("thread_name", raw.get("threadName", "")) or "").strip() or None
+        raw_applied_tags = raw.get("applied_tags", raw.get("appliedTags"))
+        applied_tags: list[str] = []
+        if isinstance(raw_applied_tags, list):
+            for item in raw_applied_tags:
+                tag_id = str(item or "").strip()
+                if tag_id:
+                    applied_tags.append(tag_id)
+        if thread_id and thread_name:
+            return None
+        if applied_tags and not thread_name:
+            return None
         return {
             "webhook_id": webhook_id,
             "webhook_token": webhook_token,
             "username": str(raw.get("username", "") or "").strip() or None,
             "avatar_url": str(raw.get("avatar_url", raw.get("avatarUrl", "")) or "").strip() or None,
-            "thread_id": str(raw.get("thread_id", raw.get("threadId", "")) or "").strip() or None,
+            "thread_id": thread_id,
+            "thread_name": thread_name,
+            "applied_tags": applied_tags,
             "wait": True if wait is None else wait,
         }
 
@@ -1867,6 +1882,8 @@ class DiscordChannel(BaseChannel):
                 embeds=payload.get("embeds"),
                 components=payload.get("components"),
                 thread_id=str(normalized_webhook.get("thread_id", "") or "") or None,
+                thread_name=str(normalized_webhook.get("thread_name", "") or "") or None,
+                applied_tags=list(normalized_webhook.get("applied_tags", []) or []),
                 wait=bool(normalized_webhook.get("wait", True)),
             )
             if not message_id and bool(normalized_webhook.get("wait", True)):
@@ -1876,6 +1893,7 @@ class DiscordChannel(BaseChannel):
                     (
                         f"{normalized_webhook.get('webhook_id', '')}:"
                         f"{normalized_webhook.get('thread_id', '')}:"
+                        f"{normalized_webhook.get('thread_name', '')}:"
                         f"{text}"
                     ).encode("utf-8")
                 ).hexdigest()[:16]
@@ -3043,6 +3061,8 @@ class DiscordChannel(BaseChannel):
         embeds: list[dict[str, Any]] | None = None,
         components: list[dict[str, Any]] | None = None,
         thread_id: str | None = None,
+        thread_name: str | None = None,
+        applied_tags: list[str] | None = None,
         wait: bool = True,
     ) -> str:
         """Execute (post via) a webhook. Returns message_id or empty string."""
@@ -3058,10 +3078,18 @@ class DiscordChannel(BaseChannel):
             body["embeds"] = normalized_embeds
         if components:
             body["components"] = [item for item in components if isinstance(item, dict)][:DISCORD_MAX_COMPONENT_ROWS]
+        clean_thread_name = str(thread_name or "").strip()
+        if clean_thread_name:
+            body["thread_name"] = clean_thread_name[:100]
+        normalized_applied_tags = [str(tag or "").strip() for tag in list(applied_tags or []) if str(tag or "").strip()]
+        if normalized_applied_tags:
+            body["applied_tags"] = normalized_applied_tags
         query_parts = [f"wait={'true' if wait else 'false'}"]
         clean_thread_id = str(thread_id or "").strip()
         if clean_thread_id:
             query_parts.append(f"thread_id={urllib.parse.quote(clean_thread_id, safe='')}")
+        if components:
+            query_parts.append("with_components=true")
         response = await self._post_json(
             url=f"{self.api_base}/webhooks/{webhook_id}/{webhook_token}?{'&'.join(query_parts)}",
             payload=body,

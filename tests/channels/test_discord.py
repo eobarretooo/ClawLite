@@ -1849,7 +1849,7 @@ def test_discord_execute_webhook_targets_thread_and_normalizes_embeds() -> None:
     )
 
     assert out == "msg-wh-thread"
-    assert posted[0][0].endswith("?wait=true&thread_id=thread-77")
+    assert posted[0][0].endswith("?wait=true&thread_id=thread-77&with_components=true")
     assert posted[0][1]["username"] == "Ops Bot"
     assert posted[0][1]["embeds"] == [
         {
@@ -1859,6 +1859,41 @@ def test_discord_execute_webhook_targets_thread_and_normalizes_embeds() -> None:
         }
     ]
     assert len(posted[0][1]["components"]) == 5
+
+
+def test_discord_execute_webhook_supports_thread_name_applied_tags_and_with_components() -> None:
+    posted: list[tuple[str, dict]] = []
+
+    async def _fake_post(url, payload, error_prefix=""):
+        posted.append((url, payload))
+        return _response(status=200, url=url, payload={"id": "msg-wh-forum"})
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._post_json = _fake_post  # type: ignore[method-assign]
+
+    out = asyncio.run(
+        ch.execute_webhook(
+            webhook_id="wh003",
+            webhook_token="wht003",
+            text="Forum webhook",
+            thread_name="Incident 42",
+            applied_tags=["tag-1", "tag-2", ""],
+            components=[{"type": 1, "components": []}],
+        )
+    )
+
+    assert out == "msg-wh-forum"
+    assert posted == [
+        (
+            "https://discord.com/api/v10/webhooks/wh003/wht003?wait=true&with_components=true",
+            {
+                "content": "Forum webhook",
+                "components": [{"type": 1, "components": []}],
+                "thread_name": "Incident 42",
+                "applied_tags": ["tag-1", "tag-2"],
+            },
+        )
+    ]
 
 
 def test_discord_send_voice_message_builds_correct_payload() -> None:
@@ -2029,6 +2064,52 @@ def test_discord_send_routes_discord_webhook_metadata_to_execute_webhook() -> No
                 {"type": 1, "components": []},
             ],
             "thread_id": "thread-55",
+            "thread_name": None,
+            "applied_tags": [],
+            "wait": True,
+        }
+    ]
+
+
+def test_discord_send_routes_discord_webhook_thread_creation_metadata() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def _fake_execute_webhook(**kwargs):
+        calls.append(dict(kwargs))
+        return "msg-webhook-thread-create"
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    with patch.object(ch, "execute_webhook", side_effect=_fake_execute_webhook):
+        out = asyncio.run(
+            ch.send(
+                target="channel:forum001",
+                text="Forum seed",
+                metadata={
+                    "discord_webhook": {
+                        "id": "wh-3",
+                        "token": "tok-3",
+                        "thread_name": "Build alerts",
+                        "applied_tags": ["tag-a", "tag-b"],
+                    }
+                },
+            )
+        )
+
+    assert out == "discord:sent:msg-webhook-thread-create"
+    assert calls == [
+        {
+            "webhook_id": "wh-3",
+            "webhook_token": "tok-3",
+            "text": "Forum seed",
+            "username": None,
+            "avatar_url": None,
+            "embeds": None,
+            "components": None,
+            "thread_id": None,
+            "thread_name": "Build alerts",
+            "applied_tags": ["tag-a", "tag-b"],
             "wait": True,
         }
     ]
@@ -2059,7 +2140,15 @@ def test_discord_send_webhook_metadata_wait_false_returns_fallback_id() -> None:
     assert out.startswith("discord:sent:webhook-")
 
 
-def test_discord_send_rejects_invalid_webhook_metadata() -> None:
+@pytest.mark.parametrize(
+    "webhook_metadata",
+    [
+        {"id": "wh-only"},
+        {"id": "wh-4", "token": "tok-4", "thread_id": "thread-1", "thread_name": "bad-mix"},
+        {"id": "wh-5", "token": "tok-5", "applied_tags": ["tag-only"]},
+    ],
+)
+def test_discord_send_rejects_invalid_webhook_metadata(webhook_metadata: dict[str, Any]) -> None:
     ch = DiscordChannel(config={"token": "tok"}, on_message=None)
     ch._running = True
 
@@ -2068,7 +2157,7 @@ def test_discord_send_rejects_invalid_webhook_metadata() -> None:
             ch.send(
                 target="channel:chan001",
                 text="Hello",
-                metadata={"discord_webhook": {"id": "wh-only"}},
+                metadata={"discord_webhook": webhook_metadata},
             )
         )
         raise AssertionError("expected invalid discord_webhook metadata to fail")
