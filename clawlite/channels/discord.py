@@ -1731,11 +1731,34 @@ class DiscordChannel(BaseChannel):
             )
             or ""
         ).strip()
+        raw_webhook = metadata_payload.get("discord_webhook")
+        raw_embeds = metadata_payload.get("discord_embeds") or metadata_payload.get("embeds")
+        raw_components = metadata_payload.get("discord_components") or metadata_payload.get("components")
+        raw_modal = metadata_payload.get("discord_modal")
+        raw_poll = metadata_payload.get("discord_poll")
         raw_voice = metadata_payload.get("discord_voice")
         normalized_voice = self._normalize_outbound_voice(raw_voice)
         if raw_voice is not None and normalized_voice is None:
             raise ValueError("discord_voice requires audio bytes and duration_secs")
         if normalized_voice is not None:
+            unsupported_voice_features: list[str] = []
+            if payload["content"].strip():
+                unsupported_voice_features.append("text content")
+            if raw_embeds:
+                unsupported_voice_features.append("discord_embeds")
+            if raw_components:
+                unsupported_voice_features.append("discord_components")
+            if raw_webhook is not None:
+                unsupported_voice_features.append("discord_webhook")
+            if raw_modal is not None:
+                unsupported_voice_features.append("discord_modal")
+            if raw_poll is not None:
+                unsupported_voice_features.append("discord_poll")
+            if unsupported_voice_features:
+                raise ValueError(
+                    "discord_voice does not support "
+                    + ", ".join(unsupported_voice_features)
+                )
             if interaction_token and interaction_ephemeral:
                 raise ValueError("discord_voice does not support ephemeral interaction replies")
             if interaction_token and interaction_followup:
@@ -1762,25 +1785,21 @@ class DiscordChannel(BaseChannel):
             }
             payload["allowed_mentions"] = {"replied_user": False}
 
-        raw_webhook = metadata_payload.get("discord_webhook")
         normalized_webhook = self._normalize_outbound_webhook(raw_webhook)
         if raw_webhook is not None and normalized_webhook is None:
             raise ValueError("discord_webhook requires webhook id and token")
 
         # Rich embeds — pass as metadata key "discord_embeds" or "embeds"
-        raw_embeds = metadata_payload.get("discord_embeds") or metadata_payload.get("embeds")
         normalized_embeds = self._normalize_embed_payloads(raw_embeds)
         if normalized_embeds:
             payload["embeds"] = normalized_embeds
 
         # Message components (buttons, select menus) — pass as metadata key "discord_components"
-        raw_components = metadata_payload.get("discord_components") or metadata_payload.get("components")
         if isinstance(raw_components, list) and raw_components:
             payload["components"] = [
                 c for c in raw_components if isinstance(c, dict)
             ][:DISCORD_MAX_COMPONENT_ROWS]
 
-        raw_modal = metadata_payload.get("discord_modal")
         normalized_modal = self._normalize_outbound_modal(raw_modal)
         if raw_modal is not None and normalized_modal is None:
             raise ValueError("discord_modal requires title and at least one valid field")
@@ -1799,7 +1818,6 @@ class DiscordChannel(BaseChannel):
             payload["components"] = components
 
         # Poll — pass as metadata key "discord_poll": {"question": str, "answers": [str, ...], "duration_hours": int}
-        raw_poll = metadata_payload.get("discord_poll")
         if isinstance(raw_poll, dict) and raw_poll.get("question") and raw_poll.get("answers"):
             answers_raw = [str(a) for a in raw_poll["answers"] if a][:10]
             payload["poll"] = {

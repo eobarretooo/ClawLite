@@ -2357,6 +2357,46 @@ def test_discord_send_rejects_invalid_voice_metadata() -> None:
         assert "discord_voice requires audio bytes and duration_secs" in str(exc)
 
 
+@pytest.mark.parametrize(
+    ("text", "extra_metadata", "expected_fragment"),
+    [
+        ("Voice caption", {}, "text content"),
+        ("", {"discord_embeds": [{"title": "Status"}]}, "discord_embeds"),
+        ("", {"discord_components": [{"type": 1, "components": []}]}, "discord_components"),
+        ("", {"discord_webhook": {"id": "wh001", "token": "wht001"}}, "discord_webhook"),
+        ("", {"discord_modal": {"title": "More info", "fields": [{"id": "notes", "label": "Notes"}]}}, "discord_modal"),
+        ("", {"discord_poll": {"question": "Ship it?", "answers": ["Yes", "No"]}}, "discord_poll"),
+    ],
+)
+def test_discord_send_voice_rejects_unsupported_extra_features(
+    text: str,
+    extra_metadata: dict[str, Any],
+    expected_fragment: str,
+) -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    metadata = {
+        "discord_voice": {
+            "audio_bytes": b"\x4f\x67\x67\x53" + b"\x05" * 8,
+            "duration_secs": 1.0,
+        }
+    }
+    metadata.update(extra_metadata)
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text=text,
+                metadata=metadata,
+            )
+        )
+        raise AssertionError("expected unsupported discord_voice combo to fail")
+    except ValueError as exc:
+        assert expected_fragment in str(exc)
+
+
 def test_discord_send_streaming_edits_message_in_place() -> None:
     """send_streaming() creates a message then edits it as chunks arrive."""
     from clawlite.core.engine import ProviderChunk
