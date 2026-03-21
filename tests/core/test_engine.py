@@ -23,7 +23,7 @@ from clawlite.core.engine import (
     ToolCall,
     TurnBudget,
 )
-from clawlite.core.memory import MemoryRecord
+from clawlite.core.memory import MemoryRecord, MemoryStore as RealMemoryStore
 from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.core.subagent_synthesizer import SubagentSynthesizer
 from clawlite.core.prompt import PromptBuilder
@@ -474,6 +474,14 @@ class FakeMemoryWithAsyncMemorize(FakeMemory):
 
 
 class _EngineDefaultMemoryStore(FakeMemory):
+    @classmethod
+    def _query_has_temporal_intent(cls, query: str) -> bool:
+        return RealMemoryStore._query_has_temporal_intent(query)
+
+    @classmethod
+    def _memory_is_temporally_relevant(cls, text: str, created_at: str) -> bool:
+        return RealMemoryStore._memory_is_temporally_relevant(text, created_at)
+
     def __init__(self, rows: list[MemoryRecord] | None = None) -> None:
         super().__init__(rows)
         self.memorize_calls: list[dict[str, Any]] = []
