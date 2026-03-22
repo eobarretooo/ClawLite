@@ -2001,6 +2001,63 @@ def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> No
     assert sleep_mock.await_args.args == (0.75,)
 
 
+@pytest.mark.parametrize(
+    ("raw_silent", "expected_flags"),
+    [
+        ("false", 8192),
+        ("true", 12288),
+    ],
+)
+def test_discord_send_voice_message_coerces_string_silent_flags(
+    raw_silent: str,
+    expected_flags: int,
+) -> None:
+    http_calls: list[tuple[str, str, Any]] = []
+    waveform = DiscordChannel._generate_placeholder_waveform()
+
+    class _FakeVoiceUploadClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def put(self, url, *, headers=None, content=None):
+            http_calls.append(("PUT", url, None))
+            return _response(status=200, url=url)
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    async def _fake_post_json(url, payload, error_prefix=""):
+        http_calls.append(("POST", url, payload))
+        if "attachments" in url:
+            return _response(
+                status=200,
+                url=url,
+                payload={"attachments": [{"id": 0, "upload_url": "https://cdn/upload", "upload_filename": "voice.ogg"}]},
+            )
+        return _response(status=200, url=url, payload={"id": "msg-silent-flags"})
+
+    ch._post_json = _fake_post_json  # type: ignore[method-assign]
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeVoiceUploadClient()):
+        out = asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 48,
+                duration_secs=1.0,
+                waveform=waveform,
+                silent=raw_silent,  # type: ignore[arg-type]
+            )
+        )
+
+    assert out == "discord:voice:msg-silent-flags"
+    msg_posts = [c for c in http_calls if c[0] == "POST" and "messages" in c[1]]
+    assert msg_posts
+    assert msg_posts[0][2]["flags"] == expected_flags
+
+
 def test_discord_send_routes_discord_webhook_metadata_to_execute_webhook() -> None:
     calls: list[dict[str, Any]] = []
 

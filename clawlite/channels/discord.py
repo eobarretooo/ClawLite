@@ -3018,6 +3018,8 @@ class DiscordChannel(BaseChannel):
         resolved_duration_secs = float(duration_secs or 0.0)
         if not math.isfinite(resolved_duration_secs) or resolved_duration_secs <= 0.0:
             raise ValueError("duration_secs must be positive")
+        normalized_silent = self._normalize_optional_bool(silent)
+        resolved_silent = bool(silent) if normalized_silent is None else normalized_silent
         clean_channel = str(channel_id).strip()
         resolved_waveform = self._normalize_voice_waveform(waveform) or await self._generate_waveform_from_audio(
             audio_bytes
@@ -3046,7 +3048,7 @@ class DiscordChannel(BaseChannel):
 
         # Step 3: Send message with voice flag
         flags = DISCORD_VOICE_MESSAGE_FLAG
-        if silent:
+        if resolved_silent:
             flags |= (1 << 12)  # SUPPRESS_NOTIFICATIONS
         msg_body: dict[str, Any] = {
             "flags": flags,
