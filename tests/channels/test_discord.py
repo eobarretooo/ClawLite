@@ -2006,6 +2006,7 @@ def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> No
     [
         ("false", 8192),
         ("true", 12288),
+        ("bogus", 8192),
     ],
 )
 def test_discord_send_voice_message_coerces_string_silent_flags(

@@ -3019,7 +3019,7 @@ class DiscordChannel(BaseChannel):
         if not math.isfinite(resolved_duration_secs) or resolved_duration_secs <= 0.0:
             raise ValueError("duration_secs must be positive")
         normalized_silent = self._normalize_optional_bool(silent)
-        resolved_silent = bool(silent) if normalized_silent is None else normalized_silent
+        resolved_silent = False if normalized_silent is None else normalized_silent
         clean_channel = str(channel_id).strip()
         resolved_waveform = self._normalize_voice_waveform(waveform) or await self._generate_waveform_from_audio(
             audio_bytes
