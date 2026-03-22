@@ -574,6 +574,23 @@ class DiscordChannel(BaseChannel):
     def _looks_like_voice_ogg(audio_bytes: bytes) -> bool:
         return isinstance(audio_bytes, bytes) and len(audio_bytes) >= 4 and audio_bytes.startswith(b"OggS")
 
+    @staticmethod
+    def _normalize_voice_waveform(raw: Any) -> str | None:
+        if raw is None:
+            return None
+        value = str(raw or "").strip()
+        if not value:
+            return None
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except Exception as exc:
+            raise ValueError("discord voice waveform must be base64-encoded") from exc
+        if len(decoded) != DISCORD_VOICE_WAVEFORM_SAMPLES:
+            raise ValueError(
+                f"discord voice waveform must decode to {DISCORD_VOICE_WAVEFORM_SAMPLES} samples"
+            )
+        return base64.b64encode(decoded).decode("ascii")
+
     @classmethod
     def _normalize_outbound_voice(cls, raw: Any) -> dict[str, Any] | None:
         if not isinstance(raw, dict):
@@ -589,7 +606,7 @@ class DiscordChannel(BaseChannel):
             duration_secs = max(0.0, float(raw.get("duration_secs", raw.get("durationSecs", 0.0)) or 0.0))
         except Exception:
             return None
-        waveform = str(raw.get("waveform", "") or "").strip() or None
+        waveform = cls._normalize_voice_waveform(raw.get("waveform"))
         return {
             "audio_bytes": audio_bytes,
             "audio_path": audio_path,
@@ -2998,7 +3015,9 @@ class DiscordChannel(BaseChannel):
         if not math.isfinite(resolved_duration_secs) or resolved_duration_secs <= 0.0:
             raise ValueError("duration_secs must be positive")
         clean_channel = str(channel_id).strip()
-        resolved_waveform = waveform or await self._generate_waveform_from_audio(audio_bytes)
+        resolved_waveform = self._normalize_voice_waveform(waveform) or await self._generate_waveform_from_audio(
+            audio_bytes
+        )
 
         # Step 1: Request upload URL
         r1 = await self._post_json(

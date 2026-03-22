@@ -1899,6 +1899,7 @@ def test_discord_execute_webhook_supports_thread_name_applied_tags_and_with_comp
 def test_discord_send_voice_message_builds_correct_payload() -> None:
     """send_voice_message() uploads file and sends message with IS_VOICE_MESSAGE flag."""
     http_calls: list[tuple[str, str, Any]] = []
+    waveform = DiscordChannel._generate_placeholder_waveform()
 
     class _FakeVoiceUploadClient:
         async def __aenter__(self):
@@ -1932,7 +1933,7 @@ def test_discord_send_voice_message_builds_correct_payload() -> None:
                 channel_id="chan001",
                 audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 100,
                 duration_secs=2.5,
-                waveform="AAAA",  # provide explicit waveform to skip ffmpeg
+                waveform=waveform,  # provide explicit waveform to skip ffmpeg
             )
         result = asyncio.run(_scenario())
 
@@ -1946,6 +1947,7 @@ def test_discord_send_voice_message_builds_correct_payload() -> None:
 
 def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> None:
     http_calls: list[tuple[str, str, Any]] = []
+    waveform = DiscordChannel._generate_placeholder_waveform()
 
     class _FakeVoiceUploadRetryClient:
         def __init__(self) -> None:
@@ -1989,7 +1991,7 @@ def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> No
                     channel_id="chan001",
                     audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 32,
                     duration_secs=1.0,
-                    waveform="AAAA",
+                    waveform=waveform,
                 )
             )
 
@@ -2190,6 +2192,7 @@ def test_discord_send_rejects_reply_reference_on_webhook_route() -> None:
 
 def test_discord_send_routes_discord_voice_metadata_to_voice_message() -> None:
     calls: list[dict[str, Any]] = []
+    waveform = DiscordChannel._generate_placeholder_waveform()
 
     async def _fake_send_voice_message(**kwargs):
         calls.append(dict(kwargs))
@@ -2208,7 +2211,7 @@ def test_discord_send_routes_discord_voice_metadata_to_voice_message() -> None:
                     "discord_voice": {
                         "audio_bytes": b"\x4f\x67\x67\x53" + b"\x00" * 16,
                         "duration_secs": 3.25,
-                        "waveform": "AAAA",
+                        "waveform": waveform,
                         "silent": True,
                     },
                 },
@@ -2221,7 +2224,7 @@ def test_discord_send_routes_discord_voice_metadata_to_voice_message() -> None:
             "channel_id": "chan001",
             "audio_bytes": b"\x4f\x67\x67\x53" + b"\x00" * 16,
             "duration_secs": 3.25,
-            "waveform": "AAAA",
+            "waveform": waveform,
             "reply_to_message_id": "msg-parent",
             "silent": True,
         }
@@ -2538,6 +2541,29 @@ def test_discord_send_rejects_non_positive_voice_duration() -> None:
         assert "discord_voice requires positive duration_secs" in str(exc)
 
 
+def test_discord_send_rejects_invalid_voice_waveform() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    try:
+        asyncio.run(
+            ch.send(
+                target="channel:chan001",
+                text="",
+                metadata={
+                    "discord_voice": {
+                        "audio_bytes": b"\x4f\x67\x67\x53" + b"\x08" * 8,
+                        "duration_secs": 1.0,
+                        "waveform": "AAAA",
+                    }
+                },
+            )
+        )
+        raise AssertionError("expected invalid discord_voice waveform to fail")
+    except ValueError as exc:
+        assert "discord voice waveform must decode to 256 samples" in str(exc)
+
+
 def test_discord_send_rejects_non_ogg_voice_audio_path(tmp_path: Path) -> None:
     ch = DiscordChannel(config={"token": "tok"}, on_message=None)
     ch._running = True
@@ -2636,6 +2662,23 @@ def test_discord_send_voice_message_rejects_non_positive_duration() -> None:
         raise AssertionError("expected non-positive direct voice duration to fail")
     except ValueError as exc:
         assert "duration_secs must be positive" in str(exc)
+
+
+def test_discord_send_voice_message_rejects_invalid_waveform() -> None:
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+
+    try:
+        asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"\x4f\x67\x67\x53" + b"\x07" * 8,
+                duration_secs=1.0,
+                waveform="not-base64",
+            )
+        )
+        raise AssertionError("expected invalid direct waveform to fail")
+    except ValueError as exc:
+        assert "discord voice waveform must be base64-encoded" in str(exc)
 
 
 def test_discord_send_streaming_edits_message_in_place() -> None:
