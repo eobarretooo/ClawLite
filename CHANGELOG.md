@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Discord `discord_voice.waveform` now also has to be valid base64 that decodes to Discord's 256-sample voice-note shape, instead of letting malformed waveform strings through to the API
 - Discord automatic voice-waveform generation now also falls back cleanly to the placeholder waveform when temporary-file setup fails before `ffmpeg`, instead of leaking a cleanup-time local-variable error
 - Discord's direct `send_voice_message(...)` helper now also normalizes string-style `silent` values like `"true"` / `"false"`, keeping direct helper calls aligned with the metadata-driven voice path
+- Discord's direct `send_voice_message(...)` helper now also treats unrecognized string-style `silent` values fail-closed as non-silent, instead of inheriting Python truthiness for garbage strings
 - Discord deferred interaction replies now also stream through the native `@original` response path when the manager uses `stream_run()`, so streamed slash/component turns no longer wait for a second non-streamed channel send and still fail closed back to the normal final-send path when streaming delivery cannot be established
 - `stream_run()` now reuses the same base prompt shaping as `run()` for memory, history, and allowlisted runtime metadata, instead of streaming from raw session rows only
 - `stream_run()` now falls back to the full `run()` loop for live-lookup turns, instead of staying on a text-only provider stream path when the answer should be verified with current web/weather data
