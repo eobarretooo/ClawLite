@@ -3469,6 +3469,16 @@ def test_discord_placeholder_waveform_is_base64() -> None:
     assert len(decoded) == 256
 
 
+def test_discord_generate_waveform_falls_back_when_tempfile_setup_fails() -> None:
+    ch = DiscordChannel(config={"token": "tok"})
+    expected = ch._generate_placeholder_waveform()
+
+    with patch("tempfile.NamedTemporaryFile", side_effect=OSError("boom")):
+        out = asyncio.run(ch._generate_waveform_from_audio(b"\x4f\x67\x67\x53" + b"\x01" * 16))
+
+    assert out == expected
+
+
 def test_discord_thread_binding_persists_and_routes_inbound_messages(tmp_path: Path) -> None:
     async def _scenario() -> None:
         emitted: list[tuple[str, str, str, dict[str, Any]]] = []

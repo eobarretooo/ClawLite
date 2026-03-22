@@ -2953,6 +2953,8 @@ class DiscordChannel(BaseChannel):
         import os
         import struct
         import tempfile
+        tmp_in: str | None = None
+        tmp_pcm: str | None = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
                 f.write(audio_bytes)
@@ -2982,7 +2984,9 @@ class DiscordChannel(BaseChannel):
         except Exception:
             return self._generate_placeholder_waveform()
         finally:
-            for p in (tmp_in, tmp_pcm):  # type: ignore[possibly-undefined]
+            for p in (tmp_in, tmp_pcm):
+                if not p:
+                    continue
                 try:
                     os.unlink(p)
                 except Exception:
