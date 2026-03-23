@@ -122,6 +122,9 @@ async def handle_discord_thread_binding_inbound_action(
         status = status_fn()
         gateway_session_task_state = str(status.get("gateway_session_task_state", "unknown") or "unknown").strip()
         gateway_session_waiting_for = str(status.get("gateway_session_waiting_for", "") or "").strip()
+        gateway_reconnect_attempt = int(status.get("gateway_reconnect_attempt", 0) or 0)
+        gateway_reconnect_retry_in_s = float(status.get("gateway_reconnect_retry_in_s", 0.0) or 0.0)
+        gateway_reconnect_state = str(status.get("gateway_reconnect_state", "") or "").strip().lower()
         lines = [
             "Discord operator status",
             f"- connected: {bool(status.get('connected', False))}",
@@ -133,6 +136,13 @@ async def handle_discord_thread_binding_inbound_action(
         ]
         if gateway_session_waiting_for:
             lines.append(f"- waiting_for: {gateway_session_waiting_for.upper()}")
+        if gateway_reconnect_attempt > 0 or gateway_reconnect_retry_in_s > 0.0:
+            reconnect_detail = (
+                f"retry_in {gateway_reconnect_retry_in_s:.1f}s"
+                if gateway_reconnect_retry_in_s > 0.0
+                else ("retrying now" if gateway_reconnect_state == "retrying" else "retry active")
+            )
+            lines.append(f"- reconnect: attempt {gateway_reconnect_attempt} | {reconnect_detail}")
         last_error = str(status.get("last_error", "") or "").strip()
         if last_error:
             lines.append(f"- last_error: {last_error}")

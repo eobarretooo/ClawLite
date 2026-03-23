@@ -364,6 +364,9 @@ class DiscordChannel(BaseChannel):
         self._heartbeat_ack_pending = False
         self._gateway_session_waiting_for = ""
         self._gateway_presence_ready = False
+        self._gateway_reconnect_attempt = 0
+        self._gateway_reconnect_backoff_s = 0.0
+        self._gateway_reconnect_retry_at_monotonic = 0.0
         self._registered_modals: dict[str, dict[str, Any]] = {}
         self._transcription_provider: Any | None = None
         self._media_transcription_count = 0
@@ -1587,6 +1590,9 @@ class DiscordChannel(BaseChannel):
         self._heartbeat_ack_pending = False
         self._gateway_session_waiting_for = ""
         self._gateway_presence_ready = False
+        self._gateway_reconnect_attempt = 0
+        self._gateway_reconnect_backoff_s = 0.0
+        self._gateway_reconnect_retry_at_monotonic = 0.0
         await cancel_task(self._auto_presence_task)
         self._auto_presence_task = None
         for task in list(self._typing_tasks.values()):
@@ -2075,6 +2081,8 @@ class DiscordChannel(BaseChannel):
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
             self._gateway_presence_ready = False
+            self._gateway_reconnect_backoff_s = 0.0
+            self._gateway_reconnect_retry_at_monotonic = 0.0
             connect_url = self._resume_url or self.gateway_url
             try:
                 async with websockets.connect(
@@ -2085,6 +2093,7 @@ class DiscordChannel(BaseChannel):
                 ) as ws:
                     self._ws = ws
                     self._last_error = ""
+                    self._gateway_reconnect_attempt = 0
                     backoff_s = self.gateway_backoff_base_s
                     await self._gateway_loop()
             except asyncio.CancelledError:
@@ -2093,6 +2102,9 @@ class DiscordChannel(BaseChannel):
                 self._last_error = str(exc)
                 if not self._running:
                     break
+                self._gateway_reconnect_attempt += 1
+                self._gateway_reconnect_backoff_s = backoff_s
+                self._gateway_reconnect_retry_at_monotonic = time.monotonic() + backoff_s
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(
                     self.gateway_backoff_max_s,
@@ -3457,15 +3469,32 @@ class DiscordChannel(BaseChannel):
             return "failed" if exc is not None else "finished"
         return "running"
 
+    def _gateway_reconnect_retry_in_s(self) -> float:
+        retry_at = float(self._gateway_reconnect_retry_at_monotonic or 0.0)
+        if retry_at <= 0.0:
+            return 0.0
+        return max(0.0, retry_at - time.monotonic())
+
     def operator_status(self) -> dict[str, Any]:
         gateway_task_state = self._task_state(self._gateway_task)
         heartbeat_task_state = self._task_state(self._heartbeat_task)
         gateway_session_task_state = self._task_state(self._gateway_session_task)
+        gateway_reconnect_retry_in_s = self._gateway_reconnect_retry_in_s()
+        gateway_reconnect_state = "idle"
+        if gateway_reconnect_retry_in_s > 0.0:
+            gateway_reconnect_state = "backoff"
+        elif self._gateway_reconnect_attempt > 0 and gateway_task_state == "running" and self._ws is None:
+            gateway_reconnect_state = "retrying"
         hints: list[str] = []
         if self.on_message is not None and gateway_task_state != "running":
             hints.append("Discord gateway listener is not running; refresh transport to reconnect the gateway loop.")
         if self._last_error:
             hints.append("Discord recorded a recent transport or HTTP error; inspect the error and consider refreshing transport.")
+        if gateway_reconnect_retry_in_s > 0.0:
+            hints.append(
+                "Discord gateway is backing off before reconnecting again; "
+                f"next retry in {gateway_reconnect_retry_in_s:.1f}s."
+            )
         if self._gateway_session_waiting_for and gateway_task_state == "running":
             hints.append(
                 "Discord gateway is waiting for "
@@ -3480,6 +3509,10 @@ class DiscordChannel(BaseChannel):
             "heartbeat_task_state": heartbeat_task_state,
             "gateway_session_task_state": gateway_session_task_state,
             "gateway_session_waiting_for": self._gateway_session_waiting_for,
+            "gateway_reconnect_attempt": self._gateway_reconnect_attempt,
+            "gateway_reconnect_backoff_s": self._gateway_reconnect_backoff_s,
+            "gateway_reconnect_retry_in_s": gateway_reconnect_retry_in_s,
+            "gateway_reconnect_state": gateway_reconnect_state,
             "session_id": self._session_id,
             "resume_url": self._resume_url,
             "sequence": self._sequence,
@@ -3697,6 +3730,9 @@ class DiscordChannel(BaseChannel):
             self._heartbeat_ack_pending = False
             self._gateway_session_waiting_for = ""
             self._gateway_presence_ready = False
+            self._gateway_reconnect_attempt = 0
+            self._gateway_reconnect_backoff_s = 0.0
+            self._gateway_reconnect_retry_at_monotonic = 0.0
             self._last_error = ""
             if was_running and (self.on_message is not None or was_gateway_running):
                 await self.start()

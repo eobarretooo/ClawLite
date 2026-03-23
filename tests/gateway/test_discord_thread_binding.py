@@ -134,6 +134,9 @@ def test_handle_discord_thread_binding_reports_operator_status() -> None:
                     "heartbeat_task_state": "running",
                     "gateway_session_task_state": "stopped",
                     "gateway_session_waiting_for": "",
+                    "gateway_reconnect_attempt": 0,
+                    "gateway_reconnect_retry_in_s": 0.0,
+                    "gateway_reconnect_state": "idle",
                     "policy_allowed_count": 4,
                     "policy_blocked_count": 1,
                     "thread_binding_count": 2,
@@ -187,6 +190,9 @@ def test_handle_discord_thread_binding_reports_pending_gateway_session_status() 
                     "heartbeat_task_state": "running",
                     "gateway_session_task_state": "running",
                     "gateway_session_waiting_for": "resumed",
+                    "gateway_reconnect_attempt": 0,
+                    "gateway_reconnect_retry_in_s": 0.0,
+                    "gateway_reconnect_state": "idle",
                     "policy_allowed_count": 4,
                     "policy_blocked_count": 1,
                     "thread_binding_count": 2,
@@ -216,6 +222,100 @@ def test_handle_discord_thread_binding_reports_pending_gateway_session_status() 
         assert handled is True
         assert "session_watchdog: running" in str(sent[0]["text"])
         assert "waiting_for: RESUMED" in str(sent[0]["text"])
+
+    asyncio.run(_scenario())
+
+
+def test_handle_discord_thread_binding_reports_reconnect_backoff() -> None:
+    async def _scenario() -> None:
+        sent: list[dict[str, object]] = []
+
+        class _DiscordChannel:
+            def operator_status(self):
+                return {
+                    "connected": False,
+                    "gateway_task_state": "running",
+                    "heartbeat_task_state": "stopped",
+                    "gateway_session_task_state": "stopped",
+                    "gateway_session_waiting_for": "",
+                    "gateway_reconnect_attempt": 2,
+                    "gateway_reconnect_retry_in_s": 3.5,
+                    "gateway_reconnect_state": "backoff",
+                    "policy_allowed_count": 4,
+                    "policy_blocked_count": 1,
+                    "thread_binding_count": 2,
+                    "last_error": "gateway connect failed",
+                }
+
+        class _Channels:
+            async def send(self, *, channel: str, target: str, text: str, metadata=None) -> str:
+                sent.append({"channel": channel, "target": target, "text": text})
+                return "ok"
+
+            def get_channel(self, name: str):
+                assert name == "discord"
+                return _DiscordChannel()
+
+        handled = await handle_discord_thread_binding_inbound_action(
+            InboundEvent(
+                channel="discord",
+                session_id="discord:guild:guild-1:channel:chan-1",
+                user_id="user-1",
+                text="/discord-status",
+                metadata={"channel_id": "chan-1"},
+            ),
+            channels=_Channels(),
+        )
+
+        assert handled is True
+        assert "reconnect: attempt 2 | retry_in 3.5s" in str(sent[0]["text"])
+
+    asyncio.run(_scenario())
+
+
+def test_handle_discord_thread_binding_reports_active_reconnect_without_backoff() -> None:
+    async def _scenario() -> None:
+        sent: list[dict[str, object]] = []
+
+        class _DiscordChannel:
+            def operator_status(self):
+                return {
+                    "connected": False,
+                    "gateway_task_state": "running",
+                    "heartbeat_task_state": "stopped",
+                    "gateway_session_task_state": "stopped",
+                    "gateway_session_waiting_for": "",
+                    "gateway_reconnect_attempt": 3,
+                    "gateway_reconnect_retry_in_s": 0.0,
+                    "gateway_reconnect_state": "retrying",
+                    "policy_allowed_count": 4,
+                    "policy_blocked_count": 1,
+                    "thread_binding_count": 2,
+                    "last_error": "gateway connect failed",
+                }
+
+        class _Channels:
+            async def send(self, *, channel: str, target: str, text: str, metadata=None) -> str:
+                sent.append({"channel": channel, "target": target, "text": text})
+                return "ok"
+
+            def get_channel(self, name: str):
+                assert name == "discord"
+                return _DiscordChannel()
+
+        handled = await handle_discord_thread_binding_inbound_action(
+            InboundEvent(
+                channel="discord",
+                session_id="discord:guild:guild-1:channel:chan-1",
+                user_id="user-1",
+                text="/discord-status",
+                metadata={"channel_id": "chan-1"},
+            ),
+            channels=_Channels(),
+        )
+
+        assert handled is True
+        assert "reconnect: attempt 3 | retrying now" in str(sent[0]["text"])
 
     asyncio.run(_scenario())
 

@@ -1156,6 +1156,9 @@ function renderDiscordBoard() {
 
   const waitingFor = String(discord.gateway_session_waiting_for || "").trim();
   const sessionWatchdogState = String(discord.gateway_session_task_state || "unknown");
+  const reconnectAttempt = numeric(discord.gateway_reconnect_attempt, 0);
+  const reconnectRetryIn = Number(discord.gateway_reconnect_retry_in_s || 0);
+  const reconnectState = String(discord.gateway_reconnect_state || "idle");
   appendSummaryCard(grid, {
     title: "Gateway state",
     body: waitingFor
@@ -1175,6 +1178,15 @@ function renderDiscordBoard() {
     body: `${numeric(discord.dm_cache_size, 0)} DM channels cached | ${numeric(discord.typing_tasks, 0)} typing tasks`,
     detail: discord.last_error ? `last error ${discord.last_error}` : "transport healthy",
   });
+  if (reconnectAttempt || reconnectRetryIn > 0) {
+    appendSummaryCard(grid, {
+      title: "Reconnect",
+      body: `attempt ${reconnectAttempt || 0}`,
+      detail: reconnectRetryIn > 0
+        ? `retry in ${reconnectRetryIn.toFixed(1)}s`
+        : (reconnectState === "retrying" ? "retrying now" : "retry active"),
+    });
+  }
 
   const hints = Array.isArray(discord.hints) ? discord.hints : [];
   if (hints.length) {
@@ -1187,8 +1199,10 @@ function renderDiscordBoard() {
     });
   }
 
-  const healthy = Boolean(discord.connected) && !discord.last_error && !waitingFor;
-  const badgeText = waitingFor ? `waiting ${waitingFor.toLowerCase()}` : (healthy ? "healthy" : "attention");
+  const healthy = Boolean(discord.connected) && !discord.last_error && !waitingFor && reconnectRetryIn <= 0;
+  const badgeText = waitingFor
+    ? `waiting ${waitingFor.toLowerCase()}`
+    : ((reconnectRetryIn > 0 || reconnectState === "retrying") ? "reconnecting" : (healthy ? "healthy" : "attention"));
   setBadge("discord-status", badgeText, healthy ? "ok" : "warn");
   if (refreshButton) {
     refreshButton.disabled = false;

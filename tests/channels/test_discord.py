@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -952,6 +953,10 @@ def test_discord_operator_status_reports_gateway_state() -> None:
     assert payload["bot_user_id"] == "bot-1"
     assert payload["gateway_session_task_state"] == "stopped"
     assert payload["gateway_session_waiting_for"] == ""
+    assert payload["gateway_reconnect_attempt"] == 0
+    assert payload["gateway_reconnect_backoff_s"] == 0.0
+    assert payload["gateway_reconnect_retry_in_s"] == 0.0
+    assert payload["gateway_reconnect_state"] == "idle"
     assert payload["presence_status"] == "idle"
     assert payload["presence_activity"] == "Focus time"
     assert payload["presence_activity_type"] == 4
@@ -979,6 +984,89 @@ def test_discord_operator_status_reports_pending_gateway_session_watchdog() -> N
             pass
         try:
             await channel._gateway_session_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+
+def test_discord_operator_status_reports_reconnect_backoff_hint() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"}, on_message=AsyncMock())
+        channel._running = True
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+        channel._gateway_reconnect_attempt = 2
+        channel._gateway_reconnect_backoff_s = 5.0
+        channel._gateway_reconnect_retry_at_monotonic = time.monotonic() + 4.5
+
+        status = channel.operator_status()
+
+        assert status["gateway_reconnect_attempt"] == 2
+        assert status["gateway_reconnect_backoff_s"] == 5.0
+        assert status["gateway_reconnect_retry_in_s"] > 0.0
+        assert status["gateway_reconnect_state"] == "backoff"
+        assert any("backing off" in hint for hint in status["hints"])
+
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+
+def test_discord_gateway_runner_records_reconnect_backoff_after_connect_error() -> None:
+    class _FailingConnect:
+        async def __aenter__(self):
+            raise RuntimeError("gateway connect failed")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "gateway_backoff_base_s": 2.0,
+                "gateway_backoff_max_s": 8.0,
+            }
+        )
+        channel._running = True
+
+        async def _sleep(delay: float) -> None:
+            assert delay == 2.0
+            channel._running = False
+
+        with patch("clawlite.channels.discord.websockets.connect", return_value=_FailingConnect()):
+            with patch("clawlite.channels.discord.asyncio.sleep", new=AsyncMock(side_effect=_sleep)):
+                await channel._gateway_runner()
+
+        assert channel._gateway_reconnect_attempt == 1
+        assert channel._gateway_reconnect_backoff_s == 2.0
+        assert channel._gateway_reconnect_retry_in_s() >= 0.0
+        assert channel._last_error == "gateway connect failed"
+
+    asyncio.run(_scenario())
+
+
+def test_discord_operator_status_reports_active_reconnect_without_backoff() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"}, on_message=AsyncMock())
+        channel._running = True
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+        channel._gateway_reconnect_attempt = 3
+        channel._gateway_reconnect_backoff_s = 5.0
+        channel._gateway_reconnect_retry_at_monotonic = 0.0
+
+        status = channel.operator_status()
+
+        assert status["gateway_reconnect_state"] == "retrying"
+        assert status["gateway_reconnect_retry_in_s"] == 0.0
+
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
         except asyncio.CancelledError:
             pass
 

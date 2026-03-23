@@ -322,7 +322,7 @@ Operator commands:
 /discord-presence-refresh
 ```
 
-These are also intercepted before the agent loop. `discord-status` returns the live transport/policy snapshot for the running Discord channel instance, now including additive lifecycle fields like `gateway_session_task_state` and `gateway_session_waiting_for` when the gateway is still waiting for `READY` / `RESUMED`, and the dashboard surfaces that pending handshake directly instead of only leaving it buried in raw JSON. `discord-refresh` triggers the same transport restart path exposed by the operator surface, `discord-presence` shows the effective static/auto presence state, and `discord-presence-refresh` forces an immediate `op 3` status update once the current gateway handshake is ready.
+These are also intercepted before the agent loop. `discord-status` returns the live transport/policy snapshot for the running Discord channel instance, now including additive lifecycle fields like `gateway_session_task_state` and `gateway_session_waiting_for` when the gateway is still waiting for `READY` / `RESUMED`, plus reconnect/backoff fields like `gateway_reconnect_attempt`, `gateway_reconnect_retry_in_s`, and `gateway_reconnect_state` when the transport is actively recovering. The dashboard surfaces that pending handshake/reconnect state directly instead of only leaving it buried in raw JSON. `discord-refresh` triggers the same transport restart path exposed by the operator surface, `discord-presence` shows the effective static/auto presence state, and `discord-presence-refresh` forces an immediate `op 3` status update once the current gateway handshake is ready.
 
 ## Email
 

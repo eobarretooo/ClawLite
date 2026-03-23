@@ -208,7 +208,11 @@ Example response:
       "connected": false,
       "gateway_task_state": "running",
       "gateway_session_task_state": "running",
-      "gateway_session_waiting_for": "ready"
+      "gateway_session_waiting_for": "ready",
+      "gateway_reconnect_attempt": 1,
+      "gateway_reconnect_backoff_s": 2.0,
+      "gateway_reconnect_retry_in_s": 1.2,
+      "gateway_reconnect_state": "backoff"
     }
   }
 }
