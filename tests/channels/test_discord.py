@@ -2052,6 +2052,37 @@ def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> No
     assert sleep_mock.await_args.args == (0.75,)
 
 
+def test_discord_send_voice_message_rejects_missing_upload_filename() -> None:
+    waveform = DiscordChannel._generate_placeholder_waveform()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    async def _fake_post_json(url, payload, error_prefix=""):
+        if "attachments" in url:
+            return _response(
+                status=200,
+                url=url,
+                payload={"attachments": [{"id": 0, "upload_url": "https://cdn/upload", "upload_filename": "   "}]},
+            )
+        raise AssertionError("message POST should not run when upload_filename is missing")
+
+    ch._post_json = _fake_post_json  # type: ignore[method-assign]
+
+    try:
+        asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 32,
+                duration_secs=1.0,
+                waveform=waveform,
+            )
+        )
+        raise AssertionError("expected missing direct voice upload_filename to fail")
+    except RuntimeError as exc:
+        assert "discord_voice_upload_filename_missing" in str(exc)
+
+
 @pytest.mark.parametrize(
     ("raw_silent", "expected_flags"),
     [

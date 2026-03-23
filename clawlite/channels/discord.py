@@ -3034,9 +3034,11 @@ class DiscordChannel(BaseChannel):
         )
         attachment_info = r1.json().get("attachments", [{}])[0]
         upload_url = str(attachment_info.get("upload_url", "") or "")
-        upload_filename = str(attachment_info.get("upload_filename", "") or "")
+        upload_filename = str(attachment_info.get("upload_filename", "") or "").strip()
         if not upload_url:
             raise RuntimeError("discord_voice_upload_url_missing")
+        if not upload_filename:
+            raise RuntimeError("discord_voice_upload_filename_missing")
 
         # Step 2: Upload the audio
         await self._put_content(
