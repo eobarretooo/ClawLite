@@ -52,6 +52,14 @@ docker compose run --rm clawlite-cli run "summarize the latest session state"
 docker compose run --rm clawlite-cli provider status
 ```
 
+For an explicit CLI-side deployment check without starting a new container, use:
+
+```bash
+clawlite validate preflight --docker
+```
+
+That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout and also surfaces the current `clawlite-gateway` container state/health if the stack is already running.
+
 ## Build Options
 
 The image installs `telegram`, `media`, `observability`, and `runtime` extras by default. Override them with build args if you want a different surface:

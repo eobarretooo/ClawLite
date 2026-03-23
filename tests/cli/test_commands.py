@@ -21,6 +21,7 @@ if importlib.util.find_spec("clawlite.channels.whatsapp") is None:
 
 from clawlite.cli.commands import cmd_provider_login
 from clawlite.cli.commands import cmd_provider_logout
+from clawlite.cli.commands import docker_preflight_probe
 from clawlite.cli.commands import main
 from clawlite.cli.ops import provider_live_probe
 from clawlite.channels.telegram_pairing import TelegramPairingStore
@@ -1884,6 +1885,7 @@ def test_cli_validate_preflight_local_success(
     assert payload["gateway_probe"] == {"enabled": False, "ok": True}
     assert payload["provider_live_probe"] == {"enabled": False, "ok": True}
     assert payload["telegram_live_probe"] == {"enabled": False, "ok": True}
+    assert payload["docker_preflight"] == {"enabled": False, "ok": True}
 
 
 def test_cli_validate_preflight_optional_probes_success(
@@ -1991,6 +1993,7 @@ def test_cli_validate_preflight_optional_probes_success(
     assert payload["provider_live_probe"]["hints"] == ["Credenciais validas."]
     assert payload["telegram_live_probe"]["enabled"] is True
     assert payload["telegram_live_probe"]["ok"] is True
+    assert payload["docker_preflight"] == {"enabled": False, "ok": True}
 
 
 def test_cli_validate_preflight_gateway_failure_returns_rc2(
@@ -2044,6 +2047,7 @@ def test_cli_validate_preflight_gateway_failure_returns_rc2(
     assert payload["gateway_probe"]["enabled"] is True
     assert payload["gateway_probe"]["ok"] is False
     assert payload["gateway_probe"]["endpoints"]["/v1/status"]["status_code"] == 500
+    assert payload["docker_preflight"] == {"enabled": False, "ok": True}
 
 
 def test_cli_validate_preflight_does_not_import_gateway_runtime(
@@ -2074,6 +2078,206 @@ def test_cli_validate_preflight_does_not_import_gateway_runtime(
     assert rc == 0
     assert "clawlite.gateway.server" not in sys.modules
     capsys.readouterr()
+
+
+def test_docker_preflight_probe_reports_not_running_stack_as_ok(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "ps"]:
+            return subprocess.CompletedProcess(command, 0, stdout="[]\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is True
+    assert payload["repo_root_source"] == "cwd"
+    assert payload["compose_config"]["ok"] is True
+    assert payload["gateway"]["detected"] is False
+    assert payload["gateway"]["status"] == "not_running"
+
+
+def test_docker_preflight_probe_surfaces_unhealthy_gateway(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "ps"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "Service": "clawlite-gateway",
+                            "State": "running",
+                            "Health": "unhealthy",
+                            "Status": "Up 30 seconds (unhealthy)",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is False
+    assert payload["error"] == "docker_gateway_not_healthy"
+    assert payload["gateway"]["detected"] is True
+    assert payload["gateway"]["running"] is True
+    assert payload["gateway"]["health"] == "unhealthy"
+
+
+def test_docker_preflight_probe_treats_starting_gateway_as_not_ready(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "ps"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "Service": "clawlite-gateway",
+                            "State": "running",
+                            "Health": "starting",
+                            "Status": "Up 10 seconds (health: starting)",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is False
+    assert payload["error"] == "docker_gateway_not_healthy"
+    assert payload["gateway"]["health"] == "starting"
+
+
+def test_cli_validate_preflight_docker_probe_success(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-preflight-1234")
+
+    workspace_path = tmp_path / "workspace"
+    for rel in TEMPLATE_FILES:
+        target = workspace_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("ok\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(workspace_path),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "clawlite.cli.commands.docker_preflight_probe",
+        lambda timeout: {
+            "enabled": True,
+            "ok": True,
+            "repo_root": str(tmp_path),
+            "compose_file": str(tmp_path / "docker-compose.yml"),
+            "docker_available": True,
+            "compose_config": {"ok": True, "exit_code": 0, "detail": ""},
+            "gateway": {"detected": False, "running": False, "ok": True, "status": "not_running", "state": "", "health": "", "error": ""},
+        },
+    )
+
+    rc = main(["--config", str(config_path), "validate", "preflight", "--docker"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["docker_preflight"]["enabled"] is True
+    assert payload["docker_preflight"]["ok"] is True
+    assert payload["docker_preflight"]["gateway"]["status"] == "not_running"
+
+
+def test_cli_validate_preflight_docker_probe_failure_returns_rc2(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-preflight-1234")
+
+    workspace_path = tmp_path / "workspace"
+    for rel in TEMPLATE_FILES:
+        target = workspace_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("ok\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(workspace_path),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "clawlite.cli.commands.docker_preflight_probe",
+        lambda timeout: {
+            "enabled": True,
+            "ok": False,
+            "error": "docker_missing",
+            "repo_root": str(tmp_path),
+            "compose_file": str(tmp_path / "docker-compose.yml"),
+            "docker_available": False,
+            "compose_config": {"ok": False, "exit_code": 0, "detail": ""},
+            "gateway": {"detected": False, "running": False, "ok": True, "status": "not_running", "state": "", "health": "", "error": ""},
+        },
+    )
+
+    rc = main(["--config", str(config_path), "validate", "preflight", "--docker"])
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["docker_preflight"]["enabled"] is True
+    assert payload["docker_preflight"]["error"] == "docker_missing"
 
 
 def test_cli_validate_channels_slack_bot_only_is_ok_with_warning(

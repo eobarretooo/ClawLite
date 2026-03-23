@@ -80,12 +80,14 @@ Identity and user flags accepted by `onboard`:
 | `validate onboarding --fix` | Creates missing workspace files | `clawlite validate onboarding --fix` |
 | `validate config` | Runs strict config-key validation | `clawlite validate config` |
 | `validate preflight` | Runs local checks plus optional live probes | `clawlite validate preflight --gateway-url http://127.0.0.1:8787` |
+| `validate preflight --docker` | Also validates Docker/Compose readiness and current gateway container state; requires `docker` + Compose v2 on the local machine | `clawlite validate preflight --docker` |
 
 Useful `validate preflight` flags:
 
 - `--gateway-url <url>`
 - `--token <bearer-token>`
 - `--timeout <seconds>`
+- `--docker`
 - `--provider-live`
 - `--telegram-live`
 

@@ -887,6 +887,184 @@ def _gateway_preflight_from_diagnostics(payload: dict[str, Any]) -> dict[str, An
     }
 
 
+def _trim_probe_output(value: Any, *, limit: int = 300) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _docker_compose_rows(raw: str) -> list[dict[str, Any]]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        rows: list[dict[str, Any]] = []
+        for line in text.splitlines():
+            snippet = str(line or "").strip()
+            if not snippet:
+                continue
+            try:
+                row = json.loads(snippet)
+            except Exception:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+        return rows
+    if isinstance(parsed, list):
+        return [row for row in parsed if isinstance(row, dict)]
+    if isinstance(parsed, dict):
+        return [parsed]
+    return []
+
+
+def _docker_compose_field(row: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row:
+            return row.get(name)
+        lowered = str(name or "").lower()
+        if lowered in row:
+            return row.get(lowered)
+    return None
+
+
+def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
+    package_root = Path(__file__).resolve().parents[2]
+    roots: list[Path] = []
+    for candidate in (Path.cwd(), package_root):
+        resolved = candidate.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+
+    repo_root = package_root
+    repo_root_source = "package"
+    for candidate in roots:
+        if (candidate / "docker-compose.yml").exists():
+            repo_root = candidate
+            repo_root_source = "cwd" if candidate == roots[0] else "package"
+            break
+
+    compose_file = repo_root / "docker-compose.yml"
+    probe_timeout = max(1.0, float(timeout))
+    payload: dict[str, Any] = {
+        "enabled": True,
+        "ok": False,
+        "repo_root": str(repo_root),
+        "repo_root_source": repo_root_source,
+        "compose_file": str(compose_file),
+        "docker_available": False,
+        "compose_version": {"ok": False, "exit_code": 0, "detail": ""},
+        "compose_config": {"ok": False, "exit_code": 0, "detail": ""},
+        "gateway": {
+            "detected": False,
+            "running": False,
+            "ok": True,
+            "state": "",
+            "health": "",
+            "status": "not_running",
+            "error": "",
+        },
+    }
+    if not compose_file.exists():
+        payload["error"] = "docker_compose_missing"
+        return payload
+
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        payload["error"] = "docker_missing"
+        return payload
+    payload["docker_available"] = True
+
+    try:
+        version = subprocess.run(
+            [docker_bin, "compose", "version"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=probe_timeout,
+        )
+    except Exception as exc:
+        payload["error"] = "docker_compose_unavailable"
+        payload["error_detail"] = _trim_probe_output(exc)
+        return payload
+
+    payload["compose_version"] = {
+        "ok": version.returncode == 0,
+        "exit_code": int(version.returncode),
+        "detail": _trim_probe_output(version.stdout or version.stderr),
+    }
+    if version.returncode != 0:
+        payload["error"] = "docker_compose_unavailable"
+        payload["error_detail"] = _trim_probe_output(version.stderr or version.stdout)
+        return payload
+
+    try:
+        compose = subprocess.run(
+            [docker_bin, "compose", "config"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=probe_timeout,
+        )
+    except Exception as exc:
+        payload["error"] = "docker_compose_config_failed"
+        payload["error_detail"] = _trim_probe_output(exc)
+        return payload
+
+    payload["compose_config"] = {
+        "ok": compose.returncode == 0,
+        "exit_code": int(compose.returncode),
+        "detail": _trim_probe_output(compose.stderr or compose.stdout),
+    }
+    if compose.returncode != 0:
+        payload["error"] = "docker_compose_config_failed"
+        payload["error_detail"] = _trim_probe_output(compose.stderr or compose.stdout)
+        return payload
+
+    try:
+        ps = subprocess.run(
+            [docker_bin, "compose", "ps", "--format", "json", "clawlite-gateway"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=probe_timeout,
+        )
+    except Exception as exc:
+        payload["error"] = "docker_compose_ps_failed"
+        payload["error_detail"] = _trim_probe_output(exc)
+        return payload
+
+    if ps.returncode != 0:
+        payload["gateway"]["ok"] = False
+        payload["gateway"]["error"] = _trim_probe_output(ps.stderr or ps.stdout)
+        payload["error"] = "docker_compose_ps_failed"
+        payload["error_detail"] = _trim_probe_output(ps.stderr or ps.stdout)
+        return payload
+
+    rows = _docker_compose_rows(ps.stdout)
+    if not rows:
+        payload["ok"] = True
+        return payload
+
+    row = rows[0]
+    state = str(_docker_compose_field(row, "State") or "").strip().lower()
+    health = str(_docker_compose_field(row, "Health") or "").strip().lower()
+    status = str(_docker_compose_field(row, "Status") or "").strip()
+    gateway_ok = state == "running" and health in {"", "healthy"}
+    payload["gateway"] = {
+        "detected": True,
+        "running": state == "running",
+        "ok": gateway_ok,
+        "state": state,
+        "health": health,
+        "status": status or ("not_running" if not state else state),
+        "error": "",
+    }
+    payload["ok"] = gateway_ok
+    if not gateway_ok:
+        payload["error"] = "docker_gateway_not_healthy"
+    return payload
+
+
 def cmd_validate_preflight(args: argparse.Namespace) -> int:
     config_path = str(args.config) if args.config else str(DEFAULT_CONFIG_PATH)
     strict_block: dict[str, Any]
@@ -966,6 +1144,10 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
             "token_masked": str(probe.get("token_masked", "") or ""),
         }
 
+    docker_check: dict[str, Any] = {"enabled": bool(args.docker), "ok": True}
+    if bool(args.docker):
+        docker_check = docker_preflight_probe(timeout=float(args.timeout))
+
     enabled_blocks = [
         strict_block,
         local_checks["provider"],
@@ -978,6 +1160,8 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
         enabled_blocks.append(provider_live_check)
     if telegram_live_check.get("enabled", False):
         enabled_blocks.append(telegram_live_check)
+    if docker_check.get("enabled", False):
+        enabled_blocks.append(docker_check)
 
     ok = all(bool(block.get("ok", False)) for block in enabled_blocks)
     payload = {
@@ -987,6 +1171,7 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
         "gateway_probe": gateway_check,
         "provider_live_probe": provider_live_check,
         "telegram_live_probe": telegram_live_check,
+        "docker_preflight": docker_check,
     }
     _print_json(payload)
     return 0 if ok else 2
@@ -2109,6 +2294,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate_preflight.add_argument("--timeout", type=float, default=3.0, help="Probe timeout in seconds")
     p_validate_preflight.add_argument("--provider-live", action="store_true", help="Run live provider connectivity probe")
     p_validate_preflight.add_argument("--telegram-live", action="store_true", help="Run live Telegram token probe")
+    p_validate_preflight.add_argument("--docker", action="store_true", help="Run Docker/Compose deployment probes when Docker is available")
     p_validate_preflight.set_defaults(handler=cmd_validate_preflight)
 
     p_tools = sub.add_parser("tools", help="Inspect tool policy and behavior")

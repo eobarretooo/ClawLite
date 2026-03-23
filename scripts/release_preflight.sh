@@ -4,10 +4,11 @@ set -euo pipefail
 CONFIG_PATH=""
 GATEWAY_URL=""
 TOKEN=""
+DOCKER_PREFLIGHT=0
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/release_preflight.sh [--config <path>] [--gateway-url <url>] [--token <token>]
+Usage: bash scripts/release_preflight.sh [--config <path>] [--gateway-url <url>] [--token <token>] [--docker]
 EOF
 }
 
@@ -27,6 +28,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { usage; exit 2; }
       TOKEN="$2"
       shift 2
+      ;;
+    --docker)
+      DOCKER_PREFLIGHT=1
+      shift
       ;;
     -h|--help)
       usage
@@ -62,6 +67,10 @@ fi
 
 if [ -n "$TOKEN" ]; then
   set -- "$@" --token "$TOKEN"
+fi
+
+if [ "$DOCKER_PREFLIGHT" -eq 1 ]; then
+  set -- "$@" --docker
 fi
 
 python -m clawlite.cli "$@"

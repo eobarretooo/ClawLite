@@ -21,3 +21,11 @@ def test_docker_setup_waits_for_gateway_health_and_prints_logs_on_timeout() -> N
     assert "wait_for_gateway_health" in script
     assert "docker inspect --format" in script
     assert "docker compose \"${profile_args[@]}\" logs --tail 50 clawlite-gateway" in script
+
+
+def test_release_preflight_supports_optional_docker_probe_flag() -> None:
+    script = (REPO_ROOT / "scripts" / "release_preflight.sh").read_text(encoding="utf-8")
+
+    assert "DOCKER_PREFLIGHT=0" in script
+    assert "--docker" in script
+    assert 'set -- "$@" --docker' in script
