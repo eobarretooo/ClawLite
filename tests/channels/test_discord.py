@@ -414,6 +414,7 @@ def test_discord_ready_clears_session_watchdog_state() -> None:
         assert channel._session_id == "sess-1"
         assert channel._resume_url == "wss://resume.example"
         assert channel._bot_user_id == "bot-1"
+        assert channel._gateway_presence_ready is True
 
     asyncio.run(_scenario())
 
@@ -1068,6 +1069,7 @@ def test_discord_operator_refresh_presence_sends_status_update() -> None:
         channel._running = True
         channel._ws = _FakeWebSocket([])
         channel._session_id = "sess-1"
+        channel._gateway_presence_ready = True
         channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
         result = await channel.operator_refresh_presence()
         assert result["ok"] is True
@@ -1104,6 +1106,7 @@ def test_discord_operator_refresh_presence_uses_captured_websocket() -> None:
         channel._running = True
         channel._ws = _FakeWebSocket([])
         channel._session_id = "sess-1"
+        channel._gateway_presence_ready = True
 
         result = await channel.operator_refresh_presence()
 
@@ -1133,6 +1136,7 @@ def test_discord_operator_refresh_presence_clears_stale_last_error_on_success() 
         channel._running = True
         channel._ws = _FakeWebSocket([])
         channel._session_id = "sess-1"
+        channel._gateway_presence_ready = True
         channel._last_error = "http:429"
         channel._presence_last_error = "send failed"
 
@@ -1148,6 +1152,113 @@ def test_discord_operator_refresh_presence_clears_stale_last_error_on_success() 
     asyncio.run(_scenario())
 
 
+def test_discord_operator_refresh_presence_skips_while_gateway_session_pending() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "activity": "Focus time",
+                "autoPresence": {
+                    "enabled": True,
+                    "healthyText": "all systems nominal",
+                },
+            }
+        )
+        channel._running = True
+        channel._ws = _FakeWebSocket([])
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+        channel._gateway_session_waiting_for = "ready"
+        channel._gateway_session_task = asyncio.create_task(asyncio.sleep(3600))
+
+        result = await channel.operator_refresh_presence()
+
+        assert result["ok"] is True
+        assert result["sent"] is False
+        assert result["reason"] == "gateway_session_pending"
+        assert result["waiting_for"] == "ready"
+        assert channel._ws.sent == []
+        assert result["status"]["presence_last_error"] == ""
+
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+        channel._gateway_session_task.cancel()
+        try:
+            await channel._gateway_session_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+
+def test_discord_operator_refresh_presence_reports_reconnecting_after_stale_watchdog() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "activity": "Focus time",
+                "autoPresence": {
+                    "enabled": True,
+                    "healthyText": "all systems nominal",
+                },
+            }
+        )
+        channel._running = True
+        channel._ws = _FakeWebSocket([])
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+        channel._gateway_session_waiting_for = "ready"
+
+        result = await channel.operator_refresh_presence()
+
+        assert result["ok"] is True
+        assert result["sent"] is False
+        assert result["reason"] == "gateway_reconnecting"
+        assert result["waiting_for"] == "ready"
+        assert channel._ws.sent == []
+
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+
+def test_discord_update_presence_skips_before_gateway_hello() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(
+            config={
+                "token": "bot-token",
+                "activity": "Focus time",
+                "autoPresence": {
+                    "enabled": True,
+                    "healthyText": "all systems nominal",
+                },
+            }
+        )
+        channel._running = True
+        channel._ws = _FakeWebSocket([])
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+
+        result = await channel._update_presence(force=False)
+
+        assert result["ok"] is True
+        assert result["sent"] is False
+        assert result["reason"] == "gateway_hello_pending"
+        assert channel._ws.sent == []
+
+        channel._gateway_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
+
+
 def test_discord_operator_refresh_transport_resets_gateway_state() -> None:
     async def _scenario() -> None:
         channel = DiscordChannel(config={"token": "bot-token"})
@@ -1157,6 +1268,7 @@ def test_discord_operator_refresh_transport_resets_gateway_state() -> None:
         channel._sequence = 42
         channel._bot_user_id = "bot-1"
         channel._gateway_session_waiting_for = "resumed"
+        channel._gateway_presence_ready = True
         channel._gateway_session_task = asyncio.create_task(asyncio.sleep(3600))
         channel._heartbeat_ack_pending = True
         gateway_task = asyncio.create_task(asyncio.sleep(3600))
@@ -1176,6 +1288,7 @@ def test_discord_operator_refresh_transport_resets_gateway_state() -> None:
         assert channel._bot_user_id == ""
         assert channel._gateway_session_task is None
         assert channel._gateway_session_waiting_for == ""
+        assert channel._gateway_presence_ready is False
         assert channel._heartbeat_ack_pending is False
 
     asyncio.run(_scenario())

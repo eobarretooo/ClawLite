@@ -363,6 +363,7 @@ class DiscordChannel(BaseChannel):
         self._presence_last_state = ""
         self._heartbeat_ack_pending = False
         self._gateway_session_waiting_for = ""
+        self._gateway_presence_ready = False
         self._registered_modals: dict[str, dict[str, Any]] = {}
         self._transcription_provider: Any | None = None
         self._media_transcription_count = 0
@@ -1585,6 +1586,7 @@ class DiscordChannel(BaseChannel):
         self._gateway_session_task = None
         self._heartbeat_ack_pending = False
         self._gateway_session_waiting_for = ""
+        self._gateway_presence_ready = False
         await cancel_task(self._auto_presence_task)
         self._auto_presence_task = None
         for task in list(self._typing_tasks.values()):
@@ -2072,6 +2074,7 @@ class DiscordChannel(BaseChannel):
             await cancel_task(self._gateway_session_task)
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
+            self._gateway_presence_ready = False
             connect_url = self._resume_url or self.gateway_url
             try:
                 async with websockets.connect(
@@ -2103,6 +2106,7 @@ class DiscordChannel(BaseChannel):
                 self._gateway_session_task = None
                 self._heartbeat_ack_pending = False
                 self._gateway_session_waiting_for = ""
+                self._gateway_presence_ready = False
 
     async def _gateway_loop(self) -> None:
         ws = self._ws
@@ -2131,6 +2135,7 @@ class DiscordChannel(BaseChannel):
         if op == 10 and isinstance(payload, dict):
             interval_ms = float(payload.get("heartbeat_interval", 45000) or 45000)
             await self._start_heartbeat(interval_ms / 1000.0)
+            self._gateway_presence_ready = False
             if self._session_id and self._sequence is not None:
                 await self._start_gateway_session_watchdog(waiting_for="resumed")
                 await self._resume()
@@ -2156,6 +2161,7 @@ class DiscordChannel(BaseChannel):
             await cancel_task(self._gateway_session_task)
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
+            self._gateway_presence_ready = False
             if not resumable:
                 self._session_id = ""
                 self._resume_url = ""
@@ -2177,6 +2183,7 @@ class DiscordChannel(BaseChannel):
             app = payload.get("application")
             if isinstance(app, dict):
                 self._application_id = str(app.get("id", "") or "").strip()
+            self._gateway_presence_ready = True
             if self.auto_presence_enabled:
                 await self._update_presence(force=True)
             return True
@@ -2185,6 +2192,7 @@ class DiscordChannel(BaseChannel):
             await cancel_task(self._gateway_session_task)
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
+            self._gateway_presence_ready = True
             if self.auto_presence_enabled:
                 await self._update_presence(force=True)
             return True
@@ -3606,6 +3614,23 @@ class DiscordChannel(BaseChannel):
         ws = self._ws
         if ws is None:
             return {"ok": False, "sent": False, "reason": "discord_gateway_unavailable"}
+        gateway_running = self._gateway_task is not None and not self._gateway_task.done()
+        if gateway_running and not self._gateway_presence_ready:
+            waiting_for = str(self._gateway_session_waiting_for or "").strip().lower()
+            session_watchdog_running = self._gateway_session_task is not None and not self._gateway_session_task.done()
+            if waiting_for and session_watchdog_running:
+                reason = "gateway_session_pending"
+            elif waiting_for:
+                reason = "gateway_reconnecting"
+            else:
+                reason = "gateway_hello_pending"
+            return {
+                "ok": True,
+                "sent": False,
+                "reason": reason,
+                "waiting_for": waiting_for,
+                "state": self._presence_last_state,
+            }
         signature = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         now = time.monotonic()
         if not force:
@@ -3671,6 +3696,7 @@ class DiscordChannel(BaseChannel):
             self._gateway_session_task = None
             self._heartbeat_ack_pending = False
             self._gateway_session_waiting_for = ""
+            self._gateway_presence_ready = False
             self._last_error = ""
             if was_running and (self.on_message is not None or was_gateway_running):
                 await self.start()
