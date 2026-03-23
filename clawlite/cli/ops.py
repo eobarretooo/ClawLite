@@ -368,8 +368,8 @@ def discord_refresh(
     )
     if response is None:
         return payload
-    if response.is_success and isinstance(body, dict) and bool(body.get("ok", False)):
-        payload["ok"] = True
+    if response.is_success and isinstance(body, dict) and "summary" in body:
+        payload["ok"] = bool(body.get("ok", False))
         payload["summary"] = body.get("summary", {})
         return payload
     detail = body.get("detail", body.get("error", "discord_refresh_failed")) if isinstance(body, dict) else str(body or "discord_refresh_failed")
@@ -395,8 +395,8 @@ def telegram_refresh(
     )
     if response is None:
         return payload
-    if response.is_success and isinstance(body, dict) and bool(body.get("ok", False)):
-        payload["ok"] = True
+    if response.is_success and isinstance(body, dict) and "summary" in body:
+        payload["ok"] = bool(body.get("ok", False))
         payload["summary"] = body.get("summary", {})
         return payload
     detail = body.get("detail", body.get("error", "telegram_refresh_failed")) if isinstance(body, dict) else str(body or "telegram_refresh_failed")
@@ -428,6 +428,44 @@ def skills_refresh(
         payload["summary"] = body.get("summary", {})
         return payload
     detail = body.get("detail", body.get("error", "skills_refresh_failed")) if isinstance(body, dict) else str(body or "skills_refresh_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
+def skills_validate(
+    config: AppConfig,
+    *,
+    force: bool = True,
+    include_all: bool = False,
+    status: str = "",
+    source: str = "",
+    query: str = "",
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="POST",
+        endpoint="/v1/control/skills/validate",
+        json_body={
+            "force": bool(force),
+            "include_all": bool(include_all),
+            "status": str(status or ""),
+            "source": str(source or ""),
+            "query": str(query or ""),
+        },
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict) and "summary" in body:
+        payload["ok"] = bool(body.get("ok", False))
+        payload["summary"] = body.get("summary", {})
+        return payload
+    detail = body.get("detail", body.get("error", "skills_validate_failed")) if isinstance(body, dict) else str(body or "skills_validate_failed")
     payload["error"] = str(detail)
     return payload
 

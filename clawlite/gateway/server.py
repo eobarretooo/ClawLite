@@ -321,6 +321,14 @@ class SkillsDoctorRequest(BaseModel):
     query: str = ""
 
 
+class SkillsValidateRequest(BaseModel):
+    force: bool = True
+    include_all: bool = False
+    status: str = ""
+    source: str = ""
+    query: str = ""
+
+
 class MemorySnapshotCreateRequest(BaseModel):
     tag: str = ""
 
@@ -3826,6 +3834,18 @@ def create_app(
         request: Request, payload: SkillsDoctorRequest | None = None
     ) -> dict[str, Any]:
         return await control_handlers.skills_doctor(request, payload or SkillsDoctorRequest())
+
+    @app.post("/v1/control/skills/validate")
+    async def skills_validate(
+        request: Request, payload: SkillsValidateRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_validate(request, payload or SkillsValidateRequest())
+
+    @app.post("/api/skills/validate")
+    async def api_skills_validate(
+        request: Request, payload: SkillsValidateRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_validate(request, payload or SkillsValidateRequest())
 
     @app.post("/v1/control/memory/snapshot/create")
     async def memory_snapshot_create_route(

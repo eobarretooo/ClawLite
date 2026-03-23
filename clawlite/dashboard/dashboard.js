@@ -2419,6 +2419,38 @@ async function triggerSkillsDoctor() {
   }
 }
 
+async function triggerSkillsValidate() {
+  const button = byId("validate-skills-inventory");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.skills_validate || "/v1/control/skills/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ force: true, include_all: false }),
+    });
+    const summary = payload.summary || {};
+    const refresh = summary.refresh || {};
+    const recommendations = Array.isArray(summary.recommendations) ? summary.recommendations : [];
+    recordEvent(
+      summary.ok === false ? "warn" : "ok",
+      "Skills validate finished",
+      `${refresh.refreshed ? "refreshed" : "unchanged"} | ${numeric(summary.count, 0)} actionable | ${recommendations[0] || "No blocking skills detected."}`,
+      appendRequestIdMeta("skills-validate", payload),
+    );
+    await refreshAll("skills-validate");
+  } catch (error) {
+    recordEvent("danger", "Skills validate failed", error.message, appendRequestIdMeta("skills-validate", error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerAutonomyWake() {
   const button = byId("trigger-autonomy-wake");
   if (button) {
@@ -2938,6 +2970,9 @@ function bindEvents() {
   });
   byId("doctor-skills-inventory").addEventListener("click", () => {
     void triggerSkillsDoctor();
+  });
+  byId("validate-skills-inventory").addEventListener("click", () => {
+    void triggerSkillsValidate();
   });
   byId("recover-supervisor-component").addEventListener("click", () => {
     void triggerSupervisorRecovery();

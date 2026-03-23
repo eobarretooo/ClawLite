@@ -1582,3 +1582,40 @@ def skills_doctor_report(
         "recommendations": recommendations,
         "skills": doctor_rows,
     }
+
+
+def skills_validate_report(
+    loader: SkillsLoader,
+    *,
+    force: bool = True,
+    include_all: bool = False,
+    status: str = "",
+    source: str = "",
+    query: str = "",
+) -> dict[str, object]:
+    refresh = loader.refresh(force=force)
+    diagnostics = loader.diagnostics_report()
+    doctor = skills_doctor_report(
+        diagnostics,
+        include_all=include_all,
+        status=status,
+        source=source,
+        query=query,
+    )
+    return {
+        "ok": bool(doctor.get("ok", False)),
+        "action": "skills_validate",
+        "refresh": refresh,
+        "summary": dict(diagnostics.get("summary", {}) or {}),
+        "watcher": dict(diagnostics.get("watcher", {}) or {}),
+        "contract_issues": dict(diagnostics.get("contract_issues", {}) or {}),
+        "missing_requirements": dict(diagnostics.get("missing_requirements", {}) or {}),
+        "doctor": doctor,
+        "status_counts": dict(doctor.get("status_counts", {}) or {}),
+        "status_filter": str(doctor.get("status_filter", "") or ""),
+        "source_filter": str(doctor.get("source_filter", "") or ""),
+        "query": str(doctor.get("query", "") or ""),
+        "count": int(doctor.get("count", 0) or 0),
+        "recommendations": list(doctor.get("recommendations", []) or []),
+        "skills": list(doctor.get("skills", []) or []),
+    }

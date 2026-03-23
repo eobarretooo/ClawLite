@@ -123,7 +123,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (1962 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (1967 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
@@ -142,6 +142,7 @@ clawlite diagnostics            # full diagnostic snapshot
 
 clawlite skills list            # list available skills
 clawlite skills doctor          # diagnose broken skills
+clawlite skills validate        # refresh + diagnose live skills state
 clawlite skills install <slug>  # install from marketplace
 
 clawlite tools approvals        # list pending tool approvals

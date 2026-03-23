@@ -75,6 +75,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
             "discord_refresh": "/v1/control/channels/discord/refresh",
             "skills_refresh": "/v1/control/skills/refresh",
             "skills_doctor": "/v1/control/skills/doctor",
+            "skills_validate": "/v1/control/skills/validate",
             "memory_suggest_refresh": "/v1/control/memory/suggest/refresh",
             "memory_snapshot_create": "/v1/control/memory/snapshot/create",
             "memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback",

@@ -43,6 +43,7 @@ from clawlite.cli.ops import pairing_revoke
 from clawlite.cli.ops import discord_refresh
 from clawlite.cli.ops import discord_status
 from clawlite.cli.ops import skills_refresh
+from clawlite.cli.ops import skills_validate
 from clawlite.cli.ops import telegram_offset_commit
 from clawlite.cli.ops import telegram_offset_reset
 from clawlite.cli.ops import telegram_offset_sync
@@ -1551,7 +1552,7 @@ def cmd_skills_check(args: argparse.Namespace) -> int:
 
 
 def cmd_skills_refresh(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, profile=getattr(args, "profile", None))
     payload = skills_refresh(
         cfg,
         force=bool(args.force),
@@ -1572,6 +1573,23 @@ def cmd_skills_doctor(args: argparse.Namespace) -> int:
         status=str(getattr(args, "status", "") or ""),
         source=str(getattr(args, "source", "") or ""),
         query=str(getattr(args, "query", "") or ""),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
+def cmd_skills_validate(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config, profile=getattr(args, "profile", None))
+    payload = skills_validate(
+        cfg,
+        force=bool(args.force),
+        include_all=bool(args.all),
+        status=str(getattr(args, "status", "") or ""),
+        source=str(getattr(args, "source", "") or ""),
+        query=str(getattr(args, "query", "") or ""),
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
     )
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
@@ -2534,6 +2552,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_skills_doctor.add_argument("--query", default="", help="Optional case-insensitive search filter")
     p_skills_doctor.set_defaults(handler=cmd_skills_doctor)
+
+    p_skills_validate = skills_sub.add_parser(
+        "validate",
+        help="Refresh runtime discovery and emit actionable blocked-skills diagnostics",
+    )
+    p_skills_validate.add_argument(
+        "--no-force",
+        dest="force",
+        action="store_false",
+        help="Let the runtime refresh path respect debounce instead of forcing discovery",
+    )
+    p_skills_validate.add_argument("--all", action="store_true", help="Include ready and disabled skills in the report")
+    p_skills_validate.add_argument(
+        "--status",
+        choices=["ready", "missing_requirements", "policy_blocked", "disabled", "invalid_contract", "unavailable"],
+        default="",
+        help="Optional status filter for the validation output",
+    )
+    p_skills_validate.add_argument(
+        "--source",
+        choices=["builtin", "workspace", "marketplace"],
+        default="",
+        help="Optional source filter for the validation output",
+    )
+    p_skills_validate.add_argument("--query", default="", help="Optional case-insensitive search filter")
+    p_skills_validate.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_skills_validate.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_skills_validate.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_skills_validate.set_defaults(handler=cmd_skills_validate, force=True)
 
     p_skills_enable = skills_sub.add_parser("enable", help="Enable one skill in the local state")
     p_skills_enable.add_argument("name")

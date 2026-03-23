@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from clawlite.core.skills import SkillsLoader, skills_doctor_report
+from clawlite.core.skills import SkillsLoader, skills_doctor_report, skills_validate_report
 
 
 class _FakeWatchfiles:
@@ -1009,6 +1009,54 @@ def test_skills_doctor_report_omits_recommendations_for_filtered_out_rows() -> N
     assert payload["count"] == 0
     assert payload["skills"] == []
     assert payload["recommendations"] == []
+
+
+def test_skills_validate_report_combines_refresh_and_doctor() -> None:
+    class _Loader:
+        def refresh(self, *, force: bool = True) -> dict[str, object]:
+            return {"ok": True, "refreshed": force, "debounced": not force}
+
+        def diagnostics_report(self) -> dict[str, object]:
+            return {
+                "summary": {"available": 2, "runnable": 1},
+                "watcher": {"task_state": "running", "last_error": ""},
+                "contract_issues": {"count": 0},
+                "missing_requirements": {"count": 1},
+                "skills": [
+                    {
+                        "name": "github",
+                        "skill_key": "github",
+                        "source": "builtin",
+                        "enabled": True,
+                        "available": False,
+                        "missing": ["env:GH_TOKEN"],
+                        "contract_issues": [],
+                        "runtime_requirements": [],
+                        "primary_env": "GH_TOKEN",
+                    }
+                ],
+            }
+
+    payload = skills_validate_report(
+        _Loader(),
+        force=False,
+        status="missing_requirements",
+        source="builtin",
+        query="github",
+    )
+
+    assert payload["action"] == "skills_validate"
+    assert payload["ok"] is False
+    assert payload["refresh"]["refreshed"] is False
+    assert payload["refresh"]["debounced"] is True
+    assert payload["doctor"]["action"] == "skills_doctor"
+    assert payload["status_filter"] == "missing_requirements"
+    assert payload["source_filter"] == "builtin"
+    assert payload["query"] == "github"
+    assert payload["count"] == 1
+    assert payload["recommendations"] == [
+        "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
+    ]
 
 
 def test_version_pin_persisted_and_reflected(tmp_path: Path) -> None:

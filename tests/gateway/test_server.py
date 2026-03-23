@@ -3091,6 +3091,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "HTTP Correlation" in body
         assert "Workspace Runtime Files" in body
         assert "Recent Sessions" in body
+        assert "Validate skills inventory" in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
         assert "/_clawlite/dashboard.css" in body
         assert "/_clawlite/dashboard.js" in body
@@ -3112,6 +3113,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"discord_refresh": "/v1/control/channels/discord/refresh"' in body
         assert '"skills_refresh": "/v1/control/skills/refresh"' in body
         assert '"skills_doctor": "/v1/control/skills/doctor"' in body
+        assert '"skills_validate": "/v1/control/skills/validate"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
@@ -3160,11 +3162,15 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderSkillsBoard" in js.text
     assert "triggerSkillsRefresh" in js.text
     assert "triggerSkillsDoctor" in js.text
+    assert "triggerSkillsValidate" in js.text
     assert 'paths.skills_refresh || "/v1/control/skills/refresh"' in js.text
     assert 'paths.skills_doctor || "/v1/control/skills/doctor"' in js.text
+    assert 'paths.skills_validate || "/v1/control/skills/validate"' in js.text
     assert "missingRequirements.os" in js.text
     assert "Skills doctor finished" in js.text
     assert "Skills refresh finished" in js.text
+    assert "Skills validate finished" in js.text
+    assert "validate-skills-inventory" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
@@ -7353,6 +7359,89 @@ def test_gateway_api_skills_doctor_alias_returns_summary(tmp_path: Path) -> None
     assert isinstance(payload["ok"], bool)
     assert payload["summary"]["action"] == "skills_doctor"
     assert payload["summary"]["status_filter"] == "missing_requirements"
+
+
+def test_gateway_skills_validate_endpoint_returns_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    class _Loader:
+        async def start_watcher(self) -> None:
+            return None
+
+        async def stop_watcher(self) -> None:
+            return None
+
+        def refresh(self, *, force: bool = True) -> dict[str, object]:
+            return {"ok": True, "refreshed": force, "debounced": not force}
+
+        def diagnostics_report(self) -> dict[str, object]:
+            return {
+                "summary": {"available": 2, "runnable": 1},
+                "watcher": {"task_state": "running", "last_error": ""},
+                "contract_issues": {"count": 0},
+                "missing_requirements": {"count": 1},
+                "skills": [
+                    {
+                        "name": "github",
+                        "skill_key": "github",
+                        "source": "builtin",
+                        "enabled": True,
+                        "available": False,
+                        "missing": ["env:GH_TOKEN"],
+                        "contract_issues": [],
+                        "runtime_requirements": [],
+                        "primary_env": "GH_TOKEN",
+                    }
+                ],
+            }
+
+    app.state.runtime.skills_loader = _Loader()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/control/skills/validate",
+            json={"force": True, "include_all": False, "status": "missing_requirements"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["summary"]["action"] == "skills_validate"
+    assert payload["summary"]["ok"] is False
+    assert "refresh" in payload["summary"]
+    assert "doctor" in payload["summary"]
+    assert payload["summary"]["status_filter"] == "missing_requirements"
+    assert payload["summary"]["count"] == 1
+
+
+def test_gateway_api_skills_validate_alias_returns_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/skills/validate",
+            json={"force": False, "source": "builtin", "query": "github"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["ok"], bool)
+    assert payload["summary"]["action"] == "skills_validate"
+    assert payload["summary"]["refresh"]["refreshed"] in {True, False}
+    assert payload["summary"]["source_filter"] == "builtin"
+    assert payload["summary"]["query"] == "github"
 
 
 def test_gateway_memory_snapshot_create_endpoint_returns_version(tmp_path: Path) -> None:

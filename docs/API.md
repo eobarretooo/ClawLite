@@ -244,6 +244,58 @@ Example response:
 
 Alias compatível: `POST /api/skills/doctor`.
 
+## `POST /v1/control/skills/validate`
+
+Runs a forced-or-debounced live refresh and then returns the same actionable blocked-skills report used by `clawlite skills doctor`, all in one control-plane call.
+
+Example request:
+
+```json
+{
+  "force": true,
+  "include_all": false,
+  "status": "missing_requirements",
+  "source": "builtin",
+  "query": "github"
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": false,
+  "summary": {
+    "ok": false,
+    "action": "skills_validate",
+    "refresh": {
+      "refreshed": true,
+      "debounced": false
+    },
+    "summary": {
+      "available": 12,
+      "runnable": 9
+    },
+    "watcher": {
+      "task_state": "running",
+      "last_error": ""
+    },
+    "doctor": {
+      "action": "skills_doctor"
+    },
+    "status_filter": "missing_requirements",
+    "source_filter": "builtin",
+    "query": "github",
+    "count": 1,
+    "recommendations": [
+      "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
+    ]
+  }
+}
+```
+
+Alias compatível: `POST /api/skills/validate`.
+
 ## `POST /v1/control/memory/snapshot/create`
 
 Creates a new memory snapshot version from the live runtime state.
