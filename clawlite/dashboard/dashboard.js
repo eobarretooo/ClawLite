@@ -1554,7 +1554,77 @@ function renderRuntime() {
   setText("metric-ws", String(numeric((((state.diagnostics || {}).ws || {}).frames_in), 0) + numeric((((state.diagnostics || {}).ws || {}).frames_out), 0)));
   setText("metric-tool-count", String(numeric((state.tools || {}).tool_count, 0)));
   setCode("ws-event-preview", state.wsPreview);
+  renderHttpCorrelationBoard();
   renderToolsSummary();
+}
+
+function renderHttpCorrelationBoard() {
+  const grid = byId("http-correlation-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+  const http = ((state.diagnostics || {}).http) || {};
+  const lastRequestId = String(http.last_request_id || "").trim();
+  const lastRequestMethod = String(http.last_request_method || "").trim() || "GET";
+  const lastRequestPath = String(http.last_request_path || "").trim() || "/";
+  const lastRequestAt = String(http.last_request_started_at || "").trim();
+  const lastErrorId = String(http.last_error_request_id || "").trim();
+  const lastErrorMethod = String(http.last_error_method || "").trim() || "GET";
+  const lastErrorPath = String(http.last_error_path || "").trim() || "/";
+  const lastErrorAt = String(http.last_error_at || "").trim();
+  const lastErrorCode = String(http.last_error_code || "").trim() || "http_error";
+  const lastErrorMessage = String(http.last_error_message || "").trim();
+  const lastErrorStatus = Number(http.last_error_status);
+
+  const requestCard = document.createElement("article");
+  requestCard.className = "summary-card";
+  const requestTitle = document.createElement("strong");
+  requestTitle.className = "summary-card__title";
+  requestTitle.textContent = "Last request";
+  const requestMeta = document.createElement("div");
+  requestMeta.className = "summary-card__meta";
+  requestMeta.textContent = lastRequestId
+    ? `${lastRequestMethod} ${lastRequestPath} | ${formatClock(lastRequestAt)}`
+    : "No HTTP request recorded yet.";
+  const requestDetail = document.createElement("div");
+  requestDetail.className = "summary-card__meta";
+  requestDetail.textContent = lastRequestId ? `req ${lastRequestId}` : "Waiting for the next control-plane request.";
+  requestCard.append(requestTitle, requestMeta, requestDetail);
+  grid.appendChild(requestCard);
+
+  const errorCard = document.createElement("article");
+  errorCard.className = "summary-card";
+  const errorTitle = document.createElement("strong");
+  errorTitle.className = "summary-card__title";
+  errorTitle.textContent = "Last error";
+  const errorMeta = document.createElement("div");
+  errorMeta.className = "summary-card__meta";
+  errorMeta.textContent = lastErrorAt
+    ? `${lastErrorMethod} ${lastErrorPath} | status ${Number.isFinite(lastErrorStatus) ? lastErrorStatus : "-"} | ${formatClock(lastErrorAt)}`
+    : "No recent HTTP error recorded.";
+  const errorDetail = document.createElement("div");
+  errorDetail.className = "summary-card__meta";
+  if (lastErrorAt) {
+    const detailParts = [`req ${lastErrorId || "-"}`, lastErrorCode];
+    if (lastErrorMessage && lastErrorMessage !== lastErrorCode) {
+      detailParts.push(lastErrorMessage);
+    }
+    errorDetail.textContent = detailParts.join(" | ");
+  } else {
+    errorDetail.textContent = "The dashboard will surface the next correlated HTTP failure here.";
+  }
+  errorCard.append(errorTitle, errorMeta, errorDetail);
+  grid.appendChild(errorCard);
+
+  if (lastErrorAt) {
+    const tone = Number.isFinite(lastErrorStatus) && lastErrorStatus >= 500 ? "danger" : "warn";
+    setBadge("http-correlation-status", "recent error", tone);
+  } else if (lastRequestId) {
+    setBadge("http-correlation-status", "requesting", "ok");
+  } else {
+    setBadge("http-correlation-status", "idle", "warn");
+  }
 }
 
 function renderAll() {

@@ -3015,6 +3015,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="supervisor-grid"' in body
         assert 'id="replay-dead-letters"' in body
         assert "Signal Feed" in body
+        assert "HTTP Correlation" in body
         assert "Workspace Runtime Files" in body
         assert "Recent Sessions" in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3079,6 +3080,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerChannelRecovery" in js.text
     assert "triggerInboundReplay" in js.text
     assert "triggerTelegramRefresh" in js.text
+    assert "renderHttpCorrelationBoard" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
