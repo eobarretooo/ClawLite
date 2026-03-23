@@ -3072,6 +3072,9 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "syncGatewayWsEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
     assert "Gateway WebSocket observed" in js.text
+    assert 'response.headers.get("X-Request-ID")' in js.text
+    assert "appendRequestIdMeta" in js.text
+    assert "requestIdFromValue" in js.text
     assert "triggerTelegramPairingApprove" in js.text
     assert "triggerTelegramPairingReject" in js.text
     assert "triggerTelegramPairingRevoke" in js.text

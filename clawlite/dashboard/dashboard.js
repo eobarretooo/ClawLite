@@ -319,6 +319,40 @@ function recordEvent(level, title, detail, meta = "") {
   renderEventFeed();
 }
 
+function attachResponseMeta(payload, meta) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+  try {
+    Object.defineProperty(payload, "__clawliteMeta", {
+      value: meta || {},
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  } catch (_error) {
+    // Ignore metadata decoration failures and keep the parsed payload usable.
+  }
+  return payload;
+}
+
+function requestIdFromValue(value) {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    return "";
+  }
+  const meta = value.__clawliteMeta || {};
+  return String(value.requestId || value.request_id || meta.requestId || "").trim();
+}
+
+function appendRequestIdMeta(meta, value) {
+  const base = String(meta || "").trim();
+  const requestId = requestIdFromValue(value);
+  if (!requestId) {
+    return base;
+  }
+  return base ? `${base} | req ${requestId}` : `req ${requestId}`;
+}
+
 function summarizeWsCorrelation(ws, includeRequest = true, options = {}) {
   const parts = [];
   const connectionId = String(
@@ -1520,14 +1554,18 @@ async function fetchJson(path, options = {}) {
   } catch (_error) {
     payload = { raw: text };
   }
+  const requestId = String(response.headers.get("X-Request-ID") || payload.request_id || "").trim();
   if (!response.ok) {
     const detail = payload.detail || payload.error || response.statusText;
     if (response.status === 401 && state.dashboardSessionToken && !state.token) {
       persistDashboardSession("");
     }
-    throw new Error(`${response.status} ${detail}`);
+    const error = new Error(`${response.status} ${detail}`);
+    error.requestId = requestId;
+    error.status = response.status;
+    throw error;
   }
-  return payload;
+  return attachResponseMeta(payload, { requestId, status: response.status });
 }
 
 async function refreshStatus() {
@@ -1786,10 +1824,15 @@ async function sendHttpMessageText(text, options = {}) {
       body: JSON.stringify(buildDashboardChatPayload(sessionId, cleanText)),
     });
     appendChatEntry("assistant", String(payload.text || ""), String(payload.model || "http"));
-    recordEvent("ok", "HTTP chat request completed", cleanText.slice(0, 80), `${source} | ${payload.model || "http"}`);
+    recordEvent(
+      "ok",
+      "HTTP chat request completed",
+      cleanText.slice(0, 80),
+      appendRequestIdMeta(`${source} | ${payload.model || "http"}`, payload),
+    );
   } catch (error) {
     appendChatEntry("assistant", `HTTP error: ${error.message}`, "http");
-    recordEvent("danger", "HTTP chat request failed", error.message, `${source} | ${sessionId}`);
+    recordEvent("danger", "HTTP chat request failed", error.message, appendRequestIdMeta(`${source} | ${sessionId}`, error));
   }
 }
 
@@ -1826,11 +1869,11 @@ async function triggerHeartbeat() {
       decision.action === "run" ? "warn" : "ok",
       "Heartbeat trigger completed",
       `${decision.action || "skip"}:${decision.reason || "unknown"}`,
-      "control",
+      appendRequestIdMeta("control", payload),
     );
     await refreshAll("heartbeat");
   } catch (error) {
-    recordEvent("danger", "Heartbeat trigger failed", error.message, "control");
+    recordEvent("danger", "Heartbeat trigger failed", error.message, appendRequestIdMeta("control", error));
   } finally {
     state.heartbeatBusy = false;
     byId("trigger-heartbeat").disabled = false;
@@ -1857,11 +1900,11 @@ async function triggerDeadLetterReplay() {
       summary.failed ? "warn" : "ok",
       "Dead-letter replay finished",
       `${numeric(summary.replayed, 0)} replayed | ${numeric(summary.failed, 0)} failed | ${numeric(summary.skipped, 0)} skipped`,
-      "channels",
+      appendRequestIdMeta("channels", payload),
     );
     await refreshAll("delivery-replay");
   } catch (error) {
-    recordEvent("danger", "Dead-letter replay failed", error.message, "channels");
+    recordEvent("danger", "Dead-letter replay failed", error.message, appendRequestIdMeta("channels", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -1889,11 +1932,11 @@ async function triggerInboundReplay() {
       numeric(summary.replayed, 0) > 0 ? "ok" : "warn",
       "Inbound replay finished",
       `${numeric(summary.replayed, 0)} replayed | ${numeric(summary.remaining, 0)} remaining | ${numeric(summary.skipped_busy, 0)} busy skips`,
-      "channels",
+      appendRequestIdMeta("channels", payload),
     );
     await refreshAll("inbound-replay");
   } catch (error) {
-    recordEvent("danger", "Inbound replay failed", error.message, "channels");
+    recordEvent("danger", "Inbound replay failed", error.message, appendRequestIdMeta("channels", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -1919,11 +1962,11 @@ async function triggerChannelRecovery() {
       summary.failed ? "warn" : "ok",
       "Channel recovery finished",
       `${numeric(summary.recovered, 0)} recovered | ${numeric(summary.failed, 0)} failed | ${numeric(summary.skipped_healthy, 0)} already healthy`,
-      "channels",
+      appendRequestIdMeta("channels", payload),
     );
     await refreshAll("channel-recovery");
   } catch (error) {
-    recordEvent("danger", "Channel recovery failed", error.message, "channels");
+    recordEvent("danger", "Channel recovery failed", error.message, appendRequestIdMeta("channels", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -1951,14 +1994,19 @@ async function triggerSupervisorRecovery() {
       summary.failed ? "warn" : "ok",
       "Supervisor recovery finished",
       `${numeric(summary.recovered, 0)} recovered | ${numeric(summary.failed, 0)} failed | ${numeric(summary.skipped_budget, 0)} budget skips`,
-      component || "all-components",
+      appendRequestIdMeta(component || "all-components", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("supervisor-recover");
   } catch (error) {
-    recordEvent("danger", "Supervisor recovery failed", error.message, component || "all-components");
+    recordEvent(
+      "danger",
+      "Supervisor recovery failed",
+      error.message,
+      appendRequestIdMeta(component || "all-components", error),
+    );
   } finally {
     if (button) {
       button.disabled = false;
@@ -1984,11 +2032,11 @@ async function triggerProviderRecovery() {
       summary.cleared ? "ok" : "warn",
       "Provider recovery finished",
       `${numeric(summary.cleared, 0)} suppression slot(s) cleared | ${numeric(summary.matched, 0)} matched`,
-      "provider",
+      appendRequestIdMeta("provider", payload),
     );
     await refreshAll("provider-recover");
   } catch (error) {
-    recordEvent("danger", "Provider recovery failed", error.message, "provider");
+    recordEvent("danger", "Provider recovery failed", error.message, appendRequestIdMeta("provider", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2014,11 +2062,11 @@ async function triggerAutonomyWake() {
       summary.result?.status && String(summary.result.status).startsWith("wake_") ? "warn" : "ok",
       "Autonomy wake finished",
       `${summary.kind || "proactive"} | ${safeJson(summary.result || {})}`,
-      "autonomy",
+      appendRequestIdMeta("autonomy", payload),
     );
     await refreshAll("autonomy-wake");
   } catch (error) {
-    recordEvent("danger", "Autonomy wake failed", error.message, "autonomy");
+    recordEvent("danger", "Autonomy wake failed", error.message, appendRequestIdMeta("autonomy", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2044,11 +2092,11 @@ async function triggerMemorySuggestRefresh() {
       summary.ok === false ? "warn" : "ok",
       "Memory suggestion refresh finished",
       `${numeric(summary.count, 0)} suggestions | source ${String(summary.source || "unknown")}`,
-      "memory",
+      appendRequestIdMeta("memory", payload),
     );
     await refreshAll("memory-suggest-refresh");
   } catch (error) {
-    recordEvent("danger", "Memory suggestion refresh failed", error.message, "memory");
+    recordEvent("danger", "Memory suggestion refresh failed", error.message, appendRequestIdMeta("memory", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2074,11 +2122,11 @@ async function triggerMemorySnapshotCreate() {
       summary.ok === false ? "warn" : "ok",
       "Memory snapshot created",
       `${String(summary.version_id || "unknown")} | tag ${String(summary.tag || "")}`,
-      "memory",
+      appendRequestIdMeta("memory", payload),
     );
     await refreshAll("memory-snapshot-create");
   } catch (error) {
-    recordEvent("danger", "Memory snapshot creation failed", error.message, "memory");
+    recordEvent("danger", "Memory snapshot creation failed", error.message, appendRequestIdMeta("memory", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2116,14 +2164,14 @@ async function triggerMemorySnapshotRollback() {
       summary.ok === false ? "warn" : "ok",
       "Memory snapshot rollback finished",
       summary.ok === false ? String(summary.error || "unknown_error") : `${versionId} restored`,
-      "memory",
+      appendRequestIdMeta("memory", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("memory-snapshot-rollback");
   } catch (error) {
-    recordEvent("danger", "Memory snapshot rollback failed", error.message, "memory");
+    recordEvent("danger", "Memory snapshot rollback failed", error.message, appendRequestIdMeta("memory", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2149,11 +2197,11 @@ async function triggerTelegramRefresh() {
       summary.last_error ? "warn" : "ok",
       "Telegram transport refresh finished",
       `${summary.webhook_activated ? "webhook refreshed" : "offset reloaded"} | connected ${Boolean(summary.connected)}`,
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     await refreshAll("telegram-refresh");
   } catch (error) {
-    recordEvent("danger", "Telegram transport refresh failed", error.message, "telegram");
+    recordEvent("danger", "Telegram transport refresh failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2179,11 +2227,11 @@ async function triggerDiscordRefresh() {
       summary.ok === false ? "warn" : "ok",
       "Discord transport refresh finished",
       `${summary.gateway_restarted ? "gateway restarted" : "state refreshed"} | running ${Boolean(summary.status?.running)}`,
-      "discord",
+      appendRequestIdMeta("discord", payload),
     );
     await refreshAll("discord-refresh");
   } catch (error) {
-    recordEvent("danger", "Discord transport refresh failed", error.message, "discord");
+    recordEvent("danger", "Discord transport refresh failed", error.message, appendRequestIdMeta("discord", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2215,14 +2263,14 @@ async function triggerTelegramPairingApprove() {
       summary.ok === false ? "warn" : "ok",
       "Telegram pairing approval finished",
       summary.ok === false ? String(summary.error || "unknown_error") : `${code} approved`,
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("telegram-pairing-approve");
   } catch (error) {
-    recordEvent("danger", "Telegram pairing approval failed", error.message, "telegram");
+    recordEvent("danger", "Telegram pairing approval failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2254,14 +2302,14 @@ async function triggerTelegramPairingReject() {
       summary.ok === false ? "warn" : "ok",
       "Telegram pairing rejection finished",
       summary.ok === false ? String(summary.error || "unknown_error") : `${code} rejected`,
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("telegram-pairing-reject");
   } catch (error) {
-    recordEvent("danger", "Telegram pairing rejection failed", error.message, "telegram");
+    recordEvent("danger", "Telegram pairing rejection failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2293,14 +2341,14 @@ async function triggerTelegramPairingRevoke() {
       summary.ok === false ? "warn" : "ok",
       "Telegram pairing revoke finished",
       summary.ok === false ? String(summary.error || "unknown_error") : `${entry} revoked`,
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("telegram-pairing-revoke");
   } catch (error) {
-    recordEvent("danger", "Telegram pairing revoke failed", error.message, "telegram");
+    recordEvent("danger", "Telegram pairing revoke failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2337,14 +2385,14 @@ async function triggerTelegramOffsetCommit() {
       summary.ok === false ? "warn" : "ok",
       "Telegram offset advance finished",
       summary.ok === false ? String(summary.error || "unknown_error") : `watermark committed through update ${updateId}`,
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("telegram-offset-commit");
   } catch (error) {
-    recordEvent("danger", "Telegram offset advance failed", error.message, "telegram");
+    recordEvent("danger", "Telegram offset advance failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2381,14 +2429,14 @@ async function triggerTelegramOffsetSync() {
       summary.ok === false ? "warn" : "ok",
       "Telegram next offset sync finished",
       summary.ok === false ? String(summary.error || "unknown_error") : `next offset synced to ${nextOffset}`,
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     if (input) {
       input.value = "";
     }
     await refreshAll("telegram-offset-sync");
   } catch (error) {
-    recordEvent("danger", "Telegram next offset sync failed", error.message, "telegram");
+    recordEvent("danger", "Telegram next offset sync failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2420,11 +2468,11 @@ async function triggerTelegramOffsetReset() {
       summary.ok === false ? "warn" : "ok",
       "Telegram offset reset finished",
       summary.ok === false ? String(summary.error || "unknown_error") : "next offset reset to zero",
-      "telegram",
+      appendRequestIdMeta("telegram", payload),
     );
     await refreshAll("telegram-offset-reset");
   } catch (error) {
-    recordEvent("danger", "Telegram offset reset failed", error.message, "telegram");
+    recordEvent("danger", "Telegram offset reset failed", error.message, appendRequestIdMeta("telegram", error));
   } finally {
     if (button) {
       button.disabled = false;
