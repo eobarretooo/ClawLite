@@ -3069,6 +3069,9 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerChannelRecovery" in js.text
     assert "triggerInboundReplay" in js.text
     assert "triggerTelegramRefresh" in js.text
+    assert "syncGatewayWsEvents" in js.text
+    assert "Gateway WebSocket error observed" in js.text
+    assert "Gateway WebSocket observed" in js.text
     assert "triggerTelegramPairingApprove" in js.text
     assert "triggerTelegramPairingReject" in js.text
     assert "triggerTelegramPairingRevoke" in js.text
@@ -3140,6 +3143,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "versions" in payload["memory"]
     assert "status" in payload["cron"]
     assert "jobs" in payload["cron"]
+    assert "ws" in payload
     assert "workspace" in payload
     assert "onboarding" in payload
     assert "bootstrap" in payload
@@ -3148,6 +3152,44 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "autonomy" in payload["provider"]
     assert "items" in payload["channels"]
     assert "enabled" in payload["self_evolution"]
+
+
+def test_gateway_dashboard_state_includes_ws_correlation_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "heartbeat": {"enabled": False},
+            "diagnostics": {"enabled": True, "require_auth": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = FakeProvider()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as socket:
+            challenge = _assert_connect_challenge(socket)
+            connection_id = str(challenge["params"]["connection_id"])
+            socket.send_json({"type": "req", "id": "c1", "method": "connect", "params": {}})
+            assert socket.receive_json()["ok"] is True
+            socket.send_json({"type": "req", "id": "req-ws-1", "method": "unsupported.method", "params": {}})
+            assert socket.receive_json()["ok"] is False
+
+        payload = client.get("/api/dashboard/state").json()
+        ws_payload = payload["ws"]
+        assert ws_payload["last_connection_id"] == connection_id
+        assert ws_payload["last_connection_path"] == "/ws"
+        assert ws_payload["last_connection_opened_at"]
+        assert ws_payload["last_connection_closed_id"] == connection_id
+        assert ws_payload["last_connection_closed_at"]
+        assert ws_payload["last_request_id"] == "req-ws-1"
+        assert ws_payload["last_error_connection_id"] == connection_id
+        assert ws_payload["last_error_request_id"] == "req-ws-1"
+        assert ws_payload["last_error_code"] == "unsupported_method"
+        assert ws_payload["last_error_message"]
+        assert ws_payload["last_error_status"] == 400
 
 
 def test_gateway_dashboard_state_redacts_sensitive_handoff_token_fields(tmp_path: Path) -> None:

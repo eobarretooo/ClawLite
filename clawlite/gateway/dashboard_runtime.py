@@ -71,6 +71,7 @@ def dashboard_state_payload(
     memory_profile_snapshot_fn: Callable[..., dict[str, Any]],
     memory_suggest_snapshot_fn: Callable[..., dict[str, Any]],
     memory_version_snapshot_fn: Callable[..., dict[str, Any]],
+    ws_snapshot_payload: Callable[[], dict[str, Any]] = lambda: {},
     self_evolution_runner_state: dict[str, Any],
     dashboard_state_payload_builder: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
@@ -97,6 +98,7 @@ def dashboard_state_payload(
         telegram_payload=dashboard_operator_summary(runtime=runtime, channel_name="telegram", operator_channel_summary=operator_channel_summary),
         cron_payload=dashboard_cron_summary(runtime=runtime, dashboard_cron_summary_payload=dashboard_cron_summary_payload),
         heartbeat_payload=runtime.heartbeat.status(),
+        ws_payload=ws_snapshot_payload(),
         subagents_payload=runtime.engine.subagents.status(),
         supervisor_payload=runtime.supervisor.status() if runtime.supervisor is not None else {},
         skills_payload=skills,

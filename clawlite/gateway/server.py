@@ -599,30 +599,33 @@ class WebSocketTelemetry:
 
     async def snapshot(self) -> dict[str, Any]:
         async with self.lock:
-            return {
-                "connections_opened": self.connections_opened,
-                "connections_closed": self.connections_closed,
-                "active_connections": self.active_connections,
-                "frames_in": self.frames_in,
-                "frames_out": self.frames_out,
-                "last_connection_id": self.last_connection_id,
-                "last_connection_path": self.last_connection_path,
-                "last_connection_opened_at": self.last_connection_opened_at,
-                "last_connection_closed_id": self.last_connection_closed_id,
-                "last_connection_closed_at": self.last_connection_closed_at,
-                "last_request_id": self.last_request_id,
-                "last_error_connection_id": self.last_error_connection_id,
-                "last_error_request_id": self.last_error_request_id,
-                "last_error_at": self.last_error_at,
-                "last_error_code": self.last_error_code,
-                "last_error_message": self.last_error_message,
-                "last_error_status": self.last_error_status,
-                "by_path": dict(self.by_path),
-                "by_message_type_in": dict(self.by_message_type_in),
-                "by_message_type_out": dict(self.by_message_type_out),
-                "req_methods": dict(self.req_methods),
-                "error_codes": dict(self.error_codes),
-            }
+            return self.snapshot_nowait()
+
+    def snapshot_nowait(self) -> dict[str, Any]:
+        return {
+            "connections_opened": self.connections_opened,
+            "connections_closed": self.connections_closed,
+            "active_connections": self.active_connections,
+            "frames_in": self.frames_in,
+            "frames_out": self.frames_out,
+            "last_connection_id": self.last_connection_id,
+            "last_connection_path": self.last_connection_path,
+            "last_connection_opened_at": self.last_connection_opened_at,
+            "last_connection_closed_id": self.last_connection_closed_id,
+            "last_connection_closed_at": self.last_connection_closed_at,
+            "last_request_id": self.last_request_id,
+            "last_error_connection_id": self.last_error_connection_id,
+            "last_error_request_id": self.last_error_request_id,
+            "last_error_at": self.last_error_at,
+            "last_error_code": self.last_error_code,
+            "last_error_message": self.last_error_message,
+            "last_error_status": self.last_error_status,
+            "by_path": dict(self.by_path),
+            "by_message_type_in": dict(self.by_message_type_in),
+            "by_message_type_out": dict(self.by_message_type_out),
+            "req_methods": dict(self.req_methods),
+            "error_codes": dict(self.error_codes),
+        }
 
 
 async def _run_engine_with_timeout(
@@ -3366,6 +3369,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             memory_profile_snapshot_fn=memory_profile_snapshot,
             memory_suggest_snapshot_fn=memory_suggest_snapshot,
             memory_version_snapshot_fn=memory_version_snapshot,
+            ws_snapshot_payload=ws_telemetry.snapshot_nowait,
             self_evolution_runner_state=self_evolution_runner_state,
             dashboard_state_payload_builder=_dashboard_state_payload_builder,
         )

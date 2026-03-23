@@ -69,6 +69,16 @@ Example response:
     "jobs": []
   },
   "heartbeat": {},
+  "ws": {
+    "active_connections": 0,
+    "last_connection_id": "ws-abc123",
+    "last_request_id": "req-42",
+    "last_error_connection_id": "ws-abc123",
+    "last_error_request_id": "req-42",
+    "last_error_code": "unsupported_method",
+    "last_error_message": "unsupported req method: unsupported.method",
+    "last_error_status": 400
+  },
   "subagents": {},
   "workspace": {},
   "handoff": {
@@ -115,7 +125,7 @@ Example response:
 
 Alias compatível: `GET /api/dashboard/state` (mesmo payload). When a gateway token is configured, the packaged dashboard alias also accepts the derived dashboard-session credential described above; `/v1/dashboard/state` itself still expects the raw gateway token.
 
-This aggregated dashboard payload now also includes queue/dead-letter stats plus `channels_dispatcher`, `channels_delivery`, `channels_inbound`, `channels_recovery`, and `supervisor` blocks so the packaged control plane can render operator recovery cards without scraping the full diagnostics payload. The dashboard handoff block intentionally redacts raw gateway secrets: it keeps `gateway_url` plus `gateway_token_masked`, but does not return `gateway_token` or `dashboard_url_with_token`.
+This aggregated dashboard payload now also includes queue/dead-letter stats plus `channels_dispatcher`, `channels_delivery`, `channels_inbound`, `channels_recovery`, `supervisor`, and a compact `ws` block so the packaged control plane can render operator recovery cards and recent WebSocket correlation hints without scraping the full diagnostics payload. The dashboard handoff block intentionally redacts raw gateway secrets: it keeps `gateway_url` plus `gateway_token_masked`, but does not return `gateway_token` or `dashboard_url_with_token`.
 
 ## `POST /v1/control/memory/suggest/refresh`
 

@@ -124,6 +124,8 @@ const state = {
   lastSyncAt: null,
   eventFeed: [],
   wsPreview: "Waiting for live websocket frames...",
+  lastObservedGatewayWsOpenedAt: "",
+  lastObservedGatewayWsErrorAt: "",
   dashboardClientId: ensureDashboardClientId(),
   operatorId: ensureDashboardOperatorId(),
   sessionId: "",
@@ -315,6 +317,58 @@ function recordEvent(level, title, detail, meta = "") {
   };
   state.eventFeed = [event, ...state.eventFeed].slice(0, maxFeedEntries);
   renderEventFeed();
+}
+
+function summarizeWsCorrelation(ws, includeRequest = true, options = {}) {
+  const parts = [];
+  const connectionId = String(
+    options.connectionId !== undefined ? options.connectionId : (ws.last_error_connection_id || ws.last_connection_id || ""),
+  ).trim();
+  const requestId = String(
+    options.requestId !== undefined ? options.requestId : (ws.last_error_request_id || ws.last_request_id || ""),
+  ).trim();
+  if (connectionId) {
+    parts.push(`conn ${connectionId}`);
+  }
+  if (includeRequest && requestId) {
+    parts.push(`req ${requestId}`);
+  }
+  return parts.join(" | ");
+}
+
+function syncGatewayWsEvents() {
+  const ws = ((state.dashboardState || {}).ws) || {};
+  const lastOpenedAt = String(ws.last_connection_opened_at || "").trim();
+  const lastErrorAt = String(ws.last_error_at || "").trim();
+
+  if (lastOpenedAt && lastOpenedAt !== state.lastObservedGatewayWsOpenedAt) {
+    const detail = `${String(ws.last_connection_path || "/v1/ws")} opened`;
+    recordEvent(
+      "ok",
+      "Gateway WebSocket observed",
+      detail,
+      summarizeWsCorrelation(ws, false, { connectionId: ws.last_connection_id, requestId: "" }) || "gateway",
+    );
+    state.lastObservedGatewayWsOpenedAt = lastOpenedAt;
+  }
+
+  if (lastErrorAt && lastErrorAt !== state.lastObservedGatewayWsErrorAt) {
+    const code = String(ws.last_error_code || "ws_error");
+    const message = String(ws.last_error_message || "gateway websocket error").trim();
+    const status = Number(ws.last_error_status);
+    const level = Number.isFinite(status) && status >= 500 ? "danger" : "warn";
+    const detail = `${code}: ${message}`;
+    recordEvent(
+      level,
+      "Gateway WebSocket error observed",
+      detail,
+      summarizeWsCorrelation(ws, true, {
+        connectionId: ws.last_error_connection_id,
+        requestId: ws.last_error_request_id,
+      }) || "gateway",
+    );
+    state.lastObservedGatewayWsErrorAt = lastErrorAt;
+  }
 }
 
 function appendChatEntry(role, text, meta = "") {
@@ -1482,6 +1536,7 @@ async function refreshStatus() {
 
 async function refreshDashboardState() {
   state.dashboardState = await fetchJson(paths.dashboard_state || "/api/dashboard/state");
+  syncGatewayWsEvents();
 }
 
 async function refreshDiagnostics() {
