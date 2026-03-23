@@ -1243,8 +1243,11 @@ Campos baseline de contrato:
 - `channels_delivery.recent`: snapshots por mensagem (mais recentes primeiro) com outcome e recibo seguro por envio, sem texto da mensagem.
   Inclui contadores aditivos de confirmacao/falha final e supressao de duplicatas (`delivery_confirmed`, `delivery_failed_final`, `idempotency_suppressed`).
 - `http`: telemetria HTTP em memoria (aditiva) com `total_requests`,
-  `in_flight`, `by_method`, `by_path`, `by_status` e `latency_ms`
-  (`count`, `min`, `max`, `avg`).
+  `in_flight`, `by_method`, `by_path`, `by_status`, `last_request_id`,
+  `last_request_method`, `last_request_path`, `last_request_started_at`,
+  `last_error_request_id`, `last_error_method`, `last_error_path`,
+  `last_error_at`, `last_error_status`, `last_error_code`,
+  `last_error_message` e `latency_ms` (`count`, `min`, `max`, `avg`).
 - `ws`: telemetria WebSocket em memoria (aditiva) com `connections_opened`,
   `connections_closed`, `active_connections`, `frames_in`, `frames_out`,
   `last_connection_id`, `last_connection_path`, `last_connection_opened_at`,

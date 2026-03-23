@@ -381,27 +381,61 @@ class HttpRequestTelemetry:
     by_method: dict[str, int] = field(default_factory=dict)
     by_path: dict[str, int] = field(default_factory=dict)
     by_status: dict[str, int] = field(default_factory=dict)
+    last_request_id: str = ""
+    last_request_method: str = ""
+    last_request_path: str = ""
+    last_request_started_at: str = ""
+    last_error_request_id: str = ""
+    last_error_method: str = ""
+    last_error_path: str = ""
+    last_error_at: str = ""
+    last_error_status: int | None = None
+    last_error_code: str = ""
+    last_error_message: str = ""
     latency_count: int = 0
     latency_sum_ms: float = 0.0
     latency_min_ms: float = 0.0
     latency_max_ms: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    async def start(self, *, method: str, path: str) -> None:
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return dt.datetime.now(dt.timezone.utc).isoformat()
+
+    async def start(self, *, method: str, path: str, request_id: str = "") -> None:
         normalized_method = (method or "UNKNOWN").upper()
         normalized_path = str(path or "") or "/"
+        normalized_request_id = str(request_id or "").strip()
         async with self.lock:
             self.total_requests += 1
             self.in_flight += 1
             self.by_method[normalized_method] = self.by_method.get(normalized_method, 0) + 1
             self.by_path[normalized_path] = self.by_path.get(normalized_path, 0) + 1
+            self.last_request_id = normalized_request_id
+            self.last_request_method = normalized_method
+            self.last_request_path = normalized_path
+            self.last_request_started_at = self._utc_now_iso()
 
-    async def finish(self, *, status_code: int, latency_ms: float) -> None:
+    async def finish(self, *, status_code: int, latency_ms: float, request_id: str = "", method: str = "", path: str = "") -> None:
         normalized_status = str(int(status_code) if status_code else 500)
         elapsed_ms = max(0.0, float(latency_ms))
+        normalized_request_id = str(request_id or "").strip()
+        normalized_method = (method or "UNKNOWN").upper()
+        normalized_path = str(path or "") or "/"
+        numeric_status = int(status_code) if status_code else 500
         async with self.lock:
             self.in_flight = max(0, self.in_flight - 1)
             self.by_status[normalized_status] = self.by_status.get(normalized_status, 0) + 1
+            if numeric_status >= 400 and not (
+                self.last_error_request_id == normalized_request_id and self.last_error_status == numeric_status
+            ):
+                self.last_error_request_id = normalized_request_id
+                self.last_error_method = normalized_method
+                self.last_error_path = normalized_path
+                self.last_error_at = self._utc_now_iso()
+                self.last_error_status = numeric_status
+                self.last_error_code = f"http_{numeric_status}"
+                self.last_error_message = ""
             self.latency_count += 1
             self.latency_sum_ms += elapsed_ms
             if self.latency_count == 1:
@@ -410,6 +444,31 @@ class HttpRequestTelemetry:
             else:
                 self.latency_min_ms = min(self.latency_min_ms, elapsed_ms)
                 self.latency_max_ms = max(self.latency_max_ms, elapsed_ms)
+
+    async def record_error(
+        self,
+        *,
+        request_id: str,
+        method: str,
+        path: str,
+        status_code: int,
+        code: str = "",
+        message: str = "",
+    ) -> None:
+        normalized_request_id = str(request_id or "").strip()
+        normalized_method = (method or "UNKNOWN").upper()
+        normalized_path = str(path or "") or "/"
+        numeric_status = int(status_code) if status_code else 500
+        normalized_code = str(code or "").strip() or f"http_{numeric_status}"
+        normalized_message = str(message or "").strip()
+        async with self.lock:
+            self.last_error_request_id = normalized_request_id
+            self.last_error_method = normalized_method
+            self.last_error_path = normalized_path
+            self.last_error_at = self._utc_now_iso()
+            self.last_error_status = numeric_status
+            self.last_error_code = normalized_code
+            self.last_error_message = normalized_message
 
     async def snapshot(self) -> dict[str, Any]:
         async with self.lock:
@@ -420,6 +479,17 @@ class HttpRequestTelemetry:
                 "by_method": dict(self.by_method),
                 "by_path": dict(self.by_path),
                 "by_status": dict(self.by_status),
+                "last_request_id": self.last_request_id,
+                "last_request_method": self.last_request_method,
+                "last_request_path": self.last_request_path,
+                "last_request_started_at": self.last_request_started_at,
+                "last_error_request_id": self.last_error_request_id,
+                "last_error_method": self.last_error_method,
+                "last_error_path": self.last_error_path,
+                "last_error_at": self.last_error_at,
+                "last_error_status": self.last_error_status,
+                "last_error_code": self.last_error_code,
+                "last_error_message": self.last_error_message,
                 "latency_ms": {
                     "count": self.latency_count,
                     "min": round(self.latency_min_ms, 3) if self.latency_count else 0.0,
@@ -1041,7 +1111,7 @@ def _request_rate_limit_credential(
     return ""
 
 
-def _http_chat_rate_limit_response(
+async def _http_chat_rate_limit_response(
     *,
     request: Request,
     auth_guard: GatewayAuthGuard,
@@ -1061,6 +1131,17 @@ def _http_chat_rate_limit_response(
     if decision.allowed:
         return None
     retry_after_s = max(1, int(math.ceil(float(decision.retry_after_s or 0.0))))
+    request_id = _request_id_from_request(request)
+    telemetry = getattr(request.app.state, "http_telemetry", None)
+    if isinstance(telemetry, HttpRequestTelemetry):
+        await telemetry.record_error(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=429,
+            code="gateway_rate_limited",
+            message="gateway chat rate limit exceeded; retry shortly",
+        )
     return JSONResponse(
         status_code=429,
         content={
@@ -3089,7 +3170,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request_id = _normalize_request_id(request.headers.get(_REQUEST_ID_HEADER_NAME, ""))
         request.state.request_id = request_id
         started_at = time.perf_counter()
-        await http_telemetry.start(method=request.method, path=request.url.path)
+        await http_telemetry.start(method=request.method, path=request.url.path, request_id=request_id)
         status_code = 500
         try:
             response = await call_next(request)
@@ -3104,12 +3185,35 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             raise
         finally:
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-            await http_telemetry.finish(status_code=status_code, latency_ms=elapsed_ms)
+            await http_telemetry.finish(
+                status_code=status_code,
+                latency_ms=elapsed_ms,
+                request_id=request_id,
+                method=request.method,
+                path=request.url.path,
+            )
+            if status_code >= 400:
+                bind_event("gateway.http").warning(
+                    "http request failed method={} path={} status={} request_id={}",
+                    request.method,
+                    request.url.path,
+                    status_code,
+                    request_id,
+                )
 
     @app.exception_handler(HTTPException)
     async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail
         request_id = _request_id_from_request(request)
+        detail_text = str(detail or "").strip() if isinstance(detail, str) else "http_error"
+        await http_telemetry.record_error(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=exc.status_code,
+            code=detail_text if isinstance(detail, str) else "http_error",
+            message=detail_text,
+        )
         if isinstance(detail, str):
             payload: dict[str, Any] = {
                 "error": detail,
@@ -3134,6 +3238,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, _: Exception) -> JSONResponse:
         request_id = _request_id_from_request(request)
+        await http_telemetry.record_error(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=500,
+            code="internal_server_error",
+            message="internal_server_error",
+        )
         payload = {
             "error": "internal_server_error",
             "status": 500,
@@ -3730,7 +3842,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/v1/chat", response_model=ChatResponse)
     async def chat(req: ChatRequest, request: Request) -> ChatResponse:
-        if blocked := _http_chat_rate_limit_response(
+        if blocked := await _http_chat_rate_limit_response(
             request=request,
             auth_guard=auth_guard,
             rate_limiter=gateway_rate_limiter,
@@ -3740,7 +3852,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/api/message", response_model=ChatResponse)
     async def api_message(req: ChatRequest, request: Request) -> ChatResponse:
-        if blocked := _http_chat_rate_limit_response(
+        if blocked := await _http_chat_rate_limit_response(
             request=request,
             auth_guard=auth_guard,
             rate_limiter=gateway_rate_limiter,

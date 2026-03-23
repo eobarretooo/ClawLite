@@ -731,6 +731,16 @@ def test_gateway_chat_rate_limit_blocks_repeated_http_chat_requests(tmp_path: Pa
         assert payload["retry_after_s"] > 0
         assert second.headers["Retry-After"] == "60"
 
+        diagnostics = client.get("/v1/diagnostics")
+        assert diagnostics.status_code == 200
+        http_payload = diagnostics.json()["http"]
+        assert http_payload["last_error_request_id"] == second.headers["X-Request-ID"]
+        assert http_payload["last_error_method"] == "POST"
+        assert http_payload["last_error_path"] == "/v1/chat"
+        assert http_payload["last_error_status"] == 429
+        assert http_payload["last_error_code"] == "gateway_rate_limited"
+        assert http_payload["last_error_message"] == "gateway chat rate limit exceeded; retry shortly"
+
 
 def test_gateway_chat_rate_limit_shares_bucket_with_api_message_alias(tmp_path: Path) -> None:
     cfg = AppConfig(
@@ -6960,6 +6970,17 @@ def test_gateway_diagnostics_http_telemetry_tracks_success_and_errors(tmp_path: 
         assert http_payload["by_path"]["/v1/diagnostics"] >= 1
         assert http_payload["by_status"]["401"] >= 1
         assert http_payload["by_status"]["200"] >= 1
+        assert http_payload["last_request_id"] == diagnostics.headers["X-Request-ID"]
+        assert http_payload["last_request_method"] == "GET"
+        assert http_payload["last_request_path"] == "/v1/diagnostics"
+        assert http_payload["last_request_started_at"]
+        assert http_payload["last_error_request_id"] == unauthorized_request_id
+        assert http_payload["last_error_method"] == "GET"
+        assert http_payload["last_error_path"] == "/v1/status"
+        assert http_payload["last_error_at"]
+        assert http_payload["last_error_status"] == 401
+        assert http_payload["last_error_code"] == unauthorized.json()["code"]
+        assert http_payload["last_error_message"] == unauthorized.json()["error"]
 
         latency = http_payload["latency_ms"]
         assert latency["count"] >= 2
@@ -6967,6 +6988,41 @@ def test_gateway_diagnostics_http_telemetry_tracks_success_and_errors(tmp_path: 
         assert latency["max"] >= latency["min"]
         assert latency["avg"] >= latency["min"]
         assert latency["avg"] <= latency["max"]
+
+
+def test_gateway_http_error_logs_include_request_id(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={
+            "auth": {
+                "mode": "required",
+                "token": "diag-token",
+                "allow_loopback_without_auth": False,
+            },
+            "heartbeat": {"enabled": False},
+        },
+        channels={},
+    )
+    app = create_app(cfg)
+
+    rows: list[str] = []
+    sink_id = logger.add(rows.append, format=logging_utils._text_format)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/v1/status", headers={"X-Request-ID": "req-http-log-1"})
+            assert response.status_code == 401
+            assert response.headers["X-Request-ID"] == "req-http-log-1"
+    finally:
+        logger.remove(sink_id)
+
+    joined = "\n".join(rows)
+    assert "[gateway.http]" in joined.lower()
+    assert "method=GET" in joined
+    assert "path=/v1/status" in joined
+    assert "status=401" in joined
+    assert "request_id=req-http-log-1" in joined
 
 
 def test_gateway_diagnostics_provider_telemetry_sanitizes_nested_secrets(tmp_path: Path) -> None:
