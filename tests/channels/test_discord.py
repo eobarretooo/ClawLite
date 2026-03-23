@@ -397,17 +397,18 @@ def test_discord_ready_clears_session_watchdog_state() -> None:
         channel._gateway_session_waiting_for = "ready"
         channel._gateway_session_task = asyncio.create_task(asyncio.sleep(3600))
 
-        should_continue = await channel._handle_gateway_payload(
-            {
-                "op": 0,
-                "t": "READY",
-                "d": {
-                    "session_id": "sess-1",
-                    "resume_gateway_url": "wss://resume.example",
-                    "user": {"id": "bot-1"},
-                },
-            }
-        )
+        with patch("clawlite.channels.discord._utc_now", return_value="2026-03-23T12:00:00+00:00"):
+            should_continue = await channel._handle_gateway_payload(
+                {
+                    "op": 0,
+                    "t": "READY",
+                    "d": {
+                        "session_id": "sess-1",
+                        "resume_gateway_url": "wss://resume.example",
+                        "user": {"id": "bot-1"},
+                    },
+                }
+            )
 
         assert should_continue is True
         assert channel._gateway_session_waiting_for == ""
@@ -416,6 +417,9 @@ def test_discord_ready_clears_session_watchdog_state() -> None:
         assert channel._resume_url == "wss://resume.example"
         assert channel._bot_user_id == "bot-1"
         assert channel._gateway_presence_ready is True
+        assert channel._gateway_last_ready_at == "2026-03-23T12:00:00+00:00"
+        assert channel._gateway_last_lifecycle_outcome == "ready"
+        assert channel._gateway_last_lifecycle_at == "2026-03-23T12:00:00+00:00"
 
     asyncio.run(_scenario())
 
@@ -957,9 +961,34 @@ def test_discord_operator_status_reports_gateway_state() -> None:
     assert payload["gateway_reconnect_backoff_s"] == 0.0
     assert payload["gateway_reconnect_retry_in_s"] == 0.0
     assert payload["gateway_reconnect_state"] == "idle"
+    assert payload["gateway_last_connect_at"] == ""
+    assert payload["gateway_last_ready_at"] == ""
+    assert payload["gateway_last_disconnect_at"] == ""
+    assert payload["gateway_last_disconnect_reason"] == ""
+    assert payload["gateway_last_lifecycle_outcome"] == ""
+    assert payload["gateway_last_lifecycle_at"] == ""
     assert payload["presence_status"] == "idle"
     assert payload["presence_activity"] == "Focus time"
     assert payload["presence_activity_type"] == 4
+
+
+def test_discord_operator_status_reports_lifecycle_history() -> None:
+    channel = DiscordChannel(config={"token": "bot-token"})
+    channel._gateway_last_connect_at = "2026-03-23T12:10:00+00:00"
+    channel._gateway_last_ready_at = "2026-03-23T12:10:03+00:00"
+    channel._gateway_last_disconnect_at = "2026-03-23T12:11:00+00:00"
+    channel._gateway_last_disconnect_reason = "discord_gateway_reconnect_requested"
+    channel._gateway_last_lifecycle_outcome = "disconnected"
+    channel._gateway_last_lifecycle_at = "2026-03-23T12:11:00+00:00"
+
+    payload = channel.operator_status()
+
+    assert payload["gateway_last_connect_at"] == "2026-03-23T12:10:00+00:00"
+    assert payload["gateway_last_ready_at"] == "2026-03-23T12:10:03+00:00"
+    assert payload["gateway_last_disconnect_at"] == "2026-03-23T12:11:00+00:00"
+    assert payload["gateway_last_disconnect_reason"] == "discord_gateway_reconnect_requested"
+    assert payload["gateway_last_lifecycle_outcome"] == "disconnected"
+    assert payload["gateway_last_lifecycle_at"] == "2026-03-23T12:11:00+00:00"
 
 
 def test_discord_operator_status_reports_pending_gateway_session_watchdog() -> None:
@@ -1040,12 +1069,56 @@ def test_discord_gateway_runner_records_reconnect_backoff_after_connect_error() 
 
         with patch("clawlite.channels.discord.websockets.connect", return_value=_FailingConnect()):
             with patch("clawlite.channels.discord.asyncio.sleep", new=AsyncMock(side_effect=_sleep)):
-                await channel._gateway_runner()
+                with patch("clawlite.channels.discord._utc_now", return_value="2026-03-23T12:05:00+00:00"):
+                    await channel._gateway_runner()
 
         assert channel._gateway_reconnect_attempt == 1
         assert channel._gateway_reconnect_backoff_s == 2.0
         assert channel._gateway_reconnect_retry_in_s() >= 0.0
         assert channel._last_error == "gateway connect failed"
+        assert channel._gateway_last_lifecycle_outcome == "connect_failed"
+        assert channel._gateway_last_lifecycle_at == "2026-03-23T12:05:00+00:00"
+        assert channel._gateway_last_connect_at == ""
+        assert channel._gateway_last_disconnect_at == ""
+
+    asyncio.run(_scenario())
+
+
+def test_discord_gateway_runner_records_connect_and_disconnect_timestamps() -> None:
+    class _ConnectedOnce:
+        def __init__(self, ws: _FakeWebSocket) -> None:
+            self._ws = ws
+
+        async def __aenter__(self) -> _FakeWebSocket:
+            return self._ws
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"})
+        channel._running = True
+        fake_ws = _FakeWebSocket([])
+
+        async def _gateway_loop() -> None:
+            channel._running = False
+
+        with patch("clawlite.channels.discord.websockets.connect", return_value=_ConnectedOnce(fake_ws)):
+            with patch.object(channel, "_gateway_loop", AsyncMock(side_effect=_gateway_loop)):
+                with patch(
+                    "clawlite.channels.discord._utc_now",
+                    side_effect=[
+                        "2026-03-23T12:10:00+00:00",
+                        "2026-03-23T12:11:00+00:00",
+                    ],
+                ):
+                    await channel._gateway_runner()
+
+        assert channel._gateway_last_connect_at == "2026-03-23T12:10:00+00:00"
+        assert channel._gateway_last_disconnect_at == "2026-03-23T12:11:00+00:00"
+        assert channel._gateway_last_disconnect_reason == "discord_gateway_stopped"
+        assert channel._gateway_last_lifecycle_outcome == "disconnected"
+        assert channel._gateway_last_lifecycle_at == "2026-03-23T12:11:00+00:00"
 
     asyncio.run(_scenario())
 

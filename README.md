@@ -123,7 +123,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (1941 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (1944 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 

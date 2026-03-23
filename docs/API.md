@@ -212,7 +212,13 @@ Example response:
       "gateway_reconnect_attempt": 1,
       "gateway_reconnect_backoff_s": 2.0,
       "gateway_reconnect_retry_in_s": 1.2,
-      "gateway_reconnect_state": "backoff"
+      "gateway_reconnect_state": "backoff",
+      "gateway_last_connect_at": "2026-03-23T12:10:00+00:00",
+      "gateway_last_ready_at": "2026-03-23T12:10:03+00:00",
+      "gateway_last_disconnect_at": "2026-03-23T12:11:40+00:00",
+      "gateway_last_disconnect_reason": "discord_gateway_heartbeat_timeout",
+      "gateway_last_lifecycle_outcome": "disconnected",
+      "gateway_last_lifecycle_at": "2026-03-23T12:11:40+00:00"
     }
   }
 }

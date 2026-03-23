@@ -125,6 +125,12 @@ async def handle_discord_thread_binding_inbound_action(
         gateway_reconnect_attempt = int(status.get("gateway_reconnect_attempt", 0) or 0)
         gateway_reconnect_retry_in_s = float(status.get("gateway_reconnect_retry_in_s", 0.0) or 0.0)
         gateway_reconnect_state = str(status.get("gateway_reconnect_state", "") or "").strip().lower()
+        gateway_last_lifecycle_outcome = str(status.get("gateway_last_lifecycle_outcome", "") or "").strip().lower()
+        gateway_last_lifecycle_at = str(status.get("gateway_last_lifecycle_at", "") or "").strip()
+        gateway_last_connect_at = str(status.get("gateway_last_connect_at", "") or "").strip()
+        gateway_last_ready_at = str(status.get("gateway_last_ready_at", "") or "").strip()
+        gateway_last_disconnect_at = str(status.get("gateway_last_disconnect_at", "") or "").strip()
+        gateway_last_disconnect_reason = str(status.get("gateway_last_disconnect_reason", "") or "").strip()
         lines = [
             "Discord operator status",
             f"- connected: {bool(status.get('connected', False))}",
@@ -143,6 +149,19 @@ async def handle_discord_thread_binding_inbound_action(
                 else ("retrying now" if gateway_reconnect_state == "retrying" else "retry active")
             )
             lines.append(f"- reconnect: attempt {gateway_reconnect_attempt} | {reconnect_detail}")
+        if gateway_last_lifecycle_outcome:
+            lifecycle_text = gateway_last_lifecycle_outcome
+            if gateway_last_lifecycle_at:
+                lifecycle_text = f"{lifecycle_text} @ {gateway_last_lifecycle_at}"
+            lines.append(f"- lifecycle: {lifecycle_text}")
+        if gateway_last_connect_at:
+            lines.append(f"- last_connect_at: {gateway_last_connect_at}")
+        if gateway_last_ready_at:
+            lines.append(f"- last_ready_at: {gateway_last_ready_at}")
+        if gateway_last_disconnect_at:
+            lines.append(f"- last_disconnect_at: {gateway_last_disconnect_at}")
+        if gateway_last_disconnect_reason:
+            lines.append(f"- disconnect_reason: {gateway_last_disconnect_reason}")
         last_error = str(status.get("last_error", "") or "").strip()
         if last_error:
             lines.append(f"- last_error: {last_error}")

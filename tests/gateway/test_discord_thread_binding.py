@@ -320,6 +320,63 @@ def test_handle_discord_thread_binding_reports_active_reconnect_without_backoff(
     asyncio.run(_scenario())
 
 
+def test_handle_discord_thread_binding_reports_lifecycle_history() -> None:
+    async def _scenario() -> None:
+        sent: list[dict[str, object]] = []
+
+        class _DiscordChannel:
+            def operator_status(self):
+                return {
+                    "connected": False,
+                    "gateway_task_state": "running",
+                    "heartbeat_task_state": "stopped",
+                    "gateway_session_task_state": "stopped",
+                    "gateway_session_waiting_for": "",
+                    "gateway_reconnect_attempt": 0,
+                    "gateway_reconnect_retry_in_s": 0.0,
+                    "gateway_reconnect_state": "idle",
+                    "gateway_last_connect_at": "2026-03-23T12:10:00+00:00",
+                    "gateway_last_ready_at": "2026-03-23T12:10:03+00:00",
+                    "gateway_last_disconnect_at": "2026-03-23T12:11:00+00:00",
+                    "gateway_last_disconnect_reason": "discord_gateway_reconnect_requested",
+                    "gateway_last_lifecycle_outcome": "disconnected",
+                    "gateway_last_lifecycle_at": "2026-03-23T12:11:00+00:00",
+                    "policy_allowed_count": 4,
+                    "policy_blocked_count": 1,
+                    "thread_binding_count": 2,
+                    "last_error": "gateway connect failed",
+                }
+
+        class _Channels:
+            async def send(self, *, channel: str, target: str, text: str, metadata=None) -> str:
+                sent.append({"channel": channel, "target": target, "text": text})
+                return "ok"
+
+            def get_channel(self, name: str):
+                assert name == "discord"
+                return _DiscordChannel()
+
+        handled = await handle_discord_thread_binding_inbound_action(
+            InboundEvent(
+                channel="discord",
+                session_id="discord:guild:guild-1:channel:chan-1",
+                user_id="user-1",
+                text="/discord-status",
+                metadata={"channel_id": "chan-1"},
+            ),
+            channels=_Channels(),
+        )
+
+        assert handled is True
+        assert "lifecycle: disconnected @ 2026-03-23T12:11:00+00:00" in str(sent[0]["text"])
+        assert "last_connect_at: 2026-03-23T12:10:00+00:00" in str(sent[0]["text"])
+        assert "last_ready_at: 2026-03-23T12:10:03+00:00" in str(sent[0]["text"])
+        assert "last_disconnect_at: 2026-03-23T12:11:00+00:00" in str(sent[0]["text"])
+        assert "disconnect_reason: discord_gateway_reconnect_requested" in str(sent[0]["text"])
+
+    asyncio.run(_scenario())
+
+
 def test_handle_discord_thread_binding_refreshes_transport() -> None:
     async def _scenario() -> None:
         sent: list[dict[str, object]] = []

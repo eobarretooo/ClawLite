@@ -364,9 +364,16 @@ class DiscordChannel(BaseChannel):
         self._heartbeat_ack_pending = False
         self._gateway_session_waiting_for = ""
         self._gateway_presence_ready = False
+        self._gateway_close_reason = ""
         self._gateway_reconnect_attempt = 0
         self._gateway_reconnect_backoff_s = 0.0
         self._gateway_reconnect_retry_at_monotonic = 0.0
+        self._gateway_last_connect_at = ""
+        self._gateway_last_ready_at = ""
+        self._gateway_last_disconnect_at = ""
+        self._gateway_last_disconnect_reason = ""
+        self._gateway_last_lifecycle_outcome = ""
+        self._gateway_last_lifecycle_at = ""
         self._registered_modals: dict[str, dict[str, Any]] = {}
         self._transcription_provider: Any | None = None
         self._media_transcription_count = 0
@@ -1581,6 +1588,7 @@ class DiscordChannel(BaseChannel):
 
     async def stop(self) -> None:
         self._running = False
+        self._gateway_close_reason = "discord_gateway_stopped"
         await cancel_task(self._gateway_task)
         self._gateway_task = None
         await cancel_task(self._heartbeat_task)
@@ -2075,12 +2083,15 @@ class DiscordChannel(BaseChannel):
     async def _gateway_runner(self) -> None:
         backoff_s = self.gateway_backoff_base_s
         while self._running:
+            active_ws: Any | None = None
+            disconnect_reason = ""
             await cancel_task(self._heartbeat_task)
             self._heartbeat_task = None
             await cancel_task(self._gateway_session_task)
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
             self._gateway_presence_ready = False
+            self._gateway_close_reason = ""
             self._gateway_reconnect_backoff_s = 0.0
             self._gateway_reconnect_retry_at_monotonic = 0.0
             connect_url = self._resume_url or self.gateway_url
@@ -2091,15 +2102,19 @@ class DiscordChannel(BaseChannel):
                     close_timeout=self.timeout_s,
                     ping_interval=None,
                 ) as ws:
+                    active_ws = ws
                     self._ws = ws
                     self._last_error = ""
                     self._gateway_reconnect_attempt = 0
+                    self._record_gateway_connected()
                     backoff_s = self.gateway_backoff_base_s
                     await self._gateway_loop()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._last_error = str(exc)
+                disconnect_reason = str(exc)
+                self._record_gateway_lifecycle_outcome("connect_failed")
                 if not self._running:
                     break
                 self._gateway_reconnect_attempt += 1
@@ -2111,6 +2126,13 @@ class DiscordChannel(BaseChannel):
                     max(self.gateway_backoff_base_s, backoff_s * 2.0),
                 )
             finally:
+                if active_ws is not None:
+                    self._record_gateway_disconnected(
+                        disconnect_reason
+                        or str(self._gateway_close_reason or "").strip()
+                        or ("discord_gateway_stopped" if not self._running else str(self._last_error or "").strip())
+                        or "discord_gateway_closed"
+                    )
                 self._ws = None
                 await cancel_task(self._heartbeat_task)
                 self._heartbeat_task = None
@@ -2119,6 +2141,7 @@ class DiscordChannel(BaseChannel):
                 self._heartbeat_ack_pending = False
                 self._gateway_session_waiting_for = ""
                 self._gateway_presence_ready = False
+                self._gateway_close_reason = ""
 
     async def _gateway_loop(self) -> None:
         ws = self._ws
@@ -2166,6 +2189,7 @@ class DiscordChannel(BaseChannel):
             return True
 
         if op == 7:
+            self._gateway_close_reason = "discord_gateway_reconnect_requested"
             return False
 
         if op == 9:
@@ -2174,6 +2198,11 @@ class DiscordChannel(BaseChannel):
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
             self._gateway_presence_ready = False
+            self._gateway_close_reason = (
+                "discord_gateway_invalid_session"
+                if not resumable
+                else "discord_gateway_resume_rejected"
+            )
             if not resumable:
                 self._session_id = ""
                 self._resume_url = ""
@@ -2196,6 +2225,7 @@ class DiscordChannel(BaseChannel):
             if isinstance(app, dict):
                 self._application_id = str(app.get("id", "") or "").strip()
             self._gateway_presence_ready = True
+            self._record_gateway_ready("ready")
             if self.auto_presence_enabled:
                 await self._update_presence(force=True)
             return True
@@ -2205,6 +2235,7 @@ class DiscordChannel(BaseChannel):
             self._gateway_session_task = None
             self._gateway_session_waiting_for = ""
             self._gateway_presence_ready = True
+            self._record_gateway_ready("resumed")
             if self.auto_presence_enabled:
                 await self._update_presence(force=True)
             return True
@@ -3475,6 +3506,30 @@ class DiscordChannel(BaseChannel):
             return 0.0
         return max(0.0, retry_at - time.monotonic())
 
+    def _record_gateway_lifecycle_outcome(self, outcome: str, *, at: str | None = None) -> None:
+        clean_outcome = str(outcome or "").strip().lower()
+        if not clean_outcome:
+            return
+        timestamp = str(at or _utc_now()).strip()
+        self._gateway_last_lifecycle_outcome = clean_outcome
+        self._gateway_last_lifecycle_at = timestamp
+
+    def _record_gateway_connected(self) -> None:
+        timestamp = _utc_now()
+        self._gateway_last_connect_at = timestamp
+        self._record_gateway_lifecycle_outcome("connected", at=timestamp)
+
+    def _record_gateway_ready(self, outcome: str) -> None:
+        timestamp = _utc_now()
+        self._gateway_last_ready_at = timestamp
+        self._record_gateway_lifecycle_outcome(outcome, at=timestamp)
+
+    def _record_gateway_disconnected(self, reason: str) -> None:
+        timestamp = _utc_now()
+        self._gateway_last_disconnect_at = timestamp
+        self._gateway_last_disconnect_reason = str(reason or "").strip()
+        self._record_gateway_lifecycle_outcome("disconnected", at=timestamp)
+
     def operator_status(self) -> dict[str, Any]:
         gateway_task_state = self._task_state(self._gateway_task)
         heartbeat_task_state = self._task_state(self._heartbeat_task)
@@ -3513,6 +3568,12 @@ class DiscordChannel(BaseChannel):
             "gateway_reconnect_backoff_s": self._gateway_reconnect_backoff_s,
             "gateway_reconnect_retry_in_s": gateway_reconnect_retry_in_s,
             "gateway_reconnect_state": gateway_reconnect_state,
+            "gateway_last_connect_at": self._gateway_last_connect_at,
+            "gateway_last_ready_at": self._gateway_last_ready_at,
+            "gateway_last_disconnect_at": self._gateway_last_disconnect_at,
+            "gateway_last_disconnect_reason": self._gateway_last_disconnect_reason,
+            "gateway_last_lifecycle_outcome": self._gateway_last_lifecycle_outcome,
+            "gateway_last_lifecycle_at": self._gateway_last_lifecycle_at,
             "session_id": self._session_id,
             "resume_url": self._resume_url,
             "sequence": self._sequence,
@@ -3709,6 +3770,7 @@ class DiscordChannel(BaseChannel):
             "last_error": "",
         }
         try:
+            self._gateway_close_reason = "discord_gateway_transport_refresh"
             await cancel_task(self._gateway_task)
             self._gateway_task = None
             await cancel_task(self._heartbeat_task)

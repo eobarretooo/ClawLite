@@ -1159,6 +1159,12 @@ function renderDiscordBoard() {
   const reconnectAttempt = numeric(discord.gateway_reconnect_attempt, 0);
   const reconnectRetryIn = Number(discord.gateway_reconnect_retry_in_s || 0);
   const reconnectState = String(discord.gateway_reconnect_state || "idle");
+  const lifecycleOutcome = String(discord.gateway_last_lifecycle_outcome || "").trim();
+  const lifecycleAt = String(discord.gateway_last_lifecycle_at || "").trim();
+  const lastConnectAt = String(discord.gateway_last_connect_at || "").trim();
+  const lastReadyAt = String(discord.gateway_last_ready_at || "").trim();
+  const lastDisconnectAt = String(discord.gateway_last_disconnect_at || "").trim();
+  const lastDisconnectReason = String(discord.gateway_last_disconnect_reason || "").trim();
   appendSummaryCard(grid, {
     title: "Gateway state",
     body: waitingFor
@@ -1185,6 +1191,28 @@ function renderDiscordBoard() {
       detail: reconnectRetryIn > 0
         ? `retry in ${reconnectRetryIn.toFixed(1)}s`
         : (reconnectState === "retrying" ? "retrying now" : "retry active"),
+    });
+  }
+  if (lifecycleOutcome || lastConnectAt || lastReadyAt || lastDisconnectAt) {
+    const lifecycleDetails = [];
+    if (lastConnectAt) {
+      lifecycleDetails.push(`connect ${lastConnectAt}`);
+    }
+    if (lastReadyAt) {
+      lifecycleDetails.push(`ready ${lastReadyAt}`);
+    }
+    if (lastDisconnectAt) {
+      lifecycleDetails.push(`disconnect ${lastDisconnectAt}`);
+    }
+    if (lastDisconnectReason) {
+      lifecycleDetails.push(`reason ${lastDisconnectReason}`);
+    }
+    appendSummaryCard(grid, {
+      title: "Lifecycle",
+      body: lifecycleOutcome
+        ? `${lifecycleOutcome}${lifecycleAt ? ` @ ${lifecycleAt}` : ""}`
+        : "no lifecycle outcome recorded",
+      detail: lifecycleDetails.length ? lifecycleDetails.join(" | ") : "no lifecycle timestamps recorded",
     });
   }
 
