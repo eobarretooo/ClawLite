@@ -1235,6 +1235,13 @@ Campos baseline de contrato:
 - `http`: telemetria HTTP em memoria (aditiva) com `total_requests`,
   `in_flight`, `by_method`, `by_path`, `by_status` e `latency_ms`
   (`count`, `min`, `max`, `avg`).
+- `ws`: telemetria WebSocket em memoria (aditiva) com `connections_opened`,
+  `connections_closed`, `active_connections`, `frames_in`, `frames_out`,
+  `last_connection_id`, `last_connection_path`, `last_connection_opened_at`,
+  `last_connection_closed_id`, `last_connection_closed_at`, `last_request_id`,
+  e mapas agregados como `by_path`, `by_message_type_in`, `by_message_type_out`,
+  `by_req_method`, `by_event_out`, `error_count_by_code`, `last_error_code`,
+  `last_error_message`, e `last_error_status`.
 
 Alias compatível: `GET /api/diagnostics` (mesmo payload). When a gateway token is configured, the dashboard alias also accepts the derived dashboard-session credential; `GET /v1/diagnostics` itself stays on the raw gateway-token path when diagnostics auth is enabled.
 
@@ -1389,6 +1396,11 @@ Example response:
 ## `WS /v1/ws`
 
 WebSocket for chat.
+
+The initial `connect.challenge` event now also includes an additive
+`params.connection_id` for that socket. This does not change the later request or
+response envelopes; it only gives operators a stable correlation handle that matches
+the `ws` telemetry snapshot returned by `GET /v1/diagnostics`.
 
 Input message:
 

@@ -436,6 +436,12 @@ class WebSocketTelemetry:
     active_connections: int = 0
     frames_in: int = 0
     frames_out: int = 0
+    last_connection_id: str = ""
+    last_connection_path: str = ""
+    last_connection_opened_at: str = ""
+    last_connection_closed_id: str = ""
+    last_connection_closed_at: str = ""
+    last_request_id: str = ""
     by_path: dict[str, int] = field(default_factory=dict)
     by_message_type_in: dict[str, int] = field(default_factory=dict)
     by_message_type_out: dict[str, int] = field(default_factory=dict)
@@ -483,25 +489,52 @@ class WebSocketTelemetry:
             return "error"
         return None
 
-    async def connection_opened(self, *, path: str) -> None:
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return dt.datetime.now(dt.timezone.utc).isoformat()
+
+    @staticmethod
+    def _request_id(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        payload_type = str(payload.get("type", "") or "").strip().lower()
+        if payload_type == "req":
+            value = payload.get("id")
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                return str(value).strip()
+            return ""
+        value = payload.get("request_id")
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            return str(value).strip()
+        return ""
+
+    async def connection_opened(self, *, path: str, connection_id: str) -> None:
         normalized_path = str(path or "") or "/"
         async with self.lock:
             self.connections_opened += 1
             self.active_connections += 1
             self.by_path[normalized_path] = self.by_path.get(normalized_path, 0) + 1
+            self.last_connection_id = str(connection_id or "").strip()
+            self.last_connection_path = normalized_path
+            self.last_connection_opened_at = self._utc_now_iso()
 
-    async def connection_closed(self) -> None:
+    async def connection_closed(self, *, connection_id: str) -> None:
         async with self.lock:
             self.connections_closed += 1
             self.active_connections = max(0, self.active_connections - 1)
+            self.last_connection_closed_id = str(connection_id or "").strip()
+            self.last_connection_closed_at = self._utc_now_iso()
 
     async def frame_inbound(self, *, path: str, payload: Any) -> None:
         normalized_path = str(path or "") or "/"
         message_type = self._message_type(payload)
+        request_id = self._request_id(payload)
         async with self.lock:
             self.frames_in += 1
             self.by_message_type_in[message_type] = self.by_message_type_in.get(message_type, 0) + 1
             self.by_path.setdefault(normalized_path, self.by_path.get(normalized_path, 0))
+            if request_id:
+                self.last_request_id = request_id
             if isinstance(payload, dict) and message_type == "req":
                 method = str(payload.get("method", "") or "").strip().lower()
                 if method:
@@ -524,6 +557,12 @@ class WebSocketTelemetry:
                 "active_connections": self.active_connections,
                 "frames_in": self.frames_in,
                 "frames_out": self.frames_out,
+                "last_connection_id": self.last_connection_id,
+                "last_connection_path": self.last_connection_path,
+                "last_connection_opened_at": self.last_connection_opened_at,
+                "last_connection_closed_id": self.last_connection_closed_id,
+                "last_connection_closed_at": self.last_connection_closed_at,
+                "last_request_id": self.last_request_id,
                 "by_path": dict(self.by_path),
                 "by_message_type_in": dict(self.by_message_type_in),
                 "by_message_type_out": dict(self.by_message_type_out),

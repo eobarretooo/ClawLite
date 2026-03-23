@@ -450,6 +450,7 @@ def _assert_connect_challenge(socket) -> dict[str, object]:
     assert payload["event"] == "connect.challenge"
     assert isinstance(payload["params"]["nonce"], str) and payload["params"]["nonce"]
     assert isinstance(payload["params"]["issued_at"], str) and payload["params"]["issued_at"]
+    assert isinstance(payload["params"]["connection_id"], str) and payload["params"]["connection_id"].startswith("ws-")
     return payload
 
 
@@ -5669,7 +5670,8 @@ def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Pat
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws") as socket:
-            _assert_connect_challenge(socket)
+            challenge = _assert_connect_challenge(socket)
+            connection_id = str(challenge["params"]["connection_id"])
 
             socket.send_json({"type": "req", "id": "c1", "method": "connect", "params": {}})
             connect_payload = socket.receive_json()
@@ -5693,6 +5695,12 @@ def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Pat
         assert ws_payload["active_connections"] == 0
         assert ws_payload["frames_in"] >= 3
         assert ws_payload["frames_out"] >= 4
+        assert ws_payload["last_connection_id"] == connection_id
+        assert ws_payload["last_connection_path"] == "/ws"
+        assert ws_payload["last_connection_opened_at"]
+        assert ws_payload["last_connection_closed_id"] == connection_id
+        assert ws_payload["last_connection_closed_at"]
+        assert ws_payload["last_request_id"] == "u1"
         assert ws_payload["by_path"]["/ws"] >= 1
         assert ws_payload["by_message_type_in"]["req"] >= 3
         assert ws_payload["by_message_type_out"]["event"] >= 1

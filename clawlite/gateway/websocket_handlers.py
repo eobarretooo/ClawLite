@@ -458,7 +458,8 @@ class GatewayWebSocketHandlers:
         ):
             return
         await socket.accept()
-        await self.ws_telemetry.connection_opened(path=path_label)
+        connection_id = f"ws-{uuid.uuid4().hex}"
+        await self.ws_telemetry.connection_opened(path=path_label, connection_id=connection_id)
 
         async def _send_ws(payload: Any) -> None:
             await socket.send_json(payload)
@@ -471,10 +472,15 @@ class GatewayWebSocketHandlers:
                 "params": {
                     "nonce": uuid.uuid4().hex,
                     "issued_at": self.utc_now_iso_fn(),
+                    "connection_id": connection_id,
                 },
             }
         )
-        bind_event("gateway.ws", channel="ws").info("websocket client connected path={}", path_label)
+        bind_event("gateway.ws", channel="ws").info(
+            "websocket client connected path={} connection_id={}",
+            path_label,
+            connection_id,
+        )
         req_connected = False
         try:
             while True:
@@ -743,9 +749,13 @@ class GatewayWebSocketHandlers:
                     out.model,
                 )
         except WebSocketDisconnect:
-            bind_event("gateway.ws", channel="ws").info("websocket client disconnected path={}", path_label)
+            bind_event("gateway.ws", channel="ws").info(
+                "websocket client disconnected path={} connection_id={}",
+                path_label,
+                connection_id,
+            )
         finally:
-            await self.ws_telemetry.connection_closed()
+            await self.ws_telemetry.connection_closed(connection_id=connection_id)
 
 
 __all__ = ["GatewayWebSocketHandlers"]

@@ -91,6 +91,7 @@ def test_websocket_handler_req_connect_ping_and_catalog() -> None:
     assert socket.accepted is True
     assert socket.sent[0]["type"] == "event"
     assert socket.sent[0]["event"] == "connect.challenge"
+    assert isinstance(socket.sent[0]["params"]["connection_id"], str) and socket.sent[0]["params"]["connection_id"].startswith("ws-")
     assert socket.sent[1]["result"]["connected"] is True
     assert socket.sent[2]["result"]["server_time"] == "2026-03-17T00:00:00+00:00"
     assert socket.sent[3]["result"]["aliases"]["bash"] == "exec"
