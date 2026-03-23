@@ -306,11 +306,13 @@ def test_discord_gateway_loop_identifies_and_emits_message() -> None:
         )
 
         with patch.object(channel, "_start_heartbeat", AsyncMock()) as start_heartbeat:
-            with patch.object(channel, "_start_typing", AsyncMock()) as start_typing:
-                with patch.object(channel, "_stop_typing", AsyncMock()) as stop_typing:
-                    await channel._gateway_loop()
+            with patch.object(channel, "_start_gateway_session_watchdog", AsyncMock()) as start_watchdog:
+                with patch.object(channel, "_start_typing", AsyncMock()) as start_typing:
+                    with patch.object(channel, "_stop_typing", AsyncMock()) as stop_typing:
+                        await channel._gateway_loop()
 
         assert start_heartbeat.await_count == 1
+        start_watchdog.assert_awaited_once_with(waiting_for="ready")
         assert channel._session_id == "sess-1"
         assert channel._resume_url == "wss://resume.example"
         assert channel._bot_user_id == "bot-1"
@@ -330,6 +332,29 @@ def test_discord_gateway_loop_identifies_and_emits_message() -> None:
     asyncio.run(_scenario())
 
 
+def test_discord_gateway_hello_uses_resumed_watchdog_when_session_exists() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"})
+        channel._running = True
+        channel._ws = _FakeWebSocket([])
+        channel._session_id = "sess-1"
+        channel._sequence = 42
+
+        with patch.object(channel, "_start_heartbeat", AsyncMock()) as start_heartbeat:
+            with patch.object(channel, "_start_gateway_session_watchdog", AsyncMock()) as start_watchdog:
+                with patch.object(channel, "_resume", AsyncMock()) as resume_mock:
+                    should_continue = await channel._handle_gateway_payload(
+                        {"op": 10, "d": {"heartbeat_interval": 30000}}
+                    )
+
+        assert should_continue is True
+        start_heartbeat.assert_awaited_once()
+        start_watchdog.assert_awaited_once_with(waiting_for="resumed")
+        resume_mock.assert_awaited_once()
+
+    asyncio.run(_scenario())
+
+
 def test_discord_handle_gateway_payload_heartbeat_ack_clears_pending_state() -> None:
     async def _scenario() -> None:
         channel = DiscordChannel(config={"token": "bot-token"})
@@ -339,6 +364,56 @@ def test_discord_handle_gateway_payload_heartbeat_ack_clears_pending_state() -> 
 
         assert should_continue is True
         assert channel._heartbeat_ack_pending is False
+
+    asyncio.run(_scenario())
+
+
+def test_discord_gateway_session_watchdog_closes_ws_after_ready_timeout() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"})
+        channel._running = True
+        fake_ws = MagicMock()
+        fake_ws.close = AsyncMock()
+        channel._ws = fake_ws
+        sleep_mock = AsyncMock()
+
+        with patch("clawlite.channels.discord.asyncio.sleep", new=sleep_mock):
+            await channel._start_gateway_session_watchdog(waiting_for="ready")
+            await channel._gateway_session_task
+
+        assert fake_ws.close.await_count == 1
+        assert channel._last_error == "discord_gateway_ready_timeout"
+        assert channel._gateway_session_waiting_for == "ready"
+
+    asyncio.run(_scenario())
+
+
+def test_discord_ready_clears_session_watchdog_state() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"})
+        channel._running = True
+        channel._ws = _FakeWebSocket([])
+        channel._gateway_session_waiting_for = "ready"
+        channel._gateway_session_task = asyncio.create_task(asyncio.sleep(3600))
+
+        should_continue = await channel._handle_gateway_payload(
+            {
+                "op": 0,
+                "t": "READY",
+                "d": {
+                    "session_id": "sess-1",
+                    "resume_gateway_url": "wss://resume.example",
+                    "user": {"id": "bot-1"},
+                },
+            }
+        )
+
+        assert should_continue is True
+        assert channel._gateway_session_waiting_for == ""
+        assert channel._gateway_session_task is None
+        assert channel._session_id == "sess-1"
+        assert channel._resume_url == "wss://resume.example"
+        assert channel._bot_user_id == "bot-1"
 
     asyncio.run(_scenario())
 
@@ -1051,6 +1126,8 @@ def test_discord_operator_refresh_transport_resets_gateway_state() -> None:
         channel._resume_url = "wss://resume.example"
         channel._sequence = 42
         channel._bot_user_id = "bot-1"
+        channel._gateway_session_waiting_for = "resumed"
+        channel._gateway_session_task = asyncio.create_task(asyncio.sleep(3600))
         channel._heartbeat_ack_pending = True
         gateway_task = asyncio.create_task(asyncio.sleep(3600))
         heartbeat_task = asyncio.create_task(asyncio.sleep(3600))
@@ -1067,6 +1144,8 @@ def test_discord_operator_refresh_transport_resets_gateway_state() -> None:
         assert channel._resume_url == ""
         assert channel._sequence is None
         assert channel._bot_user_id == ""
+        assert channel._gateway_session_task is None
+        assert channel._gateway_session_waiting_for == ""
         assert channel._heartbeat_ack_pending is False
 
     asyncio.run(_scenario())
