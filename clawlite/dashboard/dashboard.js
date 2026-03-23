@@ -1154,15 +1154,21 @@ function renderDiscordBoard() {
     return;
   }
 
+  const waitingFor = String(discord.gateway_session_waiting_for || "").trim();
+  const sessionWatchdogState = String(discord.gateway_session_task_state || "unknown");
   appendSummaryCard(grid, {
     title: "Gateway state",
-    body: `${discord.connected ? "connected" : "disconnected"} | ${String(discord.gateway_task_state || "unknown")}`,
+    body: waitingFor
+      ? `${discord.connected ? "connected" : "disconnected"} | ${String(discord.gateway_task_state || "unknown")} | waiting ${waitingFor.toUpperCase()}`
+      : `${discord.connected ? "connected" : "disconnected"} | ${String(discord.gateway_task_state || "unknown")}`,
     detail: `heartbeat ${String(discord.heartbeat_task_state || "unknown")} | sequence ${discord.sequence ?? "-"}`,
   });
   appendSummaryCard(grid, {
     title: "Session",
     body: String(discord.session_id || "not established"),
-    detail: discord.resume_url ? `resume ${discord.resume_url}` : "no resume url available",
+    detail: waitingFor
+      ? `waiting for ${waitingFor.toUpperCase()} | watchdog ${sessionWatchdogState}`
+      : (discord.resume_url ? `resume ${discord.resume_url}` : "no resume url available"),
   });
   appendSummaryCard(grid, {
     title: "Runtime",
@@ -1181,8 +1187,9 @@ function renderDiscordBoard() {
     });
   }
 
-  const healthy = Boolean(discord.connected) && !discord.last_error;
-  setBadge("discord-status", healthy ? "healthy" : "attention", healthy ? "ok" : "warn");
+  const healthy = Boolean(discord.connected) && !discord.last_error && !waitingFor;
+  const badgeText = waitingFor ? `waiting ${waitingFor.toLowerCase()}` : (healthy ? "healthy" : "attention");
+  setBadge("discord-status", badgeText, healthy ? "ok" : "warn");
   if (refreshButton) {
     refreshButton.disabled = false;
   }

@@ -120,14 +120,19 @@ async def handle_discord_thread_binding_inbound_action(
             )
             return True
         status = status_fn()
+        gateway_session_task_state = str(status.get("gateway_session_task_state", "unknown") or "unknown").strip()
+        gateway_session_waiting_for = str(status.get("gateway_session_waiting_for", "") or "").strip()
         lines = [
             "Discord operator status",
             f"- connected: {bool(status.get('connected', False))}",
             f"- gateway: {status.get('gateway_task_state', 'unknown')}",
             f"- heartbeat: {status.get('heartbeat_task_state', 'unknown')}",
+            f"- session_watchdog: {gateway_session_task_state}",
             f"- policies: allowed={status.get('policy_allowed_count', 0)} blocked={status.get('policy_blocked_count', 0)}",
             f"- focus bindings: {status.get('thread_binding_count', 0)}",
         ]
+        if gateway_session_waiting_for:
+            lines.append(f"- waiting_for: {gateway_session_waiting_for.upper()}")
         last_error = str(status.get("last_error", "") or "").strip()
         if last_error:
             lines.append(f"- last_error: {last_error}")
