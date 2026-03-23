@@ -37,7 +37,7 @@ def test_docker_setup_waits_for_gateway_health_and_prints_logs_on_timeout() -> N
     assert 'docker_wait_timeout="${CLAWLITE_DOCKER_WAIT_TIMEOUT:-120}"' in script
     assert "wait_for_gateway_health" in script
     assert "docker inspect --format" in script
-    assert "docker compose \"${profile_args[@]}\" logs --tail 50 clawlite-gateway" in script
+    assert 'docker compose "${compose_args[@]}" "${profile_args[@]}" logs --tail 50 clawlite-gateway' in script
 
 
 def test_release_preflight_supports_optional_docker_probe_flag() -> None:
@@ -46,3 +46,21 @@ def test_release_preflight_supports_optional_docker_probe_flag() -> None:
     assert "DOCKER_PREFLIGHT=0" in script
     assert "--docker" in script
     assert 'set -- "$@" --docker' in script
+
+
+def test_docker_setup_supports_optional_compose_env_file() -> None:
+    script = (REPO_ROOT / "scripts" / "docker_setup.sh").read_text(encoding="utf-8")
+
+    assert "CLAWLITE_DOCKER_ENV_FILE" in script
+    assert "--env-file" in script
+    assert "Docker env file not found" in script
+    assert "docker_cli_status_cmd" in script
+    assert "printf '%q' \"$docker_env_file\"" in script
+
+
+def test_docker_compose_env_example_documents_common_overrides() -> None:
+    env_example = (REPO_ROOT / "docker-compose.env.example").read_text(encoding="utf-8")
+
+    assert "CLAWLITE_UID=1000" in env_example
+    assert "CLAWLITE_BUS_BACKEND=inprocess" in env_example
+    assert "Do not commit real tokens" in env_example

@@ -2104,9 +2104,57 @@ def test_docker_preflight_probe_reports_not_running_stack_as_ok(
     assert payload["ok"] is True
     assert payload["repo_root_source"] == "cwd"
     assert payload["compose_config"]["ok"] is True
+    assert payload["env_file"]["configured"] is False
     assert payload["stack"]["detected"] is False
     assert payload["gateway"]["detected"] is False
     assert payload["gateway"]["status"] == "not_running"
+
+
+def test_docker_preflight_probe_uses_configured_env_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    env_file = tmp_path / ".env.docker"
+    env_file.write_text("CLAWLITE_BUS_BACKEND=redis\n", encoding="utf-8")
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAWLITE_DOCKER_ENV_FILE", env_file.name)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        compose_prefix = ["/usr/bin/docker", "compose", "--env-file", str(env_file.resolve())]
+        if command == [*compose_prefix, "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command == [*compose_prefix, "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command == [*compose_prefix, "ps", "--format", "json"]:
+            return subprocess.CompletedProcess(command, 0, stdout="[]\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is True
+    assert payload["env_file"]["configured"] is True
+    assert payload["env_file"]["ok"] is True
+    assert payload["env_file"]["path"] == str(env_file.resolve())
+
+
+def test_docker_preflight_probe_fails_when_env_file_is_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAWLITE_DOCKER_ENV_FILE", "missing.env")
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is False
+    assert payload["error"] == "docker_env_file_missing"
+    assert payload["env_file"]["configured"] is True
+    assert payload["env_file"]["ok"] is False
+    assert payload["env_file"]["path"] == "missing.env"
 
 
 def test_docker_preflight_probe_surfaces_unhealthy_gateway(

@@ -950,6 +950,35 @@ def _docker_service_summary(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _docker_env_file_details(repo_root: Path) -> dict[str, Any]:
+    raw = str(os.getenv("CLAWLITE_DOCKER_ENV_FILE", "") or "").strip()
+    payload: dict[str, Any] = {
+        "configured": bool(raw),
+        "ok": True,
+        "path": "",
+        "error": "",
+    }
+    if not raw:
+        return payload
+
+    raw_path = Path(raw)
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        repo_candidate = repo_root / raw_path
+        if repo_candidate not in candidates:
+            candidates.append(repo_candidate)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            payload["path"] = str(candidate.resolve())
+            return payload
+
+    payload["ok"] = False
+    payload["path"] = raw
+    payload["error"] = "docker_env_file_missing"
+    return payload
+
+
 def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
     package_root = Path(__file__).resolve().parents[2]
     roots: list[Path] = []
@@ -974,6 +1003,7 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
         "repo_root": str(repo_root),
         "repo_root_source": repo_root_source,
         "compose_file": str(compose_file),
+        "env_file": {"configured": False, "ok": True, "path": "", "error": ""},
         "docker_available": False,
         "compose_version": {"ok": False, "exit_code": 0, "detail": ""},
         "compose_config": {"ok": False, "exit_code": 0, "detail": ""},
@@ -1002,6 +1032,15 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
         payload["error"] = "docker_compose_missing"
         return payload
 
+    env_file = _docker_env_file_details(repo_root)
+    payload["env_file"] = env_file
+    if env_file.get("configured") and not env_file.get("ok"):
+        payload["error"] = "docker_env_file_missing"
+        return payload
+    compose_args: list[str] = []
+    if env_file.get("configured"):
+        compose_args = ["--env-file", str(env_file.get("path") or "")]
+
     docker_bin = shutil.which("docker")
     if not docker_bin:
         payload["error"] = "docker_missing"
@@ -1010,7 +1049,7 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
 
     try:
         version = subprocess.run(
-            [docker_bin, "compose", "version"],
+            [docker_bin, "compose", *compose_args, "version"],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -1033,7 +1072,7 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
 
     try:
         compose = subprocess.run(
-            [docker_bin, "compose", "config"],
+            [docker_bin, "compose", *compose_args, "config"],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -1056,7 +1095,7 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
 
     try:
         ps = subprocess.run(
-            [docker_bin, "compose", "ps", "--format", "json"],
+            [docker_bin, "compose", *compose_args, "ps", "--format", "json"],
             cwd=repo_root,
             capture_output=True,
             text=True,

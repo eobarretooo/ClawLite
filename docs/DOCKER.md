@@ -16,10 +16,18 @@ Recommended:
 bash scripts/docker_setup.sh
 ```
 
+If you want Docker-specific overrides in a dedicated env file instead of ad-hoc shell exports, start from the example shipped in-tree:
+
+```bash
+cp docker-compose.env.example .env.docker
+CLAWLITE_DOCKER_ENV_FILE=.env.docker bash scripts/docker_setup.sh
+```
+
 The helper validates Compose, builds the image, runs `configure --flow quickstart` if no local config exists yet, starts the gateway, and now waits for the compose healthcheck to become healthy before declaring success. It also exports `CLAWLITE_UID` / `CLAWLITE_GID` from your host user so the container runs rootless without leaving root-owned files behind in `~/.clawlite`.
 
 Optional helper toggles:
 
+- `CLAWLITE_DOCKER_ENV_FILE=/path/to/env` — use a dedicated Compose env file for Docker overrides/secrets
 - `CLAWLITE_DOCKER_REDIS=1` — enable the Redis profile during setup
 - `CLAWLITE_DOCKER_BROWSER=1` — build the browser-enabled image variant
 - `CLAWLITE_DOCKER_SKIP_BUILD=1` — skip image build
@@ -58,7 +66,7 @@ For an explicit CLI-side deployment check without starting a new container, use:
 clawlite validate preflight --docker
 ```
 
-That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout, summarizes the detected runtime stack, and fails closed when the stack is present without a healthy `clawlite-gateway` or when runtime dependencies such as `redis` are running but unhealthy.
+That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout, summarizes the detected runtime stack, and fails closed when the stack is present without a healthy `clawlite-gateway` or when runtime dependencies such as `redis` are running but unhealthy. If `CLAWLITE_DOCKER_ENV_FILE` is set, the probe uses that same env file for Compose resolution and fails closed when the configured file does not exist.
 
 The official image now also carries its own `HEALTHCHECK` logic for the gateway runtime: it first detects whether PID 1 is running `clawlite gateway`, and only then probes `http://127.0.0.1:8787/health`. That keeps non-gateway uses of the image from being marked unhealthy by default, while the compose-side `clawlite-cli` sidecar still disables the inherited healthcheck explicitly because it is not meant to run the gateway server.
 
@@ -138,6 +146,7 @@ What this Docker path covers now:
 - local build + compose startup
 - rootless runtime under `/home/clawlite`
 - persisted config/state under `~/.clawlite`
+- dedicated `CLAWLITE_DOCKER_ENV_FILE` support for Compose-side overrides/secrets
 - gateway healthcheck via `/health`
 - image-level `HEALTHCHECK` logic that only activates for the gateway runtime, with the CLI sidecar opting out explicitly
 - setup helper waits for the gateway healthcheck and prints recent logs on timeout
