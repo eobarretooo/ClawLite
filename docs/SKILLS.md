@@ -62,6 +62,8 @@ clawlite skills show cron
 clawlite skills doctor
 clawlite skills doctor --status missing_requirements --source builtin
 clawlite skills doctor --query github
+clawlite skills refresh
+clawlite skills refresh --no-force
 clawlite skills config github --api-key ghp_example_token --env GH_HOST=github.example.com --enable
 clawlite skills search "discord"
 clawlite skills install jira-helper
@@ -80,7 +82,7 @@ clawlite skills remove jira-helper
 `skills config <name>` is the direct config path for `skills.entries.<skillKey>` and can either inspect the current entry or update `apiKey`, `env`, and `enabled` for the active base/profile config without editing JSON or YAML by hand.
 `skills managed` shows only the marketplace-local skills currently discovered under `~/.clawlite/marketplace/skills`, including the managed folder `slug`, resolved runtime `status`, description, and remediation hint when a managed skill is blocked or missing requirements. It also supports `--status` and `--query` for filtering to one lifecycle slice such as `ready`, `missing_requirements`, or `jira`, while still returning global `status_counts` for the full managed inventory.
 The packaged dashboard now also reuses that same diagnostics payload in the Knowledge tab, surfacing compact cards for availability, runnable coverage, always-on blockers, missing requirements, contract issues, and watcher health without falling back to the raw JSON preview first.
-That same dashboard card now also exposes the first blocked skills with remediation hints and a dedicated `Refresh skills watcher` control that reuses the existing supervisor recovery path for `skills_watcher`.
+That same dashboard card now also exposes the first blocked skills with remediation hints plus a dedicated `Refresh skills inventory` control backed by the explicit runtime route `POST /v1/control/skills/refresh`. The same first-class refresh path is also available from CLI via `clawlite skills refresh`.
 
 Managed installs use the marketplace root: `~/.clawlite/marketplace/skills`.
 `skills update <name>` resolves either the managed folder slug or the discovered skill name before calling `clawhub update <slug>`. Successful `install`, `update`, and `sync` responses now echo the resolved local marketplace state (`managed_count`, `status_counts`, and resolved rows) so operators can see post-action readiness immediately. `skills remove` also returns the removed row plus the remaining managed inventory summary.

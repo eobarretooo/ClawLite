@@ -310,6 +310,10 @@ class MemorySuggestRefreshRequest(BaseModel):
     noop: bool = False
 
 
+class SkillsRefreshRequest(BaseModel):
+    force: bool = True
+
+
 class MemorySnapshotCreateRequest(BaseModel):
     tag: str = ""
 
@@ -3783,6 +3787,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         request: Request, payload: MemorySuggestRefreshRequest | None = None
     ) -> dict[str, Any]:
         return await control_handlers.memory_suggest_refresh(request, payload or MemorySuggestRefreshRequest())
+
+    @app.post("/v1/control/skills/refresh")
+    async def skills_refresh(
+        request: Request, payload: SkillsRefreshRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_refresh(request, payload or SkillsRefreshRequest())
+
+    @app.post("/api/skills/refresh")
+    async def api_skills_refresh(
+        request: Request, payload: SkillsRefreshRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_refresh(request, payload or SkillsRefreshRequest())
 
     @app.post("/v1/control/memory/snapshot/create")
     async def memory_snapshot_create_route(

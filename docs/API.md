@@ -146,6 +146,49 @@ Example response:
 
 Alias compatível: `POST /api/memory/suggest/refresh`.
 
+## `POST /v1/control/skills/refresh`
+
+Refreshes live runtime skill discovery and returns the same summary blocks used by the dashboard Knowledge tab.
+
+Example request:
+
+```json
+{
+  "force": true
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "refresh": {
+      "refreshed": true,
+      "debounced": false
+    },
+    "skills": {
+      "available": 12,
+      "runnable": 9
+    },
+    "watcher": {
+      "task_state": "running",
+      "last_error": ""
+    },
+    "contract_issues": {
+      "count": 0
+    },
+    "missing_requirements": {
+      "count": 2
+    }
+  }
+}
+```
+
+Alias compatível: `POST /api/skills/refresh`.
+
 ## `POST /v1/control/memory/snapshot/create`
 
 Creates a new memory snapshot version from the live runtime state.

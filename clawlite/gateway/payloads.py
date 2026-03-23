@@ -73,6 +73,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
             "telegram_offset_sync": "/v1/control/channels/telegram/offset/sync",
             "telegram_offset_reset": "/v1/control/channels/telegram/offset/reset",
             "discord_refresh": "/v1/control/channels/discord/refresh",
+            "skills_refresh": "/v1/control/skills/refresh",
             "memory_suggest_refresh": "/v1/control/memory/suggest/refresh",
             "memory_snapshot_create": "/v1/control/memory/snapshot/create",
             "memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback",

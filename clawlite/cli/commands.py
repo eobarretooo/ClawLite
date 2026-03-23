@@ -42,6 +42,7 @@ from clawlite.cli.ops import pairing_reject
 from clawlite.cli.ops import pairing_revoke
 from clawlite.cli.ops import discord_refresh
 from clawlite.cli.ops import discord_status
+from clawlite.cli.ops import skills_refresh
 from clawlite.cli.ops import telegram_offset_commit
 from clawlite.cli.ops import telegram_offset_reset
 from clawlite.cli.ops import telegram_offset_sync
@@ -1541,6 +1542,19 @@ def cmd_skills_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skills_refresh(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    payload = skills_refresh(
+        cfg,
+        force=bool(args.force),
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
+    )
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
 def _skills_doctor_status(row: dict[str, Any]) -> str:
     if not bool(row.get("enabled", True)):
         return "disabled"
@@ -2610,6 +2624,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_skills_check = skills_sub.add_parser("check", help="Emit aggregated deterministic skills diagnostics")
     p_skills_check.set_defaults(handler=cmd_skills_check)
+
+    p_skills_refresh = skills_sub.add_parser("refresh", help="Trigger runtime skill discovery refresh through the gateway")
+    p_skills_refresh.add_argument("--no-force", dest="force", action="store_false", help="Let the runtime refresh path respect debounce instead of forcing discovery")
+    p_skills_refresh.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_skills_refresh.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_skills_refresh.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_skills_refresh.set_defaults(handler=cmd_skills_refresh, force=True)
 
     p_skills_doctor = skills_sub.add_parser("doctor", help="Emit actionable remediation hints for skill availability issues")
     p_skills_doctor.add_argument("--all", action="store_true", help="Include ready and disabled skills in the report")

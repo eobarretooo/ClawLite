@@ -168,6 +168,20 @@ class GatewayControlHandlers:
         }
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
+    async def skills_refresh(self, request: Request, payload: Any) -> dict[str, Any]:
+        self._check_control(request)
+        refresh = self.runtime.skills_loader.refresh(force=bool(payload.force))
+        diagnostics = self.runtime.skills_loader.diagnostics_report()
+        summary = {
+            "ok": True,
+            "refresh": refresh,
+            "skills": dict(diagnostics.get("summary", {}) or {}),
+            "watcher": dict(diagnostics.get("watcher", {}) or {}),
+            "contract_issues": dict(diagnostics.get("contract_issues", {}) or {}),
+            "missing_requirements": dict(diagnostics.get("missing_requirements", {}) or {}),
+        }
+        return {"ok": True, "summary": summary}
+
     async def memory_snapshot_create(self, request: Request, payload: Any) -> dict[str, Any]:
         self._check_control(request)
         summary = self.memory_snapshot_create_fn(self.runtime.config, tag=str(payload.tag or ""))

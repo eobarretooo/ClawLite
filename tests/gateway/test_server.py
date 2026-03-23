@@ -3012,7 +3012,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Next Steps" in body
         assert "Control-Plane Correlation" in body
         assert 'id="skills-grid"' in body
-        assert 'id="refresh-skills-watcher"' in body
+        assert 'id="refresh-skills-inventory"' in body
         assert 'id="provider-grid"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3040,6 +3040,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_offset_sync": "/v1/control/channels/telegram/offset/sync"' in body
         assert '"telegram_offset_reset": "/v1/control/channels/telegram/offset/reset"' in body
         assert '"discord_refresh": "/v1/control/channels/discord/refresh"' in body
+        assert '"skills_refresh": "/v1/control/skills/refresh"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
@@ -3086,9 +3087,10 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderControlPlaneCorrelationBoard" in js.text
     assert "renderHttpCorrelationBoard" in js.text
     assert "renderSkillsBoard" in js.text
-    assert "triggerSkillsWatcherRefresh" in js.text
+    assert "triggerSkillsRefresh" in js.text
+    assert 'paths.skills_refresh || "/v1/control/skills/refresh"' in js.text
     assert "missingRequirements.os" in js.text
-    assert "Skills watcher refresh finished" in js.text
+    assert "Skills refresh finished" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
@@ -7196,6 +7198,47 @@ def test_gateway_memory_suggest_refresh_endpoint_returns_snapshot(tmp_path: Path
     assert payload["ok"] is True
     assert payload["summary"]["ok"] is True
     assert "count" in payload["summary"]
+
+
+def test_gateway_skills_refresh_endpoint_returns_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/skills/refresh", json={"force": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert "refresh" in payload["summary"]
+    assert "skills" in payload["summary"]
+    assert "watcher" in payload["summary"]
+
+
+def test_gateway_api_skills_refresh_alias_returns_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/api/skills/refresh", json={"force": False})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["refresh"]["refreshed"] in {True, False}
+    assert payload["summary"]["watcher"] is not None
 
 
 def test_gateway_memory_snapshot_create_endpoint_returns_version(tmp_path: Path) -> None:

@@ -404,6 +404,34 @@ def telegram_refresh(
     return payload
 
 
+def skills_refresh(
+    config: AppConfig,
+    *,
+    force: bool = True,
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="POST",
+        endpoint="/v1/control/skills/refresh",
+        json_body={"force": bool(force)},
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict) and bool(body.get("ok", False)):
+        payload["ok"] = True
+        payload["summary"] = body.get("summary", {})
+        return payload
+    detail = body.get("detail", body.get("error", "skills_refresh_failed")) if isinstance(body, dict) else str(body or "skills_refresh_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
 def telegram_offset_commit(
     config: AppConfig,
     *,

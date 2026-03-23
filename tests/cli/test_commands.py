@@ -4911,6 +4911,139 @@ def test_cli_autonomy_wake_uses_gateway_control(
     )
 
 
+def test_cli_skills_refresh_uses_gateway_control(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {
+                    "host": "127.0.0.1",
+                    "port": 8787,
+                    "auth": {"token": "skills-token"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, str, object]] = []
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.is_success = True
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "summary": {
+                    "ok": True,
+                    "refresh": {"refreshed": True, "debounced": False},
+                    "skills": {"available": 12, "runnable": 9},
+                    "watcher": {"task_state": "running", "last_error": ""},
+                },
+            }
+
+    class _FakeClient:
+        def __init__(self, *, timeout, headers):
+            del timeout, headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None):
+            calls.append(("POST", url, json))
+            return _FakeResponse()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _FakeClient)
+
+    rc = main(["--config", str(config_path), "skills", "refresh"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["summary"]["refresh"]["refreshed"] is True
+    assert payload["summary"]["skills"]["available"] == 12
+    assert calls[0] == (
+        "POST",
+        "http://127.0.0.1:8787/v1/control/skills/refresh",
+        {"force": True},
+    )
+
+
+def test_cli_skills_refresh_no_force_uses_gateway_control(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {
+                    "host": "127.0.0.1",
+                    "port": 8787,
+                    "auth": {"token": "skills-token"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, str, object]] = []
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.is_success = True
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "summary": {
+                    "ok": True,
+                    "refresh": {"refreshed": False, "debounced": True},
+                    "skills": {"available": 12, "runnable": 9},
+                    "watcher": {"task_state": "running", "last_error": ""},
+                },
+            }
+
+    class _FakeClient:
+        def __init__(self, *, timeout, headers):
+            del timeout, headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None):
+            calls.append(("POST", url, json))
+            return _FakeResponse()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _FakeClient)
+
+    rc = main(["--config", str(config_path), "skills", "refresh", "--no-force"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["summary"]["refresh"]["debounced"] is True
+    assert calls[0] == (
+        "POST",
+        "http://127.0.0.1:8787/v1/control/skills/refresh",
+        {"force": False},
+    )
+
+
 def test_cli_provider_set_auth_and_heartbeat_do_not_import_gateway_runtime(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:

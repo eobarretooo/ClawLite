@@ -2359,29 +2359,29 @@ async function triggerProviderRecovery() {
   }
 }
 
-async function triggerSkillsWatcherRefresh() {
-  const button = byId("refresh-skills-watcher");
+async function triggerSkillsRefresh() {
+  const button = byId("refresh-skills-inventory");
   if (button) {
     button.disabled = true;
   }
   try {
-    const payload = await fetchJson(paths.supervisor_recover || "/v1/control/supervisor/recover", {
+    const payload = await fetchJson(paths.skills_refresh || "/v1/control/skills/refresh", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ component: "skills_watcher", force: true }),
+      body: JSON.stringify({ force: true }),
     });
     const summary = payload.summary || {};
     recordEvent(
-      summary.failed ? "warn" : "ok",
-      "Skills watcher refresh finished",
-      `${numeric(summary.recovered, 0)} recovered | ${numeric(summary.failed, 0)} failed | ${numeric(summary.skipped_budget, 0)} budget skips`,
-      appendRequestIdMeta("skills_watcher", payload),
+      Boolean((summary.watcher || {}).last_error) ? "warn" : "ok",
+      "Skills refresh finished",
+      `${summary.refresh?.refreshed ? "refreshed" : "unchanged"} | ${numeric((summary.skills || {}).available, 0)} available | ${numeric((summary.skills || {}).runnable, 0)} runnable`,
+      appendRequestIdMeta("skills", payload),
     );
-    await refreshAll("skills-watcher-refresh");
+    await refreshAll("skills-refresh");
   } catch (error) {
-    recordEvent("danger", "Skills watcher refresh failed", error.message, appendRequestIdMeta("skills_watcher", error));
+    recordEvent("danger", "Skills refresh failed", error.message, appendRequestIdMeta("skills", error));
   } finally {
     if (button) {
       button.disabled = false;
@@ -2903,8 +2903,8 @@ function bindEvents() {
   byId("recover-provider").addEventListener("click", () => {
     void triggerProviderRecovery();
   });
-  byId("refresh-skills-watcher").addEventListener("click", () => {
-    void triggerSkillsWatcherRefresh();
+  byId("refresh-skills-inventory").addEventListener("click", () => {
+    void triggerSkillsRefresh();
   });
   byId("recover-supervisor-component").addEventListener("click", () => {
     void triggerSupervisorRecovery();
