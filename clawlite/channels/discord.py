@@ -3009,7 +3009,8 @@ class DiscordChannel(BaseChannel):
         2. PUT {upload_url} with audio bytes
         3. POST /channels/{id}/messages with flag 8192 + attachment metadata
         """
-        if not channel_id:
+        clean_channel = str(channel_id or "").strip()
+        if not clean_channel:
             raise ValueError("channel_id is required")
         if not isinstance(audio_bytes, bytes) or not audio_bytes:
             raise ValueError("audio_bytes must be non-empty")
@@ -3020,7 +3021,7 @@ class DiscordChannel(BaseChannel):
             raise ValueError("duration_secs must be positive")
         normalized_silent = self._normalize_optional_bool(silent)
         resolved_silent = False if normalized_silent is None else normalized_silent
-        clean_channel = str(channel_id).strip()
+        clean_reply_to_message_id = str(reply_to_message_id or "").strip() or None
         resolved_waveform = self._normalize_voice_waveform(waveform) or await self._generate_waveform_from_audio(
             audio_bytes
         )
@@ -3060,9 +3061,9 @@ class DiscordChannel(BaseChannel):
                 "waveform": resolved_waveform,
             }],
         }
-        if reply_to_message_id:
+        if clean_reply_to_message_id:
             msg_body["message_reference"] = {
-                "message_id": reply_to_message_id,
+                "message_id": clean_reply_to_message_id,
                 "fail_if_not_exists": False,
             }
 
