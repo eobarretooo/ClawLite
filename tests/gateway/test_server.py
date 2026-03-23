@@ -3080,8 +3080,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerInboundReplay" in js.text
     assert "triggerTelegramRefresh" in js.text
     assert "syncGatewayWsEvents" in js.text
+    assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
     assert "Gateway WebSocket observed" in js.text
+    assert "Gateway HTTP error observed" in js.text
+    assert 'lastObservedGatewayHttpErrorAt' in js.text
     assert 'response.headers.get("X-Request-ID")' in js.text
     assert "appendRequestIdMeta" in js.text
     assert "requestIdFromValue" in js.text

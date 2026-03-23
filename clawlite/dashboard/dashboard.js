@@ -126,6 +126,7 @@ const state = {
   wsPreview: "Waiting for live websocket frames...",
   lastObservedGatewayWsOpenedAt: "",
   lastObservedGatewayWsErrorAt: "",
+  lastObservedGatewayHttpErrorAt: "",
   dashboardClientId: ensureDashboardClientId(),
   operatorId: ensureDashboardOperatorId(),
   sessionId: "",
@@ -403,6 +404,34 @@ function syncGatewayWsEvents() {
     );
     state.lastObservedGatewayWsErrorAt = lastErrorAt;
   }
+}
+
+function syncGatewayHttpEvents() {
+  const http = ((state.diagnostics || {}).http) || {};
+  const lastErrorAt = String(http.last_error_at || "").trim();
+  if (!lastErrorAt || lastErrorAt === state.lastObservedGatewayHttpErrorAt) {
+    return;
+  }
+  const method = String(http.last_error_method || "HTTP").trim() || "HTTP";
+  const path = String(http.last_error_path || "/").trim() || "/";
+  const status = Number(http.last_error_status);
+  const code = String(http.last_error_code || "http_error").trim() || "http_error";
+  const message = String(http.last_error_message || "").trim();
+  const detailParts = [`${method} ${path}`, Number.isFinite(status) ? `status ${status}` : code];
+  if (code && (!Number.isFinite(status) || code !== `http_${status}`)) {
+    detailParts.push(code);
+  }
+  if (message && message !== code) {
+    detailParts.push(message);
+  }
+  const level = Number.isFinite(status) && status >= 500 ? "danger" : "warn";
+  recordEvent(
+    level,
+    "Gateway HTTP error observed",
+    detailParts.join(" | "),
+    appendRequestIdMeta("gateway", { request_id: http.last_error_request_id }),
+  );
+  state.lastObservedGatewayHttpErrorAt = lastErrorAt;
 }
 
 function appendChatEntry(role, text, meta = "") {
@@ -1579,6 +1608,7 @@ async function refreshDashboardState() {
 
 async function refreshDiagnostics() {
   state.diagnostics = await fetchJson(paths.diagnostics || "/api/diagnostics");
+  syncGatewayHttpEvents();
 }
 
 async function refreshTools() {
