@@ -3452,18 +3452,26 @@ class DiscordChannel(BaseChannel):
     def operator_status(self) -> dict[str, Any]:
         gateway_task_state = self._task_state(self._gateway_task)
         heartbeat_task_state = self._task_state(self._heartbeat_task)
+        gateway_session_task_state = self._task_state(self._gateway_session_task)
         hints: list[str] = []
         if self.on_message is not None and gateway_task_state != "running":
             hints.append("Discord gateway listener is not running; refresh transport to reconnect the gateway loop.")
         if self._last_error:
             hints.append("Discord recorded a recent transport or HTTP error; inspect the error and consider refreshing transport.")
-        if not self._session_id and gateway_task_state == "running":
+        if self._gateway_session_waiting_for and gateway_task_state == "running":
+            hints.append(
+                "Discord gateway is waiting for "
+                f"{self._gateway_session_waiting_for.upper()} after HELLO; stalled handshakes will reconnect automatically."
+            )
+        elif not self._session_id and gateway_task_state == "running":
             hints.append("Discord gateway is running without an active session id yet; wait for READY/RESUMED or refresh transport.")
         return {
             "running": bool(self._running),
             "connected": self._ws is not None,
             "gateway_task_state": gateway_task_state,
             "heartbeat_task_state": heartbeat_task_state,
+            "gateway_session_task_state": gateway_session_task_state,
+            "gateway_session_waiting_for": self._gateway_session_waiting_for,
             "session_id": self._session_id,
             "resume_url": self._resume_url,
             "sequence": self._sequence,

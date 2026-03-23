@@ -949,9 +949,39 @@ def test_discord_operator_status_reports_gateway_state() -> None:
     assert payload["resume_url"] == "wss://resume.example"
     assert payload["sequence"] == 42
     assert payload["bot_user_id"] == "bot-1"
+    assert payload["gateway_session_task_state"] == "stopped"
+    assert payload["gateway_session_waiting_for"] == ""
     assert payload["presence_status"] == "idle"
     assert payload["presence_activity"] == "Focus time"
     assert payload["presence_activity_type"] == 4
+
+
+def test_discord_operator_status_reports_pending_gateway_session_watchdog() -> None:
+    async def _scenario() -> None:
+        channel = DiscordChannel(config={"token": "bot-token"}, on_message=AsyncMock())
+        channel._running = True
+        channel._gateway_task = asyncio.create_task(asyncio.sleep(3600))
+        channel._gateway_session_task = asyncio.create_task(asyncio.sleep(3600))
+        channel._gateway_session_waiting_for = "resumed"
+        status = channel.operator_status()
+
+        assert status["gateway_task_state"] == "running"
+        assert status["gateway_session_task_state"] == "running"
+        assert status["gateway_session_waiting_for"] == "resumed"
+        assert any("RESUMED" in hint for hint in status["hints"])
+
+        channel._gateway_task.cancel()
+        channel._gateway_session_task.cancel()
+        try:
+            await channel._gateway_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await channel._gateway_session_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_scenario())
 
 
 def test_discord_identify_includes_presence_payload_when_configured() -> None:

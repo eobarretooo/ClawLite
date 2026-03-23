@@ -206,7 +206,9 @@ Example response:
     "gateway_restarted": true,
     "status": {
       "connected": false,
-      "gateway_task_state": "running"
+      "gateway_task_state": "running",
+      "gateway_session_task_state": "running",
+      "gateway_session_waiting_for": "ready"
     }
   }
 }
