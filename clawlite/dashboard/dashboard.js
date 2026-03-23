@@ -1418,6 +1418,13 @@ function renderSkillsBoard() {
   const executionKinds = skills.execution_kinds || {};
   const missingRequirements = skills.missing_requirements || {};
   const contractIssues = skills.contract_issues || {};
+  const skillRows = Array.isArray(skills.skills) ? skills.skills : [];
+  const blockedSkills = skillRows.filter((row) => {
+    if (!row || row.enabled === false) {
+      return false;
+    }
+    return row.available === false || (Array.isArray(row.contract_issues) && row.contract_issues.length > 0);
+  });
   const topContractIssue = Object.entries(contractIssues.by_key || {}).sort((left, right) => numeric(right[1], 0) - numeric(left[1], 0))[0];
 
   appendSummaryCard(grid, {
@@ -1457,6 +1464,22 @@ function renderSkillsBoard() {
       ? `error ${String(watcher.last_error)}`
       : `interval ${formatDuration(watcher.interval_s || 0)} | pending ${Boolean(watcher.pending)} | debounced ${Boolean(watcher.debounced)}`,
   });
+
+  blockedSkills.slice(0, 3).forEach((row) => {
+    const missing = Array.isArray(row.missing) ? row.missing : [];
+    const issues = Array.isArray(row.contract_issues) ? row.contract_issues : [];
+    const requirements = Array.isArray(row.runtime_requirements) ? row.runtime_requirements : [];
+    appendSummaryCard(grid, {
+      title: String(row.name || row.skill_key || "blocked skill"),
+      body: row.available === false ? `blocked | ${String(row.execution_kind || "unknown")}` : "contract issue",
+      detail: [
+        missing[0],
+        issues[0],
+        requirements[0],
+        row.fallback_hint || "",
+      ].filter(Boolean).join(" | ") || "Inspect this skill through skills doctor for remediation details.",
+    });
+  });
 }
 
 function renderKnowledge() {
@@ -1465,6 +1488,7 @@ function renderKnowledge() {
   const onboarding = payload.onboarding || {};
   const bootstrap = payload.bootstrap || {};
   const skills = payload.skills || {};
+  const skillRows = Array.isArray(skills.skills) ? skills.skills : [];
   const memory = payload.memory || {};
   const memoryMonitor = memory.monitor || {};
 
@@ -1538,14 +1562,15 @@ function renderKnowledge() {
   const skillsSummary = skills.summary || {};
   const skillsWatcher = skills.watcher || {};
   const skillsContract = skills.contract_issues || {};
-  const skillsBlocked = numeric(skillsSummary.unavailable, 0) > 0 || numeric(skillsSummary.always_on_unavailable, 0) > 0;
+  const enabledUnavailableCount = skillRows.filter((row) => row && row.enabled !== false && row.available === false).length;
+  const skillsBlocked = enabledUnavailableCount > 0 || numeric(skillsSummary.always_on_unavailable, 0) > 0;
   const skillsWatcherFailed = String(skillsWatcher.task_state || "") === "failed" || Boolean(skillsWatcher.last_error);
   const skillsContractBroken = numeric(skillsContract.total, 0) > 0;
   const skillsTone = skillsWatcherFailed ? "danger" : (skillsBlocked || skillsContractBroken ? "warn" : "ok");
   const skillsBadge = skillsWatcherFailed
     ? "watcher failed"
     : skillsBlocked
-      ? `${numeric(skillsSummary.unavailable, 0)} blocked`
+      ? `${enabledUnavailableCount} blocked`
       : `${numeric(skillsSummary.available, 0)} available`;
   setBadge("skills-status", skillsBadge, skillsTone);
   setBadge("memory-status", memoryMonitor.enabled ? "monitoring" : "disabled", memoryMonitor.enabled ? "ok" : "warn");
@@ -2334,6 +2359,36 @@ async function triggerProviderRecovery() {
   }
 }
 
+async function triggerSkillsWatcherRefresh() {
+  const button = byId("refresh-skills-watcher");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.supervisor_recover || "/v1/control/supervisor/recover", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ component: "skills_watcher", force: true }),
+    });
+    const summary = payload.summary || {};
+    recordEvent(
+      summary.failed ? "warn" : "ok",
+      "Skills watcher refresh finished",
+      `${numeric(summary.recovered, 0)} recovered | ${numeric(summary.failed, 0)} failed | ${numeric(summary.skipped_budget, 0)} budget skips`,
+      appendRequestIdMeta("skills_watcher", payload),
+    );
+    await refreshAll("skills-watcher-refresh");
+  } catch (error) {
+    recordEvent("danger", "Skills watcher refresh failed", error.message, appendRequestIdMeta("skills_watcher", error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerAutonomyWake() {
   const button = byId("trigger-autonomy-wake");
   if (button) {
@@ -2847,6 +2902,9 @@ function bindEvents() {
   });
   byId("recover-provider").addEventListener("click", () => {
     void triggerProviderRecovery();
+  });
+  byId("refresh-skills-watcher").addEventListener("click", () => {
+    void triggerSkillsWatcherRefresh();
   });
   byId("recover-supervisor-component").addEventListener("click", () => {
     void triggerSupervisorRecovery();
