@@ -38,6 +38,16 @@ class GatewayWebSocketHandlers:
     coalesce_profile: str = "compact"
 
     @staticmethod
+    def _log_request_id(value: str | int | None) -> str:
+        if isinstance(value, bool):
+            return "-"
+        if isinstance(value, (str, int)):
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+        return "-"
+
+    @staticmethod
     def _envelope_error(
         *,
         error: str,
@@ -247,7 +257,9 @@ class GatewayWebSocketHandlers:
         except RuntimeError as exc:
             status_code, detail = self.provider_error_payload_fn(exc)
             bind_event("gateway.ws", session=session_id, channel="ws").error(
-                "websocket request failed status={} detail={}",
+                "websocket request failed connection_id={} request_id={} status={} detail={}",
+                params.get("_connection_id", "-"),
+                self._log_request_id(request_id),
                 status_code,
                 detail,
             )
@@ -402,7 +414,9 @@ class GatewayWebSocketHandlers:
         except RuntimeError as exc:
             status_code, detail = self.provider_error_payload_fn(exc)
             bind_event("gateway.ws", session=session_id, channel="ws").error(
-                "websocket request failed status={} detail={}",
+                "websocket request failed connection_id={} request_id={} status={} detail={}",
+                params.get("_connection_id", "-"),
+                self._log_request_id(request_id),
                 status_code,
                 detail,
             )
@@ -444,7 +458,9 @@ class GatewayWebSocketHandlers:
                 }
             )
         bind_event("gateway.ws", session=session_id, channel="ws").debug(
-            "websocket streaming response sent model={}",
+            "websocket streaming response sent connection_id={} request_id={} model={}",
+            params.get("_connection_id", "-"),
+            self._log_request_id(request_id),
             last_model or "-",
         )
         return True
@@ -463,7 +479,7 @@ class GatewayWebSocketHandlers:
 
         async def _send_ws(payload: Any) -> None:
             await socket.send_json(payload)
-            await self.ws_telemetry.frame_outbound(payload=payload)
+            await self.ws_telemetry.frame_outbound(payload=payload, connection_id=connection_id)
 
         await _send_ws(
             {
@@ -589,7 +605,7 @@ class GatewayWebSocketHandlers:
                                 handled = await self._run_chat_stream_request(
                                     socket=socket,
                                     request_id=request_id,
-                                    params=params,
+                                    params={**params, "_connection_id": connection_id},
                                     send_ws_fn=_send_ws,
                                     allow_dashboard_session=allow_dashboard_session,
                                 )
@@ -604,7 +620,12 @@ class GatewayWebSocketHandlers:
                             if rate_limit_error is not None:
                                 await _send_ws(rate_limit_error)
                                 continue
-                            await _send_ws(await self._run_chat_request(request_id=request_id, params=params))
+                            await _send_ws(
+                                await self._run_chat_request(
+                                    request_id=request_id,
+                                    params={**params, "_connection_id": connection_id},
+                                )
+                            )
                             continue
 
                         await _send_ws(
@@ -656,7 +677,7 @@ class GatewayWebSocketHandlers:
                         handled = await self._run_chat_stream_request(
                             socket=socket,
                             request_id=request_id,
-                            params=payload,
+                            params={**payload, "_connection_id": connection_id},
                             send_ws_fn=_send_ws,
                             legacy_envelope=True,
                             allow_dashboard_session=allow_dashboard_session,
@@ -685,7 +706,9 @@ class GatewayWebSocketHandlers:
                     except RuntimeError as exc:
                         status_code, detail = self.provider_error_payload_fn(exc)
                         bind_event("gateway.ws", session=session_id, channel="ws").error(
-                            "websocket request failed status={} detail={}",
+                            "websocket request failed connection_id={} request_id={} status={} detail={}",
+                            connection_id,
+                            self._log_request_id(request_id),
                             status_code,
                             detail,
                         )
@@ -705,7 +728,9 @@ class GatewayWebSocketHandlers:
                         response_payload["request_id"] = request_id
                     await _send_ws(response_payload)
                     bind_event("gateway.ws", session=session_id, channel="ws").debug(
-                        "websocket response sent model={}",
+                        "websocket response sent connection_id={} request_id={} model={}",
+                        connection_id,
+                        self._log_request_id(request_id),
                         out.model,
                     )
                     continue
@@ -736,7 +761,9 @@ class GatewayWebSocketHandlers:
                 except RuntimeError as exc:
                     status_code, detail = self.provider_error_payload_fn(exc)
                     bind_event("gateway.ws", session=session_id, channel="ws").error(
-                        "websocket request failed status={} detail={}",
+                        "websocket request failed connection_id={} request_id={} status={} detail={}",
+                        connection_id,
+                        "-",
                         status_code,
                         detail,
                     )
@@ -745,7 +772,9 @@ class GatewayWebSocketHandlers:
                 self.finalize_bootstrap_for_user_turn_fn(session_id)
                 await _send_ws({"text": out.text, "model": out.model})
                 bind_event("gateway.ws", session=session_id, channel="ws").debug(
-                    "websocket response sent model={}",
+                    "websocket response sent connection_id={} request_id={} model={}",
+                    connection_id,
+                    "-",
                     out.model,
                 )
         except WebSocketDisconnect:

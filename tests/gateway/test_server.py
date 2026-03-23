@@ -5701,6 +5701,12 @@ def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Pat
         assert ws_payload["last_connection_closed_id"] == connection_id
         assert ws_payload["last_connection_closed_at"]
         assert ws_payload["last_request_id"] == "u1"
+        assert ws_payload["last_error_connection_id"] == connection_id
+        assert ws_payload["last_error_request_id"] == "u1"
+        assert ws_payload["last_error_at"]
+        assert ws_payload["last_error_code"] == "unsupported_method"
+        assert "unsupported req method" in ws_payload["last_error_message"]
+        assert ws_payload["last_error_status"] == 400
         assert ws_payload["by_path"]["/ws"] >= 1
         assert ws_payload["by_message_type_in"]["req"] >= 3
         assert ws_payload["by_message_type_out"]["event"] >= 1
@@ -5709,6 +5715,49 @@ def test_gateway_diagnostics_ws_telemetry_tracks_frames_and_errors(tmp_path: Pat
         assert ws_payload["req_methods"]["ping"] >= 1
         assert ws_payload["req_methods"]["unsupported.method"] >= 1
         assert ws_payload["error_codes"]["unsupported_method"] >= 1
+
+
+def test_gateway_ws_error_logs_include_connection_and_request_ids(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    async def _boom(*, session_id: str, user_text: str, channel=None, chat_id=None, runtime_metadata=None):
+        del session_id, user_text, channel, chat_id, runtime_metadata
+        raise RuntimeError("ws_boom")
+
+    app.state.runtime.engine.run = _boom
+
+    rows: list[str] = []
+    sink_id = logger.add(rows.append, format=logging_utils._text_format)
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/v1/ws") as socket:
+                challenge = _assert_connect_challenge(socket)
+                connection_id = str(challenge["params"]["connection_id"])
+                socket.send_json(
+                    {
+                        "type": "message",
+                        "session_id": "cli:ws-log",
+                        "text": "ping",
+                        "request_id": "req-log-1",
+                    }
+                )
+                payload = socket.receive_json()
+                assert payload["error"] == "Internal failure while processing the request."
+                assert payload["request_id"] == "req-log-1"
+    finally:
+        logger.remove(sink_id)
+
+    joined = "\n".join(rows)
+    assert "[gateway.ws]" in joined.lower()
+    assert f"connection_id={connection_id}" in joined
+    assert "request_id=req-log-1" in joined
+    assert "status=500" in joined
 
 
 def test_gateway_diagnostics_schema_and_toggle(tmp_path: Path) -> None:

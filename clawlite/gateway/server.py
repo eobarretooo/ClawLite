@@ -442,6 +442,12 @@ class WebSocketTelemetry:
     last_connection_closed_id: str = ""
     last_connection_closed_at: str = ""
     last_request_id: str = ""
+    last_error_connection_id: str = ""
+    last_error_request_id: str = ""
+    last_error_at: str = ""
+    last_error_code: str = ""
+    last_error_message: str = ""
+    last_error_status: int | None = None
     by_path: dict[str, int] = field(default_factory=dict)
     by_message_type_in: dict[str, int] = field(default_factory=dict)
     by_message_type_out: dict[str, int] = field(default_factory=dict)
@@ -490,6 +496,39 @@ class WebSocketTelemetry:
         return None
 
     @staticmethod
+    def _error_message(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        payload_type = str(payload.get("type", "") or "").strip().lower()
+        if payload_type == "res" and payload.get("ok") is False:
+            error = payload.get("error")
+            if isinstance(error, dict):
+                return str(error.get("message", "") or "").strip()
+            return str(payload.get("error", "") or "").strip()
+        if payload_type == "error" or ("error" in payload and not payload_type):
+            return str(payload.get("error", "") or "").strip()
+        return ""
+
+    @staticmethod
+    def _error_status(payload: Any) -> int | None:
+        if not isinstance(payload, dict):
+            return None
+        payload_type = str(payload.get("type", "") or "").strip().lower()
+        status_code: Any = None
+        if payload_type == "res" and payload.get("ok") is False:
+            error = payload.get("error")
+            if isinstance(error, dict):
+                status_code = error.get("status_code")
+        elif payload_type == "error" or ("error" in payload and not payload_type):
+            status_code = payload.get("status_code")
+        if status_code is None:
+            return None
+        try:
+            return int(status_code)
+        except Exception:
+            return None
+
+    @staticmethod
     def _utc_now_iso() -> str:
         return dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -498,7 +537,7 @@ class WebSocketTelemetry:
         if not isinstance(payload, dict):
             return ""
         payload_type = str(payload.get("type", "") or "").strip().lower()
-        if payload_type == "req":
+        if payload_type in {"req", "res"}:
             value = payload.get("id")
             if isinstance(value, (str, int)) and not isinstance(value, bool):
                 return str(value).strip()
@@ -540,14 +579,23 @@ class WebSocketTelemetry:
                 if method:
                     self.req_methods[method] = self.req_methods.get(method, 0) + 1
 
-    async def frame_outbound(self, *, payload: Any) -> None:
+    async def frame_outbound(self, *, payload: Any, connection_id: str = "") -> None:
         message_type = self._message_type(payload)
         error_code = self._error_code(payload)
+        error_message = self._error_message(payload)
+        error_status = self._error_status(payload)
+        request_id = self._request_id(payload)
         async with self.lock:
             self.frames_out += 1
             self.by_message_type_out[message_type] = self.by_message_type_out.get(message_type, 0) + 1
             if error_code:
                 self.error_codes[error_code] = self.error_codes.get(error_code, 0) + 1
+                self.last_error_connection_id = str(connection_id or "").strip()
+                self.last_error_request_id = request_id
+                self.last_error_at = self._utc_now_iso()
+                self.last_error_code = error_code
+                self.last_error_message = error_message
+                self.last_error_status = error_status
 
     async def snapshot(self) -> dict[str, Any]:
         async with self.lock:
@@ -563,6 +611,12 @@ class WebSocketTelemetry:
                 "last_connection_closed_id": self.last_connection_closed_id,
                 "last_connection_closed_at": self.last_connection_closed_at,
                 "last_request_id": self.last_request_id,
+                "last_error_connection_id": self.last_error_connection_id,
+                "last_error_request_id": self.last_error_request_id,
+                "last_error_at": self.last_error_at,
+                "last_error_code": self.last_error_code,
+                "last_error_message": self.last_error_message,
+                "last_error_status": self.last_error_status,
                 "by_path": dict(self.by_path),
                 "by_message_type_in": dict(self.by_message_type_in),
                 "by_message_type_out": dict(self.by_message_type_out),

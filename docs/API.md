@@ -1239,9 +1239,10 @@ Campos baseline de contrato:
   `connections_closed`, `active_connections`, `frames_in`, `frames_out`,
   `last_connection_id`, `last_connection_path`, `last_connection_opened_at`,
   `last_connection_closed_id`, `last_connection_closed_at`, `last_request_id`,
-  e mapas agregados como `by_path`, `by_message_type_in`, `by_message_type_out`,
-  `by_req_method`, `by_event_out`, `error_count_by_code`, `last_error_code`,
-  `last_error_message`, e `last_error_status`.
+  `last_error_connection_id`, `last_error_request_id`, `last_error_at`,
+  `last_error_code`, `last_error_message`, `last_error_status`, e mapas
+  agregados como `by_path`, `by_message_type_in`, `by_message_type_out`,
+  `req_methods` e `error_codes`.
 
 Alias compatível: `GET /api/diagnostics` (mesmo payload). When a gateway token is configured, the dashboard alias also accepts the derived dashboard-session credential; `GET /v1/diagnostics` itself stays on the raw gateway-token path when diagnostics auth is enabled.
 
