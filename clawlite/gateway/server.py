@@ -6,6 +6,7 @@ import hmac
 import json
 import math
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -165,6 +166,24 @@ LATEST_MEMORY_ROUTE_CACHE_TTL_S = 5.0
 LATEST_MEMORY_ROUTE_TAIL_BYTES = 32 * 1024
 _DASHBOARD_ASSET_ROOT = "/_clawlite"
 _DASHBOARD_BOOTSTRAP_TOKEN = "__CLAWLITE_DASHBOARD_BOOTSTRAP_JSON__"
+_REQUEST_ID_HEADER_NAME = "X-Request-ID"
+_MAX_REQUEST_ID_LEN = 128
+
+
+def _normalize_request_id(raw: Any) -> str:
+    value = str(raw or "").strip()
+    if not value or len(value) > _MAX_REQUEST_ID_LEN:
+        return f"req-{uuid.uuid4().hex}"
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    if any(char not in allowed for char in value):
+        return f"req-{uuid.uuid4().hex}"
+    return value
+
+
+def _request_id_from_request(request: Request) -> str:
+    state = getattr(request, "state", None)
+    raw = getattr(state, "request_id", "") if state is not None else ""
+    return _normalize_request_id(raw)
 
 def _normalize_reasoning_layer(layer: str) -> str:
     return _normalize_reasoning_layer_helper(layer)
@@ -2971,12 +2990,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def _http_telemetry_middleware(request: Request, call_next):
+        request_id = _normalize_request_id(request.headers.get(_REQUEST_ID_HEADER_NAME, ""))
+        request.state.request_id = request_id
         started_at = time.perf_counter()
         await http_telemetry.start(method=request.method, path=request.url.path)
         status_code = 500
         try:
             response = await call_next(request)
             status_code = int(getattr(response, "status_code", 500) or 500)
+            response.headers[_REQUEST_ID_HEADER_NAME] = request_id
             return response
         except HTTPException as exc:
             status_code = int(exc.status_code)
@@ -2989,13 +3011,44 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             await http_telemetry.finish(status_code=status_code, latency_ms=elapsed_ms)
 
     @app.exception_handler(HTTPException)
-    async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail
+        request_id = _request_id_from_request(request)
         if isinstance(detail, str):
-            payload: dict[str, Any] = {"error": detail, "status": exc.status_code, "code": detail}
+            payload: dict[str, Any] = {
+                "error": detail,
+                "status": exc.status_code,
+                "code": detail,
+                "request_id": request_id,
+            }
         else:
-            payload = {"error": "http_error", "status": exc.status_code, "code": "http_error", "detail": detail}
-        return JSONResponse(status_code=exc.status_code, content=payload)
+            payload = {
+                "error": "http_error",
+                "status": exc.status_code,
+                "code": "http_error",
+                "detail": detail,
+                "request_id": request_id,
+            }
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=payload,
+            headers={_REQUEST_ID_HEADER_NAME: request_id},
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, _: Exception) -> JSONResponse:
+        request_id = _request_id_from_request(request)
+        payload = {
+            "error": "internal_server_error",
+            "status": 500,
+            "code": "internal_server_error",
+            "request_id": request_id,
+        }
+        return JSONResponse(
+            status_code=500,
+            content=payload,
+            headers={_REQUEST_ID_HEADER_NAME: request_id},
+        )
 
     def _parse_failover_cooling_down(raw: str) -> str:
         parts: list[str] = []

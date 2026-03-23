@@ -574,12 +574,74 @@ def test_gateway_chat_endpoint(tmp_path: Path) -> None:
     with TestClient(app) as client:
         health = client.get("/health")
         assert health.status_code == 200
+        assert isinstance(health.headers.get("X-Request-ID", ""), str) and health.headers["X-Request-ID"]
         chat = client.post("/v1/chat", json={"session_id": "cli:1", "text": "ping"})
         assert chat.status_code == 200
+        assert isinstance(chat.headers.get("X-Request-ID", ""), str) and chat.headers["X-Request-ID"]
         assert chat.json()["text"] == "pong"
         alias = client.post("/api/message", json={"session_id": "cli:1", "text": "ping"})
         assert alias.status_code == 200
+        assert isinstance(alias.headers.get("X-Request-ID", ""), str) and alias.headers["X-Request-ID"]
         assert alias.json()["text"] == "pong"
+
+
+def test_gateway_http_request_id_preserves_safe_header(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.get("/health", headers={"X-Request-ID": "req-health-123"})
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "req-health-123"
+
+
+def test_gateway_http_request_id_replaces_invalid_header(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.get("/health", headers={"X-Request-ID": "bad request id"})
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] != "bad request id"
+    assert response.headers["X-Request-ID"].startswith("req-")
+
+
+def test_gateway_http_unhandled_error_includes_request_id(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    @app.get("/boom")
+    async def _boom() -> dict[str, object]:
+        raise RuntimeError("boom")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/boom", headers={"X-Request-ID": "req-boom-1"})
+
+    assert response.status_code == 500
+    assert response.headers["X-Request-ID"] == "req-boom-1"
+    assert response.json() == {
+        "error": "internal_server_error",
+        "status": 500,
+        "code": "internal_server_error",
+        "request_id": "req-boom-1",
+    }
 
 
 def test_gateway_chat_endpoint_forwards_optional_context(tmp_path: Path) -> None:
@@ -6777,12 +6839,16 @@ def test_gateway_diagnostics_http_telemetry_tracks_success_and_errors(tmp_path: 
     with TestClient(app) as client:
         unauthorized = client.get("/v1/status")
         assert unauthorized.status_code == 401
+        unauthorized_request_id = unauthorized.headers["X-Request-ID"]
+        assert unauthorized.json()["request_id"] == unauthorized_request_id
 
         authorized_status = client.get("/v1/status", headers={"Authorization": "Bearer diag-token"})
         assert authorized_status.status_code == 200
+        assert isinstance(authorized_status.headers.get("X-Request-ID", ""), str) and authorized_status.headers["X-Request-ID"]
 
         diagnostics = client.get("/v1/diagnostics", headers={"Authorization": "Bearer diag-token"})
         assert diagnostics.status_code == 200
+        assert isinstance(diagnostics.headers.get("X-Request-ID", ""), str) and diagnostics.headers["X-Request-ID"]
         http_payload = diagnostics.json()["http"]
 
         assert http_payload["total_requests"] >= 3

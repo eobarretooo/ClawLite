@@ -70,7 +70,14 @@ class GatewayRequestHandlers:
         self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         if not str(req.session_id or "").strip() or not str(req.text or "").strip():
             raise HTTPException(status_code=400, detail="session_id and text are required")
-        logger.debug("chat request received session={} chars={}", req.session_id, len(str(req.text or "")))
+        request_state = getattr(request, "state", None)
+        request_id = str(getattr(request_state, "request_id", "") or "").strip() or "-"
+        logger.debug(
+            "chat request received session={} request_id={} chars={}",
+            req.session_id,
+            request_id,
+            len(str(req.text or "")),
+        )
         channel = str(getattr(req, "channel", "") or "").strip() or None
         raw_chat_id = getattr(req, "chat_id", None)
         chat_id = None if raw_chat_id is None else str(raw_chat_id).strip() or None
@@ -87,13 +94,18 @@ class GatewayRequestHandlers:
         except RuntimeError as exc:
             status_code, detail = self.provider_error_payload_fn(exc)
             bind_event("gateway.chat", session=str(req.session_id)).error(
-                "chat request failed status={} detail={}",
+                "chat request failed request_id={} status={} detail={}",
+                request_id,
                 status_code,
                 detail,
             )
             raise HTTPException(status_code=status_code, detail=detail) from exc
         self.finalize_bootstrap_for_user_turn_fn(str(req.session_id))
-        bind_event("gateway.chat", session=str(req.session_id)).info("chat response generated model={}", out.model)
+        bind_event("gateway.chat", session=str(req.session_id)).info(
+            "chat response generated request_id={} model={}",
+            request_id,
+            out.model,
+        )
         return {"text": out.text, "model": out.model}
 
     async def tools_catalog(self, request: Request, *, allow_dashboard_session: bool = False) -> dict[str, Any]:
