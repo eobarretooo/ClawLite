@@ -3011,6 +3011,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Hatch agent" in body
         assert "Next Steps" in body
         assert "Control-Plane Correlation" in body
+        assert 'id="skills-grid"' in body
         assert 'id="provider-grid"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3083,6 +3084,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerTelegramRefresh" in js.text
     assert "renderControlPlaneCorrelationBoard" in js.text
     assert "renderHttpCorrelationBoard" in js.text
+    assert "renderSkillsBoard" in js.text
+    assert "missingRequirements.os" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text

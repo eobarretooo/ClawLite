@@ -1404,6 +1404,61 @@ function renderMemoryBoard() {
   });
 }
 
+function renderSkillsBoard() {
+  const grid = byId("skills-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const skills = ((state.dashboardState || {}).skills) || {};
+  const summary = skills.summary || {};
+  const watcher = skills.watcher || {};
+  const sources = skills.sources || {};
+  const executionKinds = skills.execution_kinds || {};
+  const missingRequirements = skills.missing_requirements || {};
+  const contractIssues = skills.contract_issues || {};
+  const topContractIssue = Object.entries(contractIssues.by_key || {}).sort((left, right) => numeric(right[1], 0) - numeric(left[1], 0))[0];
+
+  appendSummaryCard(grid, {
+    title: "Coverage",
+    body: `${numeric(summary.available, 0)}/${numeric(summary.total, 0)} available | ${numeric(summary.runnable, 0)} runnable`,
+    detail: `${numeric(summary.enabled, 0)} enabled | ${numeric(summary.disabled, 0)} disabled`,
+  });
+  appendSummaryCard(grid, {
+    title: "Always-on",
+    body: `${numeric(summary.always_on_unavailable, 0)} blocked | ${numeric(summary.pinned, 0)} pinned`,
+    detail: `${numeric(summary.always_on_available, 0)} always-on available`,
+  });
+  appendSummaryCard(grid, {
+    title: "Sources",
+    body: `builtin ${numeric(sources.builtin, 0)} | workspace ${numeric(sources.workspace, 0)} | marketplace ${numeric(sources.marketplace, 0)}`,
+    detail: `command ${numeric(executionKinds.command, 0)} | script ${numeric(executionKinds.script, 0)} | none ${numeric(executionKinds.none, 0)}`,
+  });
+
+  const missingEnvItems = ((missingRequirements.env || {}).items) || [];
+  const missingBinItems = ((missingRequirements.bin || {}).items) || [];
+  const missingOsItems = ((missingRequirements.os || {}).items) || [];
+  const missingOtherItems = ((missingRequirements.other || {}).items) || [];
+  appendSummaryCard(grid, {
+    title: "Missing requirements",
+    body: `env ${numeric((missingRequirements.env || {}).count, 0)} | bin ${numeric((missingRequirements.bin || {}).count, 0)} | os ${numeric((missingRequirements.os || {}).count, 0)}`,
+    detail: [missingEnvItems[0], missingBinItems[0], missingOsItems[0], missingOtherItems[0]].filter(Boolean).join(" | ") || "No missing runtime requirements recorded.",
+  });
+  appendSummaryCard(grid, {
+    title: "Contract",
+    body: `${numeric(contractIssues.total, 0)} issues`,
+    detail: topContractIssue ? `${topContractIssue[0]} | ${numeric(topContractIssue[1], 0)} skills` : "No contract issues detected.",
+  });
+  appendSummaryCard(grid, {
+    title: "Watcher",
+    body: `${String(watcher.task_state || "stopped")} | ${String(watcher.backend || "polling")}`,
+    detail: watcher.last_error
+      ? `error ${String(watcher.last_error)}`
+      : `interval ${formatDuration(watcher.interval_s || 0)} | pending ${Boolean(watcher.pending)} | debounced ${Boolean(watcher.debounced)}`,
+  });
+}
+
 function renderKnowledge() {
   const payload = state.dashboardState || {};
   const workspace = payload.workspace || {};
@@ -1480,8 +1535,21 @@ function renderKnowledge() {
     onboarding.completed ? "completed" : bootstrap.pending ? "pending" : bootstrap.last_status || "idle",
     onboarding.completed ? "ok" : bootstrap.pending ? "warn" : "ok",
   );
-  setBadge("skills-status", `${numeric(((skills.summary || {}).available), 0)} available`, numeric(((skills.summary || {}).unavailable), 0) ? "warn" : "ok");
+  const skillsSummary = skills.summary || {};
+  const skillsWatcher = skills.watcher || {};
+  const skillsContract = skills.contract_issues || {};
+  const skillsBlocked = numeric(skillsSummary.unavailable, 0) > 0 || numeric(skillsSummary.always_on_unavailable, 0) > 0;
+  const skillsWatcherFailed = String(skillsWatcher.task_state || "") === "failed" || Boolean(skillsWatcher.last_error);
+  const skillsContractBroken = numeric(skillsContract.total, 0) > 0;
+  const skillsTone = skillsWatcherFailed ? "danger" : (skillsBlocked || skillsContractBroken ? "warn" : "ok");
+  const skillsBadge = skillsWatcherFailed
+    ? "watcher failed"
+    : skillsBlocked
+      ? `${numeric(skillsSummary.unavailable, 0)} blocked`
+      : `${numeric(skillsSummary.available, 0)} available`;
+  setBadge("skills-status", skillsBadge, skillsTone);
   setBadge("memory-status", memoryMonitor.enabled ? "monitoring" : "disabled", memoryMonitor.enabled ? "ok" : "warn");
+  renderSkillsBoard();
   renderMemoryBoard();
 }
 
