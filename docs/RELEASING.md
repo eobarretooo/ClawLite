@@ -36,6 +36,13 @@ bash scripts/smoke_test.sh
 bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787
 ```
 
+If the milestone depends on the Docker path, add:
+
+```bash
+clawlite validate preflight --docker
+bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787 --docker
+```
+
 Add milestone-specific tests when the work touches gateway, providers, channels, heartbeat, or autonomy.
 
 ## Tagging Workflow

@@ -30,7 +30,9 @@ clawlite validate config
 clawlite validate preflight
 clawlite validate preflight --gateway-url http://127.0.0.1:8787
 clawlite validate preflight --gateway-url http://127.0.0.1:8787 --provider-live --telegram-live
+clawlite validate preflight --docker
 bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787
+bash scripts/release_preflight.sh --config ~/.clawlite/config.json --gateway-url http://127.0.0.1:8787 --docker
 ```
 
 ## Stage 19 release closure checklist

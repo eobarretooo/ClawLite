@@ -58,7 +58,7 @@ For an explicit CLI-side deployment check without starting a new container, use:
 clawlite validate preflight --docker
 ```
 
-That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout and also surfaces the current `clawlite-gateway` container state/health if the stack is already running.
+That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout, summarizes the detected runtime stack, and fails closed when the stack is present without a healthy `clawlite-gateway` or when runtime dependencies such as `redis` are running but unhealthy.
 
 ## Build Options
 

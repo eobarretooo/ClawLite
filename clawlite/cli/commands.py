@@ -927,6 +927,29 @@ def _docker_compose_field(row: dict[str, Any], *names: str) -> Any:
     return None
 
 
+def _docker_service_summary(row: dict[str, Any]) -> dict[str, Any]:
+    service = str(_docker_compose_field(row, "Service") or _docker_compose_field(row, "Name") or "").strip()
+    state = str(_docker_compose_field(row, "State") or "").strip().lower()
+    health = str(_docker_compose_field(row, "Health") or "").strip().lower()
+    status = str(_docker_compose_field(row, "Status") or "").strip()
+    lowered_status = status.lower()
+    if not state:
+        if lowered_status.startswith("up "):
+            state = "running"
+        elif lowered_status.startswith("exited"):
+            state = "exited"
+    running = state == "running"
+    ok = running and health not in {"starting", "unhealthy"}
+    return {
+        "service": service,
+        "running": running,
+        "ok": ok,
+        "state": state,
+        "health": health,
+        "status": status or ("not_running" if not state else state),
+    }
+
+
 def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
     package_root = Path(__file__).resolve().parents[2]
     roots: list[Path] = []
@@ -954,6 +977,17 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
         "docker_available": False,
         "compose_version": {"ok": False, "exit_code": 0, "detail": ""},
         "compose_config": {"ok": False, "exit_code": 0, "detail": ""},
+        "stack": {
+            "detected": False,
+            "ok": True,
+            "error": "",
+            "service_count": 0,
+            "runtime_service_count": 0,
+            "running_count": 0,
+            "unhealthy_services": [],
+            "ignored_services": [],
+            "services": [],
+        },
         "gateway": {
             "detected": False,
             "running": False,
@@ -1022,7 +1056,7 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
 
     try:
         ps = subprocess.run(
-            [docker_bin, "compose", "ps", "--format", "json", "clawlite-gateway"],
+            [docker_bin, "compose", "ps", "--format", "json"],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -1045,23 +1079,58 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
         payload["ok"] = True
         return payload
 
-    row = rows[0]
-    state = str(_docker_compose_field(row, "State") or "").strip().lower()
-    health = str(_docker_compose_field(row, "Health") or "").strip().lower()
-    status = str(_docker_compose_field(row, "Status") or "").strip()
-    gateway_ok = state == "running" and health in {"", "healthy"}
+    services = [_docker_service_summary(row) for row in rows]
+    ignored_services = sorted(service["service"] for service in services if service["service"] == "clawlite-cli")
+    runtime_services = [service for service in services if service["service"] != "clawlite-cli"]
+    unhealthy_services = sorted(service["service"] for service in runtime_services if not service["ok"])
+    payload["stack"] = {
+        "detected": bool(runtime_services),
+        "ok": not unhealthy_services,
+        "error": "",
+        "service_count": len(services),
+        "runtime_service_count": len(runtime_services),
+        "running_count": sum(1 for service in runtime_services if service["running"]),
+        "unhealthy_services": unhealthy_services,
+        "ignored_services": ignored_services,
+        "services": services,
+    }
+    if not runtime_services:
+        payload["ok"] = True
+        return payload
+
+    gateway = next((service for service in runtime_services if service["service"] == "clawlite-gateway"), None)
+    if gateway is None:
+        payload["stack"]["error"] = "docker_gateway_not_running"
+        payload["gateway"]["error"] = "docker_gateway_not_running"
+        payload["error"] = "docker_gateway_not_running"
+        payload["ok"] = False
+        return payload
+
+    gateway_ok = bool(gateway["ok"]) and str(gateway.get("health") or "") in {"", "healthy"}
     payload["gateway"] = {
         "detected": True,
-        "running": state == "running",
+        "running": bool(gateway["running"]),
         "ok": gateway_ok,
-        "state": state,
-        "health": health,
-        "status": status or ("not_running" if not state else state),
+        "state": str(gateway["state"] or ""),
+        "health": str(gateway["health"] or ""),
+        "status": str(gateway["status"] or ""),
         "error": "",
     }
-    payload["ok"] = gateway_ok
     if not gateway_ok:
+        payload["stack"]["error"] = "docker_gateway_not_healthy"
+        payload["gateway"]["error"] = "docker_gateway_not_healthy"
         payload["error"] = "docker_gateway_not_healthy"
+        payload["ok"] = False
+        return payload
+
+    non_gateway_unhealthy = [service for service in unhealthy_services if service != "clawlite-gateway"]
+    if non_gateway_unhealthy:
+        payload["stack"]["error"] = "docker_stack_not_healthy"
+        payload["error"] = "docker_stack_not_healthy"
+        payload["ok"] = False
+        return payload
+
+    payload["ok"] = True
     return payload
 
 

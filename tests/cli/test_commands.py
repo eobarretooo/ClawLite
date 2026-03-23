@@ -2093,7 +2093,7 @@ def test_docker_preflight_probe_reports_not_running_stack_as_ok(
             return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
         if command[:3] == ["/usr/bin/docker", "compose", "config"]:
             return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
-        if command[:3] == ["/usr/bin/docker", "compose", "ps"]:
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
             return subprocess.CompletedProcess(command, 0, stdout="[]\n", stderr="")
         raise AssertionError(command)
 
@@ -2104,6 +2104,7 @@ def test_docker_preflight_probe_reports_not_running_stack_as_ok(
     assert payload["ok"] is True
     assert payload["repo_root_source"] == "cwd"
     assert payload["compose_config"]["ok"] is True
+    assert payload["stack"]["detected"] is False
     assert payload["gateway"]["detected"] is False
     assert payload["gateway"]["status"] == "not_running"
 
@@ -2121,7 +2122,7 @@ def test_docker_preflight_probe_surfaces_unhealthy_gateway(
             return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
         if command[:3] == ["/usr/bin/docker", "compose", "config"]:
             return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
-        if command[:3] == ["/usr/bin/docker", "compose", "ps"]:
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
             return subprocess.CompletedProcess(
                 command,
                 0,
@@ -2163,7 +2164,7 @@ def test_docker_preflight_probe_treats_starting_gateway_as_not_ready(
             return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
         if command[:3] == ["/usr/bin/docker", "compose", "config"]:
             return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
-        if command[:3] == ["/usr/bin/docker", "compose", "ps"]:
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
             return subprocess.CompletedProcess(
                 command,
                 0,
@@ -2188,6 +2189,103 @@ def test_docker_preflight_probe_treats_starting_gateway_as_not_ready(
     assert payload["ok"] is False
     assert payload["error"] == "docker_gateway_not_healthy"
     assert payload["gateway"]["health"] == "starting"
+
+
+def test_docker_preflight_probe_requires_gateway_when_runtime_stack_is_present(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "Service": "redis",
+                            "State": "running",
+                            "Health": "healthy",
+                            "Status": "Up 5 minutes (healthy)",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is False
+    assert payload["error"] == "docker_gateway_not_running"
+    assert payload["stack"]["detected"] is True
+    assert payload["stack"]["error"] == "docker_gateway_not_running"
+    assert payload["stack"]["runtime_service_count"] == 1
+    assert payload["stack"]["services"][0]["service"] == "redis"
+    assert payload["gateway"]["detected"] is False
+    assert payload["gateway"]["error"] == "docker_gateway_not_running"
+
+
+def test_docker_preflight_probe_surfaces_unhealthy_runtime_dependency(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "Service": "clawlite-gateway",
+                            "State": "running",
+                            "Health": "healthy",
+                            "Status": "Up 2 minutes (healthy)",
+                        },
+                        {
+                            "Service": "redis",
+                            "State": "running",
+                            "Health": "unhealthy",
+                            "Status": "Up 2 minutes (unhealthy)",
+                        },
+                    ]
+                ),
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(timeout=1.5)
+
+    assert payload["ok"] is False
+    assert payload["error"] == "docker_stack_not_healthy"
+    assert payload["gateway"]["detected"] is True
+    assert payload["gateway"]["ok"] is True
+    assert payload["gateway"]["error"] == ""
+    assert payload["stack"]["detected"] is True
+    assert payload["stack"]["ok"] is False
+    assert payload["stack"]["error"] == "docker_stack_not_healthy"
+    assert payload["stack"]["unhealthy_services"] == ["redis"]
 
 
 def test_cli_validate_preflight_docker_probe_success(
