@@ -60,6 +60,8 @@ clawlite validate preflight --docker
 
 That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout, summarizes the detected runtime stack, and fails closed when the stack is present without a healthy `clawlite-gateway` or when runtime dependencies such as `redis` are running but unhealthy.
 
+The official image now also carries its own `HEALTHCHECK` logic for the gateway runtime: it first detects whether PID 1 is running `clawlite gateway`, and only then probes `http://127.0.0.1:8787/health`. That keeps non-gateway uses of the image from being marked unhealthy by default, while the compose-side `clawlite-cli` sidecar still disables the inherited healthcheck explicitly because it is not meant to run the gateway server.
+
 ## Build Options
 
 The image installs `telegram`, `media`, `observability`, and `runtime` extras by default. Override them with build args if you want a different surface:
@@ -137,6 +139,7 @@ What this Docker path covers now:
 - rootless runtime under `/home/clawlite`
 - persisted config/state under `~/.clawlite`
 - gateway healthcheck via `/health`
+- image-level `HEALTHCHECK` logic that only activates for the gateway runtime, with the CLI sidecar opting out explicitly
 - setup helper waits for the gateway healthcheck and prints recent logs on timeout
 - optional CLI sidecar container
 - host access to local Ollama/vLLM

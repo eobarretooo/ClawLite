@@ -43,6 +43,9 @@ RUN groupadd --gid "${CLAWLITE_GID}" clawlite && \
 VOLUME ["/home/clawlite/.clawlite"]
 EXPOSE 8787
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD python -c "import pathlib, sys, urllib.request; cmdline = pathlib.Path('/proc/1/cmdline').read_text(encoding='utf-8', errors='ignore').replace('\\x00', ' '); sys.exit(0 if 'clawlite gateway' not in cmdline else (0 if urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=5).status == 200 else 1))"
+
 USER clawlite
 
 ENTRYPOINT ["tini", "--", "clawlite"]

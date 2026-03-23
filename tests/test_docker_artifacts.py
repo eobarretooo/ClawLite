@@ -14,6 +14,23 @@ def test_docker_compose_gateway_healthcheck_targets_health_endpoint() -> None:
     assert "http://127.0.0.1:8787/health" in compose
 
 
+def test_dockerfile_declares_image_healthcheck_for_gateway_runtime() -> None:
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "HEALTHCHECK" in dockerfile
+    assert "/proc/1/cmdline" in dockerfile
+    assert "clawlite gateway" in dockerfile
+    assert "http://127.0.0.1:8787/health" in dockerfile
+
+
+def test_docker_compose_cli_service_disables_image_healthcheck() -> None:
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    cli_block = compose.split("  clawlite-cli:\n", 1)[1].split("\n\n  redis:\n", 1)[0]
+
+    assert "healthcheck:" in cli_block
+    assert "disable: true" in cli_block
+
+
 def test_docker_setup_waits_for_gateway_health_and_prints_logs_on_timeout() -> None:
     script = (REPO_ROOT / "scripts" / "docker_setup.sh").read_text(encoding="utf-8")
 

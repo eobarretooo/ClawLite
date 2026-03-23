@@ -49,6 +49,8 @@ services:
     depends_on:
       clawlite-gateway:
         condition: service_started
+    healthcheck:
+      disable: true
     stdin_open: true
     tty: true
     command: ["status"]
