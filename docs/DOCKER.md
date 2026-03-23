@@ -16,7 +16,7 @@ Recommended:
 bash scripts/docker_setup.sh
 ```
 
-The helper validates Compose, builds the image, runs `configure --flow quickstart` if no local config exists yet, and starts the gateway. It also exports `CLAWLITE_UID` / `CLAWLITE_GID` from your host user so the container runs rootless without leaving root-owned files behind in `~/.clawlite`.
+The helper validates Compose, builds the image, runs `configure --flow quickstart` if no local config exists yet, starts the gateway, and now waits for the compose healthcheck to become healthy before declaring success. It also exports `CLAWLITE_UID` / `CLAWLITE_GID` from your host user so the container runs rootless without leaving root-owned files behind in `~/.clawlite`.
 
 Optional helper toggles:
 
@@ -25,6 +25,7 @@ Optional helper toggles:
 - `CLAWLITE_DOCKER_SKIP_BUILD=1` — skip image build
 - `CLAWLITE_DOCKER_SKIP_CONFIGURE=1` — skip `configure --flow quickstart`
 - `CLAWLITE_DOCKER_SKIP_UP=1` — stop after build/config validation
+- `CLAWLITE_DOCKER_WAIT_TIMEOUT=120` — override how long the helper waits for the gateway healthcheck
 
 Manual flow still works:
 
@@ -128,6 +129,7 @@ What this Docker path covers now:
 - rootless runtime under `/home/clawlite`
 - persisted config/state under `~/.clawlite`
 - gateway healthcheck via `/health`
+- setup helper waits for the gateway healthcheck and prints recent logs on timeout
 - optional CLI sidecar container
 - host access to local Ollama/vLLM
 - optional Redis bus profile with persisted Redis data

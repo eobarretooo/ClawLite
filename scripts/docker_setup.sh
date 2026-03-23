@@ -31,6 +31,7 @@ fi
 export CLAWLITE_UID="${CLAWLITE_UID:-$(id -u)}"
 export CLAWLITE_GID="${CLAWLITE_GID:-$(id -g)}"
 clawlite_home_dir="${HOME}/.clawlite"
+docker_wait_timeout="${CLAWLITE_DOCKER_WAIT_TIMEOUT:-120}"
 mkdir -p "$clawlite_home_dir"
 
 if [[ ! -w "$clawlite_home_dir" ]]; then
@@ -41,6 +42,40 @@ if is_truthy "${CLAWLITE_DOCKER_BROWSER:-}"; then
   export CLAWLITE_PIP_EXTRAS="${CLAWLITE_PIP_EXTRAS:-browser,telegram,media,observability,runtime}"
   export CLAWLITE_INSTALL_BROWSER=1
 fi
+
+wait_for_gateway_health() {
+  local timeout="${1:-120}"
+  local deadline=$((SECONDS + timeout))
+  local status=""
+
+  while (( SECONDS < deadline )); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' clawlite-gateway 2>/dev/null || true)"
+    case "$status" in
+      healthy)
+        echo "==> Gateway container is healthy"
+        return 0
+        ;;
+      running)
+        echo "==> Gateway container is running"
+        return 0
+        ;;
+      starting|created|restarting|"")
+        sleep 2
+        ;;
+      unhealthy|exited|dead)
+        break
+        ;;
+      *)
+        sleep 2
+        ;;
+    esac
+  done
+
+  echo "==> Gateway failed to become healthy within ${timeout}s (last status: ${status:-unknown})"
+  docker compose "${profile_args[@]}" ps clawlite-gateway || true
+  docker compose "${profile_args[@]}" logs --tail 50 clawlite-gateway || true
+  return 1
+}
 
 profile_args=()
 up_services=("clawlite-gateway")
@@ -72,6 +107,8 @@ fi
 if ! is_truthy "${CLAWLITE_DOCKER_SKIP_UP:-}"; then
   echo "==> Starting services"
   docker compose "${profile_args[@]}" up -d "${up_services[@]}"
+  echo "==> Waiting for gateway health"
+  wait_for_gateway_health "$docker_wait_timeout"
 fi
 
 echo
@@ -85,3 +122,4 @@ fi
 if is_truthy "${CLAWLITE_DOCKER_BROWSER:-}"; then
   echo "- Browser image: enabled"
 fi
+echo "- Health wait timeout: ${docker_wait_timeout}s"
