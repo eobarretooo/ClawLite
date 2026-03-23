@@ -3010,6 +3010,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Trigger heartbeat" in body
         assert "Hatch agent" in body
         assert "Next Steps" in body
+        assert "Control-Plane Correlation" in body
         assert 'id="provider-grid"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3080,6 +3081,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerChannelRecovery" in js.text
     assert "triggerInboundReplay" in js.text
     assert "triggerTelegramRefresh" in js.text
+    assert "renderControlPlaneCorrelationBoard" in js.text
     assert "renderHttpCorrelationBoard" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text

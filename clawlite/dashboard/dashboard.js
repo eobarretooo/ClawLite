@@ -289,6 +289,15 @@ function formatDuration(seconds) {
   return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
 }
 
+function parseTimestampMs(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return 0;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function numeric(value, fallback = 0) {
   const result = Number(value);
   return Number.isFinite(result) ? result : fallback;
@@ -1525,6 +1534,7 @@ function renderOverview() {
 
   renderEndpointList();
   renderComponentBoard();
+  renderControlPlaneCorrelationBoard();
   renderHandoffGuidance();
 }
 
@@ -1556,6 +1566,118 @@ function renderRuntime() {
   setCode("ws-event-preview", state.wsPreview);
   renderHttpCorrelationBoard();
   renderToolsSummary();
+}
+
+function renderControlPlaneCorrelationBoard() {
+  const grid = byId("control-plane-correlation-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const diagnostics = state.diagnostics || {};
+  const http = diagnostics.http || {};
+  const ws = diagnostics.ws || {};
+  const httpRequestId = String(http.last_request_id || "").trim();
+  const httpRequestMethod = String(http.last_request_method || "").trim() || "GET";
+  const httpRequestPath = String(http.last_request_path || "").trim() || "/";
+  const httpRequestAt = String(http.last_request_started_at || "").trim();
+  const httpErrorId = String(http.last_error_request_id || "").trim();
+  const httpErrorMethod = String(http.last_error_method || "").trim() || "GET";
+  const httpErrorPath = String(http.last_error_path || "").trim() || "/";
+  const httpErrorAt = String(http.last_error_at || "").trim();
+  const httpErrorCode = String(http.last_error_code || "").trim() || "http_error";
+  const httpErrorMessage = String(http.last_error_message || "").trim();
+  const httpErrorStatus = Number(http.last_error_status);
+  const wsConnectionId = String(ws.last_connection_id || "").trim();
+  const wsConnectionPath = String(ws.last_connection_path || "").trim() || (paths.ws || "/ws");
+  const wsConnectionOpenedAt = String(ws.last_connection_opened_at || "").trim();
+  const wsClosedId = String(ws.last_connection_closed_id || "").trim();
+  const wsClosedAt = String(ws.last_connection_closed_at || "").trim();
+  const wsErrorConnectionId = String(ws.last_error_connection_id || "").trim();
+  const wsErrorRequestId = String(ws.last_error_request_id || "").trim();
+  const wsErrorAt = String(ws.last_error_at || "").trim();
+  const wsErrorCode = String(ws.last_error_code || "").trim() || "ws_error";
+  const wsErrorMessage = String(ws.last_error_message || "").trim();
+  const wsErrorStatus = Number(ws.last_error_status);
+
+  appendSummaryCard(grid, {
+    title: "HTTP request",
+    body: httpRequestId ? `${httpRequestMethod} ${httpRequestPath}` : "no request yet",
+    detail: httpRequestId
+      ? `req ${httpRequestId} | ${formatClock(httpRequestAt)}`
+      : "The next control-plane request will appear here.",
+  });
+  appendSummaryCard(grid, {
+    title: "HTTP error",
+    body: httpErrorAt
+      ? `${httpErrorMethod} ${httpErrorPath} | status ${Number.isFinite(httpErrorStatus) ? httpErrorStatus : "-"}`
+      : "no recent HTTP error",
+    detail: httpErrorAt
+      ? [
+          `req ${httpErrorId || "-"}`,
+          httpErrorCode,
+          httpErrorMessage && httpErrorMessage !== httpErrorCode ? httpErrorMessage : "",
+          formatClock(httpErrorAt),
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      : "The next correlated HTTP failure will be surfaced here.",
+  });
+  appendSummaryCard(grid, {
+    title: "WS connection",
+    body: wsConnectionId ? `conn ${wsConnectionId}` : "no WS connection yet",
+    detail: wsConnectionOpenedAt
+      ? [
+          wsConnectionPath,
+          `opened ${formatClock(wsConnectionOpenedAt)}`,
+          wsClosedAt ? `closed ${formatClock(wsClosedAt)}` : "",
+          wsClosedId ? `last close ${wsClosedId}` : "",
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      : "Open the chat tab or refresh diagnostics to watch the next gateway socket session.",
+  });
+  appendSummaryCard(grid, {
+    title: "WS error",
+    body: wsErrorAt
+      ? `${wsErrorCode} | status ${Number.isFinite(wsErrorStatus) ? wsErrorStatus : "-"}`
+      : "no recent WS error",
+    detail: wsErrorAt
+      ? [
+          `conn ${wsErrorConnectionId || "-"}`,
+          wsErrorRequestId ? `req ${wsErrorRequestId}` : "",
+          wsErrorMessage && wsErrorMessage !== wsErrorCode ? wsErrorMessage : "",
+          formatClock(wsErrorAt),
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      : "The next correlated websocket failure will be surfaced here.",
+  });
+
+  const httpRequestMs = parseTimestampMs(httpRequestAt);
+  const httpErrorMs = parseTimestampMs(httpErrorAt);
+  const wsActivityMs = Math.max(parseTimestampMs(wsConnectionOpenedAt), parseTimestampMs(wsClosedAt));
+  const wsErrorMs = parseTimestampMs(wsErrorAt);
+  const httpErrorOutstanding = httpErrorMs > 0 && httpErrorMs >= httpRequestMs;
+  const wsErrorOutstanding = wsErrorMs > 0 && wsErrorMs >= wsActivityMs;
+  const hasOutstandingError = httpErrorOutstanding || wsErrorOutstanding;
+  const hasActivity = Boolean(httpRequestMs || wsActivityMs || numeric(ws.active_connections, 0));
+  if (hasOutstandingError) {
+    const outstandingStatuses = [];
+    if (httpErrorOutstanding && Number.isFinite(httpErrorStatus)) {
+      outstandingStatuses.push(httpErrorStatus);
+    }
+    if (wsErrorOutstanding && Number.isFinite(wsErrorStatus)) {
+      outstandingStatuses.push(wsErrorStatus);
+    }
+    const tone = outstandingStatuses.some((value) => value >= 500) ? "danger" : "warn";
+    setBadge("control-plane-correlation-status", "attention", tone);
+  } else if (hasActivity) {
+    setBadge("control-plane-correlation-status", "live", "ok");
+  } else {
+    setBadge("control-plane-correlation-status", "idle", "warn");
+  }
 }
 
 function renderHttpCorrelationBoard() {
