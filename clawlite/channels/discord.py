@@ -360,6 +360,7 @@ class DiscordChannel(BaseChannel):
         self._presence_last_sent_at = 0.0
         self._presence_last_error = ""
         self._presence_last_state = ""
+        self._heartbeat_ack_pending = False
         self._registered_modals: dict[str, dict[str, Any]] = {}
         self._transcription_provider: Any | None = None
         self._media_transcription_count = 0
@@ -1578,6 +1579,7 @@ class DiscordChannel(BaseChannel):
         self._gateway_task = None
         await cancel_task(self._heartbeat_task)
         self._heartbeat_task = None
+        self._heartbeat_ack_pending = False
         await cancel_task(self._auto_presence_task)
         self._auto_presence_task = None
         for task in list(self._typing_tasks.values()):
@@ -2089,6 +2091,7 @@ class DiscordChannel(BaseChannel):
                 self._ws = None
                 await cancel_task(self._heartbeat_task)
                 self._heartbeat_task = None
+                self._heartbeat_ack_pending = False
 
     async def _gateway_loop(self) -> None:
         ws = self._ws
@@ -2124,9 +2127,11 @@ class DiscordChannel(BaseChannel):
             return True
 
         if op == 11:
+            self._heartbeat_ack_pending = False
             return True
 
         if op == 1:
+            self._heartbeat_ack_pending = True
             await self._send_ws_json({"op": 1, "d": self._sequence})
             return True
 
@@ -2222,10 +2227,23 @@ class DiscordChannel(BaseChannel):
 
     async def _start_heartbeat(self, interval_s: float) -> None:
         await cancel_task(self._heartbeat_task)
+        self._heartbeat_ack_pending = False
 
         async def _heartbeat_loop() -> None:
             while self._running and self._ws is not None:
+                if self._heartbeat_ack_pending:
+                    self._last_error = "discord_gateway_heartbeat_timeout"
+                    ws = self._ws
+                    self._heartbeat_ack_pending = False
+                    if ws is not None:
+                        close_fn = getattr(ws, "close", None)
+                        if callable(close_fn):
+                            result = close_fn()
+                            if asyncio.iscoroutine(result):
+                                await result
+                    return
                 await self._send_ws_json({"op": 1, "d": self._sequence})
+                self._heartbeat_ack_pending = True
                 await asyncio.sleep(max(0.1, interval_s))
 
         self._heartbeat_task = asyncio.create_task(_heartbeat_loop())
@@ -3536,7 +3554,7 @@ class DiscordChannel(BaseChannel):
             if (now - self._presence_last_sent_at) < self.auto_presence_min_update_interval_s:
                 return {"ok": True, "sent": False, "reason": "min_interval"}
         try:
-            await self._send_ws_json({"op": 3, "d": payload})
+            await ws.send(json.dumps({"op": 3, "d": payload}))
         except Exception as exc:
             self._presence_last_error = str(exc)
             self._last_error = str(exc)
@@ -3544,6 +3562,7 @@ class DiscordChannel(BaseChannel):
         self._presence_last_payload_signature = signature
         self._presence_last_sent_at = now
         self._presence_last_error = ""
+        self._last_error = ""
         return {"ok": True, "sent": True, "reason": "updated", "state": self._presence_last_state}
 
     async def _auto_presence_loop(self) -> None:
@@ -3588,6 +3607,7 @@ class DiscordChannel(BaseChannel):
             self._resume_url = ""
             self._sequence = None
             self._bot_user_id = ""
+            self._heartbeat_ack_pending = False
             self._last_error = ""
             if was_running and (self.on_message is not None or was_gateway_running):
                 await self.start()
