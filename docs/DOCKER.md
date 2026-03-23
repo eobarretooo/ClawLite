@@ -23,6 +23,13 @@ cp docker-compose.env.example .env.docker
 CLAWLITE_DOCKER_ENV_FILE=.env.docker bash scripts/docker_setup.sh
 ```
 
+The example now includes the runtime/provider envs that the Compose file forwards explicitly today, including:
+
+- model/base-url/key overrides such as `CLAWLITE_MODEL`, `CLAWLITE_LITELLM_BASE_URL`, `CLAWLITE_LITELLM_API_KEY`, and `CLAWLITE_API_KEY`
+- gateway auth overrides such as `CLAWLITE_GATEWAY_AUTH_MODE`, `CLAWLITE_GATEWAY_AUTH_TOKEN`, and `CLAWLITE_GATEWAY_AUTH_ALLOW_LOOPBACK`
+- common provider keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AZURE_OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, and `OPENROUTER_API_KEY`
+- Codex/Gemini auth envs such as `CLAWLITE_CODEX_ACCESS_TOKEN`, `OPENAI_CODEX_ACCESS_TOKEN`, `OPENAI_ACCESS_TOKEN`, `CLAWLITE_GEMINI_ACCESS_TOKEN`, and `CLAWLITE_GEMINI_AUTH_PATH`
+
 The helper validates Compose, builds the image, runs `configure --flow quickstart` if no local config exists yet, starts the gateway, and now waits for the compose healthcheck to become healthy before declaring success. It also exports `CLAWLITE_UID` / `CLAWLITE_GID` from your host user so the container runs rootless without leaving root-owned files behind in `~/.clawlite`.
 
 Optional helper toggles:
@@ -147,6 +154,7 @@ What this Docker path covers now:
 - rootless runtime under `/home/clawlite`
 - persisted config/state under `~/.clawlite`
 - dedicated `CLAWLITE_DOCKER_ENV_FILE` support for Compose-side overrides/secrets
+- explicit pass-through for the common runtime/provider auth envs used by the current config/provider stack
 - gateway healthcheck via `/health`
 - image-level `HEALTHCHECK` logic that only activates for the gateway runtime, with the CLI sidecar opting out explicitly
 - setup helper waits for the gateway healthcheck and prints recent logs on timeout
