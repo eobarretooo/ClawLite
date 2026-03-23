@@ -2050,6 +2050,49 @@ def test_discord_send_voice_message_retries_upload_429_using_retry_after() -> No
     assert [call[0] for call in http_calls].count("PUT") == 2
     assert sleep_mock.await_count == 1
     assert sleep_mock.await_args.args == (0.75,)
+    assert ch._last_error == ""
+
+
+def test_discord_send_voice_message_clears_stale_last_error_on_success() -> None:
+    waveform = DiscordChannel._generate_placeholder_waveform()
+
+    class _FakeVoiceUploadClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def put(self, url, *, headers=None, content=None):
+            return _response(status=200, url=url)
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+    ch._last_error = "http:500"
+
+    async def _fake_post_json(url, payload, error_prefix=""):
+        if "attachments" in url:
+            return _response(
+                status=200,
+                url=url,
+                payload={"attachments": [{"id": 0, "upload_url": "https://cdn/upload", "upload_filename": "voice.ogg"}]},
+            )
+        return _response(status=200, url=url, payload={"id": "msg-clear-last-error"})
+
+    ch._post_json = _fake_post_json  # type: ignore[method-assign]
+
+    with patch("clawlite.channels.discord.httpx.AsyncClient", return_value=_FakeVoiceUploadClient()):
+        out = asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 32,
+                duration_secs=1.0,
+                waveform=waveform,
+            )
+        )
+
+    assert out == "discord:voice:msg-clear-last-error"
+    assert ch._last_error == ""
 
 
 def test_discord_send_voice_message_rejects_missing_upload_filename() -> None:
@@ -2081,6 +2124,37 @@ def test_discord_send_voice_message_rejects_missing_upload_filename() -> None:
         raise AssertionError("expected missing direct voice upload_filename to fail")
     except RuntimeError as exc:
         assert "discord_voice_upload_filename_missing" in str(exc)
+
+
+def test_discord_send_voice_message_rejects_missing_attachment_row() -> None:
+    waveform = DiscordChannel._generate_placeholder_waveform()
+
+    ch = DiscordChannel(config={"token": "tok"}, on_message=None)
+    ch._running = True
+
+    async def _fake_post_json(url, payload, error_prefix=""):
+        if "attachments" in url:
+            return _response(
+                status=200,
+                url=url,
+                payload={"attachments": []},
+            )
+        raise AssertionError("message POST should not run when attachment reservation row is missing")
+
+    ch._post_json = _fake_post_json  # type: ignore[method-assign]
+
+    try:
+        asyncio.run(
+            ch.send_voice_message(
+                channel_id="chan001",
+                audio_bytes=b"\x4f\x67\x67\x53" + b"\x00" * 32,
+                duration_secs=1.0,
+                waveform=waveform,
+            )
+        )
+        raise AssertionError("expected missing direct voice attachment row to fail")
+    except RuntimeError as exc:
+        assert "discord_voice_attachment_missing" in str(exc)
 
 
 @pytest.mark.parametrize(

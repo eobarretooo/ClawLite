@@ -3032,7 +3032,14 @@ class DiscordChannel(BaseChannel):
             payload={"files": [{"filename": "voice-message.ogg", "file_size": len(audio_bytes), "id": "0"}]},
             error_prefix="discord_voice_attachment",
         )
-        attachment_info = r1.json().get("attachments", [{}])[0]
+        try:
+            attachment_payload = r1.json() if r1.content else {}
+        except Exception:
+            attachment_payload = {}
+        attachment_rows = attachment_payload.get("attachments") if isinstance(attachment_payload, dict) else None
+        attachment_info = attachment_rows[0] if isinstance(attachment_rows, list) and attachment_rows else None
+        if not isinstance(attachment_info, dict):
+            raise RuntimeError("discord_voice_attachment_missing")
         upload_url = str(attachment_info.get("upload_url", "") or "")
         upload_filename = str(attachment_info.get("upload_filename", "") or "").strip()
         if not upload_url:
@@ -3079,6 +3086,7 @@ class DiscordChannel(BaseChannel):
         except Exception:
             data = {}
         message_id = str(data.get("id", "") or "").strip() or "unknown"
+        self._last_error = ""
         return f"discord:voice:{message_id}"
 
     async def create_webhook(
