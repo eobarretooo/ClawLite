@@ -198,42 +198,48 @@ def _coerce_env_names(value: object) -> tuple[list[str], list[str]]:
     return out, issues
 
 
-def _resolve_active_config_payload() -> dict[str, object]:
+def _resolve_active_config_payload(
+    config_path: str | Path | None = None,
+    *,
+    profile: str | None = None,
+) -> dict[str, object]:
     from clawlite.config.loader import DEFAULT_CONFIG_PATH, _normalize_profile_name, _profile_path, load_raw_config_payload
 
-    raw_path = os.getenv("CLAWLITE_CONFIG", "").strip()
+    raw_path = str(config_path or "").strip()
+    if not raw_path:
+        raw_path = os.getenv("CLAWLITE_CONFIG", "").strip()
     path = Path(raw_path).expanduser() if raw_path else DEFAULT_CONFIG_PATH
     try:
-        profile = _normalize_profile_name(os.getenv("CLAWLITE_PROFILE", ""))
+        resolved_profile = _normalize_profile_name(profile if profile is not None else os.getenv("CLAWLITE_PROFILE", ""))
     except RuntimeError:
-        profile = ""
+        resolved_profile = ""
     try:
         stat = path.stat()
         mtime_ns = int(stat.st_mtime_ns)
     except OSError:
         mtime_ns = -1
     profile_mtime_ns = -1
-    if profile:
+    if resolved_profile:
         try:
-            profile_mtime_ns = int(_profile_path(path, profile).stat().st_mtime_ns)
+            profile_mtime_ns = int(_profile_path(path, resolved_profile).stat().st_mtime_ns)
         except OSError:
             profile_mtime_ns = -1
     cache_path = str(path)
     if (
         str(_ACTIVE_CONFIG_CACHE.get("path", "")) == cache_path
-        and str(_ACTIVE_CONFIG_CACHE.get("profile", "")) == profile
+        and str(_ACTIVE_CONFIG_CACHE.get("profile", "")) == resolved_profile
         and int(_ACTIVE_CONFIG_CACHE.get("mtime_ns", -2) or -2) == mtime_ns
         and int(_ACTIVE_CONFIG_CACHE.get("profile_mtime_ns", -2) or -2) == profile_mtime_ns
     ):
         cached_payload = _ACTIVE_CONFIG_CACHE.get("payload", {})
         return dict(cached_payload) if isinstance(cached_payload, dict) else {}
     try:
-        payload = load_raw_config_payload(path, profile=profile or None)
+        payload = load_raw_config_payload(path, profile=resolved_profile or None)
     except Exception:
         payload = {}
     normalized = dict(payload) if isinstance(payload, dict) else {}
     _ACTIVE_CONFIG_CACHE["path"] = cache_path
-    _ACTIVE_CONFIG_CACHE["profile"] = profile
+    _ACTIVE_CONFIG_CACHE["profile"] = resolved_profile
     _ACTIVE_CONFIG_CACHE["mtime_ns"] = mtime_ns
     _ACTIVE_CONFIG_CACHE["profile_mtime_ns"] = profile_mtime_ns
     _ACTIVE_CONFIG_CACHE["payload"] = dict(normalized)
@@ -269,8 +275,12 @@ def _extract_skill_entries(config: object) -> dict[str, object]:
     return dict(entries) if isinstance(entries, Mapping) else {}
 
 
-def _bundled_allowlist() -> set[str] | None:
-    config = _resolve_active_config_payload()
+def _bundled_allowlist(
+    config_path: str | Path | None = None,
+    *,
+    profile: str | None = None,
+) -> set[str] | None:
+    config = _resolve_active_config_payload(config_path, profile=profile)
     if not isinstance(config, Mapping):
         return None
     skills = config.get("skills")
@@ -283,17 +293,28 @@ def _bundled_allowlist() -> set[str] | None:
     return {str(item).strip().lower() for item in rows if str(item).strip()}
 
 
-def _bundled_skill_allowed(skill_key: str, source: str) -> bool:
+def _bundled_skill_allowed(
+    skill_key: str,
+    source: str,
+    *,
+    config_path: str | Path | None = None,
+    profile: str | None = None,
+) -> bool:
     if str(source or "").strip().lower() != "builtin":
         return True
-    allowlist = _bundled_allowlist()
+    allowlist = _bundled_allowlist(config_path, profile=profile)
     if allowlist is None:
         return True
     return str(skill_key or "").strip().lower() in allowlist
 
 
-def _skill_entry_payload(skill_key: str) -> dict[str, object]:
-    entries = _extract_skill_entries(_resolve_active_config_payload())
+def _skill_entry_payload(
+    skill_key: str,
+    *,
+    config_path: str | Path | None = None,
+    profile: str | None = None,
+) -> dict[str, object]:
+    entries = _extract_skill_entries(_resolve_active_config_payload(config_path, profile=profile))
     wanted = str(skill_key or "").strip()
     if not wanted:
         return {}
@@ -308,8 +329,13 @@ def _skill_entry_payload(skill_key: str) -> dict[str, object]:
     return {}
 
 
-def _skill_entry_enabled(skill_key: str) -> bool | None:
-    payload = _skill_entry_payload(skill_key)
+def _skill_entry_enabled(
+    skill_key: str,
+    *,
+    config_path: str | Path | None = None,
+    profile: str | None = None,
+) -> bool | None:
+    payload = _skill_entry_payload(skill_key, config_path=config_path, profile=profile)
     if "enabled" not in payload:
         return None
     return _to_bool(payload.get("enabled"))
@@ -327,8 +353,14 @@ def _resolve_skill_entry_api_key(value: object) -> str:
     return ""
 
 
-def _skill_entry_env_overrides(skill_key: str, primary_env: str = "") -> dict[str, str]:
-    payload = _skill_entry_payload(skill_key)
+def _skill_entry_env_overrides(
+    skill_key: str,
+    primary_env: str = "",
+    *,
+    config_path: str | Path | None = None,
+    profile: str | None = None,
+) -> dict[str, str]:
+    payload = _skill_entry_payload(skill_key, config_path=config_path, profile=profile)
     overrides: dict[str, str] = {}
 
     raw_env = payload.get("env")
@@ -462,7 +494,13 @@ def _extract_requirement_map(meta: dict[str, object]) -> tuple[dict[str, list[st
     return out, unique_issues
 
 
-def _missing_requirements(requirements: dict[str, list[str]], *, env_overrides: Mapping[str, str] | None = None) -> list[str]:
+def _missing_requirements(
+    requirements: dict[str, list[str]],
+    *,
+    env_overrides: Mapping[str, str] | None = None,
+    config_path: str | Path | None = None,
+    profile: str | None = None,
+) -> list[str]:
     missing: list[str] = []
     resolved_env = env_overrides or {}
     for binary in requirements["bins"]:
@@ -479,7 +517,7 @@ def _missing_requirements(requirements: dict[str, list[str]], *, env_overrides: 
             continue
         if not os.getenv(env_key):
             missing.append(f"env:{env_key}")
-    config_payload = _resolve_active_config_payload()
+    config_payload = _resolve_active_config_payload(config_path, profile=profile)
     for config_key in requirements.get("config", []):
         if not _config_value_present(config_payload, config_key):
             missing.append(f"config:{config_key}")
@@ -569,6 +607,8 @@ class SkillsLoader:
         self,
         builtin_root: str | Path | None = None,
         *,
+        config_path: str | Path | None = None,
+        config_profile: str | None = None,
         state_path: str | Path | None = None,
         watch_debounce_ms: int = 250,
         watch_interval_s: float | None = None,
@@ -581,6 +621,8 @@ class SkillsLoader:
             user_home / ".clawlite" / "workspace" / "skills",
             user_home / ".clawlite" / "marketplace" / "skills",
         ]
+        self.config_path = Path(config_path).expanduser() if config_path is not None else None
+        self.config_profile = str(config_profile or "").strip()
         self.state_path = (
             Path(state_path)
             if state_path is not None
@@ -699,13 +741,32 @@ class SkillsLoader:
         return tuple(signature)
 
     def _refresh_runtime_status(self, spec: SkillSpec) -> SkillSpec:
-        env_overrides = _skill_entry_env_overrides(spec.skill_key or spec.name, spec.primary_env)
-        missing = _missing_requirements(spec.requirements, env_overrides=env_overrides)
-        if not _bundled_skill_allowed(spec.skill_key or spec.name, spec.source):
+        env_overrides = _skill_entry_env_overrides(
+            spec.skill_key or spec.name,
+            spec.primary_env,
+            config_path=self.config_path,
+            profile=self.config_profile,
+        )
+        missing = _missing_requirements(
+            spec.requirements,
+            env_overrides=env_overrides,
+            config_path=self.config_path,
+            profile=self.config_profile,
+        )
+        if not _bundled_skill_allowed(
+            spec.skill_key or spec.name,
+            spec.source,
+            config_path=self.config_path,
+            profile=self.config_profile,
+        ):
             missing = [*missing, "policy:bundled_not_allowed"]
         available = (not missing) and (not spec.contract_issues)
         entry_state = self._entry_state(spec.name)
-        config_enabled = _skill_entry_enabled(spec.skill_key or spec.name)
+        config_enabled = _skill_entry_enabled(
+            spec.skill_key or spec.name,
+            config_path=self.config_path,
+            profile=self.config_profile,
+        )
         enabled = bool(entry_state.get("enabled", True)) and (True if config_enabled is None else bool(config_enabled))
         pinned = bool(entry_state.get("pinned", False))
         version_pin = str(entry_state.get("version_pin", "") or "").strip()
@@ -959,8 +1020,7 @@ class SkillsLoader:
             return "workspace"
         return "marketplace"
 
-    @staticmethod
-    def _parse_header(path: Path, *, source: str) -> SkillSpec | None:
+    def _parse_header(self, path: Path, *, source: str) -> SkillSpec | None:
         text = path.read_text(encoding="utf-8", errors="ignore")
         meta, body = _extract_frontmatter(text)
         raw_name = str(meta.get("name", "")).strip()
@@ -990,8 +1050,23 @@ class SkillsLoader:
             if primary_env_rows:
                 primary_env = primary_env_rows[0]
             req_issues.extend(primary_env_issues)
-        missing = _missing_requirements(req_map, env_overrides=_skill_entry_env_overrides(skill_key, primary_env))
-        if not _bundled_skill_allowed(skill_key, source):
+        missing = _missing_requirements(
+            req_map,
+            env_overrides=_skill_entry_env_overrides(
+                skill_key,
+                primary_env,
+                config_path=self.config_path,
+                profile=self.config_profile,
+            ),
+            config_path=self.config_path,
+            profile=self.config_profile,
+        )
+        if not _bundled_skill_allowed(
+            skill_key,
+            source,
+            config_path=self.config_path,
+            profile=self.config_profile,
+        ):
             missing = [*missing, "policy:bundled_not_allowed"]
         execution_kind, execution_target, execution_argv, contract_issues = _build_execution_contract(meta)
         metadata_as_text = {key: _serialize_frontmatter_value(value) for key, value in meta.items()}
@@ -1289,7 +1364,12 @@ class SkillsLoader:
         spec = spec_or_name if isinstance(spec_or_name, SkillSpec) else self.get(str(spec_or_name))
         if spec is None:
             return {}
-        return _skill_entry_env_overrides(spec.skill_key or spec.name, spec.primary_env)
+        return _skill_entry_env_overrides(
+            spec.skill_key or spec.name,
+            spec.primary_env,
+            config_path=self.config_path,
+            profile=self.config_profile,
+        )
 
     def build_skills_summary(self) -> str:
         """Return XML summary of all available skills (name + description only).
@@ -1360,3 +1440,145 @@ class SkillsLoader:
             lines.append("</skill>")
         lines.append("</available_skills>")
         return ["\n".join(lines)]
+
+
+def skills_doctor_status(row: Mapping[str, object]) -> str:
+    if not bool(row.get("enabled", True)):
+        return "disabled"
+    if list(row.get("contract_issues", []) or []):
+        return "invalid_contract"
+    missing = list(row.get("missing", []) or [])
+    if "policy:bundled_not_allowed" in missing:
+        return "policy_blocked"
+    if missing:
+        return "missing_requirements"
+    if bool(row.get("available", False)):
+        return "ready"
+    return "unavailable"
+
+
+def skills_doctor_hint(row: Mapping[str, object]) -> str:
+    contract_issues = list(row.get("contract_issues", []) or [])
+    if contract_issues:
+        return "Fix the SKILL.md frontmatter contract so only one valid execution path is declared."
+
+    missing = [str(item or "") for item in list(row.get("missing", []) or []) if str(item or "").strip()]
+    if "policy:bundled_not_allowed" in missing:
+        skill_key = str(row.get("skill_key", "") or row.get("name", "")).strip()
+        return f"Allow the builtin skill via skills.allowBundled or install a workspace/marketplace override for {skill_key}."
+
+    env_items = [item.split(":", 1)[1] for item in missing if item.startswith("env:")]
+    if env_items:
+        primary_env = str(row.get("primary_env", "") or "").strip()
+        if primary_env and primary_env in env_items:
+            skill_key = str(row.get("skill_key", "") or row.get("name", "")).strip()
+            return f"Export {primary_env}, set skills.entries.{skill_key}.apiKey manually, or run clawlite skills config {skill_key}."
+        return f"Set the required environment variables: {', '.join(env_items)}."
+
+    config_items = [item.split(":", 1)[1] for item in missing if item.startswith("config:")]
+    if config_items:
+        return f"Set the required config keys: {', '.join(config_items)}."
+
+    bin_items = [item.split(":", 1)[1] for item in missing if item.startswith("bin:")]
+    any_bin_items = [item.split(":", 1)[1] for item in missing if item.startswith("any_bin:")]
+    if bin_items or any_bin_items:
+        fallback_hint = str(row.get("fallback_hint", "") or "").strip()
+        if fallback_hint:
+            return fallback_hint
+        parts = [*bin_items, *[f"one of {item}" for item in any_bin_items]]
+        return f"Install the required binaries: {', '.join(parts)}."
+
+    os_items = [item.split(":", 1)[1] for item in missing if item.startswith("os:")]
+    if os_items:
+        return f"Run this skill on a supported OS or disable it locally: {', '.join(os_items)}."
+
+    return "No action required."
+
+
+def skills_doctor_report(
+    diagnostics: Mapping[str, object],
+    *,
+    include_all: bool = False,
+    status: str = "",
+    source: str = "",
+    query: str = "",
+) -> dict[str, object]:
+    rows = list(diagnostics.get("skills", []) or [])
+    wanted_status = str(status or "").strip().lower()
+    wanted_source = str(source or "").strip().lower()
+    wanted_query = str(query or "").strip().lower()
+    doctor_rows: list[dict[str, object]] = []
+    status_counts: dict[str, int] = {
+        "ready": 0,
+        "disabled": 0,
+        "missing_requirements": 0,
+        "policy_blocked": 0,
+        "invalid_contract": 0,
+        "unavailable": 0,
+    }
+    recommendations: list[str] = []
+
+    for row in rows:
+        row_payload = dict(row) if isinstance(row, Mapping) else {}
+        resolved_status = skills_doctor_status(row_payload)
+        status_counts[resolved_status] = status_counts.get(resolved_status, 0) + 1
+        hint = skills_doctor_hint(row_payload)
+        doctor_row = {
+            "name": row_payload.get("name", ""),
+            "skill_key": row_payload.get("skill_key", ""),
+            "primary_env": row_payload.get("primary_env", ""),
+            "source": str(row_payload.get("source", "") or ""),
+            "status": resolved_status,
+            "enabled": bool(row_payload.get("enabled", True)),
+            "available": bool(row_payload.get("available", False)),
+            "missing": list(row_payload.get("missing", []) or []),
+            "contract_issues": list(row_payload.get("contract_issues", []) or []),
+            "runtime_requirements": list(row_payload.get("runtime_requirements", []) or []),
+            "hint": hint,
+        }
+        if row_payload.get("fallback_hint"):
+            doctor_row["fallback_hint"] = row_payload.get("fallback_hint")
+        source_name = str(doctor_row.get("source", "") or "").strip().lower()
+        if wanted_status and resolved_status != wanted_status:
+            continue
+        if wanted_source and source_name != wanted_source:
+            continue
+        if wanted_query:
+            haystack = " ".join(
+                [
+                    str(doctor_row.get("name", "") or ""),
+                    str(doctor_row.get("skill_key", "") or ""),
+                    str(doctor_row.get("primary_env", "") or ""),
+                    source_name,
+                    " ".join(str(item or "") for item in doctor_row.get("missing", []) or []),
+                    " ".join(str(item or "") for item in doctor_row.get("contract_issues", []) or []),
+                    " ".join(str(item or "") for item in doctor_row.get("runtime_requirements", []) or []),
+                    str(doctor_row.get("hint", "") or ""),
+                    str(doctor_row.get("fallback_hint", "") or ""),
+                ]
+            ).lower()
+            if wanted_query not in haystack:
+                continue
+        if include_all or wanted_status or wanted_source or resolved_status not in {"ready", "disabled"}:
+            doctor_rows.append(doctor_row)
+            if hint != "No action required." and hint not in recommendations:
+                recommendations.append(hint)
+
+    blocking = (
+        status_counts.get("missing_requirements", 0)
+        + status_counts.get("policy_blocked", 0)
+        + status_counts.get("invalid_contract", 0)
+    )
+    return {
+        "ok": blocking == 0,
+        "action": "skills_doctor",
+        "summary": dict(diagnostics.get("summary", {}) or {}),
+        "watcher": dict(diagnostics.get("watcher", {}) or {}),
+        "status_counts": status_counts,
+        "status_filter": wanted_status,
+        "source_filter": wanted_source,
+        "query": wanted_query,
+        "count": len(doctor_rows),
+        "recommendations": recommendations,
+        "skills": doctor_rows,
+    }

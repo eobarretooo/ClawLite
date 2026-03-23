@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import HTTPException, Request
 
 from clawlite.core.memory_monitor import MemoryMonitor
+from clawlite.core.skills import skills_doctor_report
 
 
 @dataclass
@@ -181,6 +182,18 @@ class GatewayControlHandlers:
             "missing_requirements": dict(diagnostics.get("missing_requirements", {}) or {}),
         }
         return {"ok": True, "summary": summary}
+
+    async def skills_doctor(self, request: Request, payload: Any) -> dict[str, Any]:
+        self._check_control(request)
+        diagnostics = self.runtime.skills_loader.diagnostics_report()
+        summary = skills_doctor_report(
+            diagnostics,
+            include_all=bool(payload.include_all),
+            status=str(payload.status or ""),
+            source=str(payload.source or ""),
+            query=str(payload.query or ""),
+        )
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
     async def memory_snapshot_create(self, request: Request, payload: Any) -> dict[str, Any]:
         self._check_control(request)

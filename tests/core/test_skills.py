@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from clawlite.core.skills import SkillsLoader
+from clawlite.core.skills import SkillsLoader, skills_doctor_report
 
 
 class _FakeWatchfiles:
@@ -602,6 +602,44 @@ def test_skills_loader_uses_skill_entries_api_key_for_primary_env(tmp_path: Path
     assert loader.resolved_env_overrides(row) == {"GH_TOKEN": "injected-gh-token"}
 
 
+def test_skills_loader_uses_explicit_config_path_for_skill_entries(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "custom-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "entries": {
+                        "discord": {
+                            "apiKey": "from-explicit-config",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CLAWLITE_CONFIG", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    skill_dir = tmp_path / "discord"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: discord\n"
+        "description: discord skill\n"
+        'metadata: {"openclaw":{"primaryEnv":"GH_TOKEN"}}\n'
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=tmp_path, config_path=config_path)
+    row = loader.get("discord")
+    assert row is not None
+    assert row.available is True
+    assert loader.resolved_env_overrides(row) == {"GH_TOKEN": "from-explicit-config"}
+
+
 def test_skills_loader_applies_profiled_skill_entries(tmp_path: Path, monkeypatch) -> None:
     base_path = tmp_path / "config.yaml"
     base_path.write_text("skills:\n  entries: {}\n", encoding="utf-8")
@@ -944,6 +982,33 @@ def test_fallback_hint_not_shown_for_available_skill(tmp_path: Path) -> None:
     by_name = {str(row["name"]): row for row in report["skills"]}
     # fallback_hint should NOT appear in diagnostics for available skills
     assert "fallback_hint" not in by_name["always-available"]
+
+
+def test_skills_doctor_report_omits_recommendations_for_filtered_out_rows() -> None:
+    payload = skills_doctor_report(
+        {
+            "summary": {},
+            "watcher": {},
+            "skills": [
+                {
+                    "name": "github",
+                    "skill_key": "github",
+                    "primary_env": "GH_TOKEN",
+                    "source": "builtin",
+                    "enabled": False,
+                    "available": False,
+                    "missing": ["env:GH_TOKEN"],
+                    "contract_issues": [],
+                    "runtime_requirements": [],
+                }
+            ],
+        }
+    )
+
+    assert payload["ok"] is True
+    assert payload["count"] == 0
+    assert payload["skills"] == []
+    assert payload["recommendations"] == []
 
 
 def test_version_pin_persisted_and_reflected(tmp_path: Path) -> None:

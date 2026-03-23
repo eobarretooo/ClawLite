@@ -272,7 +272,12 @@ def _validate_local_provider_runtime(provider: Any) -> None:
     raise RuntimeError(str(failures[0].get("error") or "provider_config_error:local_runtime_unavailable"))
 
 
-def build_runtime(config: AppConfig) -> RuntimeContainer:
+def build_runtime(
+    config: AppConfig,
+    *,
+    config_path: str | Path | None = None,
+    config_profile: str | None = None,
+) -> RuntimeContainer:
     bind_event("gateway.runtime").info("building runtime workspace={} state={}", config.workspace_path, config.state_path)
     telemetry = configure_observability(
         enabled=bool(getattr(config.observability, "enabled", False)),
@@ -372,7 +377,11 @@ def build_runtime(config: AppConfig) -> RuntimeContainer:
     )
     tools.register(CronTool(_CronAPI(cron)))
     tools.register(MCPTool(config.tools.mcp))
-    skills = SkillsLoader(state_path=Path(config.state_path) / "skills-state.json")
+    skills = SkillsLoader(
+        state_path=Path(config.state_path) / "skills-state.json",
+        config_path=config_path,
+        config_profile=config_profile,
+    )
 
     sessions = SessionStore(
         root=Path(config.state_path) / "sessions",

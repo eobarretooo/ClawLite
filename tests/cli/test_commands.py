@@ -974,7 +974,15 @@ def test_cli_skills_doctor_reports_actionable_hints(tmp_path: Path, capsys, monk
 
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr("clawlite.cli.commands.SkillsLoader", lambda state_path=None: SkillsLoader(builtin_root=builtin_root, state_path=state_path))
+    monkeypatch.setattr(
+        "clawlite.cli.commands.SkillsLoader",
+        lambda state_path=None, config_path=None, config_profile=None: SkillsLoader(
+            builtin_root=builtin_root,
+            state_path=state_path,
+            config_path=config_path,
+            config_profile=config_profile,
+        ),
+    )
     monkeypatch.delenv("GH_TOKEN", raising=False)
 
     rc = main(["--config", str(config_path), "skills", "doctor"])
@@ -986,6 +994,64 @@ def test_cli_skills_doctor_reports_actionable_hints(tmp_path: Path, capsys, monk
     assert payload["status_counts"]["missing_requirements"] == 1
     assert payload["skills"][0]["status"] == "missing_requirements"
     assert "GH_TOKEN" in payload["skills"][0]["hint"]
+
+
+def test_cli_skills_doctor_uses_explicit_config_path_for_skill_entries(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    builtin_root = tmp_path / "builtin"
+    missing_dir = builtin_root / "github"
+    missing_dir.mkdir(parents=True, exist_ok=True)
+    (missing_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: github\n"
+        "description: GitHub skill\n"
+        "script: github\n"
+        "metadata:\n"
+        "  clawlite:\n"
+        "    primaryEnv: GH_TOKEN\n"
+        "    requires:\n"
+        "      env: [GH_TOKEN]\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "entries": {
+                        "github": {
+                            "apiKey": "token-from-custom-config",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CLAWLITE_CONFIG", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "clawlite.cli.commands.SkillsLoader",
+        lambda state_path=None, config_path=None, config_profile=None: SkillsLoader(
+            builtin_root=builtin_root,
+            state_path=state_path,
+            config_path=config_path,
+            config_profile=config_profile,
+        ),
+    )
+
+    rc = main(["--config", str(config_path), "skills", "doctor"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "skills_doctor"
+    assert payload["ok"] is True
+    assert payload["count"] == 0
+    assert payload["recommendations"] == []
+    assert payload["status_counts"]["ready"] == 1
 
 
 def test_cli_skills_doctor_supports_status_and_source_filters(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -1021,9 +1087,11 @@ def test_cli_skills_doctor_supports_status_and_source_filters(tmp_path: Path, ca
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
         "clawlite.cli.commands.SkillsLoader",
-        lambda state_path=None: SkillsLoader(
+        lambda state_path=None, config_path=None, config_profile=None: SkillsLoader(
             builtin_root=builtin_root,
             state_path=state_path,
+            config_path=config_path,
+            config_profile=config_profile,
         ),
     )
     monkeypatch.delenv("GH_TOKEN", raising=False)
@@ -1064,7 +1132,15 @@ def test_cli_skills_doctor_supports_query_filter(tmp_path: Path, capsys, monkeyp
 
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr("clawlite.cli.commands.SkillsLoader", lambda state_path=None: SkillsLoader(builtin_root=builtin_root, state_path=state_path))
+    monkeypatch.setattr(
+        "clawlite.cli.commands.SkillsLoader",
+        lambda state_path=None, config_path=None, config_profile=None: SkillsLoader(
+            builtin_root=builtin_root,
+            state_path=state_path,
+            config_path=config_path,
+            config_profile=config_profile,
+        ),
+    )
     monkeypatch.delenv("GH_TOKEN", raising=False)
 
     rc = main(["--config", str(config_path), "skills", "doctor", "--query", "github"])
@@ -1270,7 +1346,8 @@ def test_cli_hatch_skips_when_bootstrap_not_pending(
         encoding="utf-8",
     )
 
-    def _boom(_config):
+    def _boom(_config, **kwargs):
+        del kwargs
         raise AssertionError(
             "build_runtime should not be called when bootstrap is not pending"
         )
@@ -1312,7 +1389,7 @@ def test_cli_hatch_completes_pending_bootstrap(
 
     runtime = types.SimpleNamespace(engine=_Engine(), workspace=loader)
     monkeypatch.setattr(
-        "clawlite.gateway.server.build_runtime", lambda _config: runtime
+        "clawlite.gateway.server.build_runtime", lambda _config, **kwargs: runtime
     )
 
     rc = main(["--config", str(config_path), "hatch"])
@@ -1418,12 +1495,13 @@ def test_cli_gateway_alias_parses(tmp_path: Path, monkeypatch) -> None:
 
     called = {"ok": False}
 
-    def _fake_run_gateway(*, host, port, config=None, config_path=None):
+    def _fake_run_gateway(*, host, port, config=None, config_path=None, config_profile=None):
         called["ok"] = True
         assert host == "127.0.0.1"
         assert port == 8787
         assert config is not None
         assert config_path == str(config_path_obj)
+        assert config_profile is None
 
     config_path_obj = config_path
     monkeypatch.setattr("clawlite.gateway.server.run_gateway", _fake_run_gateway)
@@ -1460,12 +1538,13 @@ def test_cli_start_creates_missing_default_config_and_prints_notice(
 
     called = {"ok": False}
 
-    def _fake_run_gateway(*, host, port, config=None, config_path=None):
+    def _fake_run_gateway(*, host, port, config=None, config_path=None, config_profile=None):
         called["ok"] = True
         assert host == "127.0.0.1"
         assert port == 8787
         assert config is not None
         assert config_path is None
+        assert config_profile is None
 
     monkeypatch.setattr("clawlite.gateway.server.run_gateway", _fake_run_gateway)
 
@@ -1500,11 +1579,12 @@ def test_cli_start_uses_custom_config_values_for_runtime_and_port(
 
     captured: dict[str, Any] = {}
 
-    def _fake_run_gateway(*, host, port, config=None, config_path=None):
+    def _fake_run_gateway(*, host, port, config=None, config_path=None, config_profile=None):
         captured["host"] = host
         captured["port"] = port
         captured["config"] = config
         captured["config_path"] = config_path
+        captured["config_profile"] = config_profile
 
     monkeypatch.setattr("clawlite.gateway.server.run_gateway", _fake_run_gateway)
 
@@ -1513,7 +1593,58 @@ def test_cli_start_uses_custom_config_values_for_runtime_and_port(
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 19999
     assert captured["config_path"] == str(config_path)
+    assert captured["config_profile"] is None
     assert captured["config"].gateway.port == 19999
+
+
+def test_cli_start_uses_profiled_config_for_gateway_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "custom.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "gateway": {
+                    "host": "127.0.0.1",
+                    "port": 1111,
+                    "auth": {"mode": "required", "token": "tok-123456"},
+                },
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "custom.prod.json").write_text(
+        json.dumps(
+            {
+                "gateway": {
+                    "port": 2222,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run_gateway(*, host, port, config=None, config_path=None, config_profile=None):
+        captured["host"] = host
+        captured["port"] = port
+        captured["config"] = config
+        captured["config_path"] = config_path
+        captured["config_profile"] = config_profile
+
+    monkeypatch.setattr("clawlite.gateway.server.run_gateway", _fake_run_gateway)
+
+    rc = main(["--config", str(config_path), "--profile", "prod", "start"])
+    assert rc == 0
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 2222
+    assert captured["config_path"] == str(config_path)
+    assert captured["config_profile"] == "prod"
+    assert captured["config"].gateway.port == 2222
 
 
 def test_cli_help_version_status_do_not_import_gateway(tmp_path: Path, capsys) -> None:

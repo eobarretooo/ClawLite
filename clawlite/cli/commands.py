@@ -75,6 +75,9 @@ from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import save_config
 from clawlite.config.loader import save_raw_config_payload
 from clawlite.core.skills import SkillsLoader
+from clawlite.core.skills import skills_doctor_hint
+from clawlite.core.skills import skills_doctor_report
+from clawlite.core.skills import skills_doctor_status
 from clawlite.scheduler.cron import CronService
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logger import stdout_json
@@ -109,12 +112,12 @@ def _format_cli_error(exc: BaseException) -> str:
     return f"error: {message}"
 
 
-def _ensure_config_materialized(config_path: str | None) -> Any:
-    target = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+def _ensure_config_materialized(config_path: str | None, *, profile: str | None = None) -> Any:
+    target = config_payload_path(config_path, profile=profile)
     existed = target.exists()
-    cfg = load_config(config_path)
+    cfg = load_config(config_path, profile=profile)
     if not existed:
-        save_config(cfg, path=target)
+        save_raw_config_payload(cfg.to_dict(), config_path, profile=profile)
         if config_path:
             stdout_text(f"Config criado em {target}.")
         else:
@@ -153,10 +156,31 @@ def _parse_bool_flag(value: str) -> bool:
 
 def _skills_loader_for_args(args: argparse.Namespace) -> SkillsLoader:
     config_path = getattr(args, "config", None)
-    if config_path:
-        cfg = load_config(config_path)
-        return SkillsLoader(state_path=Path(cfg.state_path) / "skills-state.json")
+    config_profile = getattr(args, "profile", None)
+    if config_path or config_profile:
+        cfg = load_config(config_path, profile=config_profile)
+        return SkillsLoader(
+            state_path=Path(cfg.state_path) / "skills-state.json",
+            config_path=config_path,
+            config_profile=config_profile,
+        )
     return SkillsLoader()
+
+
+def _build_runtime_for_args(args: argparse.Namespace, cfg=None):
+    from clawlite.gateway.server import build_runtime
+
+    config_path = getattr(args, "config", None)
+    config_profile = getattr(args, "profile", None)
+    if config_path or config_profile:
+        resolved_cfg = load_config(config_path, profile=config_profile)
+    else:
+        resolved_cfg = cfg if cfg is not None else load_config(None)
+    return build_runtime(
+        resolved_cfg,
+        config_path=config_path,
+        config_profile=config_profile,
+    )
 
 
 def _parse_skill_env_assignments(values: list[str]) -> dict[str, str]:
@@ -208,10 +232,10 @@ def _run_clawhub_command(loader: SkillsLoader, *action_args: str) -> tuple[int, 
 def cmd_start(args: argparse.Namespace) -> int:
     from clawlite.gateway.server import run_gateway
 
-    cfg = _ensure_config_materialized(args.config)
+    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
     host = args.host or cfg.gateway.host
     port = args.port or cfg.gateway.port
-    run_gateway(host=host, port=port, config=cfg, config_path=args.config)
+    run_gateway(host=host, port=port, config=cfg, config_path=args.config, config_profile=getattr(args, "profile", None))
     return 0
 
 
@@ -244,7 +268,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    cfg = _ensure_config_materialized(args.config)
+    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
     config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
     handoff = build_dashboard_handoff(
         cfg,
@@ -283,10 +307,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
 
     async def _scenario() -> None:
         try:
@@ -313,8 +335,6 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_hatch(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
     handoff = build_dashboard_handoff(cfg, config_path=args.config, ensure_token=False)
     if not bool(handoff.get("bootstrap_pending", False)):
@@ -329,7 +349,7 @@ def cmd_hatch(args: argparse.Namespace) -> int:
         )
         return 0
 
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
     session_id = str(handoff.get("hatch_session_id", "hatch:operator") or "hatch:operator")
     message = str(args.message or handoff.get("recommended_first_message", "") or "Wake up, my friend!").strip()
 
@@ -412,7 +432,7 @@ def cmd_hatch(args: argparse.Namespace) -> int:
 
 def cmd_configure(args: argparse.Namespace) -> int:
     """Two-level interactive configuration wizard (Basic / Advanced)."""
-    cfg = _ensure_config_materialized(args.config)
+    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
     flow = str(getattr(args, "flow", "") or "").strip()
     if flow:
         payload = run_onboarding_wizard(
@@ -449,7 +469,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
 
 
 def cmd_onboard(args: argparse.Namespace) -> int:
-    cfg = _ensure_config_materialized(args.config)
+    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
     if bool(getattr(args, "wizard", False)):
         payload = run_onboarding_wizard(
             cfg,
@@ -1314,10 +1334,8 @@ def cmd_memory_share_optin(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_add(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
 
     async def _scenario() -> None:
         job_id = await runtime.cron.add_job(
@@ -1333,50 +1351,40 @@ def cmd_cron_add(args: argparse.Namespace) -> int:
 
 
 def cmd_cron_list(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
     rows = runtime.cron.list_jobs(session_id=args.session_id)
     _print_json({"jobs": rows})
     return 0
 
 
 def cmd_cron_remove(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
     ok = runtime.cron.remove_job(args.job_id)
     _print_json({"ok": ok})
     return 0
 
 
 def cmd_cron_enable(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
     ok = runtime.cron.enable_job(args.job_id, enabled=True)
     _print_json({"ok": ok, "job_id": args.job_id, "enabled": True})
     return 0
 
 
 def cmd_cron_disable(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
     ok = runtime.cron.enable_job(args.job_id, enabled=False)
     _print_json({"ok": ok, "job_id": args.job_id, "enabled": False})
     return 0
 
 
 def cmd_cron_run(args: argparse.Namespace) -> int:
-    from clawlite.gateway.server import build_runtime
-
     cfg = load_config(args.config)
-    runtime = build_runtime(cfg)
+    runtime = _build_runtime_for_args(args, cfg)
 
     async def _scenario() -> None:
         try:
@@ -1497,7 +1505,7 @@ def cmd_skills_show(args: argparse.Namespace) -> int:
             "available": row.available,
             "enabled": row.enabled,
             "pinned": row.pinned,
-            "status": _skills_doctor_status(
+            "status": skills_doctor_status(
                 {
                     "name": row.name,
                     "skill_key": row.skill_key or row.name,
@@ -1509,7 +1517,7 @@ def cmd_skills_show(args: argparse.Namespace) -> int:
                     "fallback_hint": row.fallback_hint,
                 }
             ),
-            "hint": _skills_doctor_hint(
+            "hint": skills_doctor_hint(
                 {
                     "name": row.name,
                     "skill_key": row.skill_key or row.name,
@@ -1555,138 +1563,16 @@ def cmd_skills_refresh(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok", False) else 2
 
 
-def _skills_doctor_status(row: dict[str, Any]) -> str:
-    if not bool(row.get("enabled", True)):
-        return "disabled"
-    if list(row.get("contract_issues", []) or []):
-        return "invalid_contract"
-    missing = list(row.get("missing", []) or [])
-    if "policy:bundled_not_allowed" in missing:
-        return "policy_blocked"
-    if missing:
-        return "missing_requirements"
-    if bool(row.get("available", False)):
-        return "ready"
-    return "unavailable"
-
-
-def _skills_doctor_hint(row: dict[str, Any]) -> str:
-    contract_issues = list(row.get("contract_issues", []) or [])
-    if contract_issues:
-        return "Fix the SKILL.md frontmatter contract so only one valid execution path is declared."
-
-    missing = [str(item or "") for item in list(row.get("missing", []) or []) if str(item or "").strip()]
-    if "policy:bundled_not_allowed" in missing:
-        skill_key = str(row.get("skill_key", "") or row.get("name", "")).strip()
-        return f"Allow the builtin skill via skills.allowBundled or install a workspace/marketplace override for {skill_key}."
-
-    env_items = [item.split(":", 1)[1] for item in missing if item.startswith("env:")]
-    if env_items:
-        primary_env = str(row.get("primary_env", "") or "").strip()
-        if primary_env and primary_env in env_items:
-            skill_key = str(row.get("skill_key", "") or row.get("name", "")).strip()
-            return (
-                f"Export {primary_env}, set skills.entries.{skill_key}.apiKey manually, or run clawlite skills config {skill_key}."
-            )
-        return f"Set the required environment variables: {', '.join(env_items)}."
-
-    config_items = [item.split(":", 1)[1] for item in missing if item.startswith("config:")]
-    if config_items:
-        return f"Set the required config keys: {', '.join(config_items)}."
-
-    bin_items = [item.split(":", 1)[1] for item in missing if item.startswith("bin:")]
-    any_bin_items = [item.split(":", 1)[1] for item in missing if item.startswith("any_bin:")]
-    if bin_items or any_bin_items:
-        fallback_hint = str(row.get("fallback_hint", "") or "").strip()
-        if fallback_hint:
-            return fallback_hint
-        parts = [*bin_items, *[f"one of {item}" for item in any_bin_items]]
-        return f"Install the required binaries: {', '.join(parts)}."
-
-    os_items = [item.split(":", 1)[1] for item in missing if item.startswith("os:")]
-    if os_items:
-        return f"Run this skill on a supported OS or disable it locally: {', '.join(os_items)}."
-
-    return "No action required."
-
-
 def cmd_skills_doctor(args: argparse.Namespace) -> int:
     loader = _skills_loader_for_args(args)
     diagnostics = loader.diagnostics_report()
-    rows = list(diagnostics.get("skills", []) or [])
-    wanted_status = str(getattr(args, "status", "") or "").strip().lower()
-    wanted_source = str(getattr(args, "source", "") or "").strip().lower()
-    query = str(getattr(args, "query", "") or "").strip().lower()
-    doctor_rows: list[dict[str, Any]] = []
-    status_counts: dict[str, int] = {
-        "ready": 0,
-        "disabled": 0,
-        "missing_requirements": 0,
-        "policy_blocked": 0,
-        "invalid_contract": 0,
-        "unavailable": 0,
-    }
-    recommendations: list[str] = []
-
-    for row in rows:
-        status = _skills_doctor_status(row)
-        status_counts[status] = status_counts.get(status, 0) + 1
-        hint = _skills_doctor_hint(row)
-        if hint != "No action required." and hint not in recommendations:
-            recommendations.append(hint)
-        doctor_row = {
-            "name": row.get("name", ""),
-            "skill_key": row.get("skill_key", ""),
-            "primary_env": row.get("primary_env", ""),
-            "source": str(row.get("source", "") or ""),
-            "status": status,
-            "enabled": bool(row.get("enabled", True)),
-            "available": bool(row.get("available", False)),
-            "missing": list(row.get("missing", []) or []),
-            "contract_issues": list(row.get("contract_issues", []) or []),
-            "runtime_requirements": list(row.get("runtime_requirements", []) or []),
-            "hint": hint,
-        }
-        if row.get("fallback_hint"):
-            doctor_row["fallback_hint"] = row.get("fallback_hint")
-        source_name = str(doctor_row.get("source", "") or "").strip().lower()
-        if wanted_status and status != wanted_status:
-            continue
-        if wanted_source and source_name != wanted_source:
-            continue
-        if query:
-            haystack = " ".join(
-                [
-                    str(doctor_row.get("name", "") or ""),
-                    str(doctor_row.get("skill_key", "") or ""),
-                    str(doctor_row.get("primary_env", "") or ""),
-                    source_name,
-                    " ".join(str(item or "") for item in doctor_row.get("missing", []) or []),
-                    " ".join(str(item or "") for item in doctor_row.get("contract_issues", []) or []),
-                    " ".join(str(item or "") for item in doctor_row.get("runtime_requirements", []) or []),
-                    str(doctor_row.get("hint", "") or ""),
-                    str(doctor_row.get("fallback_hint", "") or ""),
-                ]
-            ).lower()
-            if query not in haystack:
-                continue
-        if bool(args.all) or wanted_status or wanted_source or status not in {"ready", "disabled"}:
-            doctor_rows.append(doctor_row)
-
-    blocking = status_counts.get("missing_requirements", 0) + status_counts.get("policy_blocked", 0) + status_counts.get("invalid_contract", 0)
-    payload = {
-        "ok": blocking == 0,
-        "action": "skills_doctor",
-        "summary": diagnostics.get("summary", {}),
-        "watcher": diagnostics.get("watcher", {}),
-        "status_counts": status_counts,
-        "status_filter": wanted_status,
-        "source_filter": wanted_source,
-        "query": query,
-        "count": len(doctor_rows),
-        "recommendations": recommendations,
-        "skills": doctor_rows,
-    }
+    payload = skills_doctor_report(
+        diagnostics,
+        include_all=bool(args.all),
+        status=str(getattr(args, "status", "") or ""),
+        source=str(getattr(args, "source", "") or ""),
+        query=str(getattr(args, "query", "") or ""),
+    )
     _print_json(payload)
     return 0 if payload.get("ok", False) else 2
 
@@ -1715,7 +1601,7 @@ def _managed_skill_slug(row: Any) -> str:
 
 
 def _managed_skill_status(row: Any) -> str:
-    return _skills_doctor_status(
+    return skills_doctor_status(
         {
             "name": getattr(row, "name", ""),
             "skill_key": getattr(row, "skill_key", "") or getattr(row, "name", ""),
@@ -1728,7 +1614,7 @@ def _managed_skill_status(row: Any) -> str:
 
 
 def _managed_skill_hint(row: Any) -> str:
-    return _skills_doctor_hint(
+    return skills_doctor_hint(
         {
             "name": getattr(row, "name", ""),
             "skill_key": getattr(row, "skill_key", "") or getattr(row, "name", ""),

@@ -314,6 +314,13 @@ class SkillsRefreshRequest(BaseModel):
     force: bool = True
 
 
+class SkillsDoctorRequest(BaseModel):
+    include_all: bool = False
+    status: str = ""
+    source: str = ""
+    query: str = ""
+
+
 class MemorySnapshotCreateRequest(BaseModel):
     tag: str = ""
 
@@ -1601,10 +1608,18 @@ async def _run_bootstrap_cycle(runtime: RuntimeContainer) -> dict[str, Any]:
         }
 
 
-def create_app(config: AppConfig | None = None) -> FastAPI:
+def create_app(
+    config: AppConfig | None = None,
+    *,
+    config_path: str | Path | None = None,
+    config_profile: str | None = None,
+) -> FastAPI:
     setup_logging()
-    cfg = config or load_config()
-    runtime = build_runtime(cfg)
+    if config_path is not None or config_profile is not None:
+        cfg = load_config(config_path, profile=config_profile)
+    else:
+        cfg = config or load_config()
+    runtime = build_runtime(cfg, config_path=config_path, config_profile=config_profile)
     auth_guard = GatewayAuthGuard.from_config(cfg)
     if auth_guard.mode == "required" and not auth_guard.token:
         raise RuntimeError("gateway_auth_required_but_token_missing")
@@ -3800,6 +3815,18 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return await control_handlers.skills_refresh(request, payload or SkillsRefreshRequest())
 
+    @app.post("/v1/control/skills/doctor")
+    async def skills_doctor(
+        request: Request, payload: SkillsDoctorRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_doctor(request, payload or SkillsDoctorRequest())
+
+    @app.post("/api/skills/doctor")
+    async def api_skills_doctor(
+        request: Request, payload: SkillsDoctorRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_doctor(request, payload or SkillsDoctorRequest())
+
     @app.post("/v1/control/memory/snapshot/create")
     async def memory_snapshot_create_route(
         request: Request, payload: MemorySnapshotCreateRequest | None = None
@@ -4087,9 +4114,13 @@ def run_gateway(
     *,
     config: AppConfig | None = None,
     config_path: str | None = None,
+    config_profile: str | None = None,
 ) -> None:
-    cfg = config or load_config(config_path)
-    app = create_app(cfg)
+    if config_path is not None or config_profile is not None:
+        cfg = load_config(config_path, profile=config_profile)
+    else:
+        cfg = config or load_config()
+    app = create_app(cfg, config_path=config_path, config_profile=config_profile)
     resolved_host = host or cfg.gateway.host
     resolved_port = port or int(cfg.gateway.port)
     bind_event("gateway.lifecycle").info("running gateway host={} port={}", resolved_host, resolved_port)

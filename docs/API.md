@@ -189,6 +189,61 @@ Example response:
 
 Alias compatível: `POST /api/skills/refresh`.
 
+## `POST /v1/control/skills/doctor`
+
+Builds the same actionable blocked-skills report used by `clawlite skills doctor`, but from the live runtime control plane.
+
+Example request:
+
+```json
+{
+  "include_all": false,
+  "status": "missing_requirements",
+  "source": "builtin",
+  "query": "github"
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": false,
+  "summary": {
+    "ok": false,
+    "action": "skills_doctor",
+    "summary": {
+      "available": 12,
+      "runnable": 9
+    },
+    "watcher": {
+      "task_state": "running",
+      "last_error": ""
+    },
+    "status_counts": {
+      "missing_requirements": 1,
+      "ready": 11
+    },
+    "status_filter": "missing_requirements",
+    "source_filter": "builtin",
+    "query": "github",
+    "count": 1,
+    "recommendations": [
+      "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
+    ],
+    "skills": [
+      {
+        "name": "github",
+        "status": "missing_requirements",
+        "hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
+      }
+    ]
+  }
+}
+```
+
+Alias compatível: `POST /api/skills/doctor`.
+
 ## `POST /v1/control/memory/snapshot/create`
 
 Creates a new memory snapshot version from the live runtime state.

@@ -25,6 +25,7 @@ from clawlite.config.schema import AppConfig, SchedulerConfig
 from clawlite.core.engine import ProviderChunk
 from clawlite.core.memory import MemoryStore
 from clawlite.core.memory_monitor import MemoryMonitor, MemorySuggestion
+from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.gateway.dashboard_sessions import issue_dashboard_handoff
 from clawlite.gateway.server import (
@@ -1202,6 +1203,74 @@ def test_gateway_runtime_accepts_sqlite_memory_backend(tmp_path: Path) -> None:
     )
     runtime = build_runtime(cfg)
     assert runtime.engine.memory is not None
+
+
+def test_build_runtime_passes_config_path_to_skills_loader(tmp_path: Path, monkeypatch) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    config_path = tmp_path / "custom-config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    builtin_root = tmp_path / "builtin"
+    builtin_root.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, object] = {}
+
+    def _loader_factory(*, state_path=None, config_path=None, config_profile=None):
+        captured["state_path"] = state_path
+        captured["config_path"] = config_path
+        captured["config_profile"] = config_profile
+        return SkillsLoader(
+            builtin_root=builtin_root,
+            state_path=state_path,
+            config_path=config_path,
+            config_profile=config_profile,
+        )
+
+    monkeypatch.setattr(gateway_runtime_builder, "SkillsLoader", _loader_factory)
+
+    runtime = build_runtime(cfg, config_path=str(config_path), config_profile="prod")
+
+    assert runtime.skills_loader is not None
+    assert captured["config_path"] == str(config_path)
+    assert captured["config_profile"] == "prod"
+    assert Path(str(captured["state_path"])) == (tmp_path / "state" / "skills-state.json")
+
+
+def test_create_app_prefers_explicit_config_profile_over_passed_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace-file"),
+                "state_path": str(tmp_path / "state-file"),
+                "gateway": {"port": 1111},
+                "channels": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config.prod.json").write_text(
+        json.dumps(
+            {
+                "gateway": {"port": 2222},
+            }
+        ),
+        encoding="utf-8",
+    )
+    base_cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace-base"),
+        state_path=str(tmp_path / "state-base"),
+        gateway={"port": 1111},
+        channels={},
+    )
+
+    app = create_app(base_cfg, config_path=str(config_path), config_profile="prod")
+
+    assert int(app.state.runtime.config.gateway.port) == 2222
+    assert app.state.runtime.config.workspace_path == str(tmp_path / "workspace-file")
 
 
 def test_gateway_runtime_rejects_pgvector_backend_without_url(tmp_path: Path) -> None:
@@ -3013,6 +3082,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Control-Plane Correlation" in body
         assert 'id="skills-grid"' in body
         assert 'id="refresh-skills-inventory"' in body
+        assert 'id="doctor-skills-inventory"' in body
         assert 'id="provider-grid"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3041,6 +3111,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_offset_reset": "/v1/control/channels/telegram/offset/reset"' in body
         assert '"discord_refresh": "/v1/control/channels/discord/refresh"' in body
         assert '"skills_refresh": "/v1/control/skills/refresh"' in body
+        assert '"skills_doctor": "/v1/control/skills/doctor"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
@@ -3088,8 +3159,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderHttpCorrelationBoard" in js.text
     assert "renderSkillsBoard" in js.text
     assert "triggerSkillsRefresh" in js.text
+    assert "triggerSkillsDoctor" in js.text
     assert 'paths.skills_refresh || "/v1/control/skills/refresh"' in js.text
+    assert 'paths.skills_doctor || "/v1/control/skills/doctor"' in js.text
     assert "missingRequirements.os" in js.text
+    assert "Skills doctor finished" in js.text
     assert "Skills refresh finished" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
@@ -7239,6 +7313,46 @@ def test_gateway_api_skills_refresh_alias_returns_summary(tmp_path: Path) -> Non
     assert payload["summary"]["ok"] is True
     assert payload["summary"]["refresh"]["refreshed"] in {True, False}
     assert payload["summary"]["watcher"] is not None
+
+
+def test_gateway_skills_doctor_endpoint_returns_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/skills/doctor", json={"include_all": False})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["ok"], bool)
+    assert payload["summary"]["action"] == "skills_doctor"
+    assert "skills" in payload["summary"]
+    assert "status_counts" in payload["summary"]
+    assert "recommendations" in payload["summary"]
+
+
+def test_gateway_api_skills_doctor_alias_returns_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/api/skills/doctor", json={"status": "missing_requirements"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["ok"], bool)
+    assert payload["summary"]["action"] == "skills_doctor"
+    assert payload["summary"]["status_filter"] == "missing_requirements"
 
 
 def test_gateway_memory_snapshot_create_endpoint_returns_version(tmp_path: Path) -> None:
