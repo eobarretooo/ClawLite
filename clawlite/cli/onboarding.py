@@ -194,6 +194,25 @@ def _can_reuse_detected_api_key(config: AppConfig, provider_key: str, api_key_so
     return False
 
 
+def _can_skip_detected_api_key_prompt(
+    *,
+    api_key_source: str,
+    provider_key: str,
+    current_provider: str,
+    provider_hint: str,
+    provider_alternatives: list[tuple[str, str]],
+    provider_default_base: str,
+) -> bool:
+    return (
+        str(api_key_source or "").strip().startswith("env:")
+        and provider_key == current_provider
+        and bool(str(provider_hint or "").strip())
+        and not provider_alternatives
+        and provider_key not in _PROVIDERS_REQUIRING_BASE_URL_INPUT
+        and bool(str(provider_default_base or "").strip())
+    )
+
+
 def _dedupe_provider_matches(matches: list[tuple[str, str]]) -> list[tuple[str, str]]:
     deduped: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -1246,12 +1265,25 @@ def _configure_model(
         detected_api_key_source = str(provider_target.get("api_key_source", "") or "").strip()
         if detected_api_key and _can_reuse_detected_api_key(config, provider_key, detected_api_key_source):
             source_suffix = f"  [dim]({detected_api_key_source})[/]" if detected_api_key_source else ""
-            console.print(
-                f"  [green]✓[/] {provider.replace('_', '-')} API key found: {_mask_secret(detected_api_key)}{source_suffix}"
-            )
-            api_key = Prompt.ask(f"  {provider} API key [leave blank to reuse detected value]", password=True).strip()
-            if not api_key:
+            if _can_skip_detected_api_key_prompt(
+                api_key_source=detected_api_key_source,
+                provider_key=provider_key,
+                current_provider=current_provider,
+                provider_hint=provider_hint,
+                provider_alternatives=provider_alternatives,
+                provider_default_base=provider_default_base,
+            ):
+                console.print(
+                    f"  [green]✓[/] Reusing detected {provider.replace('_', '-')} API key: {_mask_secret(detected_api_key)}{source_suffix}"
+                )
                 api_key = detected_api_key
+            else:
+                console.print(
+                    f"  [green]✓[/] {provider.replace('_', '-')} API key found: {_mask_secret(detected_api_key)}{source_suffix}"
+                )
+                api_key = Prompt.ask(f"  {provider} API key [leave blank to reuse detected value]", password=True).strip()
+                if not api_key:
+                    api_key = detected_api_key
         else:
             api_key = Prompt.ask(f"  {provider} API key", password=True)
         if provider_key in _PROVIDERS_REQUIRING_BASE_URL_INPUT or not provider_default_base:

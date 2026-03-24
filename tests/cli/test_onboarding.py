@@ -1079,8 +1079,6 @@ def test_configure_model_defaults_provider_from_single_provider_env(monkeypatch)
         if label.strip() == "Provider":
             assert default == "anthropic"
             return default
-        if label.strip() == "anthropic API key [leave blank to reuse detected value]":
-            return ""
         if label.strip() == "anthropic base URL":
             return default
         if label.strip() == "Model":
@@ -1124,8 +1122,8 @@ def test_configure_model_defaults_provider_from_single_provider_env(monkeypatch)
     assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
     assert "Suggested provider:" in rendered
     assert "ANTHROPIC_API_KEY" in rendered
-    assert "API key found:" in rendered
-    assert "anthropic API key [leave blank to reuse detected value]" in asked_labels
+    assert "Reusing detected anthropic API key:" in rendered
+    assert "anthropic API key [leave blank to reuse detected value]" not in asked_labels
 
 
 def test_configure_model_surfaces_other_plausible_providers_for_ambiguous_envs(monkeypatch) -> None:
@@ -1184,6 +1182,8 @@ def test_configure_model_surfaces_other_plausible_providers_for_ambiguous_envs(m
 
 
 def test_configure_model_reuses_configured_provider_override_api_key(monkeypatch) -> None:
+    asked_labels: list[str] = []
+
     cfg = AppConfig.from_dict(
         {
             "provider": {"model": "openai/gpt-4o-mini"},
@@ -1192,6 +1192,7 @@ def test_configure_model_reuses_configured_provider_override_api_key(monkeypatch
     )
 
     def _fake_prompt_ask(label: str, *args, **kwargs):
+        asked_labels.append(label.strip())
         default = str(kwargs.get("default", ""))
         if label.strip() == "Provider":
             assert default == "groq"
@@ -1235,7 +1236,9 @@ def test_configure_model_reuses_configured_provider_override_api_key(monkeypatch
     assert selected_model == "groq/llama-3.1-8b-instant"
     assert probe["provider"] == "groq"
     assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "groq API key found:" in rendered
     assert "config:providers.groq.api_key" in rendered
+    assert "groq API key [leave blank to reuse detected value]" in asked_labels
 
 
 def test_configure_model_reuses_compatible_global_api_key_for_current_provider(monkeypatch) -> None:
@@ -1295,7 +1298,7 @@ def test_configure_model_reuses_compatible_global_api_key_for_current_provider(m
     assert selected_model == "anthropic/claude-3-5-haiku-latest"
     assert probe["provider"] == "anthropic"
     assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
-    assert "API key found:" in rendered
+    assert "anthropic API key found:" in rendered
     assert "config:provider.litellm_api_key" in rendered
     assert "anthropic API key [leave blank to reuse detected value]" in asked_labels
 
