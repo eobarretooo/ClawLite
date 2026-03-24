@@ -75,6 +75,12 @@ clawlite validate preflight --docker
 
 That probe requires local `docker` + Compose v2. It validates `docker compose config` from the current checkout, summarizes the detected runtime stack, and fails closed when the stack is present without a healthy `clawlite-gateway` or when runtime dependencies such as `redis` are running but unhealthy. If `CLAWLITE_DOCKER_ENV_FILE` is set, the probe uses that same env file for Compose resolution and fails closed when the configured file does not exist.
 
+The same probe now also emits guided `docker_preflight.secrets` hints for the Docker launch context:
+
+- provider key/OAuth envs expected by the active model, using the same provider detection as the main config validation
+- whether those envs are currently satisfied by the shell or by `CLAWLITE_DOCKER_ENV_FILE`
+- a fail-closed error when Docker runtime auth is set to `required` but no `CLAWLITE_GATEWAY_AUTH_TOKEN` is available
+
 The official image now also carries its own `HEALTHCHECK` logic for the gateway runtime: it first detects whether PID 1 is running `clawlite gateway`, and only then probes `http://127.0.0.1:8787/health`. That keeps non-gateway uses of the image from being marked unhealthy by default, while the compose-side `clawlite-cli` sidecar still disables the inherited healthcheck explicitly because it is not meant to run the gateway server.
 
 ## Build Options

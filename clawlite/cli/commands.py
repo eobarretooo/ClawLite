@@ -65,6 +65,8 @@ from clawlite.cli.ops import provider_set_auth
 from clawlite.cli.ops import provider_logout_oauth
 from clawlite.cli.ops import provider_status
 from clawlite.cli.ops import provider_use_model
+from clawlite.cli.ops import resolve_oauth_provider_auth
+from clawlite.cli.ops import _provider_spec
 from clawlite.cli.ops import telegram_live_probe
 from clawlite.cli.onboarding import build_dashboard_handoff
 from clawlite.cli.onboarding import run_onboarding_wizard
@@ -979,7 +981,190 @@ def _docker_env_file_details(repo_root: Path) -> dict[str, Any]:
     return payload
 
 
-def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
+DOCKER_PROVIDER_FALLBACK_ENVS: tuple[str, ...] = (
+    "CLAWLITE_LITELLM_API_KEY",
+    "CLAWLITE_API_KEY",
+)
+
+DOCKER_OAUTH_ENV_GROUPS: dict[str, tuple[str, ...]] = {
+    "openai_codex": (
+        "CLAWLITE_CODEX_ACCESS_TOKEN",
+        "OPENAI_CODEX_ACCESS_TOKEN",
+        "OPENAI_ACCESS_TOKEN",
+    ),
+    "gemini_oauth": (
+        "CLAWLITE_GEMINI_ACCESS_TOKEN",
+        "GEMINI_ACCESS_TOKEN",
+        "CLAWLITE_GEMINI_AUTH_PATH",
+    ),
+}
+
+
+def _parse_docker_env_file(path: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    target = Path(str(path or "")).expanduser()
+    if not target.is_file():
+        return values
+    for raw_line in target.read_text(encoding="utf-8").splitlines():
+        line = str(raw_line or "").strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        env_name = str(key or "").strip()
+        if not env_name:
+            continue
+        value = str(raw_value or "").strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[env_name] = value
+    return values
+
+
+def _docker_effective_env_value(name: str, env_file_values: dict[str, str]) -> tuple[str, str]:
+    env_name = str(name or "").strip()
+    if not env_name:
+        return "", ""
+    shell_value = os.getenv(env_name, "").strip()
+    if shell_value:
+        return shell_value, "shell"
+    env_file_value = str(env_file_values.get(env_name, "") or "").strip()
+    if env_file_value:
+        return env_file_value, "env_file"
+    return "", ""
+
+
+def _docker_secret_hint_target(env_file: dict[str, Any]) -> str:
+    if bool(env_file.get("configured")) and str(env_file.get("path") or "").strip():
+        return f"in CLAWLITE_DOCKER_ENV_FILE ({env_file['path']}) or the shell before docker compose up"
+    return "in the shell before docker compose up or in CLAWLITE_DOCKER_ENV_FILE"
+
+
+def _docker_secret_status(
+    *,
+    config: Any | None,
+    provider_check: dict[str, Any] | None,
+    env_file: dict[str, Any],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": True,
+        "error": "",
+        "errors": [],
+        "warnings": [],
+        "hints": [],
+        "provider": {
+            "detected": "",
+            "model": "",
+            "auth_mode": "",
+            "configured": False,
+            "configured_source": "",
+            "available_envs": [],
+            "missing_envs": [],
+        },
+        "gateway_auth": {
+            "mode": "",
+            "token_configured": False,
+            "token_source": "",
+            "error": "",
+        },
+    }
+    if config is None:
+        return payload
+
+    env_file_values = {}
+    if bool(env_file.get("configured")) and bool(env_file.get("ok")):
+        env_file_values = _parse_docker_env_file(str(env_file.get("path") or ""))
+
+    provider_payload = dict(provider_check or provider_validation(config) or {})
+    provider_name = str(provider_payload.get("provider", "") or "")
+    provider_model = str(provider_payload.get("model", "") or "")
+    spec = _provider_spec(provider_name) if provider_name else None
+    provider_auth_mode = "oauth" if bool(spec and getattr(spec, "is_oauth", False)) else (
+        "none" if provider_name in {"ollama", "vllm"} else "api_key"
+    )
+    provider_configured = bool(provider_payload.get("ok", False))
+    provider_source = ""
+    provider_envs: list[str] = []
+    if provider_auth_mode == "api_key":
+        provider_envs.extend(str(name or "").strip() for name in list(getattr(spec, "key_envs", ()) or ()))
+        provider_envs.extend(DOCKER_PROVIDER_FALLBACK_ENVS)
+    elif provider_auth_mode == "oauth":
+        provider_envs.extend(DOCKER_OAUTH_ENV_GROUPS.get(provider_name, ()))
+        oauth_status = resolve_oauth_provider_auth(config, provider_name) if provider_name else {"configured": False, "source": ""}
+        provider_configured = bool(oauth_status.get("configured", False))
+        provider_source = str(oauth_status.get("source", "") or "")
+
+    available_envs: list[dict[str, str]] = []
+    missing_envs: list[str] = []
+    seen_envs: set[str] = set()
+    for env_name in provider_envs:
+        if not env_name or env_name in seen_envs:
+            continue
+        seen_envs.add(env_name)
+        value, source = _docker_effective_env_value(env_name, env_file_values)
+        if value:
+            available_envs.append({"name": env_name, "source": source})
+        else:
+            missing_envs.append(env_name)
+
+    payload["provider"] = {
+        "detected": provider_name,
+        "model": provider_model,
+        "auth_mode": provider_auth_mode,
+        "configured": provider_configured,
+        "configured_source": provider_source,
+        "available_envs": available_envs,
+        "missing_envs": missing_envs,
+    }
+
+    if provider_name and provider_auth_mode in {"api_key", "oauth"} and not provider_configured and not available_envs:
+        if provider_auth_mode == "oauth":
+            payload["warnings"].append(f"docker_provider_oauth_missing:{provider_name}")
+            payload["hints"].append(
+                "Provider "
+                f"'{provider_name}' for model '{provider_model or provider_name}' has no Docker-side OAuth auth available. "
+                f"Set one of {', '.join(missing_envs)} {_docker_secret_hint_target(env_file)}."
+            )
+        else:
+            payload["warnings"].append(f"docker_provider_env_missing:{provider_name}")
+            payload["hints"].append(
+                "Provider "
+                f"'{provider_name}' for model '{provider_model or provider_name}' has no Docker-side API key available. "
+                f"Set one of {', '.join(missing_envs)} {_docker_secret_hint_target(env_file)}."
+            )
+
+    auth_mode, auth_mode_source = _docker_effective_env_value("CLAWLITE_GATEWAY_AUTH_MODE", env_file_values)
+    gateway_mode = auth_mode if auth_mode in {"off", "optional", "required"} else str(config.gateway.auth.mode or "off").strip().lower()
+    gateway_token, gateway_token_source = _docker_effective_env_value("CLAWLITE_GATEWAY_AUTH_TOKEN", env_file_values)
+    if not gateway_token:
+        configured_token = str(config.gateway.auth.token or "").strip()
+        if configured_token:
+            gateway_token = configured_token
+            gateway_token_source = "config"
+    payload["gateway_auth"] = {
+        "mode": gateway_mode,
+        "token_configured": bool(gateway_token),
+        "token_source": gateway_token_source or auth_mode_source,
+        "error": "",
+    }
+    if gateway_mode == "required" and not gateway_token:
+        payload["ok"] = False
+        payload["error"] = "docker_gateway_auth_token_missing"
+        payload["errors"].append("docker_gateway_auth_token_missing")
+        payload["gateway_auth"]["error"] = "docker_gateway_auth_token_missing"
+        payload["hints"].append(
+            "Gateway auth is required for this Docker runtime but no token is available. "
+            f"Set CLAWLITE_GATEWAY_AUTH_TOKEN {_docker_secret_hint_target(env_file)}."
+        )
+
+    return payload
+
+
+def docker_preflight_probe(
+    *,
+    timeout: float = 3.0,
+    config: Any | None = None,
+    provider_check: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     package_root = Path(__file__).resolve().parents[2]
     roots: list[Path] = []
     for candidate in (Path.cwd(), package_root):
@@ -1007,6 +1192,28 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
         "docker_available": False,
         "compose_version": {"ok": False, "exit_code": 0, "detail": ""},
         "compose_config": {"ok": False, "exit_code": 0, "detail": ""},
+        "secrets": {
+            "ok": True,
+            "error": "",
+            "errors": [],
+            "warnings": [],
+            "hints": [],
+            "provider": {
+                "detected": "",
+                "model": "",
+                "auth_mode": "",
+                "configured": False,
+                "configured_source": "",
+                "available_envs": [],
+                "missing_envs": [],
+            },
+            "gateway_auth": {
+                "mode": "",
+                "token_configured": False,
+                "token_source": "",
+                "error": "",
+            },
+        },
         "stack": {
             "detected": False,
             "ok": True,
@@ -1036,6 +1243,10 @@ def docker_preflight_probe(*, timeout: float = 3.0) -> dict[str, Any]:
     payload["env_file"] = env_file
     if env_file.get("configured") and not env_file.get("ok"):
         payload["error"] = "docker_env_file_missing"
+        return payload
+    payload["secrets"] = _docker_secret_status(config=config, provider_check=provider_check, env_file=env_file)
+    if not payload["secrets"]["ok"]:
+        payload["error"] = str(payload["secrets"]["error"] or "")
         return payload
     compose_args: list[str] = []
     if env_file.get("configured"):
@@ -1254,7 +1465,11 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
 
     docker_check: dict[str, Any] = {"enabled": bool(args.docker), "ok": True}
     if bool(args.docker):
-        docker_check = docker_preflight_probe(timeout=float(args.timeout))
+        docker_check = docker_preflight_probe(
+            timeout=float(args.timeout),
+            config=cfg,
+            provider_check=dict(local_checks["provider"]),
+        )
 
     enabled_blocks = [
         strict_block,
