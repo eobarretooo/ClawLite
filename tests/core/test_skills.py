@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from clawlite.core.skills import SkillsLoader, skills_doctor_report, skills_validate_report
 
 
@@ -857,6 +859,7 @@ def test_skills_loader_diagnostics_report_aggregates_deterministically(tmp_path:
         "sources",
         "watcher",
         "missing_requirements",
+        "managed",
         "contract_issues",
         "skills",
     }
@@ -901,6 +904,16 @@ def test_skills_loader_diagnostics_report_aggregates_deterministically(tmp_path:
         "contract:command_and_script_are_mutually_exclusive": 1,
     }
 
+    managed = report["managed"]
+    assert managed == {
+        "count": 0,
+        "ready_count": 0,
+        "blocked_count": 0,
+        "disabled_count": 0,
+        "status_counts": {},
+        "items": [],
+    }
+
     skills = report["skills"]
     assert [row["name"] for row in skills] == ["command-ok", "invalid-contract", "missing-reqs"]
     assert all("version" in row for row in skills)
@@ -929,6 +942,45 @@ def test_skills_loader_diagnostics_report_marks_doc_only_as_not_runnable(tmp_pat
     assert by_name["docs-only"]["runtime_requirements"] == []
     assert by_name["summarize"]["runnable"] is True
     assert by_name["summarize"]["runtime_requirements"] == ["provider", "tool:web_fetch|read|read_file"]
+
+
+def test_skills_loader_diagnostics_report_summarizes_managed_marketplace_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    builtin_root = tmp_path / "builtin"
+    builtin_root.mkdir(parents=True, exist_ok=True)
+
+    marketplace_root = tmp_path / ".clawlite" / "marketplace" / "skills"
+    ready_dir = marketplace_root / "jira-helper"
+    ready_dir.mkdir(parents=True, exist_ok=True)
+    (ready_dir / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: ready managed skill\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    blocked_dir = marketplace_root / "github-helper"
+    blocked_dir.mkdir(parents=True, exist_ok=True)
+    (blocked_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: GitHub Helper\n"
+        "description: missing env\n"
+        'requirements: {"env": ["GH_TOKEN"]}\n'
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+
+    report = SkillsLoader(builtin_root=builtin_root).diagnostics_report()
+    managed = report["managed"]
+
+    assert managed["count"] == 2
+    assert managed["ready_count"] == 1
+    assert managed["blocked_count"] == 1
+    assert managed["disabled_count"] == 0
+    assert managed["status_counts"] == {"missing_requirements": 1, "ready": 1}
+    assert [row["slug"] for row in managed["items"]] == ["github-helper", "jira-helper"]
+    assert managed["items"][0]["status"] == "missing_requirements"
+    assert "GH_TOKEN" in str(managed["items"][0]["hint"])
 
 
 def test_fallback_hint_parsed_from_frontmatter(tmp_path: Path) -> None:

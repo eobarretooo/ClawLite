@@ -3162,6 +3162,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderControlPlaneCorrelationBoard" in js.text
     assert "renderHttpCorrelationBoard" in js.text
     assert "renderSkillsBoard" in js.text
+    assert "Managed marketplace" in js.text
+    assert "skills.managed || {}" in js.text
     assert "tool-signals" in js.text
     assert "Cacheable tools" in js.text
     assert "largest_group" in js.text
@@ -3268,6 +3270,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "autonomy" in payload["provider"]
     assert "items" in payload["channels"]
     assert "enabled" in payload["self_evolution"]
+    assert "managed" in payload["skills"]
 
 
 def test_gateway_dashboard_state_includes_ws_correlation_summary(tmp_path: Path) -> None:

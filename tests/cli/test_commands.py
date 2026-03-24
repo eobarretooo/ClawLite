@@ -365,10 +365,13 @@ def test_cli_skills_check_returns_diagnostics_report(capsys) -> None:
         "sources",
         "watcher",
         "missing_requirements",
+        "managed",
         "contract_issues",
         "skills",
     }
     assert payload["watcher"]["enabled"] is True
+    assert "count" in payload["managed"]
+    assert "status_counts" in payload["managed"]
     summary = payload["summary"]
     assert summary["total"] == summary["available"] + summary["unavailable"]
     assert summary["enabled"] == summary["total"] - summary["disabled"]

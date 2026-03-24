@@ -1471,10 +1471,12 @@ function renderSkillsBoard() {
   const summary = skills.summary || {};
   const watcher = skills.watcher || {};
   const sources = skills.sources || {};
+  const managed = skills.managed || {};
   const executionKinds = skills.execution_kinds || {};
   const missingRequirements = skills.missing_requirements || {};
   const contractIssues = skills.contract_issues || {};
   const skillRows = Array.isArray(skills.skills) ? skills.skills : [];
+  const managedItems = Array.isArray(managed.items) ? managed.items : [];
   const blockedSkills = skillRows.filter((row) => {
     if (!row || row.enabled === false) {
       return false;
@@ -1498,6 +1500,13 @@ function renderSkillsBoard() {
     body: `builtin ${numeric(sources.builtin, 0)} | workspace ${numeric(sources.workspace, 0)} | marketplace ${numeric(sources.marketplace, 0)}`,
     detail: `command ${numeric(executionKinds.command, 0)} | script ${numeric(executionKinds.script, 0)} | none ${numeric(executionKinds.none, 0)}`,
   });
+  appendSummaryCard(grid, {
+    title: "Managed marketplace",
+    body: `${numeric(managed.count, 0)} tracked | ${numeric(managed.ready_count, 0)} ready`,
+    detail: numeric(managed.count, 0) > 0
+      ? `${numeric(managed.blocked_count, 0)} blocked | ${numeric(managed.disabled_count, 0)} disabled`
+      : "No managed marketplace skills discovered.",
+  });
 
   const missingEnvItems = ((missingRequirements.env || {}).items) || [];
   const missingBinItems = ((missingRequirements.bin || {}).items) || [];
@@ -1519,6 +1528,14 @@ function renderSkillsBoard() {
     detail: watcher.last_error
       ? `error ${String(watcher.last_error)}`
       : `interval ${formatDuration(watcher.interval_s || 0)} | pending ${Boolean(watcher.pending)} | debounced ${Boolean(watcher.debounced)}`,
+  });
+
+  managedItems.slice(0, 2).forEach((row) => {
+    appendSummaryCard(grid, {
+      title: String(row.slug || row.name || "managed skill"),
+      body: `${String(row.status || "unknown")} | ${String(row.version || "unversioned")}`,
+      detail: String(row.hint || "Inspect this skill through skills managed for more lifecycle details."),
+    });
   });
 
   blockedSkills.slice(0, 3).forEach((row) => {
@@ -1598,6 +1615,7 @@ function renderKnowledge() {
   setCode("skills-preview", {
     summary: skills.summary || {},
     watcher: skills.watcher || {},
+    managed: skills.managed || {},
     sources: skills.sources || {},
     missing_requirements: skills.missing_requirements || {},
   });

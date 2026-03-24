@@ -21,6 +21,14 @@ import yaml
 _KEY_VALUE_RE = re.compile(r"^(?P<key>[A-Za-z0-9_.-]+)\s*:\s*(?P<value>.*)$")
 _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _SOURCE_PRIORITY = {"builtin": 10, "marketplace": 20, "workspace": 30}
+_SKILL_STATUS_PRIORITY = {
+    "missing_requirements": 10,
+    "policy_blocked": 20,
+    "invalid_contract": 30,
+    "unavailable": 40,
+    "ready": 50,
+    "disabled": 60,
+}
 _ACTIVE_CONFIG_CACHE: dict[str, object] = {
     "path": "",
     "profile": "",
@@ -527,6 +535,13 @@ def _missing_requirements(
         if current not in supported_oses:
             missing.append(f"os:{current} not in {','.join(supported_oses)}")
     return missing
+
+
+def _managed_skill_slug(path: Path) -> str:
+    try:
+        return str(path.parent.name or "").strip()
+    except Exception:
+        return ""
 
 
 def _escape_xml(value: str) -> str:
@@ -1229,6 +1244,14 @@ class SkillsLoader:
             "other": set(),
         }
         contract_issue_counts: dict[str, int] = {}
+        managed_status_counts: dict[str, int] = {
+            "ready": 0,
+            "disabled": 0,
+            "missing_requirements": 0,
+            "policy_blocked": 0,
+            "invalid_contract": 0,
+            "unavailable": 0,
+        }
 
         available_count = 0
         unavailable_count = 0
@@ -1241,6 +1264,7 @@ class SkillsLoader:
         contract_total = 0
 
         skill_rows: list[dict[str, object]] = []
+        managed_rows: list[dict[str, object]] = []
 
         for row in rows:
             if row.enabled:
@@ -1308,8 +1332,37 @@ class SkillsLoader:
                 skill_row["fallback_hint"] = row.fallback_hint
             skill_rows.append(skill_row)
 
+            if row.source == "marketplace":
+                managed_status = skills_doctor_status(skill_row)
+                managed_status_counts[managed_status] = managed_status_counts.get(managed_status, 0) + 1
+                managed_rows.append(
+                    {
+                        "slug": _managed_skill_slug(row.path),
+                        "name": row.name,
+                        "skill_key": row.skill_key or row.name,
+                        "status": managed_status,
+                        "enabled": row.enabled,
+                        "available": row.available,
+                        "version": row.version,
+                        "version_pin": row.version_pin,
+                        "hint": skills_doctor_hint(skill_row),
+                    }
+                )
+
         for prefix in ("bin", "env", "os", "other"):
             missing_groups[prefix]["items"] = sorted(str(item) for item in missing_groups[prefix]["items"])
+
+        managed_rows = sorted(
+            managed_rows,
+            key=lambda item: (
+                int(_SKILL_STATUS_PRIORITY.get(str(item.get("status", "") or ""), 999)),
+                str(item.get("name", "") or "").lower(),
+            ),
+        )
+        managed_blocked_count = sum(
+            managed_status_counts.get(status, 0)
+            for status in ("missing_requirements", "policy_blocked", "invalid_contract", "unavailable")
+        )
 
         return {
             "summary": {
@@ -1327,6 +1380,16 @@ class SkillsLoader:
             "sources": source_counts,
             "watcher": self.watcher_status(),
             "missing_requirements": missing_groups,
+            "managed": {
+                "count": len(managed_rows),
+                "ready_count": managed_status_counts.get("ready", 0),
+                "blocked_count": managed_blocked_count,
+                "disabled_count": managed_status_counts.get("disabled", 0),
+                "status_counts": {
+                    key: value for key, value in sorted(managed_status_counts.items()) if int(value or 0) > 0
+                },
+                "items": managed_rows[:5],
+            },
             "contract_issues": {
                 "total": contract_total,
                 "by_key": {key: contract_issue_counts[key] for key in sorted(contract_issue_counts)},

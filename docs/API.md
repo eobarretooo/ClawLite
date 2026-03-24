@@ -26,6 +26,9 @@ Resumo agregado para o dashboard local.
 
 If a gateway token is configured, this endpoint requires that token even when the gateway is otherwise open on loopback.
 
+Additive note:
+- `skills.managed` now carries a compact marketplace-lifecycle summary for the packaged dashboard, with `count`, `ready_count`, `blocked_count`, `disabled_count`, `status_counts`, and a bounded `items` preview of managed marketplace skills.
+
 Example response:
 
 ```json

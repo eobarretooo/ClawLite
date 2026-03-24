@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - memory quality snapshots now expose a bounded-history `trend` summary so dashboard, diagnostics, and `clawlite memory quality` can report direction and streaks without replaying the full history client-side
 - Discord inbound audio/voice attachments can now reuse the same Groq-compatible transcription path as Telegram, appending compact transcription lines to inbound turns and surfacing transcription counters in Discord operator status
 - `tools.catalog` now exports additive live summary metadata (`group_count`, `alias_count`, `ws_method_count`, `cacheable_count`, `custom_timeout_count`, and `largest_group`), tool groups now carry `count`, tool rows surface lightweight `cacheable` / `default_timeout_s` hints, and the packaged dashboard Tools tab renders those signals directly instead of misreading the older payload shape
+- `skills.diagnostics_report()` now also exports a compact managed-marketplace lifecycle summary (`count`, `ready_count`, `blocked_count`, `disabled_count`, `status_counts`, and bounded managed items), and the packaged dashboard Knowledge tab renders those managed marketplace signals directly instead of leaving that lifecycle visible only to `clawlite skills managed`
 
 ### Fixed
 - Telegram inbound media download now creates its local chat directory inline before best-effort OCR/PDF enrichment, and the Telegram media regression tests now keep OCR/PDF work hermetic instead of relying on real `asyncio.to_thread(...)` behavior in the test harness
