@@ -194,7 +194,19 @@ def _can_reuse_detected_api_key(config: AppConfig, provider_key: str, api_key_so
     return False
 
 
-def _provider_prompt_default(config: AppConfig) -> tuple[str, str]:
+def _dedupe_provider_matches(matches: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    deduped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for provider_key, reason in matches:
+        normalized = str(provider_key or "").strip().lower().replace("-", "_")
+        if not normalized or normalized in seen or normalized not in _SUPPORTED_PROVIDER_KEYS:
+            continue
+        seen.add(normalized)
+        deduped.append((normalized, str(reason or "").strip()))
+    return deduped
+
+
+def _provider_prompt_default(config: AppConfig) -> tuple[str, str, list[tuple[str, str]]]:
     current_model = str(config.provider.model or "").strip()
     current_base = str(config.provider.litellm_base_url or "").strip()
     current_key = str(config.provider.litellm_api_key or "").strip()
@@ -203,22 +215,25 @@ def _provider_prompt_default(config: AppConfig) -> tuple[str, str]:
     detected_runtime = detect_local_runtime(current_base)
     if detected_runtime in _SUPPORTED_PROVIDER_KEYS:
         normalized_base = normalize_local_runtime_base_url(detected_runtime, current_base)
-        return detected_runtime, f"detected from the current local runtime base URL ({normalized_base})"
+        return detected_runtime, f"detected from the current local runtime base URL ({normalized_base})", []
 
     if current_key:
         detected_provider = detect_provider_name(current_model, api_key=current_key, base_url=current_base)
         if detected_provider in _SUPPORTED_PROVIDER_KEYS:
-            return detected_provider, "detected from the current configured API key"
+            return detected_provider, "detected from the current configured API key", []
 
     if current_model and current_model != openai_default_model and "/" in current_model:
         detected_provider = detect_provider_name(current_model, api_key=current_key, base_url=current_base)
         if detected_provider in _SUPPORTED_PROVIDER_KEYS:
-            return detected_provider, f"detected from the current model ({current_model})"
+            return detected_provider, f"detected from the current model ({current_model})", []
 
     configured_oauth_matches: list[tuple[str, str]] = []
     env_oauth_matches: list[tuple[str, str]] = []
     file_oauth_matches: list[tuple[str, str]] = []
-    for provider_key in sorted(_OAUTH_PROVIDER_KEYS):
+    for provider_id in SUPPORTED_PROVIDERS:
+        provider_key = str(provider_id or "").strip().lower().replace("-", "_")
+        if provider_key not in _OAUTH_PROVIDER_KEYS:
+            continue
         status = resolve_oauth_provider_auth(config, provider_key)
         if not bool(status.get("configured", False)):
             continue
@@ -248,15 +263,18 @@ def _provider_prompt_default(config: AppConfig) -> tuple[str, str]:
             else f"detected from the configured {spec.name.replace('_', '-')} credentials"
         )
         configured_overrides.append((spec.name, reason))
-    configured_signal_matches = configured_oauth_matches + configured_overrides
+    configured_signal_matches = _dedupe_provider_matches(configured_oauth_matches + configured_overrides)
     if len(configured_signal_matches) == 1:
-        return configured_signal_matches[0]
+        provider_key, reason = configured_signal_matches[0]
+        return provider_key, reason, []
+    if len(configured_signal_matches) > 1:
+        return "openai", "", configured_signal_matches[:4]
 
     env_runtime_base = str(os.getenv("CLAWLITE_LITELLM_BASE_URL", "") or "").strip()
     env_runtime = detect_local_runtime(env_runtime_base)
     if env_runtime in _SUPPORTED_PROVIDER_KEYS:
         normalized_base = normalize_local_runtime_base_url(env_runtime, env_runtime_base)
-        return env_runtime, f"detected from $CLAWLITE_LITELLM_BASE_URL ({normalized_base})"
+        return env_runtime, f"detected from $CLAWLITE_LITELLM_BASE_URL ({normalized_base})", []
 
     env_provider_matches: list[tuple[str, str]] = []
     for provider_id in SUPPORTED_PROVIDERS:
@@ -267,14 +285,21 @@ def _provider_prompt_default(config: AppConfig) -> tuple[str, str]:
             if str(os.getenv(env_name, "") or "").strip():
                 env_provider_matches.append((spec.name, f"detected from ${env_name}"))
                 break
-    env_signal_matches = env_oauth_matches + env_provider_matches
+    env_signal_matches = _dedupe_provider_matches(env_oauth_matches + env_provider_matches)
     if len(env_signal_matches) == 1:
-        return env_signal_matches[0]
+        provider_key, reason = env_signal_matches[0]
+        return provider_key, reason, []
+    if len(env_signal_matches) > 1:
+        return "openai", "", env_signal_matches[:4]
 
+    file_oauth_matches = _dedupe_provider_matches(file_oauth_matches)
     if len(file_oauth_matches) == 1:
-        return file_oauth_matches[0]
+        provider_key, reason = file_oauth_matches[0]
+        return provider_key, reason, []
+    if len(file_oauth_matches) > 1:
+        return "openai", "", file_oauth_matches[:4]
 
-    return "openai", ""
+    return "openai", "", []
 
 
 def _render_provider_suggestions(provider_key: str, *, base_url: str = "", oauth_login: str = "") -> Panel:
@@ -1143,9 +1168,16 @@ def _configure_model(
         console.print(f"    [cyan]{pid:<18}[/]{url_part}")
     console.print("")
 
-    current_provider, provider_hint = _provider_prompt_default(config)
+    current_provider, provider_hint, provider_alternatives = _provider_prompt_default(config)
     if provider_hint:
         console.print(f"  [dim]Suggested provider:[/] {current_provider.replace('_', '-')} ({provider_hint})")
+        console.print("")
+    if provider_alternatives:
+        alt_rendered = ", ".join(
+            f"{provider_key.replace('_', '-')} ({reason})" for provider_key, reason in provider_alternatives
+        )
+        heading = "Other plausible providers" if provider_hint else "Plausible providers detected"
+        console.print(f"  [dim]{heading}:[/] {alt_rendered}")
         console.print("")
     while True:
         provider = Prompt.ask("  Provider", default=current_provider).strip().lower()

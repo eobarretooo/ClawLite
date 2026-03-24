@@ -1128,6 +1128,61 @@ def test_configure_model_defaults_provider_from_single_provider_env(monkeypatch)
     assert "anthropic API key [leave blank to reuse detected value]" in asked_labels
 
 
+def test_configure_model_surfaces_other_plausible_providers_for_ambiguous_envs(monkeypatch) -> None:
+    cfg = AppConfig.from_dict({"provider": {"model": "openai/gpt-4o-mini"}})
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "openai"
+            return "groq"
+        if label.strip() == "groq API key [leave blank to reuse detected value]":
+            return ""
+        if label.strip() == "Model":
+            assert kwargs.get("default") == "groq/llama-3.1-8b-instant"
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test_123456")
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "groq",
+            "family": "openai_compatible",
+            "recommended_model": "groq/llama-3.1-8b-instant",
+            "recommended_models": ["groq/llama-3.1-8b-instant"],
+            "onboarding_hint": "Groq responds via OpenAI-compatible endpoints; prefer low-latency models when possible.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=160)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "groq"
+    assert api_key == "gsk_test_123456"
+    assert base_url == "https://api.groq.com/openai/v1"
+    assert selected_model == "groq/llama-3.1-8b-instant"
+    assert probe["provider"] == "groq"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "Suggested provider:" not in rendered
+    assert "Plausible providers detected:" in rendered
+    assert "anthropic (detected from $ANTHROPIC_API_KEY)" in rendered
+    assert "groq (detected from $GROQ_API_KEY)" in rendered
+
+
 def test_configure_model_reuses_configured_provider_override_api_key(monkeypatch) -> None:
     cfg = AppConfig.from_dict(
         {
