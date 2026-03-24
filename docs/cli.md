@@ -70,6 +70,8 @@ Identity and user flags accepted by `onboard`:
 
 `configure --flow ...` is a compatibility shortcut to `onboard --wizard --flow ...`. Plain `configure` opens the newer two-level Basic / Advanced configuration menu.
 
+When `--profile <name>` is active, both `configure` and wizard-backed onboarding persist changes to the matching overlay file (`config.<profile>.json|yaml`) and report that same saved overlay path in their result payloads.
+
 ## Validation Commands
 
 | Command | What it does | Example |

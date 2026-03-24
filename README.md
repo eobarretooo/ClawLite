@@ -123,7 +123,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (1990 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (1995 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
@@ -135,6 +135,7 @@ CI runs on Python 3.10 and 3.12.
 
 ```bash
 clawlite configure              # interactive setup wizard
+clawlite --profile prod configure  # save setup changes to config.prod.json
 clawlite gateway                # start HTTP/WS gateway
 clawlite run "..."              # one-shot agent call
 clawlite status                 # runtime health summary

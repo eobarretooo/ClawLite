@@ -12,6 +12,7 @@ from rich.prompt import Confirm
 from rich.prompt import Prompt
 
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
+from clawlite.config.loader import config_payload_path
 from clawlite.config.loader import save_config
 from clawlite.config.schema import AppConfig
 from clawlite.gateway.dashboard_sessions import issue_dashboard_handoff
@@ -1469,6 +1470,7 @@ def run_onboarding_wizard(
     config: AppConfig,
     *,
     config_path: str | Path | None,
+    config_profile: str | None = None,
     overwrite: bool = False,
     variables: dict[str, str] | None = None,
     flow: str | None = None,
@@ -1524,11 +1526,12 @@ def run_onboarding_wizard(
 
         # Ensure gateway token always exists
         generated_token = ensure_gateway_token(config)
-        saved_path = save_config(config, path=config_path)
+        saved_path = config_payload_path(config_path, profile=config_profile)
+        save_config(config, path=saved_path)
         generated_bootstrap = any(Path(path).name == "BOOTSTRAP.md" for path in generated_files)
         handoff = build_dashboard_handoff(
             config,
-            config_path=config_path,
+            config_path=saved_path,
             variables=variables or {},
             ensure_token=False,
             bootstrap_pending_override=generated_bootstrap or None,
@@ -1727,30 +1730,31 @@ def _run_configure_flow(
     config: AppConfig,
     *,
     config_path: str | Path | None = None,
+    config_profile: str | None = None,
     section: str | None = None,
 ) -> dict[str, Any]:
     """Two-level configure wizard: Basic / Advanced."""
     import sys
 
     _print_banner(console)
-    effective_path = str(config_path) if config_path else str(DEFAULT_CONFIG_PATH)
+    effective_path = config_payload_path(config_path, profile=config_profile)
     visited: set[str] = set()
 
     # Existing config detection (interactive sessions only)
-    if Path(effective_path).exists() and sys.stdin.isatty():
+    if effective_path.exists() and sys.stdin.isatty():
         proceed = Confirm.ask(
             f"  Existing config found at {effective_path}. Modify it?",
             default=True,
         )
         if not proceed:
             console.print("  [yellow]Configure cancelled. No changes made.[/]")
-            return {"ok": False, "visited_sections": [], "saved_path": effective_path}
+            return {"ok": False, "visited_sections": [], "saved_path": str(effective_path)}
 
     # Section shortcut
     if section:
         _dispatch_section(console, config, section, visited, overwrite=False, variables={})
         save_config(config, path=effective_path)
-        return {"ok": True, "visited_sections": sorted(visited), "saved_path": effective_path}
+        return {"ok": True, "visited_sections": sorted(visited), "saved_path": str(effective_path)}
 
     _MAIN_MENU = [
         ("1", "basic",    "Basic Setup"),
@@ -1795,4 +1799,4 @@ def _run_configure_flow(
             padding=(1, 2),
         )
     )
-    return {"ok": True, "visited_sections": sorted(visited), "saved_path": effective_path}
+    return {"ok": True, "visited_sections": sorted(visited), "saved_path": str(effective_path)}

@@ -436,12 +436,14 @@ def cmd_hatch(args: argparse.Namespace) -> int:
 
 def cmd_configure(args: argparse.Namespace) -> int:
     """Two-level interactive configuration wizard (Basic / Advanced)."""
-    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
+    config_profile = getattr(args, "profile", None)
+    cfg = _ensure_config_materialized(args.config, profile=config_profile)
     flow = str(getattr(args, "flow", "") or "").strip()
     if flow:
         payload = run_onboarding_wizard(
             cfg,
             config_path=args.config,
+            config_profile=config_profile,
             overwrite=False,
             flow=flow,
             variables={
@@ -465,6 +467,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
         Console(),
         cfg,
         config_path=args.config,
+        config_profile=config_profile,
         section=section,
     )
     _print_json(payload)
@@ -473,11 +476,13 @@ def cmd_configure(args: argparse.Namespace) -> int:
 
 
 def cmd_onboard(args: argparse.Namespace) -> int:
-    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
+    config_profile = getattr(args, "profile", None)
+    cfg = _ensure_config_materialized(args.config, profile=config_profile)
     if bool(getattr(args, "wizard", False)):
         payload = run_onboarding_wizard(
             cfg,
             config_path=args.config,
+            config_profile=config_profile,
             overwrite=bool(args.overwrite),
             variables={
                 "assistant_name": args.assistant_name,

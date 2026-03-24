@@ -79,10 +79,11 @@ def test_cli_onboard_wizard_mode_routes_to_runner(
 
     called: dict[str, bool] = {"ok": False}
 
-    def _fake_wizard(config, *, config_path, overwrite, variables, flow=None):
+    def _fake_wizard(config, *, config_path, config_profile=None, overwrite, variables, flow=None):
         called["ok"] = True
         assert overwrite is True
         assert flow == "quickstart"
+        assert config_profile is None
         assert str(config.agents.defaults.model).startswith("openai/")
         assert variables["assistant_name"] == "Fox"
         return {
@@ -134,8 +135,9 @@ def test_cli_configure_routes_flow_override_to_wizard(
 
     called: dict[str, object] = {"section": None}
 
-    def _fake_flow(console, config, *, config_path, section=None):
+    def _fake_flow(console, config, *, config_path, config_profile=None, section=None):
         called["section"] = section
+        called["config_profile"] = config_profile
         return {
             "ok": True,
             "visited_sections": [section] if section else [],
@@ -155,6 +157,7 @@ def test_cli_configure_routes_flow_override_to_wizard(
 
     assert rc == 0
     assert called["section"] == "memory"
+    assert called["config_profile"] is None
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
 
@@ -176,8 +179,9 @@ def test_cli_configure_flow_compatibility_routes_to_onboarding_wizard(
 
     called: dict[str, object] = {}
 
-    def _fake_wizard(config, *, config_path, overwrite=False, flow="quickstart", variables=None):
+    def _fake_wizard(config, *, config_path, config_profile=None, overwrite=False, flow="quickstart", variables=None):
         called["config_path"] = str(config_path)
+        called["config_profile"] = config_profile
         called["overwrite"] = overwrite
         called["flow"] = flow
         called["variables"] = dict(variables or {})
@@ -195,12 +199,104 @@ def test_cli_configure_flow_compatibility_routes_to_onboarding_wizard(
 
     assert rc == 0
     assert called["config_path"] == str(config_path)
+    assert called["config_profile"] is None
     assert called["overwrite"] is False
     assert called["flow"] == "quickstart"
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["mode"] == "wizard"
     assert payload["flow"] == "quickstart"
+
+
+def test_cli_configure_flow_compatibility_passes_profile_to_onboarding_wizard(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    called: dict[str, object] = {}
+
+    def _fake_wizard(config, *, config_path, config_profile=None, overwrite=False, flow="quickstart", variables=None):
+        del config, overwrite, variables
+        called["config_path"] = str(config_path)
+        called["config_profile"] = config_profile
+        called["flow"] = flow
+        return {"ok": True, "mode": "wizard", "flow": flow}
+
+    monkeypatch.setattr("clawlite.cli.commands.run_onboarding_wizard", _fake_wizard)
+
+    rc = main([
+        "--config",
+        str(config_path),
+        "--profile",
+        "prod",
+        "configure",
+        "--flow",
+        "quickstart",
+    ])
+
+    assert rc == 0
+    assert called["config_path"] == str(config_path)
+    assert called["config_profile"] == "prod"
+    assert called["flow"] == "quickstart"
+    capsys.readouterr()
+
+
+def test_cli_onboard_wizard_mode_passes_profile_to_runner(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    called: dict[str, object] = {}
+
+    def _fake_wizard(config, *, config_path, config_profile=None, overwrite, variables, flow=None):
+        del config, overwrite, variables, flow
+        called["config_path"] = str(config_path)
+        called["config_profile"] = config_profile
+        return {
+            "ok": True,
+            "mode": "wizard",
+            "flow": "quickstart",
+            "final": {
+                "gateway_url": "http://127.0.0.1:8787",
+                "gateway_token": "tok-test-123",
+            },
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.run_onboarding_wizard", _fake_wizard)
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "--profile",
+            "prod",
+            "onboard",
+            "--wizard",
+        ]
+    )
+    assert rc == 0
+    assert called["config_path"] == str(config_path)
+    assert called["config_profile"] == "prod"
+    capsys.readouterr()
 
 
 def test_cli_main_reports_runtime_errors_on_stderr(capsys, monkeypatch) -> None:

@@ -589,6 +589,57 @@ def test_run_onboarding_wizard_advanced_persists_custom_model_and_gateway(monkey
     assert payload["final"]["gateway_token"]
 
 
+def test_run_onboarding_wizard_saves_to_profile_overlay(monkeypatch, tmp_path) -> None:
+    cfg = AppConfig.from_dict({"workspace_path": str(tmp_path / "workspace")})
+    saved: dict[str, str] = {}
+
+    monkeypatch.setattr("clawlite.cli.onboarding._print_banner", lambda console: None)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding._run_quickstart_flow",
+        lambda console, config, overwrite, variables: {
+            "provider_key": "openai",
+            "provider_probe": {"ok": True},
+            "telegram_probe": {"ok": True},
+            "generated_files": [Path(config.workspace_path) / "IDENTITY.md"],
+            "provider_persisted": {"provider": "openai", "model": "openai/gpt-4o-mini"},
+            "visited_sections": ["model", "workspace"],
+        },
+    )
+    monkeypatch.setattr("clawlite.cli.onboarding.ensure_gateway_token", lambda config: "tok-profile-123456")
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.save_config",
+        lambda config, path: saved.setdefault("path", str(path)) or path,
+    )
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.build_dashboard_handoff",
+        lambda config, *, config_path, variables, ensure_token, bootstrap_pending_override: {
+            "gateway_url": "http://127.0.0.1:8787",
+            "dashboard_url_with_handoff": "http://127.0.0.1:8787#handoff=test",
+            "dashboard_url_with_token": "http://127.0.0.1:8787#handoff=test",
+            "gateway_token": "tok-profile-123456",
+            "bootstrap_pending": False,
+            "recommended_first_message": "",
+            "hatch_session_id": "hatch:operator",
+            "guidance": [],
+            "onboarding": {"completed": True},
+            "onboarding_label": "completed",
+        },
+    )
+
+    payload = run_onboarding_wizard(
+        cfg,
+        config_path=tmp_path / "config.json",
+        config_profile="prod",
+        overwrite=True,
+        variables={},
+        flow="quickstart",
+    )
+
+    assert payload["ok"] is True
+    assert payload["saved_path"] == str(tmp_path / "config.prod.json")
+    assert saved["path"] == str(tmp_path / "config.prod.json")
+
+
 def test_run_onboarding_wizard_disables_existing_telegram_when_user_declines(monkeypatch, tmp_path) -> None:
     """Section-menu wizard: visit channels section and decline Telegram."""
     cfg = AppConfig.from_dict(
