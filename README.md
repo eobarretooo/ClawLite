@@ -123,7 +123,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2007 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2009 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
@@ -134,7 +134,7 @@ CI runs on Python 3.10 and 3.12.
 ## 🖥️ CLI Reference
 
 ```bash
-clawlite configure              # interactive setup wizard; reuses local runtimes, suggests the detected provider when clear, reuses detected credentials, skips redundant env-backed key prompts, and surfaces plausible backends when setup is ambiguous
+clawlite configure              # interactive setup wizard; reuses local runtimes, suggests the detected provider when clear, reuses detected credentials, skips redundant env-backed key prompts, surfaces plausible backends when setup is ambiguous, and lets quickstart skip redundant local-runtime/model prompts on the resolved happy path
 clawlite --profile prod configure  # save setup changes to config.prod.json
 clawlite --profile prod dashboard --no-open  # reopen the control plane against config.prod.json
 clawlite gateway                # start HTTP/WS gateway

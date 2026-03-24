@@ -213,6 +213,43 @@ def _can_skip_detected_api_key_prompt(
     )
 
 
+def _can_skip_local_runtime_base_url_prompt(
+    *,
+    prefer_fast_defaults: bool,
+    provider_key: str,
+    current_provider: str,
+    provider_hint: str,
+    provider_alternatives: list[tuple[str, str]],
+    base_url: str,
+    provider_default_base: str,
+) -> bool:
+    if not prefer_fast_defaults:
+        return False
+    if provider_key not in {"ollama", "vllm"}:
+        return False
+    if provider_key != current_provider or not str(provider_hint or "").strip() or provider_alternatives:
+        return False
+    spec = _provider_spec(provider_key)
+    return _base_url_matches_provider(str(base_url or "").strip(), provider_key, spec, str(provider_default_base or "").strip())
+
+
+def _can_skip_model_prompt(
+    *,
+    prefer_fast_defaults: bool,
+    provider_key: str,
+    current_provider: str,
+    provider_hint: str,
+    provider_alternatives: list[tuple[str, str]],
+    model_default: str,
+) -> bool:
+    if not prefer_fast_defaults:
+        return False
+    if provider_key != current_provider or not str(provider_hint or "").strip() or provider_alternatives:
+        return False
+    expected_default = str(default_provider_model(provider_key) or "").strip()
+    return bool(expected_default and str(model_default or "").strip() == expected_default)
+
+
 def _dedupe_provider_matches(matches: list[tuple[str, str]]) -> list[tuple[str, str]]:
     deduped: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -1172,6 +1209,7 @@ def _configure_model(
     config: AppConfig,
     *,
     allow_continue_on_probe_failure: bool = True,
+    prefer_fast_defaults: bool = False,
 ) -> tuple[str, str, str, str, dict[str, Any], dict[str, Any]]:
     """Interactive model section. Returns (provider, api_key, base_url, model, probe, oauth)."""
     _section_header(console, "Model / Provider", "pick your AI backend")
@@ -1288,10 +1326,31 @@ def _configure_model(
             api_key = Prompt.ask(f"  {provider} API key", password=True)
         if provider_key in _PROVIDERS_REQUIRING_BASE_URL_INPUT or not provider_default_base:
             base_url = Prompt.ask(f"  {provider} base URL", default=base_url)
+    elif _can_skip_local_runtime_base_url_prompt(
+        prefer_fast_defaults=prefer_fast_defaults,
+        provider_key=provider_key,
+        current_provider=current_provider,
+        provider_hint=provider_hint,
+        provider_alternatives=provider_alternatives,
+        base_url=base_url,
+        provider_default_base=provider_default_base,
+    ):
+        console.print(f"  [green]✓[/] Using detected {provider.replace('_', '-')} base URL: [dim]{base_url}[/]")
     else:
         base_url = Prompt.ask(f"  {provider} base URL", default=base_url)
 
-    selected_model = Prompt.ask("  Model", default=model_default)
+    if _can_skip_model_prompt(
+        prefer_fast_defaults=prefer_fast_defaults,
+        provider_key=provider_key,
+        current_provider=current_provider,
+        provider_hint=provider_hint,
+        provider_alternatives=provider_alternatives,
+        model_default=model_default,
+    ):
+        selected_model = model_default
+        console.print(f"  [green]✓[/] Using suggested model: [dim]{selected_model}[/]")
+    else:
+        selected_model = Prompt.ask("  Model", default=model_default)
 
     console.print("\n  [dim]Probing provider...[/]")
     probe = probe_provider(
@@ -1436,6 +1495,7 @@ def _run_quickstart_flow(
         console,
         config,
         allow_continue_on_probe_failure=False,
+        prefer_fast_defaults=True,
     )
     provider_key = prov
     provider_persisted = apply_provider_selection(

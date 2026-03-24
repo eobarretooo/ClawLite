@@ -813,6 +813,139 @@ def test_run_onboarding_wizard_quickstart_uses_guided_defaults(monkeypatch, tmp_
     assert payload["final"]["gateway_token"]
 
 
+def test_run_onboarding_wizard_quickstart_skips_redundant_env_backed_model_prompt(monkeypatch, tmp_path) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "workspace_path": str(tmp_path / "workspace"),
+            "provider": {"model": "openai/gpt-4o-mini"},
+        }
+    )
+
+    prompt_answers = iter([
+        "1",
+        "anthropic",
+    ])
+    confirm_answers = iter([False])
+    asked_labels: list[str] = []
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        asked_labels.append(str(label).strip())
+        return next(prompt_answers)
+
+    def _fake_confirm_ask(*args, **kwargs):
+        return next(confirm_answers)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", _fake_confirm_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "anthropic",
+            "family": "anthropic",
+            "recommended_model": "anthropic/claude-3-5-haiku-latest",
+            "recommended_models": ["anthropic/claude-3-5-haiku-latest"],
+            "onboarding_hint": "Anthropic uses the native /v1/messages transport; confirm the ANTHROPIC_API_KEY value.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    class _FakeWorkspaceLoader:
+        def __init__(self, workspace_path):
+            self.workspace_path = workspace_path
+
+        def bootstrap(self, *, overwrite, variables):
+            return [Path(self.workspace_path) / "IDENTITY.md"]
+
+    monkeypatch.setattr("clawlite.cli.onboarding.WorkspaceLoader", _FakeWorkspaceLoader)
+
+    payload = run_onboarding_wizard(
+        cfg,
+        config_path=tmp_path / "config.json",
+        overwrite=True,
+        variables={},
+    )
+
+    assert payload["ok"] is True
+    assert payload["flow"] == "quickstart"
+    assert payload["persisted"]["provider"]["provider"] == "anthropic"
+    assert payload["persisted"]["provider"]["model"] == "anthropic/claude-3-5-haiku-latest"
+    assert asked_labels == ["Flow", "Provider"]
+
+
+def test_run_onboarding_wizard_quickstart_skips_redundant_local_runtime_base_url_and_model(monkeypatch, tmp_path) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "workspace_path": str(tmp_path / "workspace"),
+            "provider": {
+                "model": "openai/gpt-4o-mini",
+                "litellm_base_url": "http://localhost:11434",
+            },
+        }
+    )
+
+    prompt_answers = iter([
+        "1",
+        "ollama",
+    ])
+    confirm_answers = iter([False])
+    asked_labels: list[str] = []
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        asked_labels.append(str(label).strip())
+        return next(prompt_answers)
+
+    def _fake_confirm_ask(*args, **kwargs):
+        return next(confirm_answers)
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", _fake_confirm_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "ollama",
+            "family": "local_runtime",
+            "recommended_model": "openai/llama3.2",
+            "recommended_models": ["openai/llama3.2"],
+            "onboarding_hint": "Ollama requires a running local runtime and a model downloaded ahead of time with 'ollama pull'.",
+            "base_url": base_url,
+            "api_key_masked": "",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    class _FakeWorkspaceLoader:
+        def __init__(self, workspace_path):
+            self.workspace_path = workspace_path
+
+        def bootstrap(self, *, overwrite, variables):
+            return [Path(self.workspace_path) / "IDENTITY.md"]
+
+    monkeypatch.setattr("clawlite.cli.onboarding.WorkspaceLoader", _FakeWorkspaceLoader)
+
+    payload = run_onboarding_wizard(
+        cfg,
+        config_path=tmp_path / "config.json",
+        overwrite=True,
+        variables={},
+    )
+
+    assert payload["ok"] is True
+    assert payload["flow"] == "quickstart"
+    assert payload["persisted"]["provider"]["provider"] == "ollama"
+    assert payload["persisted"]["provider"]["base_url"] == "http://localhost:11434/v1"
+    assert payload["persisted"]["provider"]["model"] == "openai/llama3.2"
+    assert asked_labels == ["Flow", "Provider"]
+
+
 def test_run_onboarding_wizard_quickstart_supports_openai_codex(monkeypatch, tmp_path) -> None:
     cfg = AppConfig.from_dict(
         {

@@ -261,6 +261,8 @@ The local skill state is stored in `~/.clawlite/state/skills-state.json`.
 
 ## Common Operator Workflow
 
+`clawlite configure` now keeps the advanced path explicit, but the quickstart path is more aggressive about removing redundant prompts on the resolved happy path. When the chosen provider is already clear, compatible credentials are safely reusable from env, or a local runtime already has a matching loopback base URL plus the provider's default model, quickstart can skip the extra API-key, local base-URL, and model prompts instead of asking the operator to re-confirm data the wizard already knows.
+
 Typical first-run flow:
 
 ```bash
