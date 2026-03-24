@@ -1183,6 +1183,130 @@ def test_configure_model_reuses_configured_provider_override_api_key(monkeypatch
     assert "config:providers.groq.api_key" in rendered
 
 
+def test_configure_model_reuses_compatible_global_api_key_for_current_provider(monkeypatch) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "provider": {
+                "model": "anthropic/claude-3-5-haiku-latest",
+                "litellm_api_key": "cfg-anthropic-key-123456",
+            }
+        }
+    )
+    asked_labels: list[str] = []
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        asked_labels.append(label.strip())
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "anthropic"
+            return default
+        if label.strip() == "anthropic API key [leave blank to reuse detected value]":
+            return ""
+        if label.strip() == "anthropic base URL":
+            return default
+        if label.strip() == "Model":
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "anthropic",
+            "family": "anthropic",
+            "recommended_model": "anthropic/claude-3-5-haiku-latest",
+            "recommended_models": ["anthropic/claude-3-5-haiku-latest"],
+            "onboarding_hint": "Anthropic uses the native /v1/messages transport; confirm the ANTHROPIC_API_KEY value.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "anthropic"
+    assert api_key == "cfg-anthropic-key-123456"
+    assert base_url == "https://api.anthropic.com/v1"
+    assert selected_model == "anthropic/claude-3-5-haiku-latest"
+    assert probe["provider"] == "anthropic"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "API key found:" in rendered
+    assert "config:provider.litellm_api_key" in rendered
+    assert "anthropic API key [leave blank to reuse detected value]" in asked_labels
+
+
+def test_configure_model_does_not_reuse_incompatible_global_api_key(monkeypatch) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "provider": {
+                "model": "openai/gpt-4o-mini",
+                "litellm_api_key": "sk-openai-global-123456",
+            }
+        }
+    )
+    asked_labels: list[str] = []
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        asked_labels.append(label.strip())
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "openai"
+            return "anthropic"
+        if label.strip() == "anthropic API key":
+            return "anthropic-key-654321"
+        if label.strip() == "anthropic base URL":
+            return default
+        if label.strip() == "Model":
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "anthropic",
+            "family": "anthropic",
+            "recommended_model": "anthropic/claude-3-5-haiku-latest",
+            "recommended_models": ["anthropic/claude-3-5-haiku-latest"],
+            "onboarding_hint": "Anthropic uses the native /v1/messages transport; confirm the ANTHROPIC_API_KEY value.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "anthropic"
+    assert api_key == "anthropic-key-654321"
+    assert base_url == "https://api.anthropic.com/v1"
+    assert selected_model == "anthropic/claude-3-5-haiku-latest"
+    assert probe["provider"] == "anthropic"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "API key found:" not in rendered
+    assert "anthropic API key" in asked_labels
+    assert "anthropic API key [leave blank to reuse detected value]" not in asked_labels
+
+
 def test_configure_model_defaults_provider_from_saved_oauth_credentials(monkeypatch) -> None:
     cfg = AppConfig.from_dict(
         {

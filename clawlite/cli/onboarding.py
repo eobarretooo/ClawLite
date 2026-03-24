@@ -159,6 +159,41 @@ def _provider_base_url_prompt_default(config: AppConfig, provider_key: str, defa
     return str(default_base_url or "").strip()
 
 
+def _current_provider_key(config: AppConfig) -> str:
+    current_model = str(config.provider.model or "").strip()
+    current_base = str(config.provider.litellm_base_url or "").strip()
+    current_key = str(config.provider.litellm_api_key or "").strip()
+
+    detected_runtime = detect_local_runtime(current_base)
+    if detected_runtime in _SUPPORTED_PROVIDER_KEYS:
+        return detected_runtime
+
+    detected_provider = detect_provider_name(current_model, api_key=current_key, base_url=current_base)
+    if detected_provider in _SUPPORTED_PROVIDER_KEYS:
+        return detected_provider
+
+    if "/" in current_model:
+        model_provider = current_model.split("/", 1)[0].strip().lower().replace("-", "_")
+        if model_provider in _SUPPORTED_PROVIDER_KEYS:
+            return model_provider
+    return ""
+
+
+def _can_reuse_detected_api_key(config: AppConfig, provider_key: str, api_key_source: str) -> bool:
+    source = str(api_key_source or "").strip()
+    if not source:
+        return False
+    if source == f"config:providers.{provider_key}.api_key":
+        return True
+    if source.startswith("env:"):
+        env_name = source.split(":", 1)[1].strip()
+        spec = _provider_spec(provider_key)
+        return bool(spec is not None and env_name in set(spec.key_envs))
+    if source == "config:provider.litellm_api_key":
+        return _current_provider_key(config) == provider_key
+    return False
+
+
 def _provider_prompt_default(config: AppConfig) -> tuple[str, str]:
     current_model = str(config.provider.model or "").strip()
     current_base = str(config.provider.litellm_base_url or "").strip()
@@ -1177,7 +1212,7 @@ def _configure_model(
         provider_target = _resolve_provider_probe_target(config, provider_key)
         detected_api_key = str(provider_target.get("api_key", "") or "").strip()
         detected_api_key_source = str(provider_target.get("api_key_source", "") or "").strip()
-        if detected_api_key:
+        if detected_api_key and _can_reuse_detected_api_key(config, provider_key, detected_api_key_source):
             source_suffix = f"  [dim]({detected_api_key_source})[/]" if detected_api_key_source else ""
             console.print(
                 f"  [green]✓[/] {provider.replace('_', '-')} API key found: {_mask_secret(detected_api_key)}{source_suffix}"
