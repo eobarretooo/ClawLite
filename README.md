@@ -134,7 +134,7 @@ CI runs on Python 3.10 and 3.12.
 ## 🖥️ CLI Reference
 
 ```bash
-clawlite configure              # interactive setup wizard; reuses compatible local ollama/vllm loopback endpoints
+clawlite configure              # interactive setup wizard; reuses local runtimes and suggests the detected provider first
 clawlite --profile prod configure  # save setup changes to config.prod.json
 clawlite --profile prod dashboard --no-open  # reopen the control plane against config.prod.json
 clawlite gateway                # start HTTP/WS gateway

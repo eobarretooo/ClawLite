@@ -1020,6 +1020,7 @@ def test_configure_model_reuses_detected_local_runtime_base_url_and_prints_hint(
         default = str(kwargs.get("default", ""))
         asked.append((label, default))
         if label.strip() == "Provider":
+            assert default == "ollama"
             return "ollama"
         if label.strip() == "ollama base URL":
             assert default == "http://localhost:11434/v1"
@@ -1061,9 +1062,187 @@ def test_configure_model_reuses_detected_local_runtime_base_url_and_prints_hint(
     assert selected_model == "openai/llama3.2"
     assert probe["provider"] == "ollama"
     assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "Suggested provider:" in rendered
+    assert "detected from the current local runtime base URL" in rendered
     assert "Local runtime:" in rendered
     assert "http://localhost:11434/v1" in rendered
     assert "checks that the model is loaded" in rendered
+
+
+def test_configure_model_defaults_provider_from_single_provider_env(monkeypatch) -> None:
+    cfg = AppConfig.from_dict({"provider": {"model": "openai/gpt-4o-mini"}})
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "anthropic"
+            return default
+        if label.strip() == "anthropic API key":
+            return "anthropic-key-123456"
+        if label.strip() == "anthropic base URL":
+            return default
+        if label.strip() == "Model":
+            assert kwargs.get("default") == "anthropic/claude-3-5-haiku-latest"
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "anthropic",
+            "family": "anthropic",
+            "recommended_model": "anthropic/claude-3-5-haiku-latest",
+            "recommended_models": ["anthropic/claude-3-5-haiku-latest"],
+            "onboarding_hint": "Anthropic uses the native /v1/messages transport; confirm the ANTHROPIC_API_KEY value.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "anthropic"
+    assert api_key == "anthropic-key-123456"
+    assert base_url == "https://api.anthropic.com/v1"
+    assert selected_model == "anthropic/claude-3-5-haiku-latest"
+    assert probe["provider"] == "anthropic"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "Suggested provider:" in rendered
+    assert "ANTHROPIC_API_KEY" in rendered
+
+
+def test_configure_model_defaults_provider_from_saved_oauth_credentials(monkeypatch) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "provider": {"model": "openai/gpt-4o-mini"},
+            "auth": {"providers": {"openai_codex": {"access_token": "codex-token-123456", "account_id": "org-1"}}},
+        }
+    )
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "openai_codex"
+            return default
+        if label.strip() == "Model":
+            assert kwargs.get("default") == "openai-codex/gpt-5.3-codex"
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding._resolve_codex_auth_interactive",
+        lambda config: {
+            "configured": True,
+            "access_token": "codex-token-123456",
+            "account_id": "org-1",
+            "source": "config",
+            "token_masked": "********3456",
+            "account_id_masked": "****org-1",
+        },
+    )
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "openai_codex",
+            "family": "oauth",
+            "recommended_model": "openai-codex/gpt-5.3-codex",
+            "recommended_models": ["openai-codex/gpt-5.3-codex"],
+            "onboarding_hint": "OpenAI Codex uses local OAuth; sign in before validating the provider.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "transport": "oauth_codex_responses",
+            "probe_method": "POST",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "openai_codex"
+    assert api_key == ""
+    assert base_url == "https://chatgpt.com/backend-api"
+    assert selected_model == "openai-codex/gpt-5.3-codex"
+    assert probe["provider"] == "openai_codex"
+    assert oauth_payload["access_token"] == "codex-token-123456"
+    assert "Suggested provider:" in rendered
+    assert "saved openai-codex OAuth credentials" in rendered
+
+
+def test_configure_model_defaults_provider_from_single_oauth_env(monkeypatch) -> None:
+    cfg = AppConfig.from_dict({"provider": {"model": "openai/gpt-4o-mini"}})
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "gemini_oauth"
+            return default
+        if label.strip() == "Model":
+            assert kwargs.get("default") == "gemini_oauth/gemini-2.0-flash"
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setenv("CLAWLITE_GEMINI_ACCESS_TOKEN", "gemini-token-123456")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "gemini_oauth",
+            "family": "oauth",
+            "recommended_model": "gemini_oauth/gemini-2.0-flash",
+            "recommended_models": ["gemini_oauth/gemini-2.0-flash"],
+            "onboarding_hint": "Gemini uses an OpenAI-compatible endpoint via Google Generative Language.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "transport": "oauth_openai_compatible",
+            "probe_method": "GET",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "gemini_oauth"
+    assert api_key == ""
+    assert base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert selected_model == "gemini_oauth/gemini-2.0-flash"
+    assert probe["provider"] == "gemini_oauth"
+    assert oauth_payload["access_token"] == "gemini-token-123456"
+    assert oauth_payload["source"] == "env:CLAWLITE_GEMINI_ACCESS_TOKEN"
+    assert "Suggested provider:" in rendered
+    assert "CLAWLITE_GEMINI_ACCESS_TOKEN" in rendered
 
 
 def test_configure_model_does_not_reuse_other_local_runtime_base_url(monkeypatch) -> None:

@@ -177,6 +177,16 @@ PROVIDER_PROFILES: dict[str, ProviderProfile] = {
         recommended_models=("openai-codex/gpt-5.3-codex",),
         onboarding_hint="OpenAI Codex uses local OAuth; sign in before validating the provider.",
     ),
+    "gemini_oauth": ProviderProfile(
+        family="oauth",
+        recommended_models=("gemini_oauth/gemini-2.0-flash",),
+        onboarding_hint="Gemini OAuth uses a local OAuth token against the Google OpenAI-compatible endpoint.",
+    ),
+    "qwen_oauth": ProviderProfile(
+        family="oauth",
+        recommended_models=("qwen_oauth/qwen-plus",),
+        onboarding_hint="Qwen OAuth uses a local OAuth token against the Qwen-compatible endpoint.",
+    ),
     "ollama": ProviderProfile(
         family="local_runtime",
         recommended_models=("openai/llama3.2", "openai/qwen2.5-coder:7b"),

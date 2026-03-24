@@ -179,8 +179,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: onboarding/config now also reuses compatible local-runtime endpoints for `ollama` / `vllm` inside `configure` and wizard-backed onboarding, normalizing loopback defaults to `/v1` and surfacing that runtime guidance before the live probe
-- Next slice: keep pushing Onboarding/Config with stronger guided setup and provider/runtime auto-detect beyond the current local-runtime hints, especially where setup still depends on manual provider selection or base-url entry
+- Current slice: onboarding/config now also starts the provider prompt from a detected backend when the current config, a single provider override, a single provider-specific env, or a single saved OAuth session already points at one backend, while still reusing compatible `ollama` / `vllm` loopback endpoints and normalizing them to `/v1`
+- Next slice: keep pushing Onboarding/Config with stronger guided setup beyond the current provider-default detection, especially where setup still depends on manual API-key entry or manual provider selection across multiple plausible backends
 
 ## Delivery Policy
 

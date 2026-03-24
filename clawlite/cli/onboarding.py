@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.prompt import Prompt
 
+from clawlite.cli.ops import resolve_oauth_provider_auth
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import config_payload_path
 from clawlite.config.loader import save_raw_config_payload
@@ -23,7 +24,7 @@ from clawlite.providers.codex_auth import resolve_codex_auth_snapshot
 from clawlite.providers.discovery import detect_local_runtime, normalize_local_runtime_base_url, probe_local_provider_runtime
 from clawlite.providers.hints import provider_probe_hints, provider_transport_name
 from clawlite.providers.model_probe import evaluate_remote_model_check, model_check_hints
-from clawlite.providers.registry import SPECS
+from clawlite.providers.registry import SPECS, detect_provider_name
 from clawlite.workspace.loader import WorkspaceLoader
 
 
@@ -46,12 +47,14 @@ def _provider_spec(name: str) -> Any:
     )
 
 
-_ONBOARDING_PROVIDER_IDS: list[str] = ["openai-codex", *ONBOARDING_PROVIDER_ORDER]
+_ONBOARDING_PROVIDER_IDS: list[str] = ["openai-codex", "gemini-oauth", "qwen-oauth", *ONBOARDING_PROVIDER_ORDER]
 SUPPORTED_PROVIDERS: tuple[str, ...] = tuple(
     provider_id
     for provider_id in _ONBOARDING_PROVIDER_IDS
     if _provider_spec(provider_id) is not None
 )
+_SUPPORTED_PROVIDER_KEYS: set[str] = {item.replace("-", "_") for item in SUPPORTED_PROVIDERS}
+_OAUTH_PROVIDER_KEYS: set[str] = {"openai_codex", "gemini_oauth", "qwen_oauth"}
 _PROVIDERS_REQUIRING_BASE_URL_INPUT: set[str] = {"azure_openai"}
 
 DEFAULT_PROVIDER_BASE_URLS: dict[str, str] = {}
@@ -154,6 +157,89 @@ def _provider_base_url_prompt_default(config: AppConfig, provider_key: str, defa
             return normalize_local_runtime_base_url(provider_key, current_base)
         return current_base
     return str(default_base_url or "").strip()
+
+
+def _provider_prompt_default(config: AppConfig) -> tuple[str, str]:
+    current_model = str(config.provider.model or "").strip()
+    current_base = str(config.provider.litellm_base_url or "").strip()
+    current_key = str(config.provider.litellm_api_key or "").strip()
+    openai_default_model = default_provider_model("openai")
+
+    detected_runtime = detect_local_runtime(current_base)
+    if detected_runtime in _SUPPORTED_PROVIDER_KEYS:
+        normalized_base = normalize_local_runtime_base_url(detected_runtime, current_base)
+        return detected_runtime, f"detected from the current local runtime base URL ({normalized_base})"
+
+    if current_key:
+        detected_provider = detect_provider_name(current_model, api_key=current_key, base_url=current_base)
+        if detected_provider in _SUPPORTED_PROVIDER_KEYS:
+            return detected_provider, "detected from the current configured API key"
+
+    if current_model and current_model != openai_default_model and "/" in current_model:
+        detected_provider = detect_provider_name(current_model, api_key=current_key, base_url=current_base)
+        if detected_provider in _SUPPORTED_PROVIDER_KEYS:
+            return detected_provider, f"detected from the current model ({current_model})"
+
+    configured_oauth_matches: list[tuple[str, str]] = []
+    env_oauth_matches: list[tuple[str, str]] = []
+    file_oauth_matches: list[tuple[str, str]] = []
+    for provider_key in sorted(_OAUTH_PROVIDER_KEYS):
+        status = resolve_oauth_provider_auth(config, provider_key)
+        if not bool(status.get("configured", False)):
+            continue
+        source = str(status.get("source", "") or "").strip()
+        if source.startswith("env:"):
+            env_oauth_matches.append((provider_key, f"detected from ${source.split(':', 1)[1]}"))
+        elif source.startswith("file:"):
+            file_oauth_matches.append((provider_key, f"detected from the local {provider_key.replace('_', '-')} OAuth session"))
+        else:
+            configured_oauth_matches.append((provider_key, f"detected from saved {provider_key.replace('_', '-')} OAuth credentials"))
+
+    configured_overrides: list[tuple[str, str]] = []
+    for provider_id in SUPPORTED_PROVIDERS:
+        spec = _provider_spec(provider_id)
+        if spec is None:
+            continue
+        override = config.providers.get(spec.name)
+        if override is None:
+            continue
+        api_key = str(override.api_key or "").strip()
+        api_base = str(override.api_base or "").strip()
+        if not api_key and not api_base:
+            continue
+        reason = (
+            f"detected from the configured {spec.name.replace('_', '-')} base URL"
+            if api_base
+            else f"detected from the configured {spec.name.replace('_', '-')} credentials"
+        )
+        configured_overrides.append((spec.name, reason))
+    configured_signal_matches = configured_oauth_matches + configured_overrides
+    if len(configured_signal_matches) == 1:
+        return configured_signal_matches[0]
+
+    env_runtime_base = str(os.getenv("CLAWLITE_LITELLM_BASE_URL", "") or "").strip()
+    env_runtime = detect_local_runtime(env_runtime_base)
+    if env_runtime in _SUPPORTED_PROVIDER_KEYS:
+        normalized_base = normalize_local_runtime_base_url(env_runtime, env_runtime_base)
+        return env_runtime, f"detected from $CLAWLITE_LITELLM_BASE_URL ({normalized_base})"
+
+    env_provider_matches: list[tuple[str, str]] = []
+    for provider_id in SUPPORTED_PROVIDERS:
+        spec = _provider_spec(provider_id)
+        if spec is None:
+            continue
+        for env_name in spec.key_envs:
+            if str(os.getenv(env_name, "") or "").strip():
+                env_provider_matches.append((spec.name, f"detected from ${env_name}"))
+                break
+    env_signal_matches = env_oauth_matches + env_provider_matches
+    if len(env_signal_matches) == 1:
+        return env_signal_matches[0]
+
+    if len(file_oauth_matches) == 1:
+        return file_oauth_matches[0]
+
+    return "openai", ""
 
 
 def _render_provider_suggestions(provider_key: str, *, base_url: str = "", oauth_login: str = "") -> Panel:
@@ -556,7 +642,8 @@ def probe_provider(
     headers: dict[str, str] = {}
     payload: dict[str, Any] | None = None
     probe_method = "GET"
-    transport = provider_transport_name(provider=provider_key, spec=spec, auth_mode="none" if provider_key in {"ollama", "vllm"} else "api_key")
+    auth_mode = "none" if provider_key in {"ollama", "vllm"} else "oauth" if spec.is_oauth else "api_key"
+    transport = provider_transport_name(provider=provider_key, spec=spec, auth_mode=auth_mode)
     default_base_url = str(spec.default_base_url or "")
     key_envs = list(spec.key_envs)
     model_check: dict[str, Any] = {"checked": False, "ok": True, "enforced": False}
@@ -581,7 +668,7 @@ def probe_provider(
                 error=error,
                 error_detail="",
                 status_code=0,
-                auth_mode="api_key",
+                auth_mode=auth_mode,
                 transport=transport,
                 endpoint="",
                 default_base_url=default_base_url,
@@ -648,6 +735,10 @@ def probe_provider(
         key_envs = []
         default_base_url = CODEX_DEFAULT_BASE_URL
         model_check = {"checked": False, "ok": True, "enforced": False}
+    elif spec.is_oauth:
+        key = str(oauth_access_token or "").strip()
+        url = _join_base(resolved_base, "/models")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
     elif provider_key == "ollama":
         url = _join_base(resolved_base, "/api/tags")
     elif provider_key == "vllm":
@@ -693,7 +784,7 @@ def probe_provider(
                 error=f"unsupported_provider:{provider_key}",
                 error_detail="",
                 status_code=0,
-                auth_mode="api_key",
+                auth_mode=auth_mode,
                 transport=transport,
                 endpoint="",
                 default_base_url=default_base_url,
@@ -725,7 +816,7 @@ def probe_provider(
                 error=error,
                 error_detail="",
                 status_code=0,
-                auth_mode="api_key",
+                auth_mode=auth_mode,
                 transport=transport,
                 endpoint=url,
                 default_base_url=default_base_url,
@@ -777,7 +868,7 @@ def probe_provider(
             error=error,
             error_detail=error_detail,
             status_code=int(response.status_code),
-            auth_mode="none" if provider_key in {"ollama", "vllm"} else "api_key",
+            auth_mode=auth_mode,
             transport=transport,
             endpoint=url,
             default_base_url=default_base_url,
@@ -815,7 +906,7 @@ def probe_provider(
             error=error,
             error_detail="",
             status_code=0,
-            auth_mode="none" if provider_key in {"ollama", "vllm"} else "api_key",
+            auth_mode=auth_mode,
             transport=transport,
             endpoint=url,
             default_base_url=default_base_url,
@@ -1017,7 +1108,10 @@ def _configure_model(
         console.print(f"    [cyan]{pid:<18}[/]{url_part}")
     console.print("")
 
-    current_provider = str(config.provider.litellm_api_key and "openai" or "openai")
+    current_provider, provider_hint = _provider_prompt_default(config)
+    if provider_hint:
+        console.print(f"  [dim]Suggested provider:[/] {current_provider.replace('_', '-')} ({provider_hint})")
+        console.print("")
     while True:
         provider = Prompt.ask("  Provider", default=current_provider).strip().lower()
         if _provider_spec(provider) is not None:
@@ -1034,11 +1128,7 @@ def _configure_model(
     provider_default_base = DEFAULT_PROVIDER_BASE_URLS.get(provider_key, "")
     base_url = _provider_base_url_prompt_default(config, provider_key, provider_default_base)
     model_default = _model_default_for_provider(config, provider_key, provider_spec)
-    oauth_login = f"clawlite provider login {provider_key.replace('_', '-')}" if provider_key in {
-        "openai_codex",
-        "gemini_oauth",
-        "qwen_oauth",
-    } else ""
+    oauth_login = f"clawlite provider login {provider_key.replace('_', '-')}" if provider_key in _OAUTH_PROVIDER_KEYS else ""
     suggestion_base_url = (
         "your Azure OpenAI `/openai/v1` resource endpoint"
         if provider_key in _PROVIDERS_REQUIRING_BASE_URL_INPUT
@@ -1066,6 +1156,23 @@ def _configure_model(
             "source": str(oauth_status.get("source", "") or "").strip(),
         }
         base_url = CODEX_DEFAULT_BASE_URL
+    elif provider_key in _OAUTH_PROVIDER_KEYS:
+        console.print("\n  [dim]This provider uses your local OAuth session.[/]")
+        console.print("  [dim]ClawLite will reuse a saved, env, or file-backed token if one is already available.[/]\n")
+        oauth_status = resolve_oauth_provider_auth(config, provider_key)
+        if bool(oauth_status.get("configured", False)):
+            source_label = str(oauth_status.get("source", "") or "").strip()
+            source_suffix = f"  [dim]({source_label})[/]" if source_label else ""
+            console.print(
+                f"  [green]✓[/] {provider.replace('_', '-')} auth found: {oauth_status.get('token_masked', '')}{source_suffix}"
+            )
+        else:
+            console.print(f"  [red]✗[/] {provider.replace('_', '-')} auth not found.")
+        oauth_payload = {
+            "access_token": str(oauth_status.get("access_token", "") or "").strip(),
+            "account_id": str(oauth_status.get("account_id", "") or "").strip(),
+            "source": str(oauth_status.get("source", "") or "").strip(),
+        }
     elif provider_key not in {"ollama", "vllm"}:
         api_key = Prompt.ask(f"  {provider} API key", password=True)
         if provider_key in _PROVIDERS_REQUIRING_BASE_URL_INPUT or not provider_default_base:

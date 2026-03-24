@@ -73,7 +73,7 @@ Identity and user flags accepted by `onboard`:
 
 When `--profile <name>` is active, both `configure` and wizard-backed onboarding persist changes to the matching overlay file (`config.<profile>.json|yaml`) and report that same saved overlay path in their result payloads. Dashboard/hatch handoff flows now follow that same exact-path rule instead of trying to write a doubled suffix like `config.prod.prod.json`.
 
-For local runtimes, the onboarding/configure flow now also reuses an already-configured compatible loopback endpoint for the selected provider (`ollama` or `vllm`), normalizes it to the expected `/v1` shape in the prompt, and surfaces that local-runtime hint before the live probe runs.
+For local runtimes, the onboarding/configure flow now also reuses an already-configured compatible loopback endpoint for the selected provider (`ollama` or `vllm`), normalizes it to the expected `/v1` shape in the prompt, and surfaces that local-runtime hint before the live probe runs. The provider prompt now also starts from a better detected default when the current config, a unique provider override, a single provider-specific env, or a single saved OAuth session already points at one backend.
 
 ## Validation Commands
 
