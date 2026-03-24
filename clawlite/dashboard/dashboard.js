@@ -364,6 +364,26 @@ function appendRequestIdMeta(meta, value) {
   return base ? `${base} | req ${requestId}` : `req ${requestId}`;
 }
 
+function readManagedSkillsFilter() {
+  return {
+    status: String(byId("managed-skills-status-filter")?.value || "").trim(),
+    query: String(byId("managed-skills-query-filter")?.value || "").trim(),
+  };
+}
+
+function summarizeManagedFilter(summary) {
+  const status = String((summary || {}).status_filter || "").trim();
+  const query = String((summary || {}).query || "").trim();
+  const parts = [];
+  if (status) {
+    parts.push(`status ${status}`);
+  }
+  if (query) {
+    parts.push(`query ${query}`);
+  }
+  return parts.join(" | ");
+}
+
 function summarizeWsCorrelation(ws, includeRequest = true, options = {}) {
   const parts = [];
   const connectionId = String(
@@ -1486,6 +1506,7 @@ function renderSkillsBoard() {
   const managedBlockedCount = numeric(managedLive.blocked_count, numeric(managed.blocked_count, 0));
   const managedDisabledCount = numeric(managedLive.disabled_count, numeric(managed.disabled_count, 0));
   const managedVisibleCount = numeric(managedLive.count, managedTrackedCount);
+  const managedFilterMeta = summarizeManagedFilter(managedLive);
   const blockedSkills = skillRows.filter((row) => {
     if (!row || row.enabled === false) {
       return false;
@@ -1513,7 +1534,12 @@ function renderSkillsBoard() {
     title: "Managed marketplace",
     body: `${managedTrackedCount} tracked | ${managedReadyCount} ready`,
     detail: managedTrackedCount > 0
-      ? `${managedVisibleCount} visible | ${managedBlockedCount} blocked | ${managedDisabledCount} disabled`
+      ? [
+          `${managedVisibleCount} visible`,
+          `${managedBlockedCount} blocked`,
+          `${managedDisabledCount} disabled`,
+          managedFilterMeta,
+        ].filter(Boolean).join(" | ")
       : "No managed marketplace skills discovered.",
   });
 
@@ -2539,21 +2565,39 @@ async function triggerSkillsValidate() {
 
 async function triggerSkillsManagedInspect() {
   const button = byId("inspect-managed-skills");
+  const filter = readManagedSkillsFilter();
+  const url = new URL(paths.skills_managed || "/v1/control/skills/managed", window.location.origin);
+  if (filter.status) {
+    url.searchParams.set("status", filter.status);
+  }
+  if (filter.query) {
+    url.searchParams.set("query", filter.query);
+  }
   if (button) {
     button.disabled = true;
   }
   try {
-    const payload = await fetchJson(paths.skills_managed || "/v1/control/skills/managed");
+    const payload = await fetchJson(`${url.pathname}${url.search}`);
     const summary = payload.summary || {};
     const rows = Array.isArray(summary.skills) ? summary.skills : [];
     const topRow = rows[0] || {};
+    const filterMeta = summarizeManagedFilter(summary);
     state.skillsManaged = summary;
     recordEvent(
       numeric(summary.blocked_count, 0) > 0 ? "warn" : "ok",
       "Managed skills inspected",
       rows.length
-        ? `${numeric(summary.count, 0)} visible | ${numeric(summary.total_count, 0)} total | ${String(topRow.slug || topRow.name || "managed skill")} ${String(topRow.status || "unknown")}`
-        : `${numeric(summary.total_count, 0)} tracked | No managed skills discovered.`,
+        ? [
+            `${numeric(summary.count, 0)} visible`,
+            `${numeric(summary.total_count, 0)} total`,
+            filterMeta,
+            `${String(topRow.slug || topRow.name || "managed skill")} ${String(topRow.status || "unknown")}`,
+          ].filter(Boolean).join(" | ")
+        : [
+            `${numeric(summary.total_count, 0)} tracked`,
+            filterMeta,
+            "No managed skills discovered.",
+          ].filter(Boolean).join(" | "),
       appendRequestIdMeta("skills-managed", payload),
     );
     renderAll();
@@ -3093,6 +3137,12 @@ function bindEvents() {
   });
   byId("inspect-managed-skills").addEventListener("click", () => {
     void triggerSkillsManagedInspect();
+  });
+  byId("managed-skills-query-filter").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void triggerSkillsManagedInspect();
+    }
   });
   byId("recover-supervisor-component").addEventListener("click", () => {
     void triggerSupervisorRecovery();

@@ -3083,6 +3083,8 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="skills-grid"' in body
         assert 'id="refresh-skills-inventory"' in body
         assert 'id="doctor-skills-inventory"' in body
+        assert 'id="managed-skills-status-filter"' in body
+        assert 'id="managed-skills-query-filter"' in body
         assert 'id="inspect-managed-skills"' in body
         assert 'id="provider-grid"' in body
         assert 'id="delivery-grid"' in body
@@ -3176,16 +3178,22 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerSkillsDoctor" in js.text
     assert "triggerSkillsValidate" in js.text
     assert "triggerSkillsManagedInspect" in js.text
+    assert "readManagedSkillsFilter" in js.text
+    assert "summarizeManagedFilter" in js.text
     assert 'paths.skills_refresh || "/v1/control/skills/refresh"' in js.text
     assert 'paths.skills_doctor || "/v1/control/skills/doctor"' in js.text
     assert 'paths.skills_validate || "/v1/control/skills/validate"' in js.text
     assert 'paths.skills_managed || "/v1/control/skills/managed"' in js.text
+    assert 'url.searchParams.set("status", filter.status);' in js.text
+    assert 'url.searchParams.set("query", filter.query);' in js.text
     assert "missingRequirements.os" in js.text
     assert "Skills doctor finished" in js.text
     assert "Skills refresh finished" in js.text
     assert "Skills validate finished" in js.text
     assert "Managed skills inspected" in js.text
     assert "validate-skills-inventory" in js.text
+    assert "managed-skills-status-filter" in js.text
+    assert "managed-skills-query-filter" in js.text
     assert "inspect-managed-skills" in js.text
     assert "managed_live: state.skillsManaged || {}" in js.text
     assert "state.skillsManaged = null;" in js.text

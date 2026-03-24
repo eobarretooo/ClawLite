@@ -193,6 +193,7 @@ h1 {
 .nav-button,
 .action-button,
 .ghost-button,
+.ghost-input,
 select {
   border: 0;
   border-radius: var(--radius-sm);
@@ -367,6 +368,7 @@ select {
 
 .field input,
 .field textarea,
+.ghost-input,
 select {
   width: 100%;
   border: 1px solid var(--line);
@@ -383,6 +385,7 @@ select {
 
 .field input:focus,
 .field textarea:focus,
+.ghost-input:focus,
 select:focus {
   outline: none;
   border-color: rgba(255, 158, 109, 0.5);

@@ -385,6 +385,16 @@
                     <button class="ghost-button" id="refresh-skills-inventory" type="button">Refresh skills inventory</button>
                     <button class="ghost-button" id="doctor-skills-inventory" type="button">Doctor blocked skills</button>
                     <button class="ghost-button" id="validate-skills-inventory" type="button">Validate skills inventory</button>
+                    <select class="ghost-input" id="managed-skills-status-filter" aria-label="Managed skills status filter">
+                      <option value="">All statuses</option>
+                      <option value="ready">Ready</option>
+                      <option value="missing_requirements">Missing requirements</option>
+                      <option value="policy_blocked">Policy blocked</option>
+                      <option value="invalid_contract">Invalid contract</option>
+                      <option value="unavailable">Unavailable</option>
+                      <option value="disabled">Disabled</option>
+                    </select>
+                    <input class="ghost-input" id="managed-skills-query-filter" type="text" placeholder="Search managed skills" />
                     <button class="ghost-button" id="inspect-managed-skills" type="button">Inspect managed skills</button>
                     <span class="badge" id="skills-status">pending</span>
                   </div>
