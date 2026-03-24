@@ -23,6 +23,9 @@ from clawlite.providers.discovery import probe_local_provider_runtime
 from clawlite.providers.gemini_auth import load_gemini_auth_file
 from clawlite.providers.hints import provider_probe_hints, provider_status_hints, provider_transport_name
 from clawlite.providers.model_probe import evaluate_remote_model_check, model_check_hints
+from clawlite.providers.probe_cache import load_provider_probe_snapshot
+from clawlite.providers.probe_cache import normalize_provider_probe_base_url
+from clawlite.providers.probe_cache import save_provider_probe_snapshot
 from clawlite.providers.qwen_auth import load_qwen_auth_file
 from clawlite.providers.registry import SPECS, _configured_provider_hint, detect_provider_name
 from clawlite.providers.reliability import classify_provider_error
@@ -105,6 +108,26 @@ def _provider_profile_payload(provider_name: str) -> dict[str, Any]:
         "recommended_models": list(profile.recommended_models),
         "onboarding_hint": profile.onboarding_hint,
     }
+
+
+def _last_live_provider_probe(
+    config: AppConfig,
+    *,
+    provider: str,
+    model: str,
+    base_url: str,
+) -> dict[str, Any] | None:
+    snapshot = load_provider_probe_snapshot(config.state_path, provider)
+    if not isinstance(snapshot, dict):
+        return None
+    current_model = str(model or "").strip()
+    current_base_url = normalize_provider_probe_base_url(provider, str(base_url or "").strip())
+    cached_model = str(snapshot.get("model", "") or "").strip()
+    cached_base_url = normalize_provider_probe_base_url(provider, str(snapshot.get("base_url", "") or "").strip())
+    payload = dict(snapshot)
+    payload["matches_current_model"] = bool(current_model) and cached_model == current_model
+    payload["matches_current_base_url"] = cached_base_url == current_base_url
+    return payload
 
 
 def provider_set_auth(
@@ -1234,6 +1257,12 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
             else f"spec:{provider_key}.default_base_url"
         )
         codex_base_url, codex_base_url_source = _resolve_codex_base_url(config)
+        last_live_probe = _last_live_provider_probe(
+            config,
+            provider=provider_key,
+            model=str(config.agents.defaults.model or config.provider.model),
+            base_url=codex_base_url if provider_key == "openai_codex" else base_url,
+        )
         return {
             "ok": True,
             "provider": provider_key,
@@ -1247,6 +1276,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
             "base_url": codex_base_url if provider_key == "openai_codex" else base_url,
             "base_url_source": codex_base_url_source if provider_key == "openai_codex" else base_url_source,
             "key_envs": [],
+            "last_live_probe": last_live_probe,
             **_provider_profile_payload(provider_key),
             "hints": provider_status_hints(
                 provider=provider_key,
@@ -1317,6 +1347,12 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
     auth_mode = "none" if spec.name in {"ollama", "vllm"} else "api_key"
     configured = bool(base_url) if auth_mode == "none" else bool(api_key)
     transport = provider_transport_name(provider=spec.name, spec=spec, auth_mode=auth_mode)
+    last_live_probe = _last_live_provider_probe(
+        config,
+        provider=spec.name,
+        model=str(config.agents.defaults.model or config.provider.model),
+        base_url=base_url,
+    )
 
     return {
         "ok": True,
@@ -1332,6 +1368,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
         "key_envs": list(spec.key_envs),
         "is_gateway": bool(spec.is_gateway),
         "env_key_present": env_key_present,
+        "last_live_probe": last_live_probe,
         "model": str(config.agents.defaults.model or config.provider.model),
         **_provider_profile_payload(spec.name),
         "hints": provider_status_hints(
@@ -2014,7 +2051,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
         if hint not in hints:
             hints.append(hint)
 
-    return {
+    payload = {
         "ok": ok,
         "provider": provider,
         "provider_detected": detected,
@@ -2036,6 +2073,13 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
         **profile_payload,
         "hints": hints,
     }
+    save_provider_probe_snapshot(
+        config.state_path,
+        provider=provider,
+        payload=payload,
+        source="provider_live_probe",
+    )
+    return payload
 
 
 def telegram_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str, Any]:
@@ -2229,6 +2273,12 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
     resolved_base_url = provider_api_base or global_base_url
     if provider_name == "openai_codex":
         resolved_base_url, _ = _resolve_codex_base_url(config)
+    last_live_probe = _last_live_provider_probe(
+        config,
+        provider=provider_name,
+        model=model,
+        base_url=resolved_base_url,
+    )
 
     env_hits: dict[str, bool] = {}
     env_names: list[str] = []
@@ -2369,6 +2419,7 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
         "oauth_source": resolve_oauth_provider_auth(config, provider_name)["source"] if oauth else "",
         "base_url": resolved_base_url,
         "env_key_present": env_hits,
+        "last_live_probe": last_live_probe,
         **guidance,
         "checks": checks,
         "errors": errors,

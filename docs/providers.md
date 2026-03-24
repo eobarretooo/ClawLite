@@ -446,6 +446,8 @@ Common checks:
 - Wrong provider prefix: make sure the model matches the selected provider, for example `openai/...`, `anthropic/...`, `openrouter/...`
 - Local runtime down: verify Ollama or vLLM is listening on the configured base URL
 
+`clawlite validate preflight --provider-live` now also persists the latest live probe snapshot in local state. After that, `clawlite provider status <provider>` and `clawlite validate provider` reuse that additive `last_live_probe` summary so operators can see the last known live result, its timestamp, and whether it still matches the current model/base-url selection without re-running a network probe every time.
+
 ## Telegram Transcription Provider
 
 Telegram voice/audio transcription is a separate provider path from the main LLM provider. It uses:

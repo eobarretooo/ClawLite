@@ -130,6 +130,7 @@ Notes:
 - `--set-model` is a deprecated compatibility flag; Codex login already switches to the default Codex model unless you pass `--keep-model`.
 - `provider status` defaults to `openai-codex` when no provider is supplied.
 - Provider aliases such as `codex`, `google`, `claude`, `hf`, and `kimi` are accepted where supported by the registry.
+- `provider status` and `validate provider` now also surface an additive `last_live_probe` block when a recent `clawlite validate preflight --provider-live` (or another live provider probe path) has already persisted the latest live result for that provider in local state.
 
 ## Control and Diagnostics
 

@@ -27,6 +27,7 @@ from clawlite.cli.ops import provider_live_probe
 from clawlite.channels.telegram_pairing import TelegramPairingStore
 from clawlite.config.loader import load_config
 from clawlite.core.skills import SkillsLoader
+from clawlite.providers.probe_cache import save_provider_probe_snapshot
 from clawlite.workspace.loader import TEMPLATE_FILES
 from clawlite.workspace.loader import WorkspaceLoader
 
@@ -4290,6 +4291,125 @@ def test_provider_live_probe_openai_model_not_listed_returns_soft_warning(
     )
 
 
+def test_provider_live_probe_persists_snapshot_and_provider_status_reuses_it(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai-1234")
+
+    config_path = tmp_path / "config.json"
+    state_path = tmp_path / "state"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "agents": {"defaults": {"model": "openai/gpt-4o-mini"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Response:
+        status_code = 200
+        is_success = True
+        text = "ok"
+
+        @staticmethod
+        def json() -> dict[str, list[dict[str, str]]]:
+            return {"data": [{"id": "gpt-4o-mini"}]}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, headers=None):
+            assert url.endswith("/models")
+            assert str(headers.get("Authorization", "")).startswith("Bearer sk-")
+            return _Response()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _Client)
+
+    payload = provider_live_probe(load_config(config_path), timeout=0.1)
+    assert payload["ok"] is True
+
+    cache_path = state_path / "provider-probes.json"
+    assert cache_path.exists()
+    cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert cached_payload["providers"]["openai"]["provider"] == "openai"
+    assert cached_payload["providers"]["openai"]["source"] == "provider_live_probe"
+    assert cached_payload["providers"]["openai"]["status_code"] == 200
+
+    rc_status = main(["--config", str(config_path), "provider", "status", "openai"])
+    assert rc_status == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["last_live_probe"]["provider"] == "openai"
+    assert status_payload["last_live_probe"]["ok"] is True
+    assert status_payload["last_live_probe"]["source"] == "provider_live_probe"
+    assert status_payload["last_live_probe"]["matches_current_model"] is True
+    assert status_payload["last_live_probe"]["matches_current_base_url"] is True
+
+
+def test_provider_live_probe_snapshot_drops_raw_remote_error_detail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai-1234")
+
+    config_path = tmp_path / "config.json"
+    state_path = tmp_path / "state"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "agents": {"defaults": {"model": "openai/gpt-4o-mini"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Response:
+        status_code = 401
+        is_success = False
+        text = "proxy reflected Authorization: Bearer sk-test-openai-1234"
+
+        @staticmethod
+        def json() -> dict[str, str]:
+            raise ValueError("not json")
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, headers=None):
+            assert url.endswith("/models")
+            assert str(headers.get("Authorization", "")).startswith("Bearer sk-")
+            return _Response()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _Client)
+
+    payload = provider_live_probe(load_config(config_path), timeout=0.1)
+    assert payload["ok"] is False
+    assert "sk-test-openai-1234" in payload["error_detail"]
+
+    cache_path = state_path / "provider-probes.json"
+    cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert cached_payload["providers"]["openai"]["error_detail"] == ""
+
+
 def test_provider_live_probe_prefers_configured_vendor_transport_over_generic_model(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -4623,6 +4743,62 @@ def test_cli_validate_provider_surfaces_guidance_fields(
     assert payload["recommended_model"] == "minimax/MiniMax-M2.5"
     assert "minimax/MiniMax-M2.5" in payload["recommended_models"]
     assert "/anthropic" in payload["onboarding_hint"]
+
+
+def test_cli_validate_provider_surfaces_last_live_probe_snapshot(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    monkeypatch.setenv("MINIMAX_API_KEY", "mini-key-1234")
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+    monkeypatch.delenv("CLAWLITE_API_KEY", raising=False)
+
+    state_path = tmp_path / "state"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "minimax/MiniMax-M2.5"},
+                "providers": {
+                    "minimax": {"api_base": "https://api.minimax.io/anthropic"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    save_provider_probe_snapshot(
+        state_path,
+        provider="minimax",
+        payload={
+            "ok": True,
+            "provider": "minimax",
+            "model": "minimax/MiniMax-M2.5",
+            "base_url": "https://api.minimax.io/anthropic",
+            "base_url_source": "config:providers.minimax.api_base",
+            "transport": "anthropic_compatible",
+            "probe_method": "POST",
+            "endpoint": "/messages",
+            "status_code": 200,
+            "family": "anthropic_compatible",
+            "recommended_model": "minimax/MiniMax-M2.5",
+            "recommended_models": ["minimax/MiniMax-M2.5"],
+            "onboarding_hint": "MiniMax uses the Anthropic-compatible /messages path.",
+            "hints": ["Credenciais validas."],
+            "model_check": {"checked": False, "ok": True},
+        },
+    )
+
+    rc = main(["--config", str(config_path), "validate", "provider"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["last_live_probe"]["provider"] == "minimax"
+    assert payload["last_live_probe"]["ok"] is True
+    assert payload["last_live_probe"]["transport"] == "anthropic_compatible"
+    assert payload["last_live_probe"]["source"] == "provider_live_probe"
+    assert payload["last_live_probe"]["matches_current_model"] is True
+    assert payload["last_live_probe"]["matches_current_base_url"] is True
 
 
 def test_cli_provider_use_clear_fallback_clears_config(tmp_path: Path, capsys) -> None:
