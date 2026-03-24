@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import HTTPException, Request
 
 from clawlite.core.memory_monitor import MemoryMonitor
-from clawlite.core.skills import skills_doctor_report, skills_validate_report
+from clawlite.core.skills import skills_doctor_report, skills_managed_report, skills_validate_report
 
 
 @dataclass
@@ -204,6 +204,15 @@ class GatewayControlHandlers:
             status=str(payload.status or ""),
             source=str(payload.source or ""),
             query=str(payload.query or ""),
+        )
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
+    async def skills_managed(self, request: Request, *, status: str = "", query: str = "") -> dict[str, Any]:
+        self._check_control(request)
+        summary = skills_managed_report(
+            self.runtime.skills_loader,
+            status=str(status or ""),
+            query=str(query or ""),
         )
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 

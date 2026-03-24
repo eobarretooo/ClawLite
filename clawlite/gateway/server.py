@@ -3847,6 +3847,14 @@ def create_app(
     ) -> dict[str, Any]:
         return await control_handlers.skills_validate(request, payload or SkillsValidateRequest())
 
+    @app.get("/v1/control/skills/managed")
+    async def skills_managed(request: Request, status: str = "", query: str = "") -> dict[str, Any]:
+        return await control_handlers.skills_managed(request, status=status, query=query)
+
+    @app.get("/api/skills/managed")
+    async def api_skills_managed(request: Request, status: str = "", query: str = "") -> dict[str, Any]:
+        return await control_handlers.skills_managed(request, status=status, query=query)
+
     @app.post("/v1/control/memory/snapshot/create")
     async def memory_snapshot_create_route(
         request: Request, payload: MemorySnapshotCreateRequest | None = None

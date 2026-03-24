@@ -1363,6 +1363,7 @@ class SkillsLoader:
             managed_status_counts.get(status, 0)
             for status in ("missing_requirements", "policy_blocked", "invalid_contract", "unavailable")
         )
+        managed_report = skills_managed_report(self)
 
         return {
             "summary": {
@@ -1381,14 +1382,14 @@ class SkillsLoader:
             "watcher": self.watcher_status(),
             "missing_requirements": missing_groups,
             "managed": {
-                "count": len(managed_rows),
-                "ready_count": managed_status_counts.get("ready", 0),
-                "blocked_count": managed_blocked_count,
-                "disabled_count": managed_status_counts.get("disabled", 0),
-                "status_counts": {
-                    key: value for key, value in sorted(managed_status_counts.items()) if int(value or 0) > 0
-                },
-                "items": managed_rows[:5],
+                "count": int(managed_report.get("total_count", len(managed_rows)) or 0),
+                "ready_count": int(managed_report.get("ready_count", managed_status_counts.get("ready", 0)) or 0),
+                "blocked_count": int(managed_report.get("blocked_count", managed_blocked_count) or 0),
+                "disabled_count": int(
+                    managed_report.get("disabled_count", managed_status_counts.get("disabled", 0)) or 0
+                ),
+                "status_counts": dict(managed_report.get("status_counts", {}) or {}),
+                "items": list(managed_report.get("skills", []) or [])[:5],
             },
             "contract_issues": {
                 "total": contract_total,
@@ -1503,6 +1504,117 @@ class SkillsLoader:
             lines.append("</skill>")
         lines.append("</available_skills>")
         return ["\n".join(lines)]
+
+
+def _managed_skill_report_payload(row: SkillSpec) -> dict[str, object]:
+    doctor_row = {
+        "name": row.name,
+        "skill_key": row.skill_key or row.name,
+        "primary_env": row.primary_env,
+        "enabled": row.enabled,
+        "available": row.available,
+        "missing": list(row.missing or []),
+        "contract_issues": list(row.contract_issues or []),
+        "fallback_hint": row.fallback_hint,
+    }
+    return {
+        "slug": _managed_skill_slug(row.path),
+        "name": row.name,
+        "skill_key": row.skill_key or row.name,
+        "primary_env": row.primary_env,
+        "description": row.description,
+        "available": row.available,
+        "enabled": row.enabled,
+        "pinned": row.pinned,
+        "status": skills_doctor_status(doctor_row),
+        "hint": skills_doctor_hint(doctor_row),
+        "version": row.version,
+        "version_pin": row.version_pin,
+        "missing": sorted(str(item) for item in list(row.missing or [])),
+        "homepage": row.homepage,
+        "fallback_hint": row.fallback_hint,
+        "path": str(row.path),
+    }
+
+
+def _managed_marketplace_specs(loader: SkillsLoader) -> list[SkillSpec]:
+    marketplace_root = loader.roots[2]
+    if not marketplace_root.exists():
+        return []
+    rows: list[SkillSpec] = []
+    for path in sorted(marketplace_root.rglob("SKILL.md")):
+        spec = loader._parse_header(path, source="marketplace")
+        if spec is None:
+            continue
+        rows.append(loader._refresh_runtime_status(spec))
+    return rows
+
+
+def skills_managed_report(
+    loader: SkillsLoader,
+    *,
+    status: str = "",
+    query: str = "",
+) -> dict[str, object]:
+    wanted_status = str(status or "").strip().lower()
+    wanted_query = str(query or "").strip().lower()
+    managed_root = loader.roots[2].parent
+    all_rows = [
+        _managed_skill_report_payload(row)
+        for row in _managed_marketplace_specs(loader)
+    ]
+    all_rows = sorted(
+        all_rows,
+        key=lambda item: (
+            int(_SKILL_STATUS_PRIORITY.get(str(item.get("status", "") or ""), 999)),
+            str(item.get("name", "") or "").lower(),
+        ),
+    )
+    status_counts: dict[str, int] = {}
+    for row in all_rows:
+        resolved_status = str(row.get("status", "") or "").strip().lower()
+        if not resolved_status:
+            continue
+        status_counts[resolved_status] = status_counts.get(resolved_status, 0) + 1
+
+    filtered_rows = list(all_rows)
+    if wanted_status:
+        filtered_rows = [row for row in filtered_rows if str(row.get("status", "") or "").strip().lower() == wanted_status]
+    if wanted_query:
+        filtered_rows = [
+            row
+            for row in filtered_rows
+            if wanted_query
+            in " ".join(
+                [
+                    str(row.get("slug", "") or ""),
+                    str(row.get("name", "") or ""),
+                    str(row.get("skill_key", "") or ""),
+                    str(row.get("description", "") or ""),
+                    str(row.get("hint", "") or ""),
+                ]
+            ).lower()
+        ]
+
+    blocked_count = sum(
+        int(status_counts.get(key, 0) or 0)
+        for key in ("missing_requirements", "policy_blocked", "invalid_contract", "unavailable")
+    )
+    return {
+        "ok": True,
+        "action": "managed",
+        "managed_root": str(managed_root),
+        "skills_root": str(managed_root / "skills"),
+        "count": len(filtered_rows),
+        "total_count": len(all_rows),
+        "ready_count": int(status_counts.get("ready", 0) or 0),
+        "blocked_count": blocked_count,
+        "disabled_count": int(status_counts.get("disabled", 0) or 0),
+        "status_filter": wanted_status,
+        "query": wanted_query,
+        "status_counts": {key: status_counts[key] for key in sorted(status_counts)},
+        "skills": filtered_rows,
+    }
 
 
 def skills_doctor_status(row: Mapping[str, object]) -> str:

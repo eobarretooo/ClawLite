@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from clawlite.core.skills import SkillsLoader, skills_doctor_report, skills_validate_report
+from clawlite.core.skills import SkillsLoader, skills_doctor_report, skills_managed_report, skills_validate_report
 
 
 class _FakeWatchfiles:
@@ -981,6 +981,84 @@ def test_skills_loader_diagnostics_report_summarizes_managed_marketplace_rows(
     assert [row["slug"] for row in managed["items"]] == ["github-helper", "jira-helper"]
     assert managed["items"][0]["status"] == "missing_requirements"
     assert "GH_TOKEN" in str(managed["items"][0]["hint"])
+
+
+def test_skills_managed_report_supports_filters_and_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    builtin_root = tmp_path / "builtin"
+    builtin_root.mkdir(parents=True, exist_ok=True)
+
+    ready_dir = tmp_path / ".clawlite" / "marketplace" / "skills" / "jira-helper"
+    ready_dir.mkdir(parents=True, exist_ok=True)
+    (ready_dir / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: issue tracker helper\ncommand: echo hi\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    blocked_dir = tmp_path / ".clawlite" / "marketplace" / "skills" / "github-helper"
+    blocked_dir.mkdir(parents=True, exist_ok=True)
+    (blocked_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: GitHub Helper\n"
+        "description: github triage\n"
+        "metadata:\n"
+        "  clawlite:\n"
+        "    primaryEnv: GH_TOKEN\n"
+        "    requires:\n"
+        "      env: [GH_TOKEN]\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    loader = SkillsLoader(builtin_root=builtin_root)
+    payload = skills_managed_report(loader, status="missing_requirements", query="github")
+
+    assert payload["ok"] is True
+    assert payload["action"] == "managed"
+    assert payload["count"] == 1
+    assert payload["total_count"] == 2
+    assert payload["ready_count"] == 1
+    assert payload["blocked_count"] == 1
+    assert payload["status_filter"] == "missing_requirements"
+    assert payload["query"] == "github"
+    assert payload["status_counts"] == {"missing_requirements": 1, "ready": 1}
+    assert payload["skills"][0]["slug"] == "github-helper"
+    assert "GH_TOKEN" in str(payload["skills"][0]["hint"])
+
+
+def test_skills_managed_report_keeps_marketplace_rows_when_workspace_shadows_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    builtin_root = tmp_path / "builtin"
+    builtin_root.mkdir(parents=True, exist_ok=True)
+
+    workspace_skill = tmp_path / ".clawlite" / "workspace" / "skills" / "jira-helper"
+    workspace_skill.mkdir(parents=True, exist_ok=True)
+    (workspace_skill / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: workspace override\ncommand: echo workspace\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    marketplace_skill = tmp_path / ".clawlite" / "marketplace" / "skills" / "jira-helper-market"
+    marketplace_skill.mkdir(parents=True, exist_ok=True)
+    (marketplace_skill / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: marketplace copy\ncommand: echo marketplace\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(builtin_root=builtin_root)
+    payload = skills_managed_report(loader)
+    report = loader.diagnostics_report()
+
+    assert payload["count"] == 1
+    assert payload["total_count"] == 1
+    assert payload["skills"][0]["slug"] == "jira-helper-market"
+    assert report["managed"]["count"] == 1
+    assert report["managed"]["items"][0]["slug"] == "jira-helper-market"
 
 
 def test_fallback_hint_parsed_from_frontmatter(tmp_path: Path) -> None:

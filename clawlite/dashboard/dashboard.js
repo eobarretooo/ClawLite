@@ -120,6 +120,7 @@ const state = {
   dashboardState: null,
   diagnostics: null,
   tools: null,
+  skillsManaged: null,
   tokenInfo: null,
   lastSyncAt: null,
   eventFeed: [],
@@ -1472,11 +1473,19 @@ function renderSkillsBoard() {
   const watcher = skills.watcher || {};
   const sources = skills.sources || {};
   const managed = skills.managed || {};
+  const managedLive = state.skillsManaged || {};
   const executionKinds = skills.execution_kinds || {};
   const missingRequirements = skills.missing_requirements || {};
   const contractIssues = skills.contract_issues || {};
   const skillRows = Array.isArray(skills.skills) ? skills.skills : [];
   const managedItems = Array.isArray(managed.items) ? managed.items : [];
+  const managedLiveItems = Array.isArray(managedLive.skills) ? managedLive.skills : [];
+  const managedPreviewItems = managedLiveItems.length ? managedLiveItems : managedItems;
+  const managedTrackedCount = numeric(managedLive.total_count, numeric(managed.count, 0));
+  const managedReadyCount = numeric(managedLive.ready_count, numeric(managed.ready_count, 0));
+  const managedBlockedCount = numeric(managedLive.blocked_count, numeric(managed.blocked_count, 0));
+  const managedDisabledCount = numeric(managedLive.disabled_count, numeric(managed.disabled_count, 0));
+  const managedVisibleCount = numeric(managedLive.count, managedTrackedCount);
   const blockedSkills = skillRows.filter((row) => {
     if (!row || row.enabled === false) {
       return false;
@@ -1502,9 +1511,9 @@ function renderSkillsBoard() {
   });
   appendSummaryCard(grid, {
     title: "Managed marketplace",
-    body: `${numeric(managed.count, 0)} tracked | ${numeric(managed.ready_count, 0)} ready`,
-    detail: numeric(managed.count, 0) > 0
-      ? `${numeric(managed.blocked_count, 0)} blocked | ${numeric(managed.disabled_count, 0)} disabled`
+    body: `${managedTrackedCount} tracked | ${managedReadyCount} ready`,
+    detail: managedTrackedCount > 0
+      ? `${managedVisibleCount} visible | ${managedBlockedCount} blocked | ${managedDisabledCount} disabled`
       : "No managed marketplace skills discovered.",
   });
 
@@ -1530,11 +1539,11 @@ function renderSkillsBoard() {
       : `interval ${formatDuration(watcher.interval_s || 0)} | pending ${Boolean(watcher.pending)} | debounced ${Boolean(watcher.debounced)}`,
   });
 
-  managedItems.slice(0, 2).forEach((row) => {
+  managedPreviewItems.slice(0, 3).forEach((row) => {
     appendSummaryCard(grid, {
       title: String(row.slug || row.name || "managed skill"),
       body: `${String(row.status || "unknown")} | ${String(row.version || "unversioned")}`,
-      detail: String(row.hint || "Inspect this skill through skills managed for more lifecycle details."),
+      detail: String(row.hint || "Inspect this skill through managed live inventory for more lifecycle details."),
     });
   });
 
@@ -1616,6 +1625,7 @@ function renderKnowledge() {
     summary: skills.summary || {},
     watcher: skills.watcher || {},
     managed: skills.managed || {},
+    managed_live: state.skillsManaged || {},
     sources: skills.sources || {},
     missing_requirements: skills.missing_requirements || {},
   });
@@ -1989,11 +1999,13 @@ async function refreshAll(reason = "manual") {
   state.refreshInFlight = true;
   try {
     await Promise.all([refreshStatus(), refreshDashboardState(), refreshDiagnostics(), refreshTools(), refreshTokenInfo()]);
+    state.skillsManaged = null;
     state.lastSyncAt = new Date().toISOString();
     if (reason !== "auto") {
       recordEvent("ok", "Dashboard sync complete", "Status, dashboard state, diagnostics, tools, and token metadata refreshed.", reason);
     }
   } catch (error) {
+    state.skillsManaged = null;
     recordEvent("danger", "Dashboard sync failed", error.message, reason);
     setBadge("diag-status", "auth required", "warn");
   } finally {
@@ -2525,6 +2537,37 @@ async function triggerSkillsValidate() {
   }
 }
 
+async function triggerSkillsManagedInspect() {
+  const button = byId("inspect-managed-skills");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.skills_managed || "/v1/control/skills/managed");
+    const summary = payload.summary || {};
+    const rows = Array.isArray(summary.skills) ? summary.skills : [];
+    const topRow = rows[0] || {};
+    state.skillsManaged = summary;
+    recordEvent(
+      numeric(summary.blocked_count, 0) > 0 ? "warn" : "ok",
+      "Managed skills inspected",
+      rows.length
+        ? `${numeric(summary.count, 0)} visible | ${numeric(summary.total_count, 0)} total | ${String(topRow.slug || topRow.name || "managed skill")} ${String(topRow.status || "unknown")}`
+        : `${numeric(summary.total_count, 0)} tracked | No managed skills discovered.`,
+      appendRequestIdMeta("skills-managed", payload),
+    );
+    renderAll();
+  } catch (error) {
+    state.skillsManaged = null;
+    recordEvent("danger", "Managed skills inspection failed", error.message, appendRequestIdMeta("skills-managed", error));
+    renderAll();
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerAutonomyWake() {
   const button = byId("trigger-autonomy-wake");
   if (button) {
@@ -3047,6 +3090,9 @@ function bindEvents() {
   });
   byId("validate-skills-inventory").addEventListener("click", () => {
     void triggerSkillsValidate();
+  });
+  byId("inspect-managed-skills").addEventListener("click", () => {
+    void triggerSkillsManagedInspect();
   });
   byId("recover-supervisor-component").addEventListener("click", () => {
     void triggerSupervisorRecovery();

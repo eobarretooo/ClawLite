@@ -299,6 +299,50 @@ Example response:
 
 Alias compatível: `POST /api/skills/validate`.
 
+## `GET /v1/control/skills/managed`
+
+Returns the live marketplace-managed skills inventory used by `clawlite skills managed`, but from the running control plane.
+
+Query params:
+
+- `status`: optional lifecycle filter such as `ready` or `missing_requirements`
+- `query`: optional case-insensitive filter across slug, name, skill key, description, and hint
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "action": "managed",
+    "managed_root": "/home/user/.clawlite/marketplace",
+    "skills_root": "/home/user/.clawlite/marketplace/skills",
+    "count": 1,
+    "total_count": 2,
+    "ready_count": 1,
+    "blocked_count": 1,
+    "disabled_count": 0,
+    "status_filter": "missing_requirements",
+    "query": "github",
+    "status_counts": {
+      "missing_requirements": 1,
+      "ready": 1
+    },
+    "skills": [
+      {
+        "slug": "github-helper",
+        "name": "GitHub Helper",
+        "status": "missing_requirements",
+        "hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
+      }
+    ]
+  }
+}
+```
+
+Alias compatível: `GET /api/skills/managed`.
+
 ## `POST /v1/control/memory/snapshot/create`
 
 Creates a new memory snapshot version from the live runtime state.

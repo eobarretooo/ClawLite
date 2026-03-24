@@ -82,6 +82,7 @@ from clawlite.core.skills import SkillsLoader
 from clawlite.core.skills import skills_doctor_hint
 from clawlite.core.skills import skills_doctor_report
 from clawlite.core.skills import skills_doctor_status
+from clawlite.core.skills import skills_managed_report
 from clawlite.scheduler.cron import CronService
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logger import stdout_json
@@ -2544,34 +2545,12 @@ def cmd_skills_search(args: argparse.Namespace) -> int:
 
 def cmd_skills_managed(args: argparse.Namespace) -> int:
     loader = _skills_loader_for_args(args)
-    wanted_status = str(getattr(args, "status", "") or "").strip().lower()
-    query = str(getattr(args, "query", "") or "").strip().lower()
-    all_rows = _managed_skill_rows(loader)
-    rows = _managed_skill_rows(loader, status=wanted_status)
-    if query:
-        rows = [
-            row
-            for row in rows
-            if query in _managed_skill_slug(row).lower()
-            or query in str(getattr(row, "name", "") or "").strip().lower()
-            or query in str(getattr(row, "skill_key", "") or "").strip().lower()
-            or query in str(getattr(row, "description", "") or "").strip().lower()
-            or query in _managed_skill_hint(row).lower()
-        ]
-    managed_root = _skills_managed_root(loader)
     _print_json(
-        {
-            "ok": True,
-            "action": "managed",
-            "managed_root": str(managed_root),
-            "skills_root": str(managed_root / "skills"),
-            "count": len(rows),
-            "total_count": len(all_rows),
-            "status_filter": wanted_status,
-            "query": query,
-            "status_counts": _managed_skill_status_counts(all_rows),
-            "skills": [_managed_skill_payload(row) for row in rows],
-        }
+        skills_managed_report(
+            loader,
+            status=str(getattr(args, "status", "") or ""),
+            query=str(getattr(args, "query", "") or ""),
+        )
     )
     return 0
 

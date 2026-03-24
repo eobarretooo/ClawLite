@@ -3083,6 +3083,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="skills-grid"' in body
         assert 'id="refresh-skills-inventory"' in body
         assert 'id="doctor-skills-inventory"' in body
+        assert 'id="inspect-managed-skills"' in body
         assert 'id="provider-grid"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3116,6 +3117,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"skills_refresh": "/v1/control/skills/refresh"' in body
         assert '"skills_doctor": "/v1/control/skills/doctor"' in body
         assert '"skills_validate": "/v1/control/skills/validate"' in body
+        assert '"skills_managed": "/v1/control/skills/managed"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
@@ -3173,14 +3175,20 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerSkillsRefresh" in js.text
     assert "triggerSkillsDoctor" in js.text
     assert "triggerSkillsValidate" in js.text
+    assert "triggerSkillsManagedInspect" in js.text
     assert 'paths.skills_refresh || "/v1/control/skills/refresh"' in js.text
     assert 'paths.skills_doctor || "/v1/control/skills/doctor"' in js.text
     assert 'paths.skills_validate || "/v1/control/skills/validate"' in js.text
+    assert 'paths.skills_managed || "/v1/control/skills/managed"' in js.text
     assert "missingRequirements.os" in js.text
     assert "Skills doctor finished" in js.text
     assert "Skills refresh finished" in js.text
     assert "Skills validate finished" in js.text
+    assert "Managed skills inspected" in js.text
     assert "validate-skills-inventory" in js.text
+    assert "inspect-managed-skills" in js.text
+    assert "managed_live: state.skillsManaged || {}" in js.text
+    assert "state.skillsManaged = null;" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
@@ -7475,6 +7483,94 @@ def test_gateway_api_skills_validate_alias_returns_summary(tmp_path: Path) -> No
     assert payload["summary"]["refresh"]["refreshed"] in {True, False}
     assert payload["summary"]["source_filter"] == "builtin"
     assert payload["summary"]["query"] == "github"
+
+
+def test_gateway_skills_managed_endpoint_returns_live_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    managed_root = tmp_path / ".clawlite" / "marketplace" / "skills"
+    ready_skill = managed_root / "jira-helper"
+    ready_skill.mkdir(parents=True, exist_ok=True)
+    (ready_skill / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: ready managed\ncommand: echo hi\n---\nbody\n",
+        encoding="utf-8",
+    )
+    blocked_skill = managed_root / "github-helper"
+    blocked_skill.mkdir(parents=True, exist_ok=True)
+    (blocked_skill / "SKILL.md").write_text(
+        "---\n"
+        "name: GitHub Helper\n"
+        "description: blocked managed\n"
+        "metadata:\n"
+        "  clawlite:\n"
+        "    primaryEnv: GH_TOKEN\n"
+        "    requires:\n"
+        "      env: [GH_TOKEN]\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    app.state.runtime.skills_loader = SkillsLoader(
+        builtin_root=tmp_path / "builtin",
+        state_path=tmp_path / "state" / "skills-state.json",
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/v1/control/skills/managed", params={"status": "missing_requirements", "query": "github"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["action"] == "managed"
+    assert payload["summary"]["count"] == 1
+    assert payload["summary"]["total_count"] == 2
+    assert payload["summary"]["blocked_count"] == 1
+    assert payload["summary"]["status_filter"] == "missing_requirements"
+    assert payload["summary"]["query"] == "github"
+    assert payload["summary"]["skills"][0]["slug"] == "github-helper"
+    assert "GH_TOKEN" in payload["summary"]["skills"][0]["hint"]
+
+
+def test_gateway_api_skills_managed_alias_returns_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    managed_root = tmp_path / ".clawlite" / "marketplace" / "skills" / "discord-helper"
+    managed_root.mkdir(parents=True, exist_ok=True)
+    (managed_root / "SKILL.md").write_text(
+        "---\nname: Discord Helper\ndescription: managed discord skill\ncommand: echo hi\n---\nbody\n",
+        encoding="utf-8",
+    )
+    app.state.runtime.skills_loader = SkillsLoader(
+        builtin_root=tmp_path / "builtin",
+        state_path=tmp_path / "state" / "skills-state.json",
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/skills/managed")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["action"] == "managed"
+    assert payload["summary"]["count"] == 1
+    assert payload["summary"]["total_count"] == 1
+    assert payload["summary"]["skills"][0]["slug"] == "discord-helper"
 
 
 def test_gateway_memory_snapshot_create_endpoint_returns_version(tmp_path: Path) -> None:

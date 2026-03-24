@@ -630,6 +630,8 @@ def test_cli_skills_managed_lists_marketplace_entries(tmp_path: Path, capsys, mo
     assert payload["action"] == "managed"
     assert payload["count"] == 1
     assert payload["total_count"] == 1
+    assert payload["ready_count"] == 1
+    assert payload["blocked_count"] == 0
     assert payload["status_counts"] == {"ready": 1}
     assert payload["skills"][0]["slug"] == "market-echo"
     assert payload["skills"][0]["name"] == "market-echo"
@@ -671,6 +673,8 @@ def test_cli_skills_managed_filters_by_status_and_includes_hint(tmp_path: Path, 
     assert payload["ok"] is True
     assert payload["count"] == 1
     assert payload["total_count"] == 2
+    assert payload["ready_count"] == 1
+    assert payload["blocked_count"] == 1
     assert payload["status_filter"] == "missing_requirements"
     assert payload["status_counts"] == {"missing_requirements": 1, "ready": 1}
     assert payload["skills"][0]["name"] == "market-broken"
