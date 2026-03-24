@@ -1071,14 +1071,16 @@ def test_configure_model_reuses_detected_local_runtime_base_url_and_prints_hint(
 
 def test_configure_model_defaults_provider_from_single_provider_env(monkeypatch) -> None:
     cfg = AppConfig.from_dict({"provider": {"model": "openai/gpt-4o-mini"}})
+    asked_labels: list[str] = []
 
     def _fake_prompt_ask(label: str, *args, **kwargs):
+        asked_labels.append(label.strip())
         default = str(kwargs.get("default", ""))
         if label.strip() == "Provider":
             assert default == "anthropic"
             return default
-        if label.strip() == "anthropic API key":
-            return "anthropic-key-123456"
+        if label.strip() == "anthropic API key [leave blank to reuse detected value]":
+            return ""
         if label.strip() == "anthropic base URL":
             return default
         if label.strip() == "Model":
@@ -1115,13 +1117,70 @@ def test_configure_model_defaults_provider_from_single_provider_env(monkeypatch)
 
     rendered = console.export_text()
     assert provider == "anthropic"
-    assert api_key == "anthropic-key-123456"
+    assert api_key == "env-anthropic-key"
     assert base_url == "https://api.anthropic.com/v1"
     assert selected_model == "anthropic/claude-3-5-haiku-latest"
     assert probe["provider"] == "anthropic"
     assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
     assert "Suggested provider:" in rendered
     assert "ANTHROPIC_API_KEY" in rendered
+    assert "API key found:" in rendered
+    assert "anthropic API key [leave blank to reuse detected value]" in asked_labels
+
+
+def test_configure_model_reuses_configured_provider_override_api_key(monkeypatch) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "provider": {"model": "openai/gpt-4o-mini"},
+            "providers": {"groq": {"api_key": "gsk_detected_123456"}},
+        }
+    )
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            assert default == "groq"
+            return default
+        if label.strip() == "groq API key [leave blank to reuse detected value]":
+            return ""
+        if label.strip() == "Model":
+            assert kwargs.get("default") == "groq/llama-3.1-8b-instant"
+            return str(kwargs.get("default", ""))
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "groq",
+            "family": "openai_compatible",
+            "recommended_model": "groq/llama-3.1-8b-instant",
+            "recommended_models": ["groq/llama-3.1-8b-instant"],
+            "onboarding_hint": "Groq responds via OpenAI-compatible endpoints; prefer low-latency models when possible.",
+            "base_url": base_url,
+            "api_key_masked": "********3456",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "groq"
+    assert api_key == "gsk_detected_123456"
+    assert base_url == "https://api.groq.com/openai/v1"
+    assert selected_model == "groq/llama-3.1-8b-instant"
+    assert probe["provider"] == "groq"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "config:providers.groq.api_key" in rendered
 
 
 def test_configure_model_defaults_provider_from_saved_oauth_credentials(monkeypatch) -> None:

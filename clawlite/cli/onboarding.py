@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.prompt import Prompt
 
-from clawlite.cli.ops import resolve_oauth_provider_auth
+from clawlite.cli.ops import _resolve_provider_probe_target, resolve_oauth_provider_auth
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import config_payload_path
 from clawlite.config.loader import save_raw_config_payload
@@ -1174,7 +1174,19 @@ def _configure_model(
             "source": str(oauth_status.get("source", "") or "").strip(),
         }
     elif provider_key not in {"ollama", "vllm"}:
-        api_key = Prompt.ask(f"  {provider} API key", password=True)
+        provider_target = _resolve_provider_probe_target(config, provider_key)
+        detected_api_key = str(provider_target.get("api_key", "") or "").strip()
+        detected_api_key_source = str(provider_target.get("api_key_source", "") or "").strip()
+        if detected_api_key:
+            source_suffix = f"  [dim]({detected_api_key_source})[/]" if detected_api_key_source else ""
+            console.print(
+                f"  [green]✓[/] {provider.replace('_', '-')} API key found: {_mask_secret(detected_api_key)}{source_suffix}"
+            )
+            api_key = Prompt.ask(f"  {provider} API key [leave blank to reuse detected value]", password=True).strip()
+            if not api_key:
+                api_key = detected_api_key
+        else:
+            api_key = Prompt.ask(f"  {provider} API key", password=True)
         if provider_key in _PROVIDERS_REQUIRING_BASE_URL_INPUT or not provider_default_base:
             base_url = Prompt.ask(f"  {provider} base URL", default=base_url)
     else:
