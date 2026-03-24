@@ -2243,6 +2243,54 @@ def test_docker_preflight_probe_uses_env_file_to_satisfy_provider_env_hint(
     assert payload["secrets"]["provider"]["available_envs"] == [{"name": "OPENAI_API_KEY", "source": "env_file"}]
 
 
+def test_docker_preflight_probe_ignores_host_only_custom_config_for_provider_secret_hints(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    custom_dir = tmp_path / "outside"
+    custom_dir.mkdir(parents=True, exist_ok=True)
+    config_path = custom_dir / "custom.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "providers": {"openai": {"api_key": "sk-config-only-1234"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CLAWLITE_LITELLM_API_KEY", raising=False)
+    monkeypatch.delenv("CLAWLITE_API_KEY", raising=False)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
+            return subprocess.CompletedProcess(command, 0, stdout="[]\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(
+        timeout=1.5,
+        config=load_config(str(config_path)),
+        config_path=str(config_path),
+    )
+
+    assert payload["ok"] is True
+    assert payload["secrets"]["warnings"] == ["docker_provider_env_missing:openai"]
+    assert payload["secrets"]["provider"]["configured"] is False
+    assert payload["secrets"]["provider"]["configured_source"] == ""
+
+
 def test_docker_preflight_probe_surfaces_unhealthy_gateway(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -2433,12 +2481,12 @@ def test_docker_preflight_probe_requires_gateway_auth_token_when_required(
                 "workspace_path": str(tmp_path / "workspace"),
                 "state_path": str(tmp_path / "state"),
                 "provider": {"model": "openai/gpt-4o-mini"},
-                "gateway": {"auth": {"mode": "required"}},
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAWLITE_GATEWAY_AUTH_MODE", "required")
     monkeypatch.delenv("CLAWLITE_GATEWAY_AUTH_TOKEN", raising=False)
 
     payload = docker_preflight_probe(timeout=1.5, config=load_config(str(config_path)))
@@ -2449,6 +2497,82 @@ def test_docker_preflight_probe_requires_gateway_auth_token_when_required(
     assert payload["secrets"]["gateway_auth"]["mode"] == "required"
     assert payload["secrets"]["gateway_auth"]["token_configured"] is False
     assert payload["secrets"]["gateway_auth"]["error"] == "docker_gateway_auth_token_missing"
+
+
+def test_docker_preflight_probe_ignores_legacy_gateway_token_env_for_required_auth(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAWLITE_GATEWAY_AUTH_MODE", "required")
+    monkeypatch.setenv("CLAWLITE_GATEWAY_TOKEN", "legacy-only-token")
+    monkeypatch.delenv("CLAWLITE_GATEWAY_AUTH_TOKEN", raising=False)
+
+    payload = docker_preflight_probe(
+        timeout=1.5,
+        config=load_config(str(config_path)),
+        config_path=str(config_path),
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == "docker_gateway_auth_token_missing"
+    assert payload["secrets"]["gateway_auth"]["token_configured"] is False
+
+
+def test_docker_preflight_probe_qwen_oauth_hint_lists_real_env_names(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "docker-compose.yml").write_text("services:\n  clawlite-gateway:\n    image: clawlite\n", encoding="utf-8")
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "qwen-oauth/qwen-max"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLAWLITE_QWEN_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("QWEN_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr("clawlite.cli.commands.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+
+    def _fake_run(command, cwd=None, capture_output=False, text=False, timeout=None):
+        del cwd, capture_output, text, timeout
+        if command[:3] == ["/usr/bin/docker", "compose", "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout="Docker Compose version v2.32.0\n", stderr="")
+        if command[:3] == ["/usr/bin/docker", "compose", "config"]:
+            return subprocess.CompletedProcess(command, 0, stdout="services: {}\n", stderr="")
+        if command == ["/usr/bin/docker", "compose", "ps", "--format", "json"]:
+            return subprocess.CompletedProcess(command, 0, stdout="[]\n", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr("clawlite.cli.commands.subprocess.run", _fake_run)
+
+    payload = docker_preflight_probe(
+        timeout=1.5,
+        config=load_config(str(config_path)),
+        config_path=str(config_path),
+    )
+
+    assert payload["ok"] is True
+    assert payload["secrets"]["warnings"] == ["docker_provider_oauth_missing:qwen_oauth"]
+    assert "CLAWLITE_QWEN_ACCESS_TOKEN" in payload["secrets"]["hints"][0]
+    assert "QWEN_ACCESS_TOKEN" in payload["secrets"]["hints"][0]
+    assert "Set one of  " not in payload["secrets"]["hints"][0]
 
 
 def test_cli_validate_preflight_docker_probe_success(
@@ -2476,7 +2600,7 @@ def test_cli_validate_preflight_docker_probe_success(
 
     monkeypatch.setattr(
         "clawlite.cli.commands.docker_preflight_probe",
-        lambda timeout, config=None, provider_check=None: {
+        lambda timeout, config=None, config_path=None, config_profile=None, provider_check=None: {
             "enabled": True,
             "ok": True,
             "repo_root": str(tmp_path),
@@ -2521,7 +2645,7 @@ def test_cli_validate_preflight_docker_probe_failure_returns_rc2(
 
     monkeypatch.setattr(
         "clawlite.cli.commands.docker_preflight_probe",
-        lambda timeout, config=None, provider_check=None: {
+        lambda timeout, config=None, config_path=None, config_profile=None, provider_check=None: {
             "enabled": True,
             "ok": False,
             "error": "docker_missing",
