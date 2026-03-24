@@ -1003,3 +1003,119 @@ def test_configure_model_prompts_for_azure_openai_base_url(monkeypatch) -> None:
     assert probe["provider"] == "azure_openai"
     assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
     assert any(label.strip() == "azure-openai base URL" for label, _ in asked)
+
+
+def test_configure_model_reuses_detected_local_runtime_base_url_and_prints_hint(monkeypatch) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "provider": {
+                "model": "openai/gpt-4o-mini",
+                "litellm_base_url": "http://localhost:11434",
+            }
+        }
+    )
+    asked: list[tuple[str, str]] = []
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        asked.append((label, default))
+        if label.strip() == "Provider":
+            return "ollama"
+        if label.strip() == "ollama base URL":
+            assert default == "http://localhost:11434/v1"
+            return default
+        if label.strip() == "Model":
+            assert default == "openai/llama3.2"
+            return default
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "ollama",
+            "family": "local_runtime",
+            "recommended_model": "openai/llama3.2",
+            "recommended_models": ["openai/llama3.2"],
+            "onboarding_hint": "Ollama requires a running local runtime and a model downloaded ahead of time with 'ollama pull'.",
+            "base_url": base_url,
+            "api_key_masked": "",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    rendered = console.export_text()
+    assert provider == "ollama"
+    assert api_key == ""
+    assert base_url == "http://localhost:11434/v1"
+    assert selected_model == "openai/llama3.2"
+    assert probe["provider"] == "ollama"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}
+    assert "Local runtime:" in rendered
+    assert "http://localhost:11434/v1" in rendered
+    assert "checks that the model is loaded" in rendered
+
+
+def test_configure_model_does_not_reuse_other_local_runtime_base_url(monkeypatch) -> None:
+    cfg = AppConfig.from_dict(
+        {
+            "provider": {
+                "model": "openai/gpt-4o-mini",
+                "litellm_base_url": "http://localhost:11434",
+            }
+        }
+    )
+
+    def _fake_prompt_ask(label: str, *args, **kwargs):
+        default = str(kwargs.get("default", ""))
+        if label.strip() == "Provider":
+            return "vllm"
+        if label.strip() == "vllm base URL":
+            assert default == "http://127.0.0.1:8000/v1"
+            return default
+        if label.strip() == "Model":
+            assert default == "vllm/meta-llama/Llama-3.2-3B-Instruct"
+            return default
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", _fake_prompt_ask)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.probe_provider",
+        lambda provider, *, api_key, base_url, model="", timeout_s=8.0, oauth_access_token="", oauth_account_id="": {
+            "ok": True,
+            "status_code": 200,
+            "provider": "vllm",
+            "family": "local_runtime",
+            "recommended_model": "vllm/meta-llama/Llama-3.2-3B-Instruct",
+            "recommended_models": ["vllm/meta-llama/Llama-3.2-3B-Instruct"],
+            "onboarding_hint": "vLLM requires a running server and a model loaded when the process starts.",
+            "base_url": base_url,
+            "api_key_masked": "",
+            "error": "",
+            "hints": [],
+        },
+    )
+
+    console = Console(record=True, width=140)
+    provider, api_key, base_url, selected_model, probe, oauth_payload = onboarding_module._configure_model(
+        console,
+        cfg,
+        allow_continue_on_probe_failure=True,
+    )
+
+    assert provider == "vllm"
+    assert api_key == ""
+    assert base_url == "http://127.0.0.1:8000/v1"
+    assert selected_model == "vllm/meta-llama/Llama-3.2-3B-Instruct"
+    assert probe["provider"] == "vllm"
+    assert oauth_payload == {"access_token": "", "account_id": "", "source": ""}

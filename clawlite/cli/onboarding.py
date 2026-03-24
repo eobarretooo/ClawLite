@@ -20,7 +20,7 @@ from clawlite.providers.catalog import ONBOARDING_PROVIDER_ORDER, default_provid
 from clawlite.providers.codex import CODEX_DEFAULT_BASE_URL
 from clawlite.providers.codex_auth import load_codex_auth_file
 from clawlite.providers.codex_auth import resolve_codex_auth_snapshot
-from clawlite.providers.discovery import normalize_local_runtime_base_url, probe_local_provider_runtime
+from clawlite.providers.discovery import detect_local_runtime, normalize_local_runtime_base_url, probe_local_provider_runtime
 from clawlite.providers.hints import provider_probe_hints, provider_transport_name
 from clawlite.providers.model_probe import evaluate_remote_model_check, model_check_hints
 from clawlite.providers.registry import SPECS
@@ -128,6 +128,15 @@ def _base_url_matches_provider(base_url: str, provider_key: str, spec: Any | Non
     if not candidate or spec is None:
         return False
     expected_default = str(default_base_url or "").strip().lower().rstrip("/")
+    if provider_key in {"ollama", "vllm"}:
+        detected_runtime = detect_local_runtime(candidate)
+        if detected_runtime == provider_key:
+            return True
+        if expected_default and normalize_local_runtime_base_url(provider_key, candidate) == normalize_local_runtime_base_url(
+            provider_key,
+            expected_default,
+        ):
+            return True
     if expected_default and candidate == expected_default:
         return True
     for keyword in tuple(getattr(spec, "base_url_keywords", ()) or ()):
@@ -141,6 +150,8 @@ def _provider_base_url_prompt_default(config: AppConfig, provider_key: str, defa
     current_base = str(config.provider.litellm_base_url or "").strip()
     spec = _provider_spec(provider_key)
     if current_base and _base_url_matches_provider(current_base, provider_key, spec, default_base_url):
+        if provider_key in {"ollama", "vllm"}:
+            return normalize_local_runtime_base_url(provider_key, current_base)
         return current_base
     return str(default_base_url or "").strip()
 
@@ -155,6 +166,11 @@ def _render_provider_suggestions(provider_key: str, *, base_url: str = "", oauth
         body.append(f"[bold]Suggested models:[/] {', '.join(recommended_models)}")
     if base_url:
         body.append(f"[bold]Base URL:[/] {base_url}")
+    if provider_key in {"ollama", "vllm"} and base_url:
+        normalized_base_url = normalize_local_runtime_base_url(provider_key, base_url)
+        body.append(
+            f"[bold]Local runtime:[/] ClawLite normalizes local runtime endpoints to {normalized_base_url} and checks that the model is loaded."
+        )
     if oauth_login:
         body.append(f"[bold]Login:[/] {oauth_login}")
     body.append(f"[dim]{profile.onboarding_hint}[/]")

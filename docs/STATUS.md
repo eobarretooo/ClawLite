@@ -179,8 +179,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: onboarding/config now keeps `configure`, wizard-backed onboarding, `dashboard`, and `hatch` aligned with the active `--profile`, while exact-path saves avoid doubled profile suffixes like `config.prod.prod.json`
-- Next slice: keep pushing Onboarding/Config with a guided setup improvement, especially better local-provider/runtime auto-detect hints inside `configure` / onboarding
+- Current slice: onboarding/config now also reuses compatible local-runtime endpoints for `ollama` / `vllm` inside `configure` and wizard-backed onboarding, normalizing loopback defaults to `/v1` and surfacing that runtime guidance before the live probe
+- Next slice: keep pushing Onboarding/Config with stronger guided setup and provider/runtime auto-detect beyond the current local-runtime hints, especially where setup still depends on manual provider selection or base-url entry
 
 ## Delivery Policy
 
