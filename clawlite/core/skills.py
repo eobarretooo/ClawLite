@@ -7,6 +7,7 @@ import platform
 import re
 import shlex
 import shutil
+import subprocess
 import time
 import hashlib
 import uuid
@@ -1550,6 +1551,40 @@ def _managed_marketplace_specs(loader: SkillsLoader) -> list[SkillSpec]:
     return rows
 
 
+def _managed_marketplace_root(loader: SkillsLoader) -> Path:
+    return loader.roots[2].parent
+
+
+def _run_clawhub_command(loader: SkillsLoader, *action_args: str) -> tuple[int, dict[str, object]]:
+    managed_root = _managed_marketplace_root(loader)
+    skills_root = managed_root / "skills"
+    npx_path = shutil.which("npx")
+    if not npx_path:
+        return 1, {
+            "ok": False,
+            "returncode": 1,
+            "error": "skills_manager_requires_npx",
+            "managed_root": str(managed_root),
+            "skills_root": str(skills_root),
+        }
+
+    managed_root.mkdir(parents=True, exist_ok=True)
+    command = [npx_path, "--yes", "clawhub@latest", *action_args, "--workdir", str(managed_root)]
+    completed = subprocess.run(command, capture_output=True, text=True)
+    payload: dict[str, object] = {
+        "ok": completed.returncode == 0,
+        "returncode": int(completed.returncode),
+        "command": command,
+        "managed_root": str(managed_root),
+        "skills_root": str(skills_root),
+        "stdout": str(completed.stdout or "").strip(),
+        "stderr": str(completed.stderr or "").strip(),
+    }
+    if completed.returncode != 0:
+        payload["error"] = "skills_manager_command_failed"
+    return completed.returncode, payload
+
+
 def skills_managed_report(
     loader: SkillsLoader,
     *,
@@ -1615,6 +1650,22 @@ def skills_managed_report(
         "status_counts": {key: status_counts[key] for key in sorted(status_counts)},
         "skills": filtered_rows,
     }
+
+
+def skills_sync_report(loader: SkillsLoader) -> dict[str, object]:
+    rc, payload = _run_clawhub_command(loader, "update", "--all")
+    payload["action"] = "sync"
+    if rc == 0:
+        payload["refresh"] = loader.refresh(force=True)
+        managed = skills_managed_report(loader)
+        payload["managed"] = managed
+        payload["managed_count"] = int(managed.get("total_count", managed.get("count", 0)) or 0)
+        payload["ready_count"] = int(managed.get("ready_count", 0) or 0)
+        payload["blocked_count"] = int(managed.get("blocked_count", 0) or 0)
+        payload["disabled_count"] = int(managed.get("disabled_count", 0) or 0)
+        payload["status_counts"] = dict(managed.get("status_counts", {}) or {})
+        payload["skills"] = list(managed.get("skills", []) or [])
+    return payload
 
 
 def skills_doctor_status(row: Mapping[str, object]) -> str:

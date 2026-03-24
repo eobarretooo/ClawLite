@@ -83,6 +83,7 @@ from clawlite.core.skills import skills_doctor_hint
 from clawlite.core.skills import skills_doctor_report
 from clawlite.core.skills import skills_doctor_status
 from clawlite.core.skills import skills_managed_report
+from clawlite.core.skills import skills_sync_report
 from clawlite.scheduler.cron import CronService
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logger import stdout_json
@@ -2507,16 +2508,9 @@ def cmd_skills_update(args: argparse.Namespace) -> int:
 
 def cmd_skills_sync(args: argparse.Namespace) -> int:
     loader = _skills_loader_for_args(args)
-    rc, payload = _run_clawhub_command(loader, "update", "--all")
-    payload["action"] = "sync"
-    if rc == 0:
-        refreshed_loader = _skills_loader_for_args(args)
-        rows = _managed_skill_rows(refreshed_loader)
-        payload["managed_count"] = len(rows)
-        payload["status_counts"] = _managed_skill_status_counts(rows)
-        payload["skills"] = [_managed_skill_payload(row) for row in rows]
+    payload = skills_sync_report(loader)
     _print_json(payload)
-    return rc
+    return int(payload.get("returncode", 0 if payload.get("ok", False) else 1) or 0)
 
 
 def cmd_skills_search(args: argparse.Namespace) -> int:

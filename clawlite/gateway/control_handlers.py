@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException, Request
 
 from clawlite.core.memory_monitor import MemoryMonitor
-from clawlite.core.skills import skills_doctor_report, skills_managed_report, skills_validate_report
+from clawlite.core.skills import skills_doctor_report, skills_managed_report, skills_sync_report, skills_validate_report
 
 
 @dataclass
@@ -205,6 +206,12 @@ class GatewayControlHandlers:
             source=str(payload.source or ""),
             query=str(payload.query or ""),
         )
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
+    async def skills_sync(self, request: Request, payload: Any) -> dict[str, Any]:
+        del payload
+        self._check_control(request)
+        summary = await asyncio.to_thread(skills_sync_report, self.runtime.skills_loader)
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
     async def skills_managed(self, request: Request, *, status: str = "", query: str = "") -> dict[str, Any]:

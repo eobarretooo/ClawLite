@@ -2563,6 +2563,57 @@ async function triggerSkillsValidate() {
   }
 }
 
+async function triggerSkillsSync() {
+  const button = byId("sync-managed-skills");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.skills_sync || "/v1/control/skills/sync", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const summary = payload.summary || {};
+    const managed = summary.managed || {};
+    if (summary.ok === false) {
+      state.skillsManaged = null;
+      recordEvent(
+        "danger",
+        "Managed skills sync failed",
+        String(summary.stderr || summary.error || "Managed marketplace sync failed."),
+        appendRequestIdMeta("skills-sync", payload),
+      );
+      renderAll();
+      return;
+    }
+    recordEvent(
+      numeric(summary.blocked_count, 0) > 0 ? "warn" : "ok",
+      "Managed skills sync finished",
+      [
+        (summary.refresh || {}).refreshed ? "refreshed" : "unchanged",
+        `${numeric(summary.managed_count, numeric(managed.total_count, 0))} tracked`,
+        `${numeric(summary.ready_count, numeric(managed.ready_count, 0))} ready`,
+        `${numeric(summary.blocked_count, numeric(managed.blocked_count, 0))} blocked`,
+      ].join(" | "),
+      appendRequestIdMeta("skills-sync", payload),
+    );
+    await refreshAll("skills-sync");
+    state.skillsManaged = managed;
+    renderAll();
+  } catch (error) {
+    state.skillsManaged = null;
+    recordEvent("danger", "Managed skills sync failed", error.message, appendRequestIdMeta("skills-sync", error));
+    renderAll();
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerSkillsManagedInspect() {
   const button = byId("inspect-managed-skills");
   const filter = readManagedSkillsFilter();
@@ -3134,6 +3185,9 @@ function bindEvents() {
   });
   byId("validate-skills-inventory").addEventListener("click", () => {
     void triggerSkillsValidate();
+  });
+  byId("sync-managed-skills").addEventListener("click", () => {
+    void triggerSkillsSync();
   });
   byId("inspect-managed-skills").addEventListener("click", () => {
     void triggerSkillsManagedInspect();

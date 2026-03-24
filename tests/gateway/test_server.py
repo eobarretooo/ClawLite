@@ -3083,6 +3083,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="skills-grid"' in body
         assert 'id="refresh-skills-inventory"' in body
         assert 'id="doctor-skills-inventory"' in body
+        assert 'id="sync-managed-skills"' in body
         assert 'id="managed-skills-status-filter"' in body
         assert 'id="managed-skills-query-filter"' in body
         assert 'id="inspect-managed-skills"' in body
@@ -3095,6 +3096,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Workspace Runtime Files" in body
         assert "Recent Sessions" in body
         assert "Validate skills inventory" in body
+        assert "Sync managed skills" in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3117,6 +3119,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"telegram_offset_reset": "/v1/control/channels/telegram/offset/reset"' in body
         assert '"discord_refresh": "/v1/control/channels/discord/refresh"' in body
         assert '"skills_refresh": "/v1/control/skills/refresh"' in body
+        assert '"skills_sync": "/v1/control/skills/sync"' in body
         assert '"skills_doctor": "/v1/control/skills/doctor"' in body
         assert '"skills_validate": "/v1/control/skills/validate"' in body
         assert '"skills_managed": "/v1/control/skills/managed"' in body
@@ -3175,12 +3178,14 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "derivedCacheableCount" in js.text
     assert "derivedLargestGroup" in js.text
     assert "triggerSkillsRefresh" in js.text
+    assert "triggerSkillsSync" in js.text
     assert "triggerSkillsDoctor" in js.text
     assert "triggerSkillsValidate" in js.text
     assert "triggerSkillsManagedInspect" in js.text
     assert "readManagedSkillsFilter" in js.text
     assert "summarizeManagedFilter" in js.text
     assert 'paths.skills_refresh || "/v1/control/skills/refresh"' in js.text
+    assert 'paths.skills_sync || "/v1/control/skills/sync"' in js.text
     assert 'paths.skills_doctor || "/v1/control/skills/doctor"' in js.text
     assert 'paths.skills_validate || "/v1/control/skills/validate"' in js.text
     assert 'paths.skills_managed || "/v1/control/skills/managed"' in js.text
@@ -3189,9 +3194,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "missingRequirements.os" in js.text
     assert "Skills doctor finished" in js.text
     assert "Skills refresh finished" in js.text
+    assert "Managed skills sync finished" in js.text
     assert "Skills validate finished" in js.text
     assert "Managed skills inspected" in js.text
     assert "validate-skills-inventory" in js.text
+    assert "sync-managed-skills" in js.text
     assert "managed-skills-status-filter" in js.text
     assert "managed-skills-query-filter" in js.text
     assert "inspect-managed-skills" in js.text
@@ -7578,6 +7585,99 @@ def test_gateway_api_skills_managed_alias_returns_summary(tmp_path: Path, monkey
     assert payload["summary"]["action"] == "managed"
     assert payload["summary"]["count"] == 1
     assert payload["summary"]["total_count"] == 1
+    assert payload["summary"]["skills"][0]["slug"] == "discord-helper"
+
+
+def test_gateway_skills_sync_endpoint_returns_managed_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    def _fake_which(binary: str) -> str | None:
+        return "/usr/bin/npx" if binary == "npx" else None
+
+    def _fake_run(command: list[str], capture_output: bool = True, text: bool = True):
+        assert capture_output is True
+        assert text is True
+        managed_root = Path(command[-1])
+        skill_dir = managed_root / "skills" / "github-helper"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: GitHub Helper\ndescription: synced marketplace skill\ncommand: echo hi\n---\nbody\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="synced", stderr="")
+
+    monkeypatch.setattr("clawlite.core.skills.shutil.which", _fake_which)
+    monkeypatch.setattr("clawlite.core.skills.subprocess.run", _fake_run)
+    app.state.runtime.skills_loader = SkillsLoader(
+        builtin_root=tmp_path / "builtin",
+        state_path=tmp_path / "state" / "skills-state.json",
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/skills/sync", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["action"] == "sync"
+    assert payload["summary"]["returncode"] == 0
+    assert payload["summary"]["refresh"]["refreshed"] is True
+    assert payload["summary"]["managed"]["action"] == "managed"
+    assert payload["summary"]["managed_count"] == 1
+    assert payload["summary"]["status_counts"] == {"ready": 1}
+    assert payload["summary"]["skills"][0]["slug"] == "github-helper"
+
+
+def test_gateway_api_skills_sync_alias_returns_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    def _fake_which(binary: str) -> str | None:
+        return "/usr/bin/npx" if binary == "npx" else None
+
+    def _fake_run(command: list[str], capture_output: bool = True, text: bool = True):
+        assert capture_output is True
+        assert text is True
+        managed_root = Path(command[-1])
+        skill_dir = managed_root / "skills" / "discord-helper"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: Discord Helper\ndescription: synced managed skill\ncommand: echo hi\n---\nbody\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="synced", stderr="")
+
+    monkeypatch.setattr("clawlite.core.skills.shutil.which", _fake_which)
+    monkeypatch.setattr("clawlite.core.skills.subprocess.run", _fake_run)
+    app.state.runtime.skills_loader = SkillsLoader(
+        builtin_root=tmp_path / "builtin",
+        state_path=tmp_path / "state" / "skills-state.json",
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/skills/sync", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["action"] == "sync"
+    assert payload["summary"]["managed_count"] == 1
     assert payload["summary"]["skills"][0]["slug"] == "discord-helper"
 
 

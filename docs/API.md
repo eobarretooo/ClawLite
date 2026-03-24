@@ -299,6 +299,56 @@ Example response:
 
 Alias compatível: `POST /api/skills/validate`.
 
+## `POST /v1/control/skills/sync`
+
+Runs the same managed marketplace sync used by `clawlite skills sync`, then refreshes runtime skill discovery and returns the resulting managed inventory snapshot.
+
+Example request:
+
+```json
+{}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "action": "sync",
+    "managed_root": "/home/user/.clawlite/marketplace",
+    "skills_root": "/home/user/.clawlite/marketplace/skills",
+    "returncode": 0,
+    "refresh": {
+      "refreshed": true
+    },
+    "managed_count": 2,
+    "ready_count": 1,
+    "blocked_count": 1,
+    "disabled_count": 0,
+    "status_counts": {
+      "missing_requirements": 1,
+      "ready": 1
+    },
+    "managed": {
+      "ok": true,
+      "action": "managed",
+      "count": 2,
+      "total_count": 2
+    },
+    "skills": [
+      {
+        "slug": "github-helper",
+        "status": "missing_requirements"
+      }
+    ]
+  }
+}
+```
+
+Alias compatível: `POST /api/skills/sync`.
+
 ## `GET /v1/control/skills/managed`
 
 Returns the live marketplace-managed skills inventory used by `clawlite skills managed`, but from the running control plane.

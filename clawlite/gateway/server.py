@@ -314,6 +314,10 @@ class SkillsRefreshRequest(BaseModel):
     force: bool = True
 
 
+class SkillsSyncRequest(BaseModel):
+    noop: bool = False
+
+
 class SkillsDoctorRequest(BaseModel):
     include_all: bool = False
     status: str = ""
@@ -3822,6 +3826,18 @@ def create_app(
         request: Request, payload: SkillsRefreshRequest | None = None
     ) -> dict[str, Any]:
         return await control_handlers.skills_refresh(request, payload or SkillsRefreshRequest())
+
+    @app.post("/v1/control/skills/sync")
+    async def skills_sync(
+        request: Request, payload: SkillsSyncRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_sync(request, payload or SkillsSyncRequest())
+
+    @app.post("/api/skills/sync")
+    async def api_skills_sync(
+        request: Request, payload: SkillsSyncRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.skills_sync(request, payload or SkillsSyncRequest())
 
     @app.post("/v1/control/skills/doctor")
     async def skills_doctor(

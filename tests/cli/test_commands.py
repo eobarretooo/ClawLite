@@ -705,6 +705,44 @@ def test_cli_skills_managed_supports_query_filter(tmp_path: Path, capsys, monkey
     assert payload["skills"][0]["slug"] == "discord-helper"
 
 
+def test_cli_skills_sync_updates_managed_marketplace(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls: list[list[str]] = []
+
+    def _fake_which(binary: str) -> str | None:
+        return "/usr/bin/npx" if binary == "npx" else None
+
+    def _fake_run(command: list[str], capture_output: bool = True, text: bool = True):
+        assert capture_output is True
+        assert text is True
+        calls.append(list(command))
+        managed_root = Path(command[-1])
+        skill_dir = managed_root / "skills" / "jira-helper"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: Jira Helper\ndescription: managed sync skill\ncommand: echo hi\n---\nbody\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, "updated all", "")
+
+    monkeypatch.setattr("clawlite.core.skills.shutil.which", _fake_which)
+    monkeypatch.setattr("clawlite.core.skills.subprocess.run", _fake_run)
+
+    rc = main(["skills", "sync"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "sync"
+    assert payload["returncode"] == 0
+    assert payload["refresh"]["refreshed"] is True
+    assert payload["managed_count"] == 1
+    assert payload["status_counts"] == {"ready": 1}
+    assert payload["managed"]["action"] == "managed"
+    assert payload["managed"]["skills"][0]["slug"] == "jira-helper"
+    assert payload["skills"][0]["slug"] == "jira-helper"
+    assert calls[0][3:5] == ["update", "--all"]
+
+
 def test_cli_skills_remove_resolves_marketplace_skill_by_name(tmp_path: Path, capsys, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     skill_dir = tmp_path / ".clawlite" / "marketplace" / "skills" / "managed-folder"

@@ -74,6 +74,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
             "telegram_offset_reset": "/v1/control/channels/telegram/offset/reset",
             "discord_refresh": "/v1/control/channels/discord/refresh",
             "skills_refresh": "/v1/control/skills/refresh",
+            "skills_sync": "/v1/control/skills/sync",
             "skills_doctor": "/v1/control/skills/doctor",
             "skills_validate": "/v1/control/skills/validate",
             "skills_managed": "/v1/control/skills/managed",
