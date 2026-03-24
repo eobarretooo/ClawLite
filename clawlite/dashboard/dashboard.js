@@ -625,28 +625,84 @@ function renderEventFeed() {
 }
 
 function renderToolsSummary() {
+  const signalsNode = byId("tool-signals");
   const groupsNode = byId("tool-groups");
   const aliasesNode = byId("tool-aliases");
-  if (!groupsNode || !aliasesNode) {
+  if (!signalsNode || !groupsNode || !aliasesNode) {
     return;
   }
+  signalsNode.innerHTML = "";
   groupsNode.innerHTML = "";
   aliasesNode.innerHTML = "";
 
   const tools = state.tools || {};
   const groups = Array.isArray(tools.groups) ? tools.groups : [];
   const aliases = tools.aliases && typeof tools.aliases === "object" ? tools.aliases : {};
+  const summary = tools.summary && typeof tools.summary === "object" ? tools.summary : {};
+  const wsMethods = Array.isArray(tools.ws_methods) ? tools.ws_methods : [];
+  const largestGroup = summary.largest_group && typeof summary.largest_group === "object" ? summary.largest_group : {};
+  const derivedCacheableCount = groups.reduce((total, group) => {
+    const toolsInGroup = Array.isArray(group.tools) ? group.tools : [];
+    return total + toolsInGroup.filter((tool) => Boolean(tool && tool.cacheable)).length;
+  }, 0);
+  const derivedCustomTimeoutCount = groups.reduce((total, group) => {
+    const toolsInGroup = Array.isArray(group.tools) ? group.tools : [];
+    return total + toolsInGroup.filter((tool) => tool && tool.default_timeout_s != null).length;
+  }, 0);
+  const derivedLargestGroup = groups.reduce(
+    (best, group) => {
+      const count = numeric(group.count, Array.isArray(group.tools) ? group.tools.length : 0);
+      if (count > best.count) {
+        return {
+          label: String(group.label || group.name || group.group || "group"),
+          count,
+        };
+      }
+      return best;
+    },
+    { label: "", count: 0 },
+  );
+
+  const signalCards = [
+    {
+      title: "Catalog shape",
+      body: `${numeric(summary.group_count, groups.length)} groups`,
+      detail: `${numeric(summary.alias_count, Object.keys(aliases).length)} aliases`,
+    },
+    {
+      title: "Transport methods",
+      body: `${numeric(summary.ws_method_count, wsMethods.length)} WebSocket methods`,
+      detail: wsMethods.slice(0, 3).join(", ") || "No WebSocket methods exported.",
+    },
+    {
+      title: "Cacheable tools",
+      body: `${numeric(summary.cacheable_count, derivedCacheableCount)} cacheable`,
+      detail: `${numeric(summary.custom_timeout_count, derivedCustomTimeoutCount)} tools publish a custom timeout`,
+    },
+    {
+      title: "Largest group",
+      body: String(largestGroup.label || derivedLargestGroup.label || "unknown"),
+      detail: `${numeric(largestGroup.count, derivedLargestGroup.count)} tools`,
+    },
+  ];
+  signalCards.forEach((item) => appendSummaryCard(signalsNode, item));
 
   groups.slice(0, 12).forEach((group) => {
     const card = document.createElement("article");
     card.className = "summary-card";
     const title = document.createElement("span");
     title.className = "summary-card__title";
-    title.textContent = String(group.name || group.group || "group");
+    title.textContent = String(group.label || group.name || group.group || "group");
     const meta = document.createElement("div");
     meta.className = "summary-card__meta";
-    meta.textContent = `${numeric(group.count, 0)} tools`;
-    card.append(title, meta);
+    const toolsInGroup = Array.isArray(group.tools) ? group.tools : [];
+    const cacheableCount = toolsInGroup.filter((tool) => Boolean(tool && tool.cacheable)).length;
+    const timeoutCount = toolsInGroup.filter((tool) => tool && tool.default_timeout_s != null).length;
+    meta.textContent = `${numeric(group.count, toolsInGroup.length)} tools`;
+    const detail = document.createElement("div");
+    detail.className = "summary-card__meta";
+    detail.textContent = `${numeric(cacheableCount, 0)} cacheable | ${numeric(timeoutCount, 0)} custom timeouts`;
+    card.append(title, meta, detail);
     groupsNode.appendChild(card);
   });
 

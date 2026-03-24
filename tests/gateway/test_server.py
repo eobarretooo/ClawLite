@@ -3092,6 +3092,8 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Workspace Runtime Files" in body
         assert "Recent Sessions" in body
         assert "Validate skills inventory" in body
+        assert "Catalog Signals" in body
+        assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
         assert "/_clawlite/dashboard.css" in body
         assert "/_clawlite/dashboard.js" in body
@@ -3160,6 +3162,12 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderControlPlaneCorrelationBoard" in js.text
     assert "renderHttpCorrelationBoard" in js.text
     assert "renderSkillsBoard" in js.text
+    assert "tool-signals" in js.text
+    assert "Cacheable tools" in js.text
+    assert "largest_group" in js.text
+    assert "custom_timeout_count" in js.text
+    assert "derivedCacheableCount" in js.text
+    assert "derivedLargestGroup" in js.text
     assert "triggerSkillsRefresh" in js.text
     assert "triggerSkillsDoctor" in js.text
     assert "triggerSkillsValidate" in js.text
@@ -3673,7 +3681,11 @@ def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Pa
         assert isinstance(payload["aliases"], dict)
         assert isinstance(payload["groups"], list) and payload["groups"]
         assert isinstance(payload["ws_methods"], list)
+        assert isinstance(payload["summary"], dict)
         assert "tools.catalog" in payload["ws_methods"]
+        assert payload["summary"]["group_count"] == len(payload["groups"])
+        assert payload["summary"]["alias_count"] == len(payload["aliases"])
+        assert payload["summary"]["ws_method_count"] == len(payload["ws_methods"])
 
         aliases = payload["aliases"]
         assert aliases["bash"] == "exec"
@@ -3686,19 +3698,35 @@ def test_gateway_tools_catalog_http_endpoints_return_expected_shape(tmp_path: Pa
         assert {"agents_list", "spawn", "run_skill"}.issubset({tool["id"] for tool in agents_group["tools"]})
 
         total_tools = 0
+        cacheable_count = 0
+        custom_timeout_count = 0
         for group in payload["groups"]:
             assert isinstance(group["id"], str) and group["id"]
             assert isinstance(group["label"], str) and group["label"]
+            assert isinstance(group["count"], int) and group["count"] > 0
             assert isinstance(group["tools"], list) and group["tools"]
+            assert group["count"] == len(group["tools"])
             tool_ids = [tool["id"] for tool in group["tools"]]
             assert tool_ids == sorted(tool_ids)
             for tool in group["tools"]:
                 assert isinstance(tool["id"], str) and tool["id"]
                 assert isinstance(tool["label"], str) and tool["label"]
                 assert isinstance(tool["description"], str)
+                assert isinstance(tool["cacheable"], bool)
+                assert tool["default_timeout_s"] is None or isinstance(tool["default_timeout_s"], float)
+                if tool["cacheable"]:
+                    cacheable_count += 1
+                if tool["default_timeout_s"] is not None:
+                    custom_timeout_count += 1
             total_tools += len(group["tools"])
 
         assert total_tools == payload["tool_count"]
+        assert payload["summary"]["cacheable_count"] == cacheable_count
+        assert payload["summary"]["custom_timeout_count"] == custom_timeout_count
+        largest_group = payload["summary"]["largest_group"]
+        assert isinstance(largest_group["id"], str)
+        assert isinstance(largest_group["label"], str)
+        assert largest_group["count"] == max(group["count"] for group in payload["groups"])
 
     assert {k: v for k, v in api_payload.items() if k != "schema"} == {
         k: v for k, v in v1_payload.items() if k != "schema"
@@ -3723,6 +3751,8 @@ def test_gateway_tools_catalog_include_schema_matches_tool_count(tmp_path: Path)
         assert len(payload["schema"]) == payload["tool_count"]
         schema_names = [str(row.get("name", "")) for row in payload["schema"]]
         assert schema_names == sorted(schema_names)
+        assert all("cacheable" in row for row in payload["schema"])
+        assert all("default_timeout_s" in row for row in payload["schema"])
 
 
 def test_gateway_tools_approvals_endpoints_return_requests_and_grants(tmp_path: Path) -> None:

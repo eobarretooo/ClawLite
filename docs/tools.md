@@ -15,6 +15,17 @@ WebSocket clients can request `tools.catalog`.
 
 If gateway auth is enabled, call the catalog with the same bearer token used for `/v1/chat` and `/v1/diagnostics`.
 
+The live catalog now also includes additive operator metadata:
+
+- `summary.group_count`, `alias_count`, and `ws_method_count`
+- `summary.cacheable_count` and `summary.custom_timeout_count`
+- `summary.largest_group`
+- `groups[*].count`
+- `groups[*].tools[*].cacheable`
+- `groups[*].tools[*].default_timeout_s`
+
+That same compact summary is what the packaged dashboard uses to render the Tools tab without fetching the full schema.
+
 ## Compatibility Aliases
 
 These aliases are exported on purpose so prompts and clients can use older names safely:

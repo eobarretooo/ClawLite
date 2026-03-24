@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-CATALOG_CONTRACT_VERSION = "2026-03-06"
+CATALOG_CONTRACT_VERSION = "2026-03-24"
 
 REQUIRED_TOOL_ALIASES: dict[str, str] = {
     "bash": "exec",
@@ -89,8 +89,20 @@ def parse_include_schema_flag(values: Mapping[str, Any] | None) -> bool:
     return False
 
 
+def _normalize_timeout_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        timeout_s = float(value)
+    except (TypeError, ValueError):
+        return None
+    if timeout_s <= 0:
+        return None
+    return timeout_s
+
+
 def build_tools_catalog_payload(tool_schema_rows: list[dict[str, Any]], *, include_schema: bool) -> dict[str, Any]:
-    tools_by_id: dict[str, dict[str, str]] = {}
+    tools_by_id: dict[str, dict[str, Any]] = {}
     normalized_schema: list[dict[str, Any]] = []
 
     for row in tool_schema_rows:
@@ -100,14 +112,21 @@ def build_tools_catalog_payload(tool_schema_rows: list[dict[str, Any]], *, inclu
         if not name:
             continue
         description = str(row.get("description", "") or "").strip()
+        cacheable = bool(row.get("cacheable", False))
+        default_timeout_s = _normalize_timeout_value(row.get("default_timeout_s"))
         tools_by_id[name] = {
             "id": name,
             "label": name,
             "description": description,
+            "cacheable": cacheable,
+            "default_timeout_s": default_timeout_s,
         }
-        normalized_schema.append(dict(row))
+        normalized_row = dict(row)
+        normalized_row["cacheable"] = cacheable
+        normalized_row["default_timeout_s"] = default_timeout_s
+        normalized_schema.append(normalized_row)
 
-    grouped: dict[str, list[dict[str, str]]] = {group_id: [] for group_id, _ in _GROUP_ORDER}
+    grouped: dict[str, list[dict[str, Any]]] = {group_id: [] for group_id, _ in _GROUP_ORDER}
     for tool_id, payload in tools_by_id.items():
         group_id = _GROUP_BY_TOOL_ID.get(tool_id, "other")
         grouped.setdefault(group_id, []).append(payload)
@@ -121,9 +140,24 @@ def build_tools_catalog_payload(tool_schema_rows: list[dict[str, Any]], *, inclu
             {
                 "id": group_id,
                 "label": group_label,
+                "count": len(tools),
                 "tools": tools,
             }
         )
+
+    largest_group = max(groups, key=lambda row: int(row.get("count", 0) or 0), default=None)
+    summary = {
+        "group_count": len(groups),
+        "alias_count": len(REQUIRED_TOOL_ALIASES),
+        "ws_method_count": len(WS_METHODS),
+        "cacheable_count": sum(1 for tool in tools_by_id.values() if bool(tool.get("cacheable", False))),
+        "custom_timeout_count": sum(1 for tool in tools_by_id.values() if tool.get("default_timeout_s") is not None),
+        "largest_group": {
+            "id": str((largest_group or {}).get("id", "") or ""),
+            "label": str((largest_group or {}).get("label", "") or ""),
+            "count": int((largest_group or {}).get("count", 0) or 0),
+        },
+    }
 
     catalog: dict[str, Any] = {
         "contract_version": CATALOG_CONTRACT_VERSION,
@@ -131,6 +165,7 @@ def build_tools_catalog_payload(tool_schema_rows: list[dict[str, Any]], *, inclu
         "aliases": dict(REQUIRED_TOOL_ALIASES),
         "groups": groups,
         "ws_methods": list(WS_METHODS),
+        "summary": summary,
     }
     if include_schema:
         catalog["schema"] = sorted(normalized_schema, key=lambda row: str(row.get("name", "") or ""))

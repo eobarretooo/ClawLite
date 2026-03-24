@@ -136,6 +136,19 @@ class NestedSchemaTool(Tool):
         return str(arguments)
 
 
+class InvalidTimeoutSchemaTool(Tool):
+    name = "invalid_timeout"
+    description = "exports a non-numeric timeout"
+    default_timeout_s = "abc"
+
+    def args_schema(self) -> dict:
+        return {"type": "object", "properties": {}}
+
+    async def run(self, arguments: dict, ctx: ToolContext) -> str:
+        del arguments, ctx
+        return "ok"
+
+
 class _FakeSpan:
     def __init__(self, name: str, sink: list[dict[str, object]]) -> None:
         self._row = {"name": name, "attributes": {}, "exceptions": []}
@@ -193,6 +206,13 @@ def test_tool_registry_execute_emits_tool_span() -> None:
         assert int(span["attributes"]["tool.result.length"]) == 2
 
     asyncio.run(_scenario())
+
+
+def test_tool_export_schema_ignores_invalid_default_timeout_value() -> None:
+    payload = InvalidTimeoutSchemaTool().export_schema()
+
+    assert payload["name"] == "invalid_timeout"
+    assert payload["default_timeout_s"] is None
 
 
 def test_tool_registry_blocks_risky_tools_for_blocked_channels() -> None:

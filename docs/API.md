@@ -1247,6 +1247,14 @@ Returns the live gateway tool catalog, grouped by runtime area and compatibility
 Query params:
 - `include_schema=true` to include the JSON-schema rows for each tool.
 
+Response baseline:
+- `tool_count`: total live tool ids exported by the runtime
+- `summary`: additive catalog summary with `group_count`, `alias_count`, `ws_method_count`, `cacheable_count`, `custom_timeout_count`, and `largest_group`
+- `groups[*].count`: additive count for that tool group
+- `groups[*].tools[*].cacheable`: whether the tool participates in result caching
+- `groups[*].tools[*].default_timeout_s`: additive per-tool timeout override when the tool publishes one
+- `schema[*].cacheable` / `schema[*].default_timeout_s`: the same metadata when `include_schema=true`
+
 Alias compatível: `GET /api/tools/catalog`.
 
 ## `GET /v1/tools/approvals`

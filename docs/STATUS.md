@@ -26,6 +26,7 @@ The newest onboarding/config follow-up now threads `--profile` all the way throu
 The newest onboarding/config follow-up now also keeps `clawlite dashboard` and `clawlite hatch` aligned with that same overlay path and switches the exact-path save sites away from profile-sensitive re-resolution, so live handoff/token persistence no longer falls back to the base config file or accidentally writes `config.prod.prod.json`.
 The newest onboarding/config follow-up now also makes API-key setup less repetitive: when `configure` detects a compatible provider key from the current config or environment, it shows that source and lets the operator reuse it with an empty response instead of forcing a full re-entry during the live probe path.
 The newest onboarding/config follow-up now also handles ambiguous setup more gracefully: when multiple providers look plausible from env/config/OAuth state, `configure` now prints those plausible backends inline so the operator gets guided disambiguation instead of a bare manual choice or an implicit auto-switch.
+The newest tools follow-up now turns the live tool catalog into a compact operator signal surface: `tools.catalog` exports additive summary metadata (`group_count`, `alias_count`, `ws_method_count`, `cacheable_count`, `custom_timeout_count`, and `largest_group`), group rows now carry `count`, tool rows surface lightweight `cacheable` / `default_timeout_s` hints, and the packaged dashboard Tools tab now renders those catalog signals directly instead of misreading the older payload shape.
 The newest onboarding/config follow-up now also skips redundant API-key prompts in the clear env-backed cases: when provider, reusable env auth, and base URL are already resolved for the selected backend, `configure` goes straight to the model choice and live probe while still keeping config-backed credentials, Azure, ambiguous, and incompatible-auth cases on the explicit prompt path.
 The newest onboarding/config follow-up now also trims the quickstart happy path further: when a local-runtime provider like `ollama` or `vllm` is already clearly resolved with a compatible loopback base URL and canonical default model, quickstart reuses those resolved defaults and skips the redundant base-URL/model prompts, while the advanced flow keeps the explicit override path intact.
 The newest provider follow-up now adds a persistent live-probe snapshot for provider operations: `provider_live_probe()` stores the latest live result per provider under local state, while `clawlite provider status` and `clawlite validate provider` now surface that additive `last_live_probe` block with timestamp, transport, last error/result, and whether the cached live probe still matches the current model/base-url selection.
@@ -39,7 +40,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2012 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2013 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -170,7 +171,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2012 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2013 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -184,8 +185,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: providers now persist the latest live probe snapshot per provider and reuse it in `provider status` / `validate provider`, so the control-plane can show the last real provider result without forcing a fresh live probe every time
-- Next slice: keep pushing Providers by reusing that probe/capability snapshot in more operator paths, or by adding a bounded capability cache for model/provider guidance instead of rediscovering the same live shape repeatedly
+- Current slice: tools now export additive live catalog signals and the dashboard now summarizes those operator-facing counts/metadata directly from `tools.catalog`, so tool groups, aliases, cacheable tools, custom timeouts, and the largest group are visible without reading raw JSON
+- Next slice: pivot to Skills now that Tools has a usable operator summary, ideally by adding a similarly small live discovery/managed-lifecycle slice instead of going back to another catalog-only microfix
 
 ## Delivery Policy
 

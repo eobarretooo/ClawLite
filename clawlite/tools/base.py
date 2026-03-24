@@ -71,8 +71,17 @@ class Tool(ABC):
         return ToolHealthResult(ok=True, latency_ms=0.0, detail="no_check")
 
     def export_schema(self) -> dict[str, Any]:
+        default_timeout_s = self.default_timeout_s
+        normalized_timeout = None
+        if default_timeout_s is not None:
+            try:
+                normalized_timeout = float(default_timeout_s)
+            except (TypeError, ValueError):
+                normalized_timeout = None
         return {
             "name": self.name,
             "description": self.description,
+            "cacheable": bool(self.cacheable),
+            "default_timeout_s": normalized_timeout,
             "parameters": self.args_schema(),
         }
