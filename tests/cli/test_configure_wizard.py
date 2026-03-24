@@ -128,7 +128,10 @@ def test_configure_flow_basic_exits_immediately(monkeypatch, tmp_path) -> None:
     """Navigate: main menu -> Save & Exit without visiting any section."""
     config = AppConfig.from_dict({"workspace_path": str(tmp_path / "ws")})
     saved: list[str] = []
-    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(str(path)) or path)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.save_raw_config_payload",
+        lambda payload, path, profile="": saved.append(str(path)) or path,
+    )
     # All Prompt.ask calls see "  Select" — "3" = Save & Exit
     monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: "3")
     monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: kw.get("default", False))
@@ -142,7 +145,10 @@ def test_configure_flow_section_shortcut(monkeypatch, tmp_path) -> None:
     """--section memory jumps directly to memory section and exits."""
     config = AppConfig.from_dict({})
     saved: list[str] = []
-    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(path) or path)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.save_raw_config_payload",
+        lambda payload, path, profile="": saved.append(path) or path,
+    )
     monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: kw.get("default", ""))
     # config file doesn't exist yet -> existing-config gate skipped (Path.exists() is False)
     monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: True)
@@ -154,7 +160,10 @@ def test_configure_flow_section_shortcut(monkeypatch, tmp_path) -> None:
 def test_configure_flow_section_shortcut_saves_to_profile_overlay(monkeypatch, tmp_path) -> None:
     config = AppConfig.from_dict({})
     saved: list[str] = []
-    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(str(path)) or path)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.save_raw_config_payload",
+        lambda payload, path, profile="": saved.append(str(path)) or path,
+    )
     monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: kw.get("default", ""))
     monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: True)
 
@@ -175,7 +184,10 @@ def test_configure_flow_advanced_jobs_section(monkeypatch, tmp_path) -> None:
     """Navigate to Advanced -> Jobs -> Back -> Save & Exit."""
     config = AppConfig.from_dict({})
     saved: list[str] = []
-    monkeypatch.setattr("clawlite.cli.onboarding.save_config", lambda cfg, path: saved.append(path) or path)
+    monkeypatch.setattr(
+        "clawlite.cli.onboarding.save_raw_config_payload",
+        lambda payload, path, profile="": saved.append(path) or path,
+    )
     all_prompts = iter(["2", "3", "2", "8", "3"])
     monkeypatch.setattr("clawlite.cli.onboarding.Prompt.ask", lambda *a, **kw: next(all_prompts, kw.get("default", "")))
     monkeypatch.setattr("clawlite.cli.onboarding.Confirm.ask", lambda *a, **kw: kw.get("default", False))

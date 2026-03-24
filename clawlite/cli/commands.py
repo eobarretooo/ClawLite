@@ -272,11 +272,13 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    cfg = _ensure_config_materialized(args.config, profile=getattr(args, "profile", None))
+    config_profile = getattr(args, "profile", None)
+    cfg = _ensure_config_materialized(args.config, profile=config_profile)
     config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
     handoff = build_dashboard_handoff(
         cfg,
         config_path=config_path,
+        config_profile=config_profile,
         ensure_token=bool(cfg.gateway.auth.mode != "off"),
     )
     dashboard_handoff_url = str(handoff.get("dashboard_url_with_handoff") or handoff["dashboard_url_with_token"] or "")
@@ -339,8 +341,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_hatch(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
-    handoff = build_dashboard_handoff(cfg, config_path=args.config, ensure_token=False)
+    config_profile = getattr(args, "profile", None)
+    cfg = load_config(args.config, profile=config_profile)
+    handoff = build_dashboard_handoff(
+        cfg,
+        config_path=args.config,
+        config_profile=config_profile,
+        ensure_token=False,
+    )
     if not bool(handoff.get("bootstrap_pending", False)):
         _print_json(
             {

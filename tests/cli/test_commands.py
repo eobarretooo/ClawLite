@@ -1394,6 +1394,46 @@ def test_cli_dashboard_no_open_returns_tokenized_handoff_and_bootstrap_state(
     assert saved["gateway"]["auth"]["token"]
 
 
+def test_cli_dashboard_profile_saves_token_to_overlay(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    overlay_path = tmp_path / "config.prod.json"
+    workspace_path = tmp_path / "workspace"
+    WorkspaceLoader(workspace_path=workspace_path).bootstrap()
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(workspace_path),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {"auth": {"mode": "required", "token": ""}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    overlay_path.write_text(
+        json.dumps(
+            {
+                "gateway": {"port": 19090},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["--config", str(config_path), "--profile", "prod", "dashboard", "--no-open"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    backup_row = next(item for item in payload["guidance"] if item["id"] == "workspace_backup")
+    saved_base = json.loads(config_path.read_text(encoding="utf-8"))
+    saved_overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+
+    assert payload["gateway_url"] == "http://127.0.0.1:19090"
+    assert "config.prod.json" in backup_row["body"]
+    assert saved_base["gateway"]["auth"]["token"] == ""
+    assert saved_overlay["gateway"]["auth"]["token"]
+    assert not (tmp_path / "config.prod.prod.json").exists()
+
+
 def test_cli_dashboard_opens_browser_when_allowed(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
@@ -1457,6 +1497,51 @@ def test_cli_hatch_skips_when_bootstrap_not_pending(
     assert payload["ok"] is True
     assert payload["status"] == "skipped"
     assert payload["reason"] == "not_pending"
+
+
+def test_cli_hatch_passes_profile_to_dashboard_handoff(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    called: dict[str, Any] = {}
+
+    def _fake_handoff(
+        config,
+        *,
+        config_path=None,
+        config_profile=None,
+        variables=None,
+        ensure_token=False,
+        bootstrap_pending_override=None,
+        include_sensitive=True,
+    ):
+        del config, variables, ensure_token, bootstrap_pending_override, include_sensitive
+        called["config_path"] = str(config_path)
+        called["config_profile"] = config_profile
+        return {
+            "bootstrap_pending": False,
+            "hatch_session_id": "hatch:operator",
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.build_dashboard_handoff", _fake_handoff)
+    rc = main(["--config", str(config_path), "--profile", "prod", "hatch"])
+
+    assert rc == 0
+    assert called["config_path"] == str(config_path)
+    assert called["config_profile"] == "prod"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "skipped"
 
 
 def test_cli_hatch_completes_pending_bootstrap(

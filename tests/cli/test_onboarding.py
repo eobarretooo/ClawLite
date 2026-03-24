@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -170,6 +171,43 @@ def test_build_dashboard_handoff_can_redact_sensitive_dashboard_fields() -> None
     assert "#token=" not in dashboard_row["body"]
     token_row = next(item for item in payload["guidance"] if item["id"] == "token")
     assert "scoped dashboard session" in token_row["body"]
+
+
+def test_build_dashboard_handoff_profile_persists_token_to_overlay(tmp_path: Path, monkeypatch) -> None:
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    base_config_path = tmp_path / "config.json"
+    base_config_path.write_text("{}", encoding="utf-8")
+    overlay_path = tmp_path / "config.prod.json"
+    overlay_path.write_text("{}", encoding="utf-8")
+    cfg = AppConfig.from_dict(
+        {
+            "workspace_path": str(workspace_path),
+            "gateway": {"auth": {"mode": "required", "token": ""}},
+        }
+    )
+
+    def _fake_ensure_gateway_token(config) -> str:
+        config.gateway.auth.token = "tok-profile-123456"
+        return "tok-profile-123456"
+
+    monkeypatch.setattr("clawlite.cli.onboarding.ensure_gateway_token", _fake_ensure_gateway_token)
+
+    payload = build_dashboard_handoff(
+        cfg,
+        config_path=base_config_path,
+        config_profile="prod",
+        ensure_token=True,
+    )
+
+    saved_overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+    saved_base = json.loads(base_config_path.read_text(encoding="utf-8"))
+    backup_row = next(item for item in payload["guidance"] if item["id"] == "workspace_backup")
+
+    assert saved_base == {}
+    assert saved_overlay["gateway"]["auth"]["token"] == "tok-profile-123456"
+    assert not (tmp_path / "config.prod.prod.json").exists()
+    assert "config.prod.json" in backup_row["body"]
 
 
 def test_probe_provider_openai_success(monkeypatch) -> None:
@@ -607,8 +645,8 @@ def test_run_onboarding_wizard_saves_to_profile_overlay(monkeypatch, tmp_path) -
     )
     monkeypatch.setattr("clawlite.cli.onboarding.ensure_gateway_token", lambda config: "tok-profile-123456")
     monkeypatch.setattr(
-        "clawlite.cli.onboarding.save_config",
-        lambda config, path: saved.setdefault("path", str(path)) or path,
+        "clawlite.cli.onboarding.save_raw_config_payload",
+        lambda payload, path, profile="": saved.setdefault("path", str(path)) or path,
     )
     monkeypatch.setattr(
         "clawlite.cli.onboarding.build_dashboard_handoff",

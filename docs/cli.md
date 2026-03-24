@@ -39,6 +39,7 @@ Notes:
 - `hatch` does not require the gateway to be running; it uses the dedicated `hatch:operator` session and only completes bootstrap when a pending hatch exists.
 - `status` includes enabled channels, provider model, heartbeat interval, and bootstrap state.
 - `dashboard` prints the current dashboard URL, a short-lived one-time dashboard handoff URL, bootstrap state, post-onboarding guidance (including web-search hints), and can open the browser unless `--no-open` is passed. The browser uses that handoff only for the initial exchange, then keeps only the derived dashboard session in the current tab after bootstrap.
+- `dashboard` and `hatch` now also keep their handoff/token persistence aligned with the active `--profile`, so reopening the control plane no longer falls back to the base config file or a doubled profile suffix.
 - `discord status` reads Discord runtime state from `/api/dashboard/state`; `discord refresh` calls the live gateway transport-refresh control.
 - `telegram status` reads Telegram runtime state from `/api/dashboard/state` and includes operator hints; `telegram refresh`, `telegram offset-commit`, `telegram offset-sync`, and `telegram offset-reset` call the live gateway control endpoints.
 - `jobs list` reads from the persisted job store, `jobs status` inspects one job by id, and `jobs cancel` requires a live runtime because it calls the gateway cancellation path.
@@ -70,7 +71,7 @@ Identity and user flags accepted by `onboard`:
 
 `configure --flow ...` is a compatibility shortcut to `onboard --wizard --flow ...`. Plain `configure` opens the newer two-level Basic / Advanced configuration menu.
 
-When `--profile <name>` is active, both `configure` and wizard-backed onboarding persist changes to the matching overlay file (`config.<profile>.json|yaml`) and report that same saved overlay path in their result payloads.
+When `--profile <name>` is active, both `configure` and wizard-backed onboarding persist changes to the matching overlay file (`config.<profile>.json|yaml`) and report that same saved overlay path in their result payloads. Dashboard/hatch handoff flows now follow that same exact-path rule instead of trying to write a doubled suffix like `config.prod.prod.json`.
 
 ## Validation Commands
 

@@ -13,7 +13,7 @@ from rich.prompt import Prompt
 
 from clawlite.config.loader import DEFAULT_CONFIG_PATH
 from clawlite.config.loader import config_payload_path
-from clawlite.config.loader import save_config
+from clawlite.config.loader import save_raw_config_payload
 from clawlite.config.schema import AppConfig
 from clawlite.gateway.dashboard_sessions import issue_dashboard_handoff
 from clawlite.providers.catalog import ONBOARDING_PROVIDER_ORDER, default_provider_model, provider_profile
@@ -305,16 +305,21 @@ def build_dashboard_handoff(
     config: AppConfig,
     *,
     config_path: str | Path | None = None,
+    config_profile: str | None = None,
     variables: dict[str, str] | None = None,
     ensure_token: bool = False,
     bootstrap_pending_override: bool | None = None,
     include_sensitive: bool = True,
 ) -> dict[str, Any]:
+    resolved_config_path = (
+        config_payload_path(config_path, profile=config_profile)
+        if config_profile is not None
+        else Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+    )
     token = str(config.gateway.auth.token or "").strip()
     if not token and ensure_token:
         token = ensure_gateway_token(config)
-        if config_path:
-            save_config(config, path=config_path)
+        save_raw_config_payload(config.to_dict(), resolved_config_path, profile="")
 
     gateway_url = f"http://{config.gateway.host}:{config.gateway.port}"
     dashboard_url_with_handoff = _dashboard_url_with_handoff(gateway_url, token)
@@ -336,7 +341,6 @@ def build_dashboard_handoff(
         if onboarding_status.get("completed")
         else "bootstrap pending" if bootstrap_pending else "not seeded"
     )
-    resolved_config_path = str(Path(config_path) if config_path else DEFAULT_CONFIG_PATH)
     brave_enabled = bool(str(config.tools.web.brave_api_key or "").strip())
     searxng_enabled = bool(str(config.tools.web.searxng_base_url or "").strip())
 
@@ -1527,7 +1531,7 @@ def run_onboarding_wizard(
         # Ensure gateway token always exists
         generated_token = ensure_gateway_token(config)
         saved_path = config_payload_path(config_path, profile=config_profile)
-        save_config(config, path=saved_path)
+        save_raw_config_payload(config.to_dict(), saved_path, profile="")
         generated_bootstrap = any(Path(path).name == "BOOTSTRAP.md" for path in generated_files)
         handoff = build_dashboard_handoff(
             config,
@@ -1753,7 +1757,7 @@ def _run_configure_flow(
     # Section shortcut
     if section:
         _dispatch_section(console, config, section, visited, overwrite=False, variables={})
-        save_config(config, path=effective_path)
+        save_raw_config_payload(config.to_dict(), effective_path, profile="")
         return {"ok": True, "visited_sections": sorted(visited), "saved_path": str(effective_path)}
 
     _MAIN_MENU = [
@@ -1776,7 +1780,7 @@ def _run_configure_flow(
                 if key == "back":
                     break
                 _dispatch_section(console, config, key, visited, overwrite=False, variables={})
-                save_config(config, path=effective_path)
+                save_raw_config_payload(config.to_dict(), effective_path, profile="")
 
         elif choice == "advanced":
             while True:
@@ -1785,9 +1789,9 @@ def _run_configure_flow(
                 if key == "back":
                     break
                 _dispatch_section(console, config, key, visited, overwrite=False, variables={})
-                save_config(config, path=effective_path)
+                save_raw_config_payload(config.to_dict(), effective_path, profile="")
 
-    save_config(config, path=effective_path)
+    save_raw_config_payload(config.to_dict(), effective_path, profile="")
     console.print(
         Panel(
             f"  [bold green]Configuration saved![/]\n\n"
