@@ -480,6 +480,106 @@ function populateToolApprovalSelection(rows, options = {}) {
   return currentStillVisible ? current : top;
 }
 
+function approvalContextSummary(row) {
+  const context = (row && typeof row === "object" && row.approval_context && typeof row.approval_context === "object")
+    ? row.approval_context
+    : {};
+  const parts = [];
+  if (context.command_binary) {
+    parts.push(`binary ${String(context.command_binary).trim()}`);
+  }
+  if (Array.isArray(context.env_keys) && context.env_keys.length) {
+    parts.push(`env ${context.env_keys.length}`);
+  }
+  if (context.cwd) {
+    parts.push(`cwd ${String(context.cwd).trim()}`);
+  }
+  if (context.action) {
+    parts.push(`action ${String(context.action).trim()}`);
+  }
+  if (context.method) {
+    parts.push(`method ${String(context.method).trim()}`);
+  }
+  if (context.host) {
+    parts.push(`host ${String(context.host).trim()}`);
+  }
+  if (context.name) {
+    parts.push(`skill ${String(context.name).trim()}`);
+  }
+  if (!parts.length && context.command_text) {
+    parts.push(`cmd ${String(context.command_text).trim().slice(0, 48)}`);
+  }
+  if (!parts.length && context.url) {
+    parts.push(`url ${String(context.url).trim().slice(0, 48)}`);
+  }
+  return parts.slice(0, 3).join(" | ");
+}
+
+function grantSelectionValue(row) {
+  return [
+    String(row?.request_id || "").trim(),
+    String(row?.session_id || "").trim(),
+    String(row?.channel || "").trim(),
+    String(row?.rule || "").trim(),
+    String(row?.scope || "").trim(),
+  ].join("::");
+}
+
+function grantSelectionLabel(row) {
+  const requestId = String(row?.request_id || "").trim();
+  const shortRequestId = requestId ? requestId.slice(0, 8) : "grant";
+  return [
+    `req ${shortRequestId}`,
+    approvalToolLabel(row) || "grant",
+    String(row?.rule || "").trim(),
+    String(row?.session_id || "").trim(),
+  ].filter(Boolean).join(" | ");
+}
+
+function selectedToolGrant(rows) {
+  const select = byId("tool-grant-selection");
+  const actionable = actionableApprovalGrants(rows);
+  if (!select) {
+    return actionable[0] || null;
+  }
+  const current = String(select.value || "").trim();
+  return actionable.find((row) => grantSelectionValue(row) === current) || actionable[0] || null;
+}
+
+function populateToolGrantSelection(rows, options = {}) {
+  const select = byId("tool-grant-selection");
+  const actionable = actionableApprovalGrants(rows);
+  if (!select) {
+    return actionable[0] || null;
+  }
+  const current = String(select.value || "").trim();
+  const currentStillVisible = actionable.some((row) => grantSelectionValue(row) === current);
+  const selectedValue = ((options.force || !current || !currentStillVisible) && actionable.length)
+    ? grantSelectionValue(actionable[0])
+    : currentStillVisible
+      ? current
+      : "";
+
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = actionable.length ? "Select exact grant" : "No exact grant visible";
+  select.appendChild(placeholder);
+
+  actionable.forEach((row) => {
+    const option = document.createElement("option");
+    option.value = grantSelectionValue(row);
+    option.textContent = grantSelectionLabel(row);
+    select.appendChild(option);
+  });
+
+  select.value = selectedValue;
+  if (!select.value && actionable.length) {
+    select.value = grantSelectionValue(actionable[0]);
+  }
+  return selectedToolGrant(actionable);
+}
+
 function summarizeWsCorrelation(ws, includeRequest = true, options = {}) {
   const parts = [];
   const connectionId = String(
@@ -845,6 +945,7 @@ function renderToolApprovalsSummary() {
   const approveButton = byId("approve-tool-request");
   const rejectButton = byId("reject-tool-request");
   const revokeGrantButton = byId("revoke-tool-grant");
+  const grantSelect = byId("tool-grant-selection");
   if (!grid || !preview) {
     return;
   }
@@ -867,6 +968,10 @@ function renderToolApprovalsSummary() {
     }
     if (revokeGrantButton) {
       revokeGrantButton.disabled = true;
+    }
+    if (grantSelect) {
+      grantSelect.innerHTML = '<option value="">No exact grant visible</option>';
+      grantSelect.disabled = true;
     }
     return;
   }
@@ -893,8 +998,9 @@ function renderToolApprovalsSummary() {
   const notifiedCount = requests.filter((row) => numeric(row?.notified_count, 0) > 0).length;
   const filterMeta = summarizeToolApprovalsFilter(approvals);
   const firstRequest = requests[0] || {};
-  const firstGrant = grants[0] || {};
+  const selectedGrant = populateToolGrantSelection(grants) || null;
   const firstRequestRule = approvalRuleLabel(firstRequest);
+  const firstRequestContext = approvalContextSummary(firstRequest);
 
   appendSummaryCard(grid, {
     title: "Queue",
@@ -916,21 +1022,26 @@ function renderToolApprovalsSummary() {
           String(firstRequest.session_id || "session unknown"),
           `expires ${formatDuration(firstRequest.expires_in_s || 0)}`,
           String(firstRequest.requester_actor || ""),
+          firstRequestContext,
         ].filter(Boolean).join(" | ")
       : "No approval requests matched the current live filter.",
   });
   appendSummaryCard(grid, {
-    title: "Top grant",
-    body: grants.length
-      ? `${approvalToolLabel(firstGrant) || "grant"} | ${String(firstGrant.rule || "rule")}`
+    title: "Selected grant",
+    body: selectedGrant
+      ? `${approvalToolLabel(selectedGrant) || "grant"} | ${String(selectedGrant.rule || "rule")}`
       : "none",
-    detail: grants.length
+    detail: selectedGrant
       ? [
-          String(firstGrant.session_id || "session unknown"),
-          `expires ${formatDuration(firstGrant.expires_in_s || 0)}`,
-          String(firstGrant.channel || ""),
+          `req ${String(selectedGrant.request_id || "").trim().slice(0, 8) || "unknown"}`,
+          `expires ${formatDuration(selectedGrant.expires_in_s || 0)}`,
+          String(selectedGrant.scope || ""),
+          String(selectedGrant.channel || ""),
+          String(selectedGrant.session_id || "session unknown"),
         ].filter(Boolean).join(" | ")
-      : "No active approval grants matched the current live filter.",
+      : grants.length
+        ? "No exact grant can be selected from the current live filter."
+        : "No active approval grants matched the current live filter.",
   });
 
   if (pendingVisible > 0) {
@@ -951,6 +1062,9 @@ function renderToolApprovalsSummary() {
   }
   if (revokeGrantButton) {
     revokeGrantButton.disabled = actionableGrants.length <= 0;
+  }
+  if (grantSelect) {
+    grantSelect.disabled = actionableGrants.length <= 0;
   }
   setCode("tool-approvals-preview", approvals);
 }
@@ -3117,12 +3231,12 @@ async function reviewToolApproval(decision) {
   }
 }
 
-async function revokeTopToolGrant() {
+async function revokeSelectedToolGrant() {
   const revokeButton = byId("revoke-tool-grant");
   const approvals = state.toolApprovals || {};
-  const grant = actionableApprovalGrants(approvals.grants)[0] || null;
+  const grant = selectedToolGrant(approvals.grants);
   if (!grant) {
-    recordEvent("warn", "Tool grant revoke skipped", "No visible exact grant matches the current live filter.", "tools-approvals");
+    recordEvent("warn", "Tool grant revoke skipped", "Select a visible exact grant first.", "tools-approvals");
     return;
   }
   if (revokeButton) {
@@ -4024,8 +4138,11 @@ function bindEvents() {
   byId("reject-tool-request").addEventListener("click", () => {
     void reviewToolApproval("rejected");
   });
+  byId("tool-grant-selection").addEventListener("change", () => {
+    renderToolApprovalsSummary();
+  });
   byId("revoke-tool-grant").addEventListener("click", () => {
-    void revokeTopToolGrant();
+    void revokeSelectedToolGrant();
   });
   byId("tool-approval-request-id").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {

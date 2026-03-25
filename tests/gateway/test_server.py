@@ -3109,6 +3109,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="tool-approvals-preview"' in body
         assert 'id="tool-approval-request-id"' in body
         assert 'id="tool-approval-note"' in body
+        assert 'id="tool-grant-selection"' in body
         assert 'id="approve-tool-request"' in body
         assert 'id="reject-tool-request"' in body
         assert 'id="revoke-tool-grant"' in body
@@ -3197,11 +3198,16 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "readToolApprovalsFilter" in js.text
     assert "summarizeToolApprovalsFilter" in js.text
     assert "approvalToolLabel" in js.text
+    assert "approvalContextSummary" in js.text
+    assert "grantSelectionValue" in js.text
+    assert "grantSelectionLabel" in js.text
+    assert "selectedToolGrant" in js.text
+    assert "populateToolGrantSelection" in js.text
     assert "fetchToolApprovalsSnapshot" in js.text
     assert "toolApprovalReviewPath" in js.text
     assert "toolGrantRevokePath" in js.text
     assert "reviewToolApproval" in js.text
-    assert "revokeTopToolGrant" in js.text
+    assert "revokeSelectedToolGrant" in js.text
     assert "triggerToolApprovalsInspect" in js.text
     assert 'paths.tools_approvals || "/api/tools/approvals"' in js.text
     assert 'paths.tools_grants_revoke || "/api/tools/grants/revoke"' in js.text
@@ -3219,9 +3225,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Tool approvals refresh failed" in js.text
     assert "pendingVisible" in js.text
     assert "tool-approval-request-id" in js.text
+    assert "tool-grant-selection" in js.text
     assert "approve-tool-request" in js.text
     assert "reject-tool-request" in js.text
     assert "revoke-tool-grant" in js.text
+    assert "Select exact grant" in js.text
     assert "Cacheable tools" in js.text
     assert "largest_group" in js.text
     assert "custom_timeout_count" in js.text

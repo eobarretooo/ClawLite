@@ -491,9 +491,12 @@
                 <div class="button-row">
                   <input class="ghost-input" id="tool-approval-request-id" type="text" autocomplete="off" placeholder="Request id" />
                   <input class="ghost-input" id="tool-approval-note" type="text" autocomplete="off" placeholder="Review note (optional)" />
+                  <select class="ghost-input" id="tool-grant-selection" aria-label="Exact grant selection">
+                    <option value="">Select exact grant</option>
+                  </select>
                   <button class="ghost-button" id="approve-tool-request" type="button">Approve request</button>
                   <button class="ghost-button" id="reject-tool-request" type="button">Reject request</button>
-                  <button class="ghost-button" id="revoke-tool-grant" type="button">Revoke top visible exact grant</button>
+                  <button class="ghost-button" id="revoke-tool-grant" type="button">Revoke selected exact grant</button>
                 </div>
                 <pre class="code-block" id="tool-approvals-preview">Waiting for live tool approvals...</pre>
               </article>
