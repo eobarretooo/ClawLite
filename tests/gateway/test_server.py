@@ -3216,6 +3216,12 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert 'paths.memory_quality || "/v1/control/memory/quality"' in js.text
     assert "Memory quality updated" in js.text
     assert "quality_live: state.memoryQuality || {}" in js.text
+    assert "memoryRecommendationSummary" in js.text
+    assert "memorySuggestionSummary" in js.text
+    assert "Top recommendation" in js.text
+    assert "Next suggestion" in js.text
+    assert "No pending suggestions in the live dashboard snapshot." in js.text
+    assert "triage_guidance:" in js.text
     assert "const qualityCurrent = quality.current || {}" in js.text
     assert "const qualityTrend = quality.trend || {}" in js.text
     assert "summary.ok !== false && state.dashboardState && state.dashboardState.memory" in js.text

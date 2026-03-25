@@ -231,6 +231,8 @@ The packaged dashboard now also exposes two first-class memory control-plane act
 
 Those live snapshots stay separate from the normal dashboard-state payload on purpose, so operators can inspect integrity, overview, and quality signals on demand without turning every generic dashboard refresh into a heavier memory maintenance cycle.
 
+The same Memory card now also turns those read-only signals into a more guided triage surface: it highlights the top live quality recommendation and the highest-priority pending proactive-memory suggestion directly in the dashboard instead of leaving that interpretation entirely to raw JSON or the CLI.
+
 ## Session Logs vs Memory
 
 Session logs are not the same as memory.

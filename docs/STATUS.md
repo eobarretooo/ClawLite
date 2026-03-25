@@ -190,8 +190,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: the packaged dashboard now also exposes `memory overview` as a live control-plane action, wiring `Run memory overview` to `POST /v1/control/memory/overview` / `/api/memory/overview` and using that snapshot to surface a more compact triage summary alongside the existing live doctor and quality cards
-- Next slice: keep pushing `Memory` with one more small operator-safe follow-up, ideally a guided live triage or suggestion-quality surface that reuses doctor + overview + quality instead of a broader memory refactor
+- Current slice: the packaged dashboard now also turns the existing `memory suggest` and live `memory quality` signals into a more guided triage surface, highlighting the top quality recommendation and highest-priority pending suggestion directly in the Memory card alongside the live doctor / overview / quality snapshots
+- Next slice: `Memory` is now strong enough to stop monopolizing the roadmap; the next safe high-value pivot is likely back to `Providers`, ideally with a small capability-cache or provider-health follow-up instead of another dashboard-only memory slice
 
 ## Delivery Policy
 

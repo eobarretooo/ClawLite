@@ -307,6 +307,17 @@ function numeric(value, fallback = 0) {
   return Number.isFinite(result) ? result : fallback;
 }
 
+function truncateText(value, maxLength = 96) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
+
 function truthy(value) {
   return value === true || value === "true" || value === "running" || value === "ready" || value === "online";
 }
@@ -1449,6 +1460,8 @@ function memoryTriageSummary({
   liveOverview,
   liveDoctor,
   liveQuality,
+  recommendationSummary,
+  suggestionSummary,
 }) {
   const reasons = [];
   let level = "ok";
@@ -1479,7 +1492,8 @@ function memoryTriageSummary({
       if (level !== "danger") {
         level = "warn";
       }
-      reasons.push(`${score} quality / ${drift || "unknown"} drift`);
+      const recommendation = String((recommendationSummary || {}).recommendation || "");
+      reasons.push(recommendation ? truncateText(recommendation, 72) : `${score} quality / ${drift || "unknown"} drift`);
     }
   }
 
@@ -1501,7 +1515,17 @@ function memoryTriageSummary({
     if (level === "ok") {
       level = "warn";
     }
-    reasons.push(`${numeric(suggestionsCount, 0)} pending suggestions`);
+    const suggestionLead = String((suggestionSummary || {}).trigger || "");
+    reasons.push(
+      suggestionLead
+        ? `${numeric(suggestionsCount, 0)} pending | ${suggestionLead}`
+        : `${numeric(suggestionsCount, 0)} pending suggestions`,
+    );
+  } else if (String((suggestionSummary || {}).body || "") === "suggestions unavailable") {
+    if (level === "ok") {
+      level = "warn";
+    }
+    reasons.push("suggestions unavailable");
   }
   if (numeric(snapshotCount, 0) <= 0) {
     if (level === "ok") {
@@ -1525,6 +1549,82 @@ function memoryTriageSummary({
   };
 }
 
+function memoryRecommendationSummary({ liveQuality, quality }) {
+  const liveReport = (liveQuality || {}).report || {};
+  const liveState = (liveQuality || {}).state || {};
+  const current = quality.current || {};
+  const trend = quality.trend || {};
+  const score = numeric(liveReport.score, numeric((liveState.current || {}).score, numeric(current.score, 0)));
+  const drift = String(
+    ((liveReport.drift || (liveState.current || {}).drift || {}).assessment || (liveState.trend || trend || {}).assessment || "stable"),
+  );
+  const recommendations = Array.isArray(liveReport.recommendations) ? liveReport.recommendations : [];
+  const recommendation = String(recommendations[0] || "").trim();
+
+  if (liveQuality && liveQuality.ok === false) {
+    const error = (liveQuality || {}).error || {};
+    return {
+      body: "quality failed",
+      detail: `${String(error.type || "error")} | ${String(error.message || "Memory quality snapshot failed.")}`,
+      recommendation: "",
+    };
+  }
+  if (recommendation) {
+    return {
+      body: truncateText(recommendation, 88),
+      detail: `${score} score | ${drift} drift | ${numeric((liveReport.retrieval || {}).attempts, 0)} attempts`,
+      recommendation,
+    };
+  }
+  if (liveQuality) {
+    return {
+      body: "No explicit recommendation",
+      detail: `${score} score | ${drift} drift | live snapshot ready`,
+      recommendation: "",
+    };
+  }
+  return {
+    body: "Run memory quality",
+    detail: `${numeric(current.score, 0)} cached score | ${String(trend.assessment || "unknown")} trend`,
+    recommendation: "",
+  };
+}
+
+function memorySuggestionSummary(suggest) {
+  if (suggest && suggest.ok === false) {
+    const error = suggest.error || {};
+    return {
+      body: "suggestions unavailable",
+      detail: `${String(error.type || "error")} | ${String(error.message || "Memory suggestions snapshot failed.")}`,
+      trigger: "",
+      text: "",
+    };
+  }
+  const rows = Array.isArray(suggest.suggestions) ? suggest.suggestions.slice() : [];
+  if (!rows.length) {
+    return {
+      body: "No pending suggestions",
+      detail: "No pending suggestions in the live dashboard snapshot.",
+      trigger: "",
+      text: "",
+    };
+  }
+  rows.sort((left, right) => {
+    const priorityDelta = numeric(right.priority, 0) - numeric(left.priority, 0);
+    if (Math.abs(priorityDelta) > 0.0001) {
+      return priorityDelta;
+    }
+    return parseTimestampMs(String(left.created_at || "")) - parseTimestampMs(String(right.created_at || ""));
+  });
+  const top = rows[0] || {};
+  return {
+    body: truncateText(String(top.text || "Pending suggestion ready for review."), 88),
+    detail: `${String(top.trigger || "unknown")} | ${Math.round(numeric(top.priority, 0) * 100)}% | ${String(top.channel || "cli")} -> ${String(top.target || "default")}`,
+    trigger: String(top.trigger || ""),
+    text: String(top.text || ""),
+  };
+}
+
 function renderMemoryBoard() {
   const grid = byId("memory-grid");
   if (!grid) {
@@ -1545,7 +1645,8 @@ function renderMemoryBoard() {
   const liveOverviewCounts = liveOverview.counts || {};
   const liveOverviewPaths = liveOverview.paths || {};
   const liveOverviewError = liveOverview.error || {};
-  const liveQuality = state.memoryQuality || {};
+  const liveQualitySnapshot = state.memoryQuality;
+  const liveQuality = liveQualitySnapshot || {};
   const liveQualityReport = liveQuality.report || {};
   const liveQualityState = liveQuality.state || {};
   const liveQualityCurrent = liveQualityState.current || {};
@@ -1557,12 +1658,16 @@ function renderMemoryBoard() {
   const doctorFiles = doctor.files || {};
   const doctorError = doctor.error || {};
   const profilePayload = profile.profile || {};
+  const recommendationSummary = memoryRecommendationSummary({ liveQuality: liveQualitySnapshot, quality });
+  const suggestionSummary = memorySuggestionSummary(suggest);
   const triage = memoryTriageSummary({
     suggestionsCount: numeric(suggest.count, 0),
     snapshotCount: numeric(versions.count, 0),
     liveOverview: state.memoryOverview,
     liveDoctor: state.memoryDoctor,
     liveQuality: state.memoryQuality,
+    recommendationSummary,
+    suggestionSummary,
   });
 
   appendSummaryCard(grid, {
@@ -1574,6 +1679,16 @@ function renderMemoryBoard() {
     title: "Triage",
     body: triage.body,
     detail: triage.detail,
+  });
+  appendSummaryCard(grid, {
+    title: "Top recommendation",
+    body: recommendationSummary.body,
+    detail: recommendationSummary.detail,
+  });
+  appendSummaryCard(grid, {
+    title: "Next suggestion",
+    body: suggestionSummary.body,
+    detail: suggestionSummary.detail,
   });
   appendSummaryCard(grid, {
     title: "Suggestions",
@@ -1818,6 +1933,10 @@ function renderKnowledge() {
     profile: memory.profile || {},
     suggestions: memory.suggestions || {},
     quality: memory.quality || {},
+    triage_guidance: {
+      recommendation: memoryRecommendationSummary({ liveQuality: state.memoryQuality, quality: memory.quality || {} }),
+      next_suggestion: memorySuggestionSummary(memory.suggestions || {}),
+    },
     overview_live: state.memoryOverview || {},
     quality_live: state.memoryQuality || {},
     doctor_live: state.memoryDoctor || {},
