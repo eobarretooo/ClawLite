@@ -67,7 +67,7 @@ bash scripts/docker_setup.sh
 | 🧠 **Memory** | BM25 + vector search · FTS5 · temporal decay · episodic→knowledge consolidation · SQLite or pgvector |
 | 🔁 **Runtime** | Heartbeat supervisor · cron engine · dead-letter replay · background job queue · loop detection · subagent orchestration |
 | 🌊 **Streaming** | `stream_run()` async generator · `ProviderChunk` delta/done · edit-in-place on Telegram and Discord |
-| 🖥️ **Dashboard** | Live chat · sessions · cron controls · memory health · tools catalog + approval queue — `http://127.0.0.1:8787` |
+| 🖥️ **Dashboard** | Live chat · sessions · cron controls · memory health · tools catalog + approval review queue — `http://127.0.0.1:8787` |
 | 🧰 **Tools** | `files` `exec` `web` `browser` `memory` `sessions` `spawn` `cron` `mcp` `pdf` `tts` and more |
 | 🎯 **Skills (25+)** | `web-search` `coding-agent` `github` `docker` `notion` `spotify` `obsidian` `weather` `tmux` and more |
 

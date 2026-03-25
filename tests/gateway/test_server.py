@@ -3107,6 +3107,10 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="inspect-tool-approvals"' in body
         assert 'id="tool-approvals-grid"' in body
         assert 'id="tool-approvals-preview"' in body
+        assert 'id="tool-approval-request-id"' in body
+        assert 'id="tool-approval-note"' in body
+        assert 'id="approve-tool-request"' in body
+        assert 'id="reject-tool-request"' in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3191,12 +3195,24 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "readToolApprovalsFilter" in js.text
     assert "summarizeToolApprovalsFilter" in js.text
     assert "approvalToolLabel" in js.text
+    assert "fetchToolApprovalsSnapshot" in js.text
+    assert "toolApprovalReviewPath" in js.text
+    assert "reviewToolApproval" in js.text
     assert "triggerToolApprovalsInspect" in js.text
     assert 'paths.tools_approvals || "/api/tools/approvals"' in js.text
     assert 'url.searchParams.set("include_grants", "true");' in js.text
     assert "Tool approvals inspected" in js.text
     assert "Tool approvals inspection failed" in js.text
+    assert "Tool approval approved" in js.text
+    assert "Tool approval already reviewed" in js.text
+    assert "Tool approval rejected" in js.text
+    assert "Tool approval failed" in js.text
+    assert "Tool rejection failed" in js.text
+    assert "Tool approvals refresh failed" in js.text
     assert "pendingVisible" in js.text
+    assert "tool-approval-request-id" in js.text
+    assert "approve-tool-request" in js.text
+    assert "reject-tool-request" in js.text
     assert "Cacheable tools" in js.text
     assert "largest_group" in js.text
     assert "custom_timeout_count" in js.text
@@ -4980,6 +4996,36 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
     )
     app = create_app(cfg)
     app.state.runtime.engine.provider = FakeProvider()
+    registry = app.state.runtime.engine.tools
+    registry._approval_requests["req-dashboard"] = {
+        "request_id": "req-dashboard",
+        "tool": "browser",
+        "session_id": "dashboard:test",
+        "channel": "cli",
+        "matched_approval_specifiers": ["browser:evaluate"],
+        "status": "pending",
+        "created_at_monotonic": time.monotonic() - 1.0,
+        "expires_at_monotonic": time.monotonic() + 300.0,
+        "arguments_preview": '{"action":"evaluate"}',
+        "approval_context": {"tool": "browser", "action": "evaluate"},
+        "notified_count": 1,
+    }
+    registry._approval_requests["req-dashboard-reject"] = {
+        "request_id": "req-dashboard-reject",
+        "tool": "shell",
+        "session_id": "dashboard:test",
+        "channel": "cli",
+        "matched_approval_specifiers": ["shell:run"],
+        "status": "pending",
+        "created_at_monotonic": time.monotonic() - 1.0,
+        "expires_at_monotonic": time.monotonic() + 300.0,
+        "arguments_preview": '{"command":"pwd"}',
+        "approval_context": {"tool": "shell", "command": "pwd"},
+        "notified_count": 0,
+    }
+    registry._approval_request_order.append("req-dashboard")
+    registry._approval_request_order.append("req-dashboard-reject")
+    registry._approval_grants["dashboard:test::cli::browser:evaluate"] = time.monotonic() + 120.0
 
     with TestClient(app) as client:
         missing_client = client.post("/api/dashboard/session", headers={"Authorization": "Bearer secret-token"})
@@ -5044,6 +5090,30 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         assert api_tool_approvals.status_code == 200
         assert api_tool_approvals.json()["ok"] is True
 
+        api_tool_approve = client.post(
+            "/api/tools/approvals/req-dashboard/approve",
+            headers=session_headers,
+            json={"note": "reviewed from dashboard"},
+        )
+        assert api_tool_approve.status_code == 200
+        assert api_tool_approve.json()["summary"]["status"] == "approved"
+
+        api_tool_reject = client.post(
+            "/api/tools/approvals/req-dashboard-reject/reject",
+            headers=session_headers,
+            json={"note": "reject from dashboard"},
+        )
+        assert api_tool_reject.status_code == 200
+        assert api_tool_reject.json()["summary"]["status"] == "rejected"
+
+        api_revoke = client.post(
+            "/api/tools/grants/revoke",
+            headers=session_headers,
+            json={"session_id": "dashboard:test", "channel": "cli", "rule": "browser:evaluate"},
+        )
+        assert api_revoke.status_code == 200
+        assert api_revoke.json()["summary"]["removed_count"] >= 1
+
         api_message = client.post(
             "/api/message",
             headers=session_headers,
@@ -5063,6 +5133,22 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         v1_tool_approvals = client.get("/v1/tools/approvals", headers=session_headers)
         assert v1_tool_approvals.status_code == 401
         assert v1_tool_approvals.json()["error"] == "gateway_auth_required"
+
+        v1_tool_approve = client.post(
+            "/v1/tools/approvals/req-dashboard/reject",
+            headers=session_headers,
+            json={"note": "should fail"},
+        )
+        assert v1_tool_approve.status_code == 401
+        assert v1_tool_approve.json()["error"] == "gateway_auth_required"
+
+        v1_revoke = client.post(
+            "/v1/tools/grants/revoke",
+            headers=session_headers,
+            json={"session_id": "dashboard:test", "channel": "cli", "rule": "browser:evaluate"},
+        )
+        assert v1_revoke.status_code == 401
+        assert v1_revoke.json()["error"] == "gateway_auth_required"
 
         v1_chat = client.post(
             "/v1/chat",

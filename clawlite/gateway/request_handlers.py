@@ -192,12 +192,13 @@ class GatewayRequestHandlers:
         self,
         request: Request,
         *,
+        allow_dashboard_session: bool = False,
         request_id: str,
         decision: str,
         actor: str = "",
         note: str = "",
     ) -> dict[str, Any]:
-        self._check_sensitive_control(request)
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         tools = getattr(self.runtime.engine, "tools", None)
         review_fn = getattr(tools, "review_approval_request", None)
         if not callable(review_fn):
@@ -228,11 +229,12 @@ class GatewayRequestHandlers:
         self,
         request: Request,
         *,
+        allow_dashboard_session: bool = False,
         session_id: str = "",
         channel: str = "",
         rule: str = "",
     ) -> dict[str, Any]:
-        self._check_sensitive_control(request)
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         tools = getattr(self.runtime.engine, "tools", None)
         revoke_fn = getattr(tools, "revoke_approval_grants", None)
         if not callable(revoke_fn):

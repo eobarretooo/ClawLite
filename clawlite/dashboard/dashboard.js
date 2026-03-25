@@ -442,6 +442,32 @@ function approvalToolLabel(row) {
   return String(rule.split(":", 1)[0] || "").trim();
 }
 
+function actionableApprovalRequests(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(
+    (row) => String(row?.request_id || "").trim() && String(row?.status || "").trim().toLowerCase() === "pending",
+  );
+}
+
+function populateToolApprovalSelection(rows, options = {}) {
+  const input = byId("tool-approval-request-id");
+  if (!input) {
+    return "";
+  }
+  const actionable = actionableApprovalRequests(rows);
+  const current = String(input.value || "").trim();
+  const currentStillVisible = actionable.some((row) => String(row?.request_id || "").trim() === current);
+  const top = String((actionable[0] || {}).request_id || "").trim();
+  if ((options.force || !current || !currentStillVisible) && top) {
+    input.value = top;
+    return top;
+  }
+  if (!currentStillVisible && !top) {
+    input.value = "";
+    return "";
+  }
+  return currentStillVisible ? current : top;
+}
+
 function summarizeWsCorrelation(ws, includeRequest = true, options = {}) {
   const parts = [];
   const connectionId = String(
@@ -804,6 +830,8 @@ function renderToolsSummary() {
 function renderToolApprovalsSummary() {
   const grid = byId("tool-approvals-grid");
   const preview = byId("tool-approvals-preview");
+  const approveButton = byId("approve-tool-request");
+  const rejectButton = byId("reject-tool-request");
   if (!grid || !preview) {
     return;
   }
@@ -818,11 +846,18 @@ function renderToolApprovalsSummary() {
     });
     setBadge("tool-approvals-status", "idle", "warn");
     setCode("tool-approvals-preview", { note: "Run Inspect approvals to fetch the live approval queue." });
+    if (approveButton) {
+      approveButton.disabled = true;
+    }
+    if (rejectButton) {
+      rejectButton.disabled = true;
+    }
     return;
   }
 
   const requests = Array.isArray(approvals.requests) ? approvals.requests : [];
   const grants = Array.isArray(approvals.grants) ? approvals.grants : [];
+  const actionable = actionableApprovalRequests(requests);
   const pendingVisible = requests.filter((row) => String(row?.status || "").trim().toLowerCase() === "pending").length;
   const toolsInQueue = new Set(
     requests
@@ -889,6 +924,13 @@ function renderToolApprovalsSummary() {
     setBadge("tool-approvals-status", `${numeric(approvals.count, requests.length)} ${String(approvals.status || "items")}`, "ok");
   } else {
     setBadge("tool-approvals-status", "clear", "ok");
+  }
+  populateToolApprovalSelection(requests);
+  if (approveButton) {
+    approveButton.disabled = actionable.length <= 0;
+  }
+  if (rejectButton) {
+    rejectButton.disabled = actionable.length <= 0;
   }
   setCode("tool-approvals-preview", approvals);
 }
@@ -2920,24 +2962,11 @@ async function triggerProviderRecovery() {
 
 async function triggerToolApprovalsInspect() {
   const button = byId("inspect-tool-approvals");
-  const filter = readToolApprovalsFilter();
-  const url = new URL(paths.tools_approvals || "/api/tools/approvals", window.location.origin);
-  if (filter.status) {
-    url.searchParams.set("status", filter.status);
-  }
-  if (filter.tool) {
-    url.searchParams.set("tool", filter.tool);
-  }
-  if (filter.rule) {
-    url.searchParams.set("rule", filter.rule);
-  }
-  url.searchParams.set("include_grants", "true");
-  url.searchParams.set("limit", "20");
   if (button) {
     button.disabled = true;
   }
   try {
-    const payload = await fetchJson(`${url.pathname}${url.search}`);
+    const payload = await fetchToolApprovalsSnapshot();
     const requests = Array.isArray(payload.requests) ? payload.requests : [];
     const grants = Array.isArray(payload.grants) ? payload.grants : [];
     const pendingVisible = requests.filter((row) => String(row?.status || "").trim().toLowerCase() === "pending").length;
@@ -2970,6 +2999,97 @@ async function triggerToolApprovalsInspect() {
     if (button) {
       button.disabled = false;
     }
+  }
+}
+
+async function fetchToolApprovalsSnapshot(filter = readToolApprovalsFilter()) {
+  const url = new URL(paths.tools_approvals || "/api/tools/approvals", window.location.origin);
+  if (filter.status) {
+    url.searchParams.set("status", filter.status);
+  }
+  if (filter.tool) {
+    url.searchParams.set("tool", filter.tool);
+  }
+  if (filter.rule) {
+    url.searchParams.set("rule", filter.rule);
+  }
+  url.searchParams.set("include_grants", "true");
+  url.searchParams.set("limit", "20");
+  return await fetchJson(`${url.pathname}${url.search}`);
+}
+
+function toolApprovalReviewPath(requestId, decision) {
+  const base = String(paths.tools_approvals || "/api/tools/approvals").replace(/\/+$/, "");
+  const action = decision === "rejected" ? "reject" : "approve";
+  return `${base}/${encodeURIComponent(String(requestId || "").trim())}/${action}`;
+}
+
+async function reviewToolApproval(decision) {
+  const requestInput = byId("tool-approval-request-id");
+  const noteInput = byId("tool-approval-note");
+  const approveButton = byId("approve-tool-request");
+  const rejectButton = byId("reject-tool-request");
+  const requestId = String(requestInput?.value || "").trim();
+  const note = String(noteInput?.value || "").trim();
+  if (!requestId) {
+    recordEvent("warn", "Tool approval review skipped", "Enter a pending request id first.", "tools-approvals");
+    return;
+  }
+  if (approveButton) {
+    approveButton.disabled = true;
+  }
+  if (rejectButton) {
+    rejectButton.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(toolApprovalReviewPath(requestId, decision), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ note }),
+    });
+    const summary = payload.summary || {};
+    const changed = summary.changed !== false;
+    const status = String(summary.status || decision || "").trim().toLowerCase();
+    recordEvent(
+      changed ? (decision === "rejected" ? "warn" : "ok") : "warn",
+      changed
+        ? (decision === "rejected" ? "Tool approval rejected" : "Tool approval approved")
+        : "Tool approval already reviewed",
+      [
+        String(summary.request_id || requestId),
+        approvalToolLabel(summary) || "tool",
+        approvalRuleLabel(summary) || (changed ? String(summary.status || decision) : `already ${status || decision}`),
+      ].filter(Boolean).join(" | "),
+      appendRequestIdMeta("tools-approvals", payload),
+    );
+    if (requestInput) {
+      requestInput.value = "";
+    }
+    if (noteInput) {
+      noteInput.value = "";
+    }
+    try {
+      state.toolApprovals = await fetchToolApprovalsSnapshot();
+    } catch (refreshError) {
+      state.toolApprovals = null;
+      recordEvent(
+        "warn",
+        "Tool approvals refresh failed",
+        refreshError.message,
+        appendRequestIdMeta("tools-approvals", refreshError),
+      );
+    }
+    renderAll();
+  } catch (error) {
+    recordEvent(
+      "danger",
+      decision === "rejected" ? "Tool rejection failed" : "Tool approval failed",
+      error.message,
+      appendRequestIdMeta("tools-approvals", error),
+    );
+    renderAll();
   }
 }
 
@@ -3812,6 +3932,18 @@ function bindEvents() {
   byId("inspect-tool-approvals").addEventListener("click", () => {
     void triggerToolApprovalsInspect();
   });
+  byId("approve-tool-request").addEventListener("click", () => {
+    void reviewToolApproval("approved");
+  });
+  byId("reject-tool-request").addEventListener("click", () => {
+    void reviewToolApproval("rejected");
+  });
+  byId("tool-approval-request-id").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void reviewToolApproval("approved");
+    }
+  });
   byId("tool-approvals-tool-filter").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -3822,6 +3954,12 @@ function bindEvents() {
     if (event.key === "Enter") {
       event.preventDefault();
       void triggerToolApprovalsInspect();
+    }
+  });
+  byId("tool-approval-note").addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      void reviewToolApproval("approved");
     }
   });
   byId("refresh-skills-inventory").addEventListener("click", () => {

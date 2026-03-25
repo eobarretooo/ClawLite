@@ -4070,6 +4070,7 @@ def create_app(
     ) -> dict[str, Any]:
         return await request_handlers.tools_approval_review(
             request,
+            allow_dashboard_session=False,
             request_id=request_id,
             decision="approved",
             actor=str((payload or ToolApprovalReviewRequest()).actor or ""),
@@ -4084,6 +4085,7 @@ def create_app(
     ) -> dict[str, Any]:
         return await request_handlers.tools_approval_review(
             request,
+            allow_dashboard_session=True,
             request_id=request_id,
             decision="approved",
             actor=str((payload or ToolApprovalReviewRequest()).actor or ""),
@@ -4098,6 +4100,7 @@ def create_app(
     ) -> dict[str, Any]:
         return await request_handlers.tools_approval_review(
             request,
+            allow_dashboard_session=False,
             request_id=request_id,
             decision="rejected",
             actor=str((payload or ToolApprovalReviewRequest()).actor or ""),
@@ -4112,6 +4115,7 @@ def create_app(
     ) -> dict[str, Any]:
         return await request_handlers.tools_approval_review(
             request,
+            allow_dashboard_session=True,
             request_id=request_id,
             decision="rejected",
             actor=str((payload or ToolApprovalReviewRequest()).actor or ""),
@@ -4126,6 +4130,7 @@ def create_app(
         body = payload or ToolGrantRevokeRequest()
         return await request_handlers.tools_grants_revoke(
             request,
+            allow_dashboard_session=False,
             session_id=str(body.session_id or ""),
             channel=str(body.channel or ""),
             rule=str(body.rule or ""),
@@ -4139,6 +4144,7 @@ def create_app(
         body = payload or ToolGrantRevokeRequest()
         return await request_handlers.tools_grants_revoke(
             request,
+            allow_dashboard_session=True,
             session_id=str(body.session_id or ""),
             channel=str(body.channel or ""),
             rule=str(body.rule or ""),
