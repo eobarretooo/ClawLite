@@ -67,7 +67,7 @@ bash scripts/docker_setup.sh
 | 🧠 **Memory** | BM25 + vector search · FTS5 · temporal decay · episodic→knowledge consolidation · SQLite or pgvector |
 | 🔁 **Runtime** | Heartbeat supervisor · cron engine · dead-letter replay · background job queue · loop detection · subagent orchestration |
 | 🌊 **Streaming** | `stream_run()` async generator · `ProviderChunk` delta/done · edit-in-place on Telegram and Discord |
-| 🖥️ **Dashboard** | Live chat · sessions · cron controls · memory health · tools catalog + approval review queue — `http://127.0.0.1:8787` |
+| 🖥️ **Dashboard** | Live chat · sessions · cron controls · memory health · tools catalog + approval review queue/actions — `http://127.0.0.1:8787` |
 | 🧰 **Tools** | `files` `exec` `web` `browser` `memory` `sessions` `spawn` `cron` `mcp` `pdf` `tts` and more |
 | 🎯 **Skills (25+)** | `web-search` `coding-agent` `github` `docker` `notion` `spotify` `obsidian` `weather` `tmux` and more |
 
@@ -123,7 +123,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2028 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2029 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 

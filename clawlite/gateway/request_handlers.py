@@ -233,6 +233,8 @@ class GatewayRequestHandlers:
         session_id: str = "",
         channel: str = "",
         rule: str = "",
+        request_id: str = "",
+        scope: str = "",
     ) -> dict[str, Any]:
         self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         tools = getattr(self.runtime.engine, "tools", None)
@@ -245,6 +247,8 @@ class GatewayRequestHandlers:
             session_id=str(session_id or "").strip(),
             channel=str(channel or "").strip().lower(),
             rule=str(rule or "").strip().lower(),
+            request_id=str(request_id or "").strip(),
+            scope=str(scope or "").strip().lower(),
         )
         if not isinstance(summary, dict) or not bool(summary.get("ok", False)):
             error = "tool_grant_revoke_failed"

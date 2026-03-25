@@ -852,11 +852,15 @@ class ToolRegistry:
         session_id: str = "",
         channel: str = "",
         rule: str = "",
+        request_id: str = "",
+        scope: str = "",
     ) -> dict[str, Any]:
         self._prune_approval_state()
         normalized_session = str(session_id or "").strip()
         normalized_channel = str(channel or "").strip().lower()
         normalized_rule = str(rule or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
+        normalized_scope = str(scope or "").strip().lower()
         removed: list[dict[str, Any]] = []
 
         for key in list(self._approval_grants.keys()):
@@ -864,11 +868,17 @@ class ToolRegistry:
             session_part = parsed["session_id"]
             channel_part = parsed["channel"]
             rule_part = parsed["rule"]
+            request_part = parsed["request_id"]
+            scope_part = str(parsed["scope"] or "").strip().lower()
             if normalized_session and session_part != normalized_session:
                 continue
             if normalized_channel and channel_part != normalized_channel:
                 continue
             if normalized_rule and rule_part != normalized_rule:
+                continue
+            if normalized_request_id and request_part != normalized_request_id:
+                continue
+            if normalized_scope and scope_part != normalized_scope:
                 continue
             self._approval_grants.pop(key, None)
             removed.append(
@@ -888,6 +898,8 @@ class ToolRegistry:
             "session_id": normalized_session,
             "channel": normalized_channel,
             "rule": normalized_rule,
+            "request_id": normalized_request_id,
+            "scope": normalized_scope,
         }
 
     def safety_decision(

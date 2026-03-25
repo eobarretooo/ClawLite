@@ -376,6 +376,8 @@ class ToolGrantRevokeRequest(BaseModel):
     session_id: str = ""
     channel: str = ""
     rule: str = ""
+    request_id: str = ""
+    scope: str = ""
 
 
 class ControlPlaneResponse(BaseModel):
@@ -4134,6 +4136,8 @@ def create_app(
             session_id=str(body.session_id or ""),
             channel=str(body.channel or ""),
             rule=str(body.rule or ""),
+            request_id=str(body.request_id or ""),
+            scope=str(body.scope or ""),
         )
 
     @app.post("/api/tools/grants/revoke")
@@ -4148,6 +4152,8 @@ def create_app(
             session_id=str(body.session_id or ""),
             channel=str(body.channel or ""),
             rule=str(body.rule or ""),
+            request_id=str(body.request_id or ""),
+            scope=str(body.scope or ""),
         )
 
     @app.get("/api/token")

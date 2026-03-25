@@ -3111,6 +3111,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="tool-approval-note"' in body
         assert 'id="approve-tool-request"' in body
         assert 'id="reject-tool-request"' in body
+        assert 'id="revoke-tool-grant"' in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3149,6 +3150,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"heartbeat_trigger": "/v1/control/heartbeat/trigger"' in body
         assert '"tools": "/api/tools/catalog"' in body
         assert '"tools_approvals": "/api/tools/approvals"' in body
+        assert '"tools_grants_revoke": "/api/tools/grants/revoke"' in body
         assert '"ws": "/ws"' in body
         assert 'value="dashboard:operator"' not in body
 
@@ -3197,9 +3199,12 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "approvalToolLabel" in js.text
     assert "fetchToolApprovalsSnapshot" in js.text
     assert "toolApprovalReviewPath" in js.text
+    assert "toolGrantRevokePath" in js.text
     assert "reviewToolApproval" in js.text
+    assert "revokeTopToolGrant" in js.text
     assert "triggerToolApprovalsInspect" in js.text
     assert 'paths.tools_approvals || "/api/tools/approvals"' in js.text
+    assert 'paths.tools_grants_revoke || "/api/tools/grants/revoke"' in js.text
     assert 'url.searchParams.set("include_grants", "true");' in js.text
     assert "Tool approvals inspected" in js.text
     assert "Tool approvals inspection failed" in js.text
@@ -3208,11 +3213,15 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Tool approval rejected" in js.text
     assert "Tool approval failed" in js.text
     assert "Tool rejection failed" in js.text
+    assert "Tool grant revoked" in js.text
+    assert "Tool grant already cleared" in js.text
+    assert "Tool grant revoke failed" in js.text
     assert "Tool approvals refresh failed" in js.text
     assert "pendingVisible" in js.text
     assert "tool-approval-request-id" in js.text
     assert "approve-tool-request" in js.text
     assert "reject-tool-request" in js.text
+    assert "revoke-tool-grant" in js.text
     assert "Cacheable tools" in js.text
     assert "largest_group" in js.text
     assert "custom_timeout_count" in js.text
@@ -4012,6 +4021,42 @@ def test_gateway_tools_grants_revoke_endpoint_removes_matching_grants(tmp_path: 
     assert payload["summary"]["removed_count"] == 1
     assert "telegram:1::telegram::browser:evaluate" not in registry._approval_grants
     assert "telegram:2::telegram::browser:evaluate" in registry._approval_grants
+
+
+def test_gateway_tools_grants_revoke_endpoint_can_target_exact_grant(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    registry = app.state.runtime.engine.tools
+    registry._approval_grants["exact::req-1::telegram:1::telegram::browser:evaluate"] = time.monotonic() + 120.0
+    registry._approval_grants["exact::req-2::telegram:1::telegram::browser:evaluate"] = time.monotonic() + 120.0
+    registry._approval_grants["telegram:1::telegram::browser:evaluate"] = time.monotonic() + 120.0
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/tools/grants/revoke",
+            json={
+                "session_id": "telegram:1",
+                "channel": "telegram",
+                "rule": "browser:evaluate",
+                "request_id": "req-1",
+                "scope": "exact",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["removed_count"] == 1
+    assert payload["summary"]["request_id"] == "req-1"
+    assert payload["summary"]["scope"] == "exact"
+    assert "exact::req-1::telegram:1::telegram::browser:evaluate" not in registry._approval_grants
+    assert "exact::req-2::telegram:1::telegram::browser:evaluate" in registry._approval_grants
+    assert "telegram:1::telegram::browser:evaluate" in registry._approval_grants
 
 
 def test_gateway_tools_approval_endpoints_require_token_when_configured_even_on_loopback(tmp_path: Path) -> None:
@@ -5109,7 +5154,13 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         api_revoke = client.post(
             "/api/tools/grants/revoke",
             headers=session_headers,
-            json={"session_id": "dashboard:test", "channel": "cli", "rule": "browser:evaluate"},
+            json={
+                "session_id": "dashboard:test",
+                "channel": "cli",
+                "rule": "browser:evaluate",
+                "request_id": "req-dashboard",
+                "scope": "exact",
+            },
         )
         assert api_revoke.status_code == 200
         assert api_revoke.json()["summary"]["removed_count"] >= 1

@@ -9,7 +9,7 @@ Default base URL: `http://127.0.0.1:8787`
 - `gateway.auth.mode=required`: requires token (except loopback when `allow_loopback_without_auth=true`).
 - Token can be sent via configurable header (default `Authorization`, with or without `Bearer ` prefix) or configurable query param (default `token`).
 - If a gateway token is configured, the control-plane routes (`/v1/status`, `/v1/dashboard/state`, `/v1/chat`, control mutations, approvals/grants, and `WS /v1/ws`) require that token even when the gateway is otherwise open on loopback.
-- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/tools/approvals`, `/api/tools/approvals/*`, `/api/tools/grants/revoke`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. The short-lived handoff itself is consumed on the first successful exchange in the running gateway process, which blocks replay of the same bootstrap credential. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token.
+- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/tools/approvals`, `/api/tools/approvals/*`, `/api/tools/grants/revoke`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. The short-lived handoff itself is consumed on the first successful exchange in the running gateway process, which blocks replay of the same bootstrap credential. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token. The packaged Tools tab now uses that same scoped flow not only for live approval inspection/review but also for filtered grant cleanup through `/api/tools/grants/revoke`.
 - `/health` only requires auth when `gateway.auth.protect_health=true` and mode is `required`.
 - `/v1/diagnostics` depends on `gateway.diagnostics.enabled` and may require auth with `gateway.diagnostics.require_auth=true`.
 - Every HTTP response now includes `X-Request-ID`. HTTP error envelopes also echo that same value as `request_id` in the JSON body.
@@ -1537,11 +1537,14 @@ Request body:
 {
   "session_id": "telegram:123",
   "channel": "telegram",
-  "rule": "browser:evaluate"
+  "rule": "browser:evaluate",
+  "request_id": "7f4b0a3c91d2a6ef",
+  "scope": "exact"
 }
 ```
 
 Any field may be omitted to widen the match:
+- include `request_id` + `scope="exact"` to revoke one exact reviewed grant instead of every grant sharing the same session/channel/rule
 - omit `rule` to revoke all grants for the session/channel
 - omit `channel` to revoke all grants for the session
 - omit `session_id` to revoke every grant matching the remaining filters

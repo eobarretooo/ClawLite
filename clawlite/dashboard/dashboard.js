@@ -448,6 +448,18 @@ function actionableApprovalRequests(rows) {
   );
 }
 
+function actionableApprovalGrants(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    return Boolean(
+      String(row?.session_id || "").trim()
+      && String(row?.channel || "").trim()
+      && String(row?.rule || "").trim()
+      && String(row?.request_id || "").trim()
+      && String(row?.scope || "").trim().toLowerCase() === "exact",
+    );
+  });
+}
+
 function populateToolApprovalSelection(rows, options = {}) {
   const input = byId("tool-approval-request-id");
   if (!input) {
@@ -832,6 +844,7 @@ function renderToolApprovalsSummary() {
   const preview = byId("tool-approvals-preview");
   const approveButton = byId("approve-tool-request");
   const rejectButton = byId("reject-tool-request");
+  const revokeGrantButton = byId("revoke-tool-grant");
   if (!grid || !preview) {
     return;
   }
@@ -852,12 +865,16 @@ function renderToolApprovalsSummary() {
     if (rejectButton) {
       rejectButton.disabled = true;
     }
+    if (revokeGrantButton) {
+      revokeGrantButton.disabled = true;
+    }
     return;
   }
 
   const requests = Array.isArray(approvals.requests) ? approvals.requests : [];
   const grants = Array.isArray(approvals.grants) ? approvals.grants : [];
   const actionable = actionableApprovalRequests(requests);
+  const actionableGrants = actionableApprovalGrants(grants);
   const pendingVisible = requests.filter((row) => String(row?.status || "").trim().toLowerCase() === "pending").length;
   const toolsInQueue = new Set(
     requests
@@ -931,6 +948,9 @@ function renderToolApprovalsSummary() {
   }
   if (rejectButton) {
     rejectButton.disabled = actionable.length <= 0;
+  }
+  if (revokeGrantButton) {
+    revokeGrantButton.disabled = actionableGrants.length <= 0;
   }
   setCode("tool-approvals-preview", approvals);
 }
@@ -3024,6 +3044,10 @@ function toolApprovalReviewPath(requestId, decision) {
   return `${base}/${encodeURIComponent(String(requestId || "").trim())}/${action}`;
 }
 
+function toolGrantRevokePath() {
+  return String(paths.tools_grants_revoke || "/api/tools/grants/revoke").trim() || "/api/tools/grants/revoke";
+}
+
 async function reviewToolApproval(decision) {
   const requestInput = byId("tool-approval-request-id");
   const noteInput = byId("tool-approval-note");
@@ -3086,6 +3110,68 @@ async function reviewToolApproval(decision) {
     recordEvent(
       "danger",
       decision === "rejected" ? "Tool rejection failed" : "Tool approval failed",
+      error.message,
+      appendRequestIdMeta("tools-approvals", error),
+    );
+    renderAll();
+  }
+}
+
+async function revokeTopToolGrant() {
+  const revokeButton = byId("revoke-tool-grant");
+  const approvals = state.toolApprovals || {};
+  const grant = actionableApprovalGrants(approvals.grants)[0] || null;
+  if (!grant) {
+    recordEvent("warn", "Tool grant revoke skipped", "No visible exact grant matches the current live filter.", "tools-approvals");
+    return;
+  }
+  if (revokeButton) {
+    revokeButton.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(toolGrantRevokePath(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: String(grant.session_id || "").trim(),
+        channel: String(grant.channel || "").trim(),
+        rule: String(grant.rule || "").trim(),
+        request_id: String(grant.request_id || "").trim(),
+        scope: String(grant.scope || "").trim(),
+      }),
+    });
+    const summary = payload.summary || {};
+    const removedCount = numeric(summary.removed_count, 0);
+    recordEvent(
+      removedCount > 0 ? "ok" : "warn",
+      removedCount > 0 ? "Tool grant revoked" : "Tool grant already cleared",
+      [
+        approvalToolLabel(grant) || "grant",
+        String(grant.rule || ""),
+        String(grant.scope || ""),
+        String(grant.session_id || ""),
+        String(grant.channel || ""),
+      ].filter(Boolean).join(" | "),
+      appendRequestIdMeta("tools-approvals", payload),
+    );
+    try {
+      state.toolApprovals = await fetchToolApprovalsSnapshot();
+    } catch (refreshError) {
+      state.toolApprovals = null;
+      recordEvent(
+        "warn",
+        "Tool approvals refresh failed",
+        refreshError.message,
+        appendRequestIdMeta("tools-approvals", refreshError),
+      );
+    }
+    renderAll();
+  } catch (error) {
+    recordEvent(
+      "danger",
+      "Tool grant revoke failed",
       error.message,
       appendRequestIdMeta("tools-approvals", error),
     );
@@ -3937,6 +4023,9 @@ function bindEvents() {
   });
   byId("reject-tool-request").addEventListener("click", () => {
     void reviewToolApproval("rejected");
+  });
+  byId("revoke-tool-grant").addEventListener("click", () => {
+    void revokeTopToolGrant();
   });
   byId("tool-approval-request-id").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
