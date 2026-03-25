@@ -122,6 +122,7 @@ const state = {
   tools: null,
   skillsManaged: null,
   memoryDoctor: null,
+  memoryOverview: null,
   memoryQuality: null,
   tokenInfo: null,
   lastSyncAt: null,
@@ -1442,6 +1443,88 @@ function renderDiscordBoard() {
   }
 }
 
+function memoryTriageSummary({
+  suggestionsCount,
+  snapshotCount,
+  liveOverview,
+  liveDoctor,
+  liveQuality,
+}) {
+  const reasons = [];
+  let level = "ok";
+
+  if (liveDoctor && liveDoctor.ok === false) {
+    level = "danger";
+    reasons.push("doctor failed");
+  } else {
+    const corruptLines = numeric((liveDoctor || {}).diagnostics?.history_read_corrupt_lines, 0);
+    const repairedFiles = numeric((liveDoctor || {}).diagnostics?.history_repaired_files, 0);
+    if (corruptLines > 0 || repairedFiles > 0) {
+      level = "warn";
+      reasons.push(`doctor flagged ${corruptLines} corrupt / ${repairedFiles} repaired`);
+    }
+  }
+
+  if (liveQuality && liveQuality.ok === false) {
+    level = "danger";
+    reasons.push("quality failed");
+  } else if (liveQuality) {
+    const score = numeric((liveQuality.report || {}).score, numeric((liveQuality.state || {}).current?.score, 0));
+    const drift = String(
+      (((liveQuality.report || {}).drift || ((liveQuality.state || {}).current || {}).drift || {}).assessment
+        || ((liveQuality.state || {}).trend || {}).assessment
+        || ""),
+    );
+    if (drift === "degrading" || score < 65) {
+      if (level !== "danger") {
+        level = "warn";
+      }
+      reasons.push(`${score} quality / ${drift || "unknown"} drift`);
+    }
+  }
+
+  if (liveOverview && liveOverview.ok === false) {
+    level = "danger";
+    reasons.push("overview failed");
+  } else if (liveOverview) {
+    const total = numeric((liveOverview.counts || {}).total, 0);
+    const semanticCoverage = Number(liveOverview.semantic_coverage || 0);
+    if (total > 0 && semanticCoverage < 0.4) {
+      if (level !== "danger") {
+        level = "warn";
+      }
+      reasons.push(`${Math.round(semanticCoverage * 100)}% semantic coverage`);
+    }
+  }
+
+  if (numeric(suggestionsCount, 0) > 0) {
+    if (level === "ok") {
+      level = "warn";
+    }
+    reasons.push(`${numeric(suggestionsCount, 0)} pending suggestions`);
+  }
+  if (numeric(snapshotCount, 0) <= 0) {
+    if (level === "ok") {
+      level = "warn";
+    }
+    reasons.push("no snapshots yet");
+  }
+
+  if (!reasons.length) {
+    return {
+      level: "ok",
+      body: "healthy",
+      detail: "Doctor, quality, overview, and snapshot signals look steady.",
+    };
+  }
+
+  return {
+    level,
+    body: level === "danger" ? "needs attention" : "watch closely",
+    detail: reasons.slice(0, 3).join(" | "),
+  };
+}
+
 function renderMemoryBoard() {
   const grid = byId("memory-grid");
   if (!grid) {
@@ -1458,6 +1541,10 @@ function renderMemoryBoard() {
   const qualityRetrieval = qualityCurrent.retrieval || {};
   const qualitySemantic = qualityCurrent.semantic || {};
   const doctor = state.memoryDoctor || {};
+  const liveOverview = state.memoryOverview || {};
+  const liveOverviewCounts = liveOverview.counts || {};
+  const liveOverviewPaths = liveOverview.paths || {};
+  const liveOverviewError = liveOverview.error || {};
   const liveQuality = state.memoryQuality || {};
   const liveQualityReport = liveQuality.report || {};
   const liveQualityState = liveQuality.state || {};
@@ -1470,11 +1557,23 @@ function renderMemoryBoard() {
   const doctorFiles = doctor.files || {};
   const doctorError = doctor.error || {};
   const profilePayload = profile.profile || {};
+  const triage = memoryTriageSummary({
+    suggestionsCount: numeric(suggest.count, 0),
+    snapshotCount: numeric(versions.count, 0),
+    liveOverview: state.memoryOverview,
+    liveDoctor: state.memoryDoctor,
+    liveQuality: state.memoryQuality,
+  });
 
   appendSummaryCard(grid, {
     title: "Profile",
     body: `${Array.isArray(profile.keys) ? profile.keys.length : 0} keys`,
     detail: Array.isArray(profile.keys) && profile.keys.length ? profile.keys.slice(0, 4).join(", ") : "No profile keys captured yet.",
+  });
+  appendSummaryCard(grid, {
+    title: "Triage",
+    body: triage.body,
+    detail: triage.detail,
   });
   appendSummaryCard(grid, {
     title: "Suggestions",
@@ -1505,6 +1604,19 @@ function renderMemoryBoard() {
       : "Run Memory doctor to inspect file integrity and repair counters.",
   });
   appendSummaryCard(grid, {
+    title: "Overview live",
+    body: state.memoryOverview
+      ? (liveOverview.ok === false
+        ? "error"
+        : `${numeric(liveOverviewCounts.total, 0)} entries | ${Math.round(Number(liveOverview.semantic_coverage || 0) * 100)}% semantic`)
+      : "no live snapshot",
+    detail: state.memoryOverview
+      ? (liveOverview.ok === false
+        ? `${String(liveOverviewError.type || "error")} | ${String(liveOverviewError.message || "Memory overview failed.")}`
+        : `${numeric(liveOverviewCounts.history, 0)} history | ${numeric(liveOverviewCounts.curated, 0)} curated | proactive ${liveOverview.proactive_enabled ? "on" : "off"}`)
+      : "Run memory overview to inspect coverage, counts, and proactive memory posture from the live runtime.",
+  });
+  appendSummaryCard(grid, {
     title: "Quality live",
     body: state.memoryQuality
       ? (liveQuality.ok === false
@@ -1520,7 +1632,9 @@ function renderMemoryBoard() {
   appendSummaryCard(grid, {
     title: "Identity context",
     body: String(profilePayload.display_name || profilePayload.name || "unknown"),
-    detail: String(profilePayload.timezone || "timezone not set"),
+    detail: state.memoryOverview && liveOverview.ok !== false
+      ? `${String(profilePayload.timezone || "timezone not set")} | ${String(liveOverviewPaths.memory_home || "memory home unavailable")}`
+      : String(profilePayload.timezone || "timezone not set"),
   });
 }
 
@@ -1704,6 +1818,7 @@ function renderKnowledge() {
     profile: memory.profile || {},
     suggestions: memory.suggestions || {},
     quality: memory.quality || {},
+    overview_live: state.memoryOverview || {},
     quality_live: state.memoryQuality || {},
     doctor_live: state.memoryDoctor || {},
   });
@@ -1738,18 +1853,27 @@ function renderKnowledge() {
   const qualityHasIssues = Boolean(state.memoryQuality) && (
     (state.memoryQuality || {}).ok === false || qualityDrift === "degrading" || qualityScore < 65
   );
+  const overviewCoverage = Number((state.memoryOverview || {}).semantic_coverage || 0);
+  const overviewTotal = numeric((state.memoryOverview || {}).counts?.total, 0);
+  const overviewHasIssues = Boolean(state.memoryOverview) && (
+    (state.memoryOverview || {}).ok === false || (overviewTotal > 0 && overviewCoverage < 0.4)
+  );
   const memoryBadge = (state.memoryDoctor || {}).ok === false
     ? "doctor failed"
+    : ((state.memoryOverview || {}).ok === false
+      ? "overview failed"
     : ((state.memoryQuality || {}).ok === false
       ? "quality failed"
       : (doctorHasIssues
         ? "doctor attention"
-        : (qualityHasIssues ? "quality attention" : (memoryMonitor.enabled ? "monitoring" : "disabled"))));
+        : (overviewHasIssues ? "overview attention" : (qualityHasIssues ? "quality attention" : (memoryMonitor.enabled ? "monitoring" : "disabled"))))));
   const memoryTone = (state.memoryDoctor || {}).ok === false
     ? "danger"
+    : ((state.memoryOverview || {}).ok === false
+      ? "danger"
     : ((state.memoryQuality || {}).ok === false
       ? "danger"
-      : (doctorHasIssues || qualityHasIssues ? "warn" : (memoryMonitor.enabled ? "ok" : "warn")));
+      : (doctorHasIssues || overviewHasIssues || qualityHasIssues ? "warn" : (memoryMonitor.enabled ? "ok" : "warn"))));
   setBadge("memory-status", memoryBadge, memoryTone);
   renderSkillsBoard();
   renderMemoryBoard();
@@ -2826,6 +2950,43 @@ async function triggerMemoryDoctor() {
   }
 }
 
+async function triggerMemoryOverview() {
+  const button = byId("run-memory-overview");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.memory_overview || "/v1/control/memory/overview", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const summary = payload.summary || {};
+    const total = numeric((summary.counts || {}).total, 0);
+    const semanticCoverage = Math.round(Number(summary.semantic_coverage || 0) * 100);
+    state.memoryOverview = summary;
+    recordEvent(
+      summary.ok === false ? "danger" : (total > 0 && Number(summary.semantic_coverage || 0) < 0.4 ? "warn" : "ok"),
+      summary.ok === false ? "Memory overview failed" : "Memory overview updated",
+      summary.ok === false
+        ? String((summary.error || {}).message || (summary.error || {}).type || "Memory overview failed.")
+        : `${total} entries | ${semanticCoverage}% semantic | proactive ${summary.proactive_enabled ? "on" : "off"}`,
+      appendRequestIdMeta("memory-overview", payload),
+    );
+    renderAll();
+  } catch (error) {
+    state.memoryOverview = null;
+    recordEvent("danger", "Memory overview failed", error.message, appendRequestIdMeta("memory-overview", error));
+    renderAll();
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerMemoryQuality() {
   const button = byId("run-memory-quality");
   if (button) {
@@ -2889,6 +3050,7 @@ async function triggerMemorySnapshotCreate() {
       appendRequestIdMeta("memory", payload),
     );
     state.memoryDoctor = null;
+    state.memoryOverview = null;
     state.memoryQuality = null;
     await refreshAll("memory-snapshot-create");
   } catch (error) {
@@ -2933,6 +3095,7 @@ async function triggerMemorySnapshotRollback() {
       appendRequestIdMeta("memory", payload),
     );
     state.memoryDoctor = null;
+    state.memoryOverview = null;
     state.memoryQuality = null;
     if (input) {
       input.value = "";
@@ -3316,6 +3479,9 @@ function bindEvents() {
   });
   byId("run-memory-doctor").addEventListener("click", () => {
     void triggerMemoryDoctor();
+  });
+  byId("run-memory-overview").addEventListener("click", () => {
+    void triggerMemoryOverview();
   });
   byId("run-memory-quality").addEventListener("click", () => {
     void triggerMemoryQuality();

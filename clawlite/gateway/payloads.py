@@ -79,6 +79,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
             "skills_validate": "/v1/control/skills/validate",
             "skills_managed": "/v1/control/skills/managed",
             "memory_doctor": "/v1/control/memory/doctor",
+            "memory_overview": "/v1/control/memory/overview",
             "memory_quality": "/v1/control/memory/quality",
             "memory_suggest_refresh": "/v1/control/memory/suggest/refresh",
             "memory_snapshot_create": "/v1/control/memory/snapshot/create",

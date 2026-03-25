@@ -3098,6 +3098,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Validate skills inventory" in body
         assert "Sync managed skills" in body
         assert "Run memory doctor" in body
+        assert "Run memory overview" in body
         assert "Run memory quality" in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
@@ -3126,6 +3127,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"skills_validate": "/v1/control/skills/validate"' in body
         assert '"skills_managed": "/v1/control/skills/managed"' in body
         assert '"memory_doctor": "/v1/control/memory/doctor"' in body
+        assert '"memory_overview": "/v1/control/memory/overview"' in body
         assert '"memory_quality": "/v1/control/memory/quality"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
@@ -3206,6 +3208,10 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerMemoryDoctor" in js.text
     assert 'paths.memory_doctor || "/v1/control/memory/doctor"' in js.text
     assert "Memory doctor finished" in js.text
+    assert "triggerMemoryOverview" in js.text
+    assert 'paths.memory_overview || "/v1/control/memory/overview"' in js.text
+    assert "Memory overview updated" in js.text
+    assert "overview_live: state.memoryOverview || {}" in js.text
     assert "triggerMemoryQuality" in js.text
     assert 'paths.memory_quality || "/v1/control/memory/quality"' in js.text
     assert "Memory quality updated" in js.text
@@ -3215,11 +3221,13 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "summary.ok !== false && state.dashboardState && state.dashboardState.memory" in js.text
     assert "doctor_live: state.memoryDoctor || {}" in js.text
     assert "run-memory-doctor" in js.text
+    assert "run-memory-overview" in js.text
     assert "run-memory-quality" in js.text
     assert "managed-skills-status-filter" in js.text
     assert "managed-skills-query-filter" in js.text
     assert "inspect-managed-skills" in js.text
     assert "managed_live: state.skillsManaged || {}" in js.text
+    assert "state.memoryOverview = null;" in js.text
     assert "state.skillsManaged = null;" in js.text
     assert "state.memoryQuality = null;" in js.text
     assert "syncGatewayWsEvents" in js.text
@@ -7427,6 +7435,88 @@ def test_gateway_api_memory_doctor_alias_returns_snapshot(tmp_path: Path, monkey
     assert payload["summary"]["repair_applied"] is False
     assert payload["summary"]["diagnostics"]["history_repaired_files"] == 1
     assert calls == [False]
+
+
+def test_gateway_memory_overview_endpoint_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def _fake_memory_overview(_config: AppConfig) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": True,
+            "counts": {"history": 3, "curated": 2, "total": 5},
+            "semantic_coverage": 0.6,
+            "proactive_enabled": True,
+            "paths": {
+                "memory_home": "memory-home",
+                "history": "history.jsonl",
+                "curated": "curated.json",
+                "embeddings": "embeddings.json",
+                "versions": "versions",
+            },
+        }
+
+    monkeypatch.setattr(gateway_server, "memory_overview_snapshot", _fake_memory_overview)
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/memory/overview", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["counts"]["total"] == 5
+    assert payload["summary"]["proactive_enabled"] is True
+    assert calls == 1
+
+
+def test_gateway_api_memory_overview_alias_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def _fake_memory_overview(_config: AppConfig) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": True,
+            "counts": {"history": 1, "curated": 1, "total": 2},
+            "semantic_coverage": 0.25,
+            "proactive_enabled": False,
+            "paths": {
+                "memory_home": "memory-home",
+                "history": "history.jsonl",
+                "curated": "curated.json",
+                "embeddings": "embeddings.json",
+                "versions": "versions",
+            },
+        }
+
+    monkeypatch.setattr(gateway_server, "memory_overview_snapshot", _fake_memory_overview)
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/api/memory/overview", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["semantic_coverage"] == 0.25
+    assert payload["summary"]["counts"]["history"] == 1
+    assert calls == 1
 
 
 def test_gateway_memory_quality_endpoint_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

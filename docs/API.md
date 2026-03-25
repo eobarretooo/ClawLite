@@ -431,6 +431,43 @@ Example response:
 
 Alias compatível: `POST /api/memory/doctor`.
 
+## `POST /v1/control/memory/overview`
+
+Runs the same lightweight overview used by `clawlite memory overview`, but from the running control plane.
+
+Example request:
+
+```json
+{}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "counts": {
+      "history": 12,
+      "curated": 4,
+      "total": 16
+    },
+    "semantic_coverage": 0.625,
+    "proactive_enabled": true,
+    "paths": {
+      "memory_home": "/home/user/.clawlite/memory",
+      "history": "/home/user/.clawlite/state/memory.jsonl",
+      "curated": "/home/user/.clawlite/state/memory_curated.json",
+      "embeddings": "/home/user/.clawlite/memory/embeddings.json",
+      "versions": "/home/user/.clawlite/memory/versions"
+    }
+  }
+}
+```
+
+Alias compatível: `POST /api/memory/overview`.
+
 ## `POST /v1/control/memory/quality`
 
 Computes and persists the same quality-state report used by `clawlite memory quality`, but from the running control plane.

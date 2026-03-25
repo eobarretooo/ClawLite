@@ -226,9 +226,10 @@ clawlite memory import ./memory-export.json
 The packaged dashboard now also exposes two first-class memory control-plane actions:
 
 - `Run memory doctor`, backed by `POST /v1/control/memory/doctor` and `POST /api/memory/doctor`, which keeps the existing read-only file-integrity snapshot available on demand
+- `Run memory overview`, backed by `POST /v1/control/memory/overview` and `POST /api/memory/overview`, which returns a lightweight live snapshot of counts, semantic coverage, proactive-memory posture, and memory file locations
 - `Run memory quality`, backed by `POST /v1/control/memory/quality` and `POST /api/memory/quality`, which computes and persists a fresh quality-state report from the running runtime
 
-Those live snapshots stay separate from the normal dashboard-state payload on purpose, so operators can inspect integrity and quality signals on demand without turning every generic dashboard refresh into a heavier memory maintenance cycle.
+Those live snapshots stay separate from the normal dashboard-state payload on purpose, so operators can inspect integrity, overview, and quality signals on demand without turning every generic dashboard refresh into a heavier memory maintenance cycle.
 
 ## Session Logs vs Memory
 

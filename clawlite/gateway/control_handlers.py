@@ -17,6 +17,7 @@ class GatewayControlHandlers:
     runtime: Any
     heartbeat_enabled: bool
     memory_doctor_fn: Callable[[Any, bool], dict[str, Any]]
+    memory_overview_fn: Callable[[Any], dict[str, Any]]
     memory_quality_fn: Callable[[Any], dict[str, Any]]
     memory_snapshot_create_fn: Callable[[Any, str], dict[str, Any]]
     memory_snapshot_rollback_fn: Callable[[Any, str], dict[str, Any]]
@@ -176,6 +177,12 @@ class GatewayControlHandlers:
         del payload
         self._check_control(request)
         summary = await asyncio.to_thread(self.memory_doctor_fn, self.runtime.config, False)
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
+    async def memory_overview(self, request: Request, payload: Any) -> dict[str, Any]:
+        del payload
+        self._check_control(request)
+        summary = await asyncio.to_thread(self.memory_overview_fn, self.runtime.config)
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
     async def memory_quality(self, request: Request, payload: Any) -> dict[str, Any]:
