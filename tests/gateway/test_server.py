@@ -3100,6 +3100,13 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Run memory doctor" in body
         assert "Run memory overview" in body
         assert "Run memory quality" in body
+        assert "Approval Queue" in body
+        assert 'id="tool-approvals-status-filter"' in body
+        assert 'id="tool-approvals-tool-filter"' in body
+        assert 'id="tool-approvals-rule-filter"' in body
+        assert 'id="inspect-tool-approvals"' in body
+        assert 'id="tool-approvals-grid"' in body
+        assert 'id="tool-approvals-preview"' in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3137,6 +3144,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"supervisor_recover": "/v1/control/supervisor/recover"' in body
         assert '"heartbeat_trigger": "/v1/control/heartbeat/trigger"' in body
         assert '"tools": "/api/tools/catalog"' in body
+        assert '"tools_approvals": "/api/tools/approvals"' in body
         assert '"ws": "/ws"' in body
         assert 'value="dashboard:operator"' not in body
 
@@ -3178,6 +3186,17 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Managed marketplace" in js.text
     assert "skills.managed || {}" in js.text
     assert "tool-signals" in js.text
+    assert "tool-approvals-grid" in js.text
+    assert "tool-approvals-preview" in js.text
+    assert "readToolApprovalsFilter" in js.text
+    assert "summarizeToolApprovalsFilter" in js.text
+    assert "approvalToolLabel" in js.text
+    assert "triggerToolApprovalsInspect" in js.text
+    assert 'paths.tools_approvals || "/api/tools/approvals"' in js.text
+    assert 'url.searchParams.set("include_grants", "true");' in js.text
+    assert "Tool approvals inspected" in js.text
+    assert "Tool approvals inspection failed" in js.text
+    assert "pendingVisible" in js.text
     assert "Cacheable tools" in js.text
     assert "largest_group" in js.text
     assert "custom_timeout_count" in js.text
@@ -3851,6 +3870,7 @@ def test_gateway_tools_approvals_endpoints_return_requests_and_grants(tmp_path: 
     }
     registry._approval_request_order.append("req-2")
     registry._approval_grants["telegram:1::telegram::browser:evaluate"] = time.monotonic() + 120.0
+    registry._approval_grants["telegram:1::telegram::exec:env-key:git-ssh-command"] = time.monotonic() + 180.0
 
     with TestClient(app) as client:
         v1_response = client.get(
@@ -5020,6 +5040,10 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         api_tools = client.get("/api/tools/catalog", headers=session_headers)
         assert api_tools.status_code == 200
 
+        api_tool_approvals = client.get("/api/tools/approvals", headers=session_headers)
+        assert api_tool_approvals.status_code == 200
+        assert api_tool_approvals.json()["ok"] is True
+
         api_message = client.post(
             "/api/message",
             headers=session_headers,
@@ -5035,6 +5059,10 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         v1_tools = client.get("/v1/tools/catalog", headers=session_headers)
         assert v1_tools.status_code == 401
         assert v1_tools.json()["error"] == "gateway_auth_required"
+
+        v1_tool_approvals = client.get("/v1/tools/approvals", headers=session_headers)
+        assert v1_tool_approvals.status_code == 401
+        assert v1_tool_approvals.json()["error"] == "gateway_auth_required"
 
         v1_chat = client.post(
             "/v1/chat",

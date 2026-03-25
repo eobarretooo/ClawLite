@@ -473,6 +473,26 @@
             <div class="card-grid">
               <article class="panel-card">
                 <div class="panel-card__header">
+                  <h2>Approval Queue</h2>
+                  <div class="button-row">
+                    <select class="ghost-input" id="tool-approvals-status-filter" aria-label="Tool approvals status filter">
+                      <option value="pending">Pending</option>
+                      <option value="approved">Approved</option>
+                      <option value="rejected">Rejected</option>
+                      <option value="all">All</option>
+                    </select>
+                    <input class="ghost-input" id="tool-approvals-tool-filter" type="text" placeholder="Filter tool" />
+                    <input class="ghost-input" id="tool-approvals-rule-filter" type="text" placeholder="Filter rule" />
+                    <button class="ghost-button" id="inspect-tool-approvals" type="button">Inspect approvals</button>
+                    <span class="badge" id="tool-approvals-status">pending</span>
+                  </div>
+                </div>
+                <div class="summary-grid" id="tool-approvals-grid"></div>
+                <pre class="code-block" id="tool-approvals-preview">Waiting for live tool approvals...</pre>
+              </article>
+
+              <article class="panel-card">
+                <div class="panel-card__header">
                   <h2>Catalog Signals</h2>
                   <span class="badge">summary</span>
                 </div>

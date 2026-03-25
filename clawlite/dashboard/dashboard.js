@@ -120,6 +120,7 @@ const state = {
   dashboardState: null,
   diagnostics: null,
   tools: null,
+  toolApprovals: null,
   skillsManaged: null,
   memoryDoctor: null,
   memoryOverview: null,
@@ -396,6 +397,49 @@ function summarizeManagedFilter(summary) {
     parts.push(`query ${query}`);
   }
   return parts.join(" | ");
+}
+
+function readToolApprovalsFilter() {
+  const status = String(byId("tool-approvals-status-filter")?.value || "").trim().toLowerCase();
+  return {
+    status: status || "pending",
+    tool: String(byId("tool-approvals-tool-filter")?.value || "").trim(),
+    rule: String(byId("tool-approvals-rule-filter")?.value || "").trim(),
+  };
+}
+
+function summarizeToolApprovalsFilter(summary) {
+  const status = String((summary || {}).status || "").trim().toLowerCase();
+  const tool = String((summary || {}).tool || "").trim();
+  const rule = String((summary || {}).rule || "").trim();
+  const parts = [];
+  if (status) {
+    parts.push(`status ${status}`);
+  }
+  if (tool) {
+    parts.push(`tool ${tool}`);
+  }
+  if (rule) {
+    parts.push(`rule ${rule}`);
+  }
+  return parts.join(" | ");
+}
+
+function approvalRuleLabel(row) {
+  const matched = Array.isArray((row || {}).matched_approval_specifiers) ? row.matched_approval_specifiers : [];
+  return String(matched[0] || row?.rule || "").trim();
+}
+
+function approvalToolLabel(row) {
+  const direct = String((row || {}).tool || "").trim();
+  if (direct) {
+    return direct;
+  }
+  const rule = String((row || {}).rule || approvalRuleLabel(row)).trim();
+  if (!rule) {
+    return "";
+  }
+  return String(rule.split(":", 1)[0] || "").trim();
 }
 
 function summarizeWsCorrelation(ws, includeRequest = true, options = {}) {
@@ -755,6 +799,98 @@ function renderToolsSummary() {
       card.append(title, meta);
       aliasesNode.appendChild(card);
     });
+}
+
+function renderToolApprovalsSummary() {
+  const grid = byId("tool-approvals-grid");
+  const preview = byId("tool-approvals-preview");
+  if (!grid || !preview) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const approvals = state.toolApprovals || null;
+  if (!approvals) {
+    appendSummaryCard(grid, {
+      title: "Approval queue",
+      body: "idle",
+      detail: "Run Inspect approvals to fetch the live tool approval queue and active grants.",
+    });
+    setBadge("tool-approvals-status", "idle", "warn");
+    setCode("tool-approvals-preview", { note: "Run Inspect approvals to fetch the live approval queue." });
+    return;
+  }
+
+  const requests = Array.isArray(approvals.requests) ? approvals.requests : [];
+  const grants = Array.isArray(approvals.grants) ? approvals.grants : [];
+  const pendingVisible = requests.filter((row) => String(row?.status || "").trim().toLowerCase() === "pending").length;
+  const toolsInQueue = new Set(
+    requests
+      .map((row) => String(row?.tool || "").trim())
+      .filter(Boolean),
+  );
+  const rulesInQueue = new Set(
+    requests
+      .flatMap((row) => {
+        const rule = approvalRuleLabel(row);
+        return rule ? [rule] : [];
+      })
+      .concat(grants.map((row) => String(row?.rule || "").trim()).filter(Boolean)),
+  );
+  const actorBoundCount = requests.filter((row) => String(row?.requester_actor || "").trim()).length;
+  const notifiedCount = requests.filter((row) => numeric(row?.notified_count, 0) > 0).length;
+  const filterMeta = summarizeToolApprovalsFilter(approvals);
+  const firstRequest = requests[0] || {};
+  const firstGrant = grants[0] || {};
+  const firstRequestRule = approvalRuleLabel(firstRequest);
+
+  appendSummaryCard(grid, {
+    title: "Queue",
+    body: `${numeric(approvals.count, requests.length)} requests | ${numeric(approvals.grant_count, grants.length)} grants`,
+    detail: filterMeta || "live approval queue snapshot",
+  });
+  appendSummaryCard(grid, {
+    title: "Scope",
+    body: `${toolsInQueue.size} tools | ${rulesInQueue.size} rules`,
+    detail: `${actorBoundCount} actor-bound | ${notifiedCount} notified`,
+  });
+  appendSummaryCard(grid, {
+    title: "Top request",
+    body: requests.length
+      ? `${String(firstRequest.tool || "tool")} | ${firstRequestRule || String(firstRequest.status || "pending")}`
+      : "none",
+    detail: requests.length
+      ? [
+          String(firstRequest.session_id || "session unknown"),
+          `expires ${formatDuration(firstRequest.expires_in_s || 0)}`,
+          String(firstRequest.requester_actor || ""),
+        ].filter(Boolean).join(" | ")
+      : "No approval requests matched the current live filter.",
+  });
+  appendSummaryCard(grid, {
+    title: "Top grant",
+    body: grants.length
+      ? `${approvalToolLabel(firstGrant) || "grant"} | ${String(firstGrant.rule || "rule")}`
+      : "none",
+    detail: grants.length
+      ? [
+          String(firstGrant.session_id || "session unknown"),
+          `expires ${formatDuration(firstGrant.expires_in_s || 0)}`,
+          String(firstGrant.channel || ""),
+        ].filter(Boolean).join(" | ")
+      : "No active approval grants matched the current live filter.",
+  });
+
+  if (pendingVisible > 0) {
+    setBadge("tool-approvals-status", `pending ${pendingVisible}`, "warn");
+  } else if (numeric(approvals.grant_count, grants.length) > 0) {
+    setBadge("tool-approvals-status", `grants ${numeric(approvals.grant_count, grants.length)}`, "ok");
+  } else if (numeric(approvals.count, requests.length) > 0) {
+    setBadge("tool-approvals-status", `${numeric(approvals.count, requests.length)} ${String(approvals.status || "items")}`, "ok");
+  } else {
+    setBadge("tool-approvals-status", "clear", "ok");
+  }
+  setCode("tool-approvals-preview", approvals);
 }
 
 function appendSummaryCard(container, item) {
@@ -2079,6 +2215,7 @@ function renderRuntime() {
   setCode("ws-event-preview", state.wsPreview);
   renderHttpCorrelationBoard();
   renderToolsSummary();
+  renderToolApprovalsSummary();
 }
 
 function renderControlPlaneCorrelationBoard() {
@@ -2774,6 +2911,61 @@ async function triggerProviderRecovery() {
     await refreshAll("provider-recover");
   } catch (error) {
     recordEvent("danger", "Provider recovery failed", error.message, appendRequestIdMeta("provider", error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function triggerToolApprovalsInspect() {
+  const button = byId("inspect-tool-approvals");
+  const filter = readToolApprovalsFilter();
+  const url = new URL(paths.tools_approvals || "/api/tools/approvals", window.location.origin);
+  if (filter.status) {
+    url.searchParams.set("status", filter.status);
+  }
+  if (filter.tool) {
+    url.searchParams.set("tool", filter.tool);
+  }
+  if (filter.rule) {
+    url.searchParams.set("rule", filter.rule);
+  }
+  url.searchParams.set("include_grants", "true");
+  url.searchParams.set("limit", "20");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(`${url.pathname}${url.search}`);
+    const requests = Array.isArray(payload.requests) ? payload.requests : [];
+    const grants = Array.isArray(payload.grants) ? payload.grants : [];
+    const pendingVisible = requests.filter((row) => String(row?.status || "").trim().toLowerCase() === "pending").length;
+    const topRequest = requests[0] || {};
+    const filterMeta = summarizeToolApprovalsFilter(payload);
+    state.toolApprovals = payload;
+    recordEvent(
+      pendingVisible > 0 ? "warn" : "ok",
+      "Tool approvals inspected",
+      requests.length
+        ? [
+            `${numeric(payload.count, requests.length)} requests`,
+            `${numeric(payload.grant_count, grants.length)} grants`,
+            filterMeta,
+            `${String(topRequest.tool || "tool")} ${approvalRuleLabel(topRequest) || String(topRequest.status || "pending")}`,
+          ].filter(Boolean).join(" | ")
+        : [
+            `${numeric(payload.grant_count, grants.length)} grants`,
+            filterMeta,
+            "No approval requests matched.",
+          ].filter(Boolean).join(" | "),
+      appendRequestIdMeta("tools-approvals", payload),
+    );
+    renderAll();
+  } catch (error) {
+    state.toolApprovals = null;
+    recordEvent("danger", "Tool approvals inspection failed", error.message, appendRequestIdMeta("tools-approvals", error));
+    renderAll();
   } finally {
     if (button) {
       button.disabled = false;
@@ -3616,6 +3808,21 @@ function bindEvents() {
   });
   byId("recover-provider").addEventListener("click", () => {
     void triggerProviderRecovery();
+  });
+  byId("inspect-tool-approvals").addEventListener("click", () => {
+    void triggerToolApprovalsInspect();
+  });
+  byId("tool-approvals-tool-filter").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void triggerToolApprovalsInspect();
+    }
+  });
+  byId("tool-approvals-rule-filter").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void triggerToolApprovalsInspect();
+    }
   });
   byId("refresh-skills-inventory").addEventListener("click", () => {
     void triggerSkillsRefresh();

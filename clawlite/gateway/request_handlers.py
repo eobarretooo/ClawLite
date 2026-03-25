@@ -117,6 +117,7 @@ class GatewayRequestHandlers:
         self,
         request: Request,
         *,
+        allow_dashboard_session: bool = False,
         status: str = "pending",
         session_id: str = "",
         channel: str = "",
@@ -125,17 +126,23 @@ class GatewayRequestHandlers:
         include_grants: bool = False,
         limit: int = 50,
     ) -> dict[str, Any]:
-        self._check_sensitive_control(request)
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         tools = getattr(self.runtime.engine, "tools", None)
+        normalized_status = str(status or "pending").strip().lower() or "pending"
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_tool = str(tool or "").strip().lower()
+        normalized_rule = str(rule or "").strip().lower()
+        max_rows = max(1, int(limit or 1))
         list_requests = getattr(tools, "approval_requests_snapshot", None)
         if not callable(list_requests):
             return {
                 "ok": True,
-                "status": str(status or "pending").strip().lower() or "pending",
-                "session_id": str(session_id or "").strip(),
-                "channel": str(channel or "").strip().lower(),
-                "tool": str(tool or "").strip().lower(),
-                "rule": str(rule or "").strip().lower(),
+                "status": normalized_status,
+                "session_id": normalized_session,
+                "channel": normalized_channel,
+                "tool": normalized_tool,
+                "rule": normalized_rule,
                 "include_grants": bool(include_grants),
                 "count": 0,
                 "requests": [],
@@ -143,29 +150,37 @@ class GatewayRequestHandlers:
                 "grants": [],
             }
         requests = list_requests(
-            status=str(status or "pending").strip().lower() or "pending",
-            session_id=str(session_id or "").strip(),
-            channel=str(channel or "").strip().lower(),
-            tool=str(tool or "").strip().lower(),
-            rule=str(rule or "").strip().lower(),
-            limit=max(1, int(limit or 1)),
+            status=normalized_status,
+            session_id=normalized_session,
+            channel=normalized_channel,
+            tool=normalized_tool,
+            rule=normalized_rule,
+            limit=max_rows,
         )
         grants: list[dict[str, Any]] = []
         if include_grants:
             list_grants = getattr(tools, "approval_grants_snapshot", None)
             if callable(list_grants):
                 grants = list_grants(
-                    session_id=str(session_id or "").strip(),
-                    channel=str(channel or "").strip().lower(),
-                    limit=max(1, int(limit or 1)),
+                    session_id=normalized_session,
+                    channel=normalized_channel,
+                    limit=max_rows,
                 )
+                if normalized_rule:
+                    grants = [row for row in grants if str((row or {}).get("rule", "") or "").strip().lower() == normalized_rule]
+                elif normalized_tool:
+                    grants = [
+                        row
+                        for row in grants
+                        if str((row or {}).get("rule", "") or "").strip().lower().split(":", 1)[0] == normalized_tool
+                    ]
         return {
             "ok": True,
-            "status": str(status or "pending").strip().lower() or "pending",
-            "session_id": str(session_id or "").strip(),
-            "channel": str(channel or "").strip().lower(),
-            "tool": str(tool or "").strip().lower(),
-            "rule": str(rule or "").strip().lower(),
+            "status": normalized_status,
+            "session_id": normalized_session,
+            "channel": normalized_channel,
+            "tool": normalized_tool,
+            "rule": normalized_rule,
             "include_grants": bool(include_grants),
             "count": len(requests),
             "requests": requests,

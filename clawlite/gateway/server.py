@@ -4029,6 +4029,7 @@ def create_app(
     ) -> dict[str, Any]:
         return await request_handlers.tools_approvals(
             request,
+            allow_dashboard_session=False,
             status=status,
             session_id=session_id,
             channel=channel,
@@ -4051,6 +4052,7 @@ def create_app(
     ) -> dict[str, Any]:
         return await request_handlers.tools_approvals(
             request,
+            allow_dashboard_session=True,
             status=status,
             session_id=session_id,
             channel=channel,
