@@ -431,6 +431,50 @@ Example response:
 
 Alias compatível: `POST /api/memory/doctor`.
 
+## `POST /v1/control/memory/quality`
+
+Computes and persists the same quality-state report used by `clawlite memory quality`, but from the running control plane.
+
+Example request:
+
+```json
+{}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "report": {
+      "score": 74,
+      "drift": {
+        "assessment": "stable"
+      },
+      "recommendations": [
+        "Quality is stable; continue monitoring and periodic memory snapshots."
+      ]
+    },
+    "state": {
+      "updated_at": "2026-03-25T00:00:00+00:00",
+      "current": {
+        "score": 74
+      },
+      "trend": {
+        "available": true,
+        "assessment": "stable",
+        "window_points": 1
+      }
+    },
+    "quality_state_path": "/home/user/.clawlite/memory/quality-state.json"
+  }
+}
+```
+
+Alias compatível: `POST /api/memory/quality`.
+
 ## `POST /v1/control/memory/snapshot/create`
 
 Creates a new memory snapshot version from the live runtime state.

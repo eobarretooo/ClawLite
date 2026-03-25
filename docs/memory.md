@@ -223,7 +223,12 @@ clawlite memory export --out ./memory-export.json
 clawlite memory import ./memory-export.json
 ```
 
-The packaged dashboard now also exposes the safe read-only doctor path directly through `Run memory doctor`, backed by `POST /v1/control/memory/doctor` and `POST /api/memory/doctor`. That live snapshot stays separate from the normal dashboard-state payload on purpose, so operators can inspect file-integrity counters and repair diagnostics on demand without mutating memory or forcing a full runtime refresh.
+The packaged dashboard now also exposes two first-class memory control-plane actions:
+
+- `Run memory doctor`, backed by `POST /v1/control/memory/doctor` and `POST /api/memory/doctor`, which keeps the existing read-only file-integrity snapshot available on demand
+- `Run memory quality`, backed by `POST /v1/control/memory/quality` and `POST /api/memory/quality`, which computes and persists a fresh quality-state report from the running runtime
+
+Those live snapshots stay separate from the normal dashboard-state payload on purpose, so operators can inspect integrity and quality signals on demand without turning every generic dashboard refresh into a heavier memory maintenance cycle.
 
 ## Session Logs vs Memory
 

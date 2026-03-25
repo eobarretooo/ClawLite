@@ -3098,6 +3098,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Validate skills inventory" in body
         assert "Sync managed skills" in body
         assert "Run memory doctor" in body
+        assert "Run memory quality" in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3125,6 +3126,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"skills_validate": "/v1/control/skills/validate"' in body
         assert '"skills_managed": "/v1/control/skills/managed"' in body
         assert '"memory_doctor": "/v1/control/memory/doctor"' in body
+        assert '"memory_quality": "/v1/control/memory/quality"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
@@ -3204,13 +3206,22 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerMemoryDoctor" in js.text
     assert 'paths.memory_doctor || "/v1/control/memory/doctor"' in js.text
     assert "Memory doctor finished" in js.text
+    assert "triggerMemoryQuality" in js.text
+    assert 'paths.memory_quality || "/v1/control/memory/quality"' in js.text
+    assert "Memory quality updated" in js.text
+    assert "quality_live: state.memoryQuality || {}" in js.text
+    assert "const qualityCurrent = quality.current || {}" in js.text
+    assert "const qualityTrend = quality.trend || {}" in js.text
+    assert "summary.ok !== false && state.dashboardState && state.dashboardState.memory" in js.text
     assert "doctor_live: state.memoryDoctor || {}" in js.text
     assert "run-memory-doctor" in js.text
+    assert "run-memory-quality" in js.text
     assert "managed-skills-status-filter" in js.text
     assert "managed-skills-query-filter" in js.text
     assert "inspect-managed-skills" in js.text
     assert "managed_live: state.skillsManaged || {}" in js.text
     assert "state.skillsManaged = null;" in js.text
+    assert "state.memoryQuality = null;" in js.text
     assert "syncGatewayWsEvents" in js.text
     assert "syncGatewayHttpEvents" in js.text
     assert "Gateway WebSocket error observed" in js.text
@@ -7416,6 +7427,108 @@ def test_gateway_api_memory_doctor_alias_returns_snapshot(tmp_path: Path, monkey
     assert payload["summary"]["repair_applied"] is False
     assert payload["summary"]["diagnostics"]["history_repaired_files"] == 1
     assert calls == [False]
+
+
+def test_gateway_memory_quality_endpoint_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def _fake_memory_quality(_config: AppConfig) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": True,
+            "report": {
+                "score": 74,
+                "retrieval": {"attempts": 6, "hits": 5, "rewrites": 1, "hit_rate": 0.833333},
+                "turn_stability": {"successes": 4, "errors": 1, "success_rate": 0.8, "error_rate": 0.2},
+                "drift": {"assessment": "stable"},
+                "semantic": {"enabled": False, "coverage_ratio": 0.0},
+                "reasoning_layers": {"total_records": 4, "distribution": {}, "balance_score": 1.0, "weakest_layer": "", "weakest_ratio": 1.0, "confidence": {}},
+                "recommendations": ["Quality is stable; continue monitoring and periodic memory snapshots."],
+            },
+            "state": {
+                "updated_at": "2026-03-25T00:00:00+00:00",
+                "current": {"score": 74, "drift": {"assessment": "stable"}},
+                "history": [],
+                "trend": {"available": True, "assessment": "stable", "window_points": 1},
+                "tuning": {},
+            },
+            "quality_state_path": "quality-state.json",
+            "eval": {"cases": 6, "passed": 5, "failed": 1},
+            "gateway_probe": {"enabled": False},
+            "analysis": {"reasoning_layers": {}, "confidence": {}},
+        }
+
+    monkeypatch.setattr(gateway_server, "memory_quality_snapshot", _fake_memory_quality)
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/memory/quality", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["report"]["score"] == 74
+    assert payload["summary"]["state"]["trend"]["assessment"] == "stable"
+    assert calls == 1
+
+
+def test_gateway_api_memory_quality_alias_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def _fake_memory_quality(_config: AppConfig) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": True,
+            "report": {
+                "score": 58,
+                "retrieval": {"attempts": 4, "hits": 2, "rewrites": 0, "hit_rate": 0.5},
+                "turn_stability": {"successes": 2, "errors": 2, "success_rate": 0.5, "error_rate": 0.5},
+                "drift": {"assessment": "degrading"},
+                "semantic": {"enabled": True, "coverage_ratio": 0.2},
+                "reasoning_layers": {"total_records": 2, "distribution": {}, "balance_score": 0.5, "weakest_layer": "decision", "weakest_ratio": 0.1, "confidence": {}},
+                "recommendations": ["Quality drift detected; review memory diagnostics and recent regressions."],
+            },
+            "state": {
+                "updated_at": "2026-03-25T00:00:00+00:00",
+                "current": {"score": 58, "drift": {"assessment": "degrading"}},
+                "history": [],
+                "trend": {"available": True, "assessment": "degrading", "window_points": 2},
+                "tuning": {},
+            },
+            "quality_state_path": "quality-state.json",
+            "eval": {"cases": 4, "passed": 2, "failed": 2},
+            "gateway_probe": {"enabled": False},
+            "analysis": {"reasoning_layers": {}, "confidence": {}},
+        }
+
+    monkeypatch.setattr(gateway_server, "memory_quality_snapshot", _fake_memory_quality)
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/api/memory/quality", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["report"]["drift"]["assessment"] == "degrading"
+    assert payload["summary"]["state"]["current"]["score"] == 58
+    assert calls == 1
 
 
 def test_gateway_skills_refresh_endpoint_returns_summary(tmp_path: Path) -> None:

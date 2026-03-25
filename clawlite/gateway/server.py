@@ -151,7 +151,15 @@ from clawlite.gateway.runtime_builder import RuntimeContainer, _provider_config,
 from clawlite.gateway.webhooks import GatewayWebhookHandlers
 from clawlite.gateway.websocket_handlers import GatewayWebSocketHandlers
 from clawlite.cli.onboarding import build_dashboard_handoff
-from clawlite.cli.ops import memory_doctor_snapshot, memory_profile_snapshot, memory_snapshot_create, memory_snapshot_rollback, memory_suggest_snapshot, memory_version_snapshot
+from clawlite.cli.ops import (
+    memory_doctor_snapshot,
+    memory_profile_snapshot,
+    memory_quality_snapshot,
+    memory_snapshot_create,
+    memory_snapshot_rollback,
+    memory_suggest_snapshot,
+    memory_version_snapshot,
+)
 from clawlite.utils.logging import bind_event, setup_logging
 
 
@@ -311,6 +319,10 @@ class MemorySuggestRefreshRequest(BaseModel):
 
 
 class MemoryDoctorRequest(BaseModel):
+    noop: bool = False
+
+
+class MemoryQualityRequest(BaseModel):
     noop: bool = False
 
 
@@ -2415,6 +2427,7 @@ def create_app(
         runtime=runtime,
         heartbeat_enabled=bool(cfg.gateway.heartbeat.enabled),
         memory_doctor_fn=memory_doctor_snapshot,
+        memory_quality_fn=memory_quality_snapshot,
         memory_snapshot_create_fn=memory_snapshot_create,
         memory_snapshot_rollback_fn=memory_snapshot_rollback,
         submit_heartbeat_wake=_submit_heartbeat_wake,
@@ -3831,6 +3844,18 @@ def create_app(
         request: Request, payload: MemoryDoctorRequest | None = None
     ) -> dict[str, Any]:
         return await control_handlers.memory_doctor(request, payload or MemoryDoctorRequest())
+
+    @app.post("/v1/control/memory/quality")
+    async def memory_quality(
+        request: Request, payload: MemoryQualityRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.memory_quality(request, payload or MemoryQualityRequest())
+
+    @app.post("/api/memory/quality")
+    async def api_memory_quality(
+        request: Request, payload: MemoryQualityRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.memory_quality(request, payload or MemoryQualityRequest())
 
     @app.post("/v1/control/skills/refresh")
     async def skills_refresh(

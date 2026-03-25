@@ -122,6 +122,7 @@ const state = {
   tools: null,
   skillsManaged: null,
   memoryDoctor: null,
+  memoryQuality: null,
   tokenInfo: null,
   lastSyncAt: null,
   eventFeed: [],
@@ -1452,13 +1453,23 @@ function renderMemoryBoard() {
   const suggest = memory.suggestions || {};
   const versions = memory.versions || {};
   const quality = memory.quality || {};
+  const qualityCurrent = quality.current || {};
+  const qualityTrend = quality.trend || {};
+  const qualityRetrieval = qualityCurrent.retrieval || {};
+  const qualitySemantic = qualityCurrent.semantic || {};
   const doctor = state.memoryDoctor || {};
+  const liveQuality = state.memoryQuality || {};
+  const liveQualityReport = liveQuality.report || {};
+  const liveQualityState = liveQuality.state || {};
+  const liveQualityCurrent = liveQualityState.current || {};
+  const liveQualityTrend = liveQualityState.trend || {};
+  const liveQualityDrift = (liveQualityReport.drift || liveQualityCurrent.drift || {});
+  const liveQualityError = liveQuality.error || {};
   const doctorCounts = doctor.counts || {};
   const doctorDiagnostics = doctor.diagnostics || {};
   const doctorFiles = doctor.files || {};
   const doctorError = doctor.error || {};
   const profilePayload = profile.profile || {};
-  const qualityScores = quality.scores || {};
 
   appendSummaryCard(grid, {
     title: "Profile",
@@ -1472,8 +1483,8 @@ function renderMemoryBoard() {
   });
   appendSummaryCard(grid, {
     title: "Quality",
-    body: `${Number(qualityScores.overall || 0).toFixed(3)} overall`,
-    detail: `${Number(qualityScores.retrieval || 0).toFixed(3)} retrieval | ${Number(qualityScores.semantic || 0).toFixed(3)} semantic`,
+    body: `${numeric(qualityCurrent.score, 0)} current | ${String(qualityTrend.assessment || "unknown")} trend`,
+    detail: `${Number(qualityRetrieval.hit_rate || 0).toFixed(3)} hit rate | ${Number(qualitySemantic.coverage_ratio || 0).toFixed(3)} semantic | ${numeric(qualityTrend.degrading_streak, 0)} degrading streak`,
   });
   appendSummaryCard(grid, {
     title: "Snapshots",
@@ -1492,6 +1503,19 @@ function renderMemoryBoard() {
         ? `${String(doctorError.type || "error")} | ${String(doctorError.message || "Memory doctor failed.")}`
         : `corrupt ${numeric(doctorDiagnostics.history_read_corrupt_lines, 0)} | repaired ${numeric(doctorDiagnostics.history_repaired_files, 0)} | history ${numeric((doctorFiles.history || {}).size_bytes, 0)} bytes`)
       : "Run Memory doctor to inspect file integrity and repair counters.",
+  });
+  appendSummaryCard(grid, {
+    title: "Quality live",
+    body: state.memoryQuality
+      ? (liveQuality.ok === false
+        ? "error"
+        : `${numeric(liveQualityReport.score, numeric(liveQualityCurrent.score, 0))} score | ${String(liveQualityDrift.assessment || liveQualityTrend.assessment || "stable")}`)
+      : "no live snapshot",
+    detail: state.memoryQuality
+      ? (liveQuality.ok === false
+        ? `${String(liveQualityError.type || "error")} | ${String(liveQualityError.message || "Memory quality snapshot failed.")}`
+        : `${numeric((liveQualityReport.retrieval || {}).attempts, 0)} attempts | ${numeric((liveQualityReport.turn_stability || {}).errors, 0)} errors | ${String((liveQualityReport.recommendations || [])[0] || "Quality snapshot persisted.")}`)
+      : "Run memory quality to compute and persist a fresh quality-state report from the live runtime.",
   });
   appendSummaryCard(grid, {
     title: "Identity context",
@@ -1680,6 +1704,7 @@ function renderKnowledge() {
     profile: memory.profile || {},
     suggestions: memory.suggestions || {},
     quality: memory.quality || {},
+    quality_live: state.memoryQuality || {},
     doctor_live: state.memoryDoctor || {},
   });
 
@@ -1708,12 +1733,23 @@ function renderKnowledge() {
   const doctorHasIssues = Boolean(state.memoryDoctor) && (
     (state.memoryDoctor || {}).ok === false || doctorLines > 0 || doctorRepairs > 0
   );
+  const qualityScore = numeric((state.memoryQuality || {}).report?.score, numeric((state.memoryQuality || {}).state?.current?.score, 0));
+  const qualityDrift = String((((state.memoryQuality || {}).report || {}).drift || ((state.memoryQuality || {}).state || {}).current?.drift || {}).assessment || (((state.memoryQuality || {}).state || {}).trend || {}).assessment || "");
+  const qualityHasIssues = Boolean(state.memoryQuality) && (
+    (state.memoryQuality || {}).ok === false || qualityDrift === "degrading" || qualityScore < 65
+  );
   const memoryBadge = (state.memoryDoctor || {}).ok === false
     ? "doctor failed"
-    : (doctorHasIssues ? "doctor attention" : (memoryMonitor.enabled ? "monitoring" : "disabled"));
+    : ((state.memoryQuality || {}).ok === false
+      ? "quality failed"
+      : (doctorHasIssues
+        ? "doctor attention"
+        : (qualityHasIssues ? "quality attention" : (memoryMonitor.enabled ? "monitoring" : "disabled"))));
   const memoryTone = (state.memoryDoctor || {}).ok === false
     ? "danger"
-    : (doctorHasIssues ? "warn" : (memoryMonitor.enabled ? "ok" : "warn"));
+    : ((state.memoryQuality || {}).ok === false
+      ? "danger"
+      : (doctorHasIssues || qualityHasIssues ? "warn" : (memoryMonitor.enabled ? "ok" : "warn")));
   setBadge("memory-status", memoryBadge, memoryTone);
   renderSkillsBoard();
   renderMemoryBoard();
@@ -2790,6 +2826,48 @@ async function triggerMemoryDoctor() {
   }
 }
 
+async function triggerMemoryQuality() {
+  const button = byId("run-memory-quality");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.memory_quality || "/v1/control/memory/quality", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const summary = payload.summary || {};
+    const report = summary.report || {};
+    const statePayload = summary.state || {};
+    const drift = String((report.drift || {}).assessment || (statePayload.trend || {}).assessment || "stable");
+    const score = numeric(report.score, numeric((statePayload.current || {}).score, 0));
+    state.memoryQuality = summary;
+    if (summary.ok !== false && state.dashboardState && state.dashboardState.memory) {
+      state.dashboardState.memory.quality = statePayload;
+    }
+    recordEvent(
+      summary.ok === false ? "danger" : (drift === "degrading" || score < 65 ? "warn" : "ok"),
+      summary.ok === false ? "Memory quality failed" : "Memory quality updated",
+      summary.ok === false
+        ? String((summary.error || {}).message || (summary.error || {}).type || "Memory quality snapshot failed.")
+        : `${score} score | ${drift} drift | ${String((report.recommendations || [])[0] || "Quality snapshot persisted.")}`,
+      appendRequestIdMeta("memory-quality", payload),
+    );
+    renderAll();
+  } catch (error) {
+    state.memoryQuality = null;
+    recordEvent("danger", "Memory quality failed", error.message, appendRequestIdMeta("memory-quality", error));
+    renderAll();
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerMemorySnapshotCreate() {
   const button = byId("create-memory-snapshot");
   if (button) {
@@ -2811,6 +2889,7 @@ async function triggerMemorySnapshotCreate() {
       appendRequestIdMeta("memory", payload),
     );
     state.memoryDoctor = null;
+    state.memoryQuality = null;
     await refreshAll("memory-snapshot-create");
   } catch (error) {
     recordEvent("danger", "Memory snapshot creation failed", error.message, appendRequestIdMeta("memory", error));
@@ -2854,6 +2933,7 @@ async function triggerMemorySnapshotRollback() {
       appendRequestIdMeta("memory", payload),
     );
     state.memoryDoctor = null;
+    state.memoryQuality = null;
     if (input) {
       input.value = "";
     }
@@ -3236,6 +3316,9 @@ function bindEvents() {
   });
   byId("run-memory-doctor").addEventListener("click", () => {
     void triggerMemoryDoctor();
+  });
+  byId("run-memory-quality").addEventListener("click", () => {
+    void triggerMemoryQuality();
   });
   byId("refresh-memory-suggestions").addEventListener("click", () => {
     void triggerMemorySuggestRefresh();
