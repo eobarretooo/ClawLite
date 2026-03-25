@@ -25,6 +25,7 @@ from clawlite.providers.hints import provider_probe_hints, provider_status_hints
 from clawlite.providers.model_probe import evaluate_remote_model_check, model_check_hints
 from clawlite.providers.probe_cache import load_provider_probe_snapshot
 from clawlite.providers.probe_cache import normalize_provider_probe_base_url
+from clawlite.providers.probe_cache import provider_probe_capability_summary
 from clawlite.providers.probe_cache import save_provider_probe_snapshot
 from clawlite.providers.qwen_auth import load_qwen_auth_file
 from clawlite.providers.registry import SPECS, _configured_provider_hint, detect_provider_name
@@ -127,6 +128,10 @@ def _last_live_provider_probe(
     payload = dict(snapshot)
     payload["matches_current_model"] = bool(current_model) and cached_model == current_model
     payload["matches_current_base_url"] = cached_base_url == current_base_url
+    capability_summary = payload.get("capability_summary")
+    if not isinstance(capability_summary, dict):
+        capability_summary = provider_probe_capability_summary(payload)
+    payload["capability_summary"] = dict(capability_summary or {})
     return payload
 
 
@@ -1263,6 +1268,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
             model=str(config.agents.defaults.model or config.provider.model),
             base_url=codex_base_url if provider_key == "openai_codex" else base_url,
         )
+        last_capability_probe = dict((last_live_probe or {}).get("capability_summary", {}) or {}) if isinstance(last_live_probe, dict) else None
         return {
             "ok": True,
             "provider": provider_key,
@@ -1277,6 +1283,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
             "base_url_source": codex_base_url_source if provider_key == "openai_codex" else base_url_source,
             "key_envs": [],
             "last_live_probe": last_live_probe,
+            "last_capability_probe": last_capability_probe,
             **_provider_profile_payload(provider_key),
             "hints": provider_status_hints(
                 provider=provider_key,
@@ -1353,6 +1360,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
         model=str(config.agents.defaults.model or config.provider.model),
         base_url=base_url,
     )
+    last_capability_probe = dict((last_live_probe or {}).get("capability_summary", {}) or {}) if isinstance(last_live_probe, dict) else None
 
     return {
         "ok": True,
@@ -1369,6 +1377,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
         "is_gateway": bool(spec.is_gateway),
         "env_key_present": env_key_present,
         "last_live_probe": last_live_probe,
+        "last_capability_probe": last_capability_probe,
         "model": str(config.agents.defaults.model or config.provider.model),
         **_provider_profile_payload(spec.name),
         "hints": provider_status_hints(
@@ -2073,12 +2082,17 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
         **profile_payload,
         "hints": hints,
     }
-    save_provider_probe_snapshot(
+    payload["capability_summary"] = provider_probe_capability_summary(payload)
+    snapshot = save_provider_probe_snapshot(
         config.state_path,
         provider=provider,
         payload=payload,
         source="provider_live_probe",
     )
+    payload["checked_at"] = str(snapshot.get("checked_at", "") or "")
+    payload["source"] = str(snapshot.get("source", "provider_live_probe") or "provider_live_probe")
+    payload["capability_summary"] = dict(snapshot.get("capability_summary", payload.get("capability_summary", {})) or {})
+    payload["last_capability_probe"] = dict(payload.get("capability_summary", {}) or {})
     return payload
 
 
@@ -2279,6 +2293,7 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
         model=model,
         base_url=resolved_base_url,
     )
+    last_capability_probe = dict((last_live_probe or {}).get("capability_summary", {}) or {}) if isinstance(last_live_probe, dict) else None
 
     env_hits: dict[str, bool] = {}
     env_names: list[str] = []
@@ -2420,6 +2435,7 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
         "base_url": resolved_base_url,
         "env_key_present": env_hits,
         "last_live_probe": last_live_probe,
+        "last_capability_probe": last_capability_probe,
         **guidance,
         "checks": checks,
         "errors": errors,

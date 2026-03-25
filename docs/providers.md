@@ -446,7 +446,7 @@ Common checks:
 - Wrong provider prefix: make sure the model matches the selected provider, for example `openai/...`, `anthropic/...`, `openrouter/...`
 - Local runtime down: verify Ollama or vLLM is listening on the configured base URL
 
-`clawlite validate preflight --provider-live` now also persists the latest live probe snapshot in local state. After that, `clawlite provider status <provider>` and `clawlite validate provider` reuse that additive `last_live_probe` summary so operators can see the last known live result, its timestamp, and whether it still matches the current model/base-url selection without re-running a network probe every time.
+`clawlite validate preflight --provider-live` now also persists the latest live probe snapshot in local state. After that, `clawlite provider status <provider>` and `clawlite validate provider` reuse that additive cache in two ways: `last_live_probe` keeps the last known raw result, timestamp, and model/base-url match flags, while `last_capability_probe` summarizes the last remote model-list/capability signal (`checked`, `current_model_listed`, listed-model count, and a bounded sample) without re-running a network probe every time.
 
 ## Telegram Transcription Provider
 

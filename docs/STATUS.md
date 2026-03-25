@@ -30,6 +30,7 @@ The newest tools follow-up now turns the live tool catalog into a compact operat
 The newest onboarding/config follow-up now also skips redundant API-key prompts in the clear env-backed cases: when provider, reusable env auth, and base URL are already resolved for the selected backend, `configure` goes straight to the model choice and live probe while still keeping config-backed credentials, Azure, ambiguous, and incompatible-auth cases on the explicit prompt path.
 The newest onboarding/config follow-up now also trims the quickstart happy path further: when a local-runtime provider like `ollama` or `vllm` is already clearly resolved with a compatible loopback base URL and canonical default model, quickstart reuses those resolved defaults and skips the redundant base-URL/model prompts, while the advanced flow keeps the explicit override path intact.
 The newest provider follow-up now adds a persistent live-probe snapshot for provider operations: `provider_live_probe()` stores the latest live result per provider under local state, while `clawlite provider status` and `clawlite validate provider` now surface that additive `last_live_probe` block with timestamp, transport, last error/result, and whether the cached live probe still matches the current model/base-url selection.
+The newest provider follow-up now also derives and reuses a compact capability summary from that same persisted probe cache: `last_capability_probe` surfaces whether the provider exposed a remote model list, whether the current model appeared in it, plus a bounded listed-model sample/count, and older cached snapshots still get that summary derived lazily instead of breaking on missing fields.
 The newest skills follow-up now adds a compact managed-marketplace lifecycle summary to `skills.diagnostics_report()`: dashboard/control-plane payloads can now see managed `count`, `ready_count`, `blocked_count`, `disabled_count`, bounded `items`, and `status_counts`, and the Knowledge tab surfaces those managed marketplace signals directly instead of leaving marketplace lifecycle visible only in the CLI `skills managed` path.
 The newest skills follow-up now promotes that same managed lifecycle into a first-class live control-plane surface: `GET /v1/control/skills/managed` and `GET /api/skills/managed` expose the full managed inventory with live filters/counts, and the packaged dashboard Knowledge tab now offers `Inspect managed skills` to fetch that snapshot on demand instead of relying only on the bounded diagnostics preview.
 The newest dashboard follow-up now makes that live managed inventory usable in-place: the packaged Knowledge tab exposes `status` and free-text `query` controls before `Inspect managed skills`, so operators can fetch only one managed lifecycle slice or search one marketplace skill directly from the control plane instead of falling back to CLI flags for every triage pass.
@@ -45,7 +46,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2027 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2028 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -176,7 +177,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2027 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2028 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -190,8 +191,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: the packaged dashboard now also turns the existing `memory suggest` and live `memory quality` signals into a more guided triage surface, highlighting the top quality recommendation and highest-priority pending suggestion directly in the Memory card alongside the live doctor / overview / quality snapshots
-- Next slice: `Memory` is now strong enough to stop monopolizing the roadmap; the next safe high-value pivot is likely back to `Providers`, ideally with a small capability-cache or provider-health follow-up instead of another dashboard-only memory slice
+- Current slice: `Providers` now reuse the persisted live-probe cache more effectively by surfacing a compact `last_capability_probe` summary alongside `last_live_probe`, so operators can inspect remote model-list/capability posture from `provider status`, `validate provider`, and live preflight output without forcing another network call
+- Next slice: the provider cache path is now strong enough for a pivot; the next safe high-value slice is likely `Tools`, ideally a compact health/approval summary follow-up instead of another provider-only cache refinement
 
 ## Delivery Policy
 

@@ -1528,6 +1528,7 @@ def cmd_validate_preflight(args: argparse.Namespace) -> int:
             "api_key_source": str(probe.get("api_key_source", "") or ""),
             "key_envs": list(probe.get("key_envs", []) or []),
             "model_check": dict(probe.get("model_check", {}) or {}),
+            "last_capability_probe": dict(probe.get("last_capability_probe", probe.get("capability_summary", {})) or {}),
             "onboarding_hint": str(probe.get("onboarding_hint", "") or ""),
             "hints": list(probe.get("hints", []) or []),
         }

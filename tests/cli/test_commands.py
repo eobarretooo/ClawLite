@@ -2175,6 +2175,16 @@ def test_cli_validate_preflight_optional_probes_success(
             "api_key_source": "env:OPENAI_API_KEY",
             "key_envs": ["OPENAI_API_KEY"],
             "model_check": {"checked": False, "ok": True},
+            "capability_summary": {
+                "provider": "openai",
+                "model": str(config.provider.model),
+                "transport": "openai_compatible",
+                "checked": False,
+                "current_model_listed": False,
+                "detail": "model_list_unavailable",
+                "listed_model_count": 0,
+                "listed_model_sample": [],
+            },
             "onboarding_hint": "OpenAI responds via the standard OpenAI-compatible endpoint; validate billing and the active project.",
             "hints": ["Credenciais validas."],
         },
@@ -2217,6 +2227,8 @@ def test_cli_validate_preflight_optional_probes_success(
         "openai/gpt-4o-mini",
         "openai/gpt-4.1-mini",
     ]
+    assert payload["provider_live_probe"]["last_capability_probe"]["provider"] == "openai"
+    assert payload["provider_live_probe"]["last_capability_probe"]["detail"] == "model_list_unavailable"
     assert "billing" in payload["provider_live_probe"]["onboarding_hint"].lower()
     assert payload["provider_live_probe"]["hints"] == ["Credenciais validas."]
     assert payload["telegram_live_probe"]["enabled"] is True
@@ -4383,6 +4395,11 @@ def test_provider_live_probe_persists_snapshot_and_provider_status_reuses_it(
 
     payload = provider_live_probe(load_config(config_path), timeout=0.1)
     assert payload["ok"] is True
+    assert payload["capability_summary"]["checked"] is True
+    assert payload["capability_summary"]["current_model_listed"] is True
+    assert payload["capability_summary"]["listed_model_count"] == 1
+    assert payload["last_capability_probe"]["source"] == "provider_live_probe"
+    assert payload["last_capability_probe"]["checked_at"]
 
     cache_path = state_path / "provider-probes.json"
     assert cache_path.exists()
@@ -4390,6 +4407,7 @@ def test_provider_live_probe_persists_snapshot_and_provider_status_reuses_it(
     assert cached_payload["providers"]["openai"]["provider"] == "openai"
     assert cached_payload["providers"]["openai"]["source"] == "provider_live_probe"
     assert cached_payload["providers"]["openai"]["status_code"] == 200
+    assert cached_payload["providers"]["openai"]["capability_summary"]["listed_model_sample"] == ["gpt-4o-mini"]
 
     rc_status = main(["--config", str(config_path), "provider", "status", "openai"])
     assert rc_status == 0
@@ -4399,6 +4417,9 @@ def test_provider_live_probe_persists_snapshot_and_provider_status_reuses_it(
     assert status_payload["last_live_probe"]["source"] == "provider_live_probe"
     assert status_payload["last_live_probe"]["matches_current_model"] is True
     assert status_payload["last_live_probe"]["matches_current_base_url"] is True
+    assert status_payload["last_capability_probe"]["provider"] == "openai"
+    assert status_payload["last_capability_probe"]["current_model_listed"] is True
+    assert status_payload["last_capability_probe"]["listed_model_count"] == 1
 
 
 def test_provider_live_probe_snapshot_drops_raw_remote_error_detail(
@@ -4844,6 +4865,71 @@ def test_cli_validate_provider_surfaces_last_live_probe_snapshot(
     assert payload["last_live_probe"]["source"] == "provider_live_probe"
     assert payload["last_live_probe"]["matches_current_model"] is True
     assert payload["last_live_probe"]["matches_current_base_url"] is True
+    assert payload["last_capability_probe"]["provider"] == "minimax"
+    assert payload["last_capability_probe"]["checked"] is False
+    assert payload["last_capability_probe"]["detail"] == "model_list_unavailable"
+
+
+def test_cli_provider_status_derives_capability_summary_from_legacy_probe_snapshot(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai-1234")
+
+    state_path = tmp_path / "state"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(state_path),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "agents": {"defaults": {"model": "openai/gpt-4o-mini"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cache_path = state_path / "provider-probes.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "providers": {
+                    "openai": {
+                        "provider": "openai",
+                        "model": "openai/gpt-4o-mini",
+                        "base_url": "https://api.openai.com/v1",
+                        "transport": "openai_compatible",
+                        "status_code": 200,
+                        "ok": True,
+                        "source": "provider_live_probe",
+                        "checked_at": "2026-03-25T00:00:00+00:00",
+                        "model_check": {
+                            "checked": True,
+                            "ok": True,
+                            "detail": "model_listed",
+                            "matched_model": "gpt-4o-mini",
+                            "available_models": ["gpt-4o-mini", "gpt-4.1-mini"],
+                        },
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rc_status = main(["--config", str(config_path), "provider", "status", "openai"])
+    assert rc_status == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["last_live_probe"]["provider"] == "openai"
+    assert payload["last_capability_probe"]["provider"] == "openai"
+    assert payload["last_capability_probe"]["source"] == "provider_live_probe"
+    assert payload["last_capability_probe"]["checked_at"] == "2026-03-25T00:00:00+00:00"
+    assert payload["last_capability_probe"]["current_model_listed"] is True
+    assert payload["last_capability_probe"]["listed_model_count"] == 2
+    assert payload["last_capability_probe"]["listed_model_sample"] == ["gpt-4o-mini", "gpt-4.1-mini"]
 
 
 def test_cli_provider_use_clear_fallback_clears_config(tmp_path: Path, capsys) -> None:
