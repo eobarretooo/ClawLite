@@ -16,6 +16,7 @@ class GatewayControlHandlers:
     diagnostics_require_auth: bool
     runtime: Any
     heartbeat_enabled: bool
+    memory_doctor_fn: Callable[[Any, bool], dict[str, Any]]
     memory_snapshot_create_fn: Callable[[Any, str], dict[str, Any]]
     memory_snapshot_rollback_fn: Callable[[Any, str], dict[str, Any]]
     submit_heartbeat_wake: Callable[[], Awaitable[Any]]
@@ -168,6 +169,12 @@ class GatewayControlHandlers:
             "suggestions": rows,
             "pending_path": str(monitor.suggestions_path),
         }
+        return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
+    async def memory_doctor(self, request: Request, payload: Any) -> dict[str, Any]:
+        del payload
+        self._check_control(request)
+        summary = await asyncio.to_thread(self.memory_doctor_fn, self.runtime.config, False)
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
 
     async def skills_refresh(self, request: Request, payload: Any) -> dict[str, Any]:

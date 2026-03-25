@@ -121,6 +121,7 @@ const state = {
   diagnostics: null,
   tools: null,
   skillsManaged: null,
+  memoryDoctor: null,
   tokenInfo: null,
   lastSyncAt: null,
   eventFeed: [],
@@ -1451,6 +1452,11 @@ function renderMemoryBoard() {
   const suggest = memory.suggestions || {};
   const versions = memory.versions || {};
   const quality = memory.quality || {};
+  const doctor = state.memoryDoctor || {};
+  const doctorCounts = doctor.counts || {};
+  const doctorDiagnostics = doctor.diagnostics || {};
+  const doctorFiles = doctor.files || {};
+  const doctorError = doctor.error || {};
   const profilePayload = profile.profile || {};
   const qualityScores = quality.scores || {};
 
@@ -1473,6 +1479,19 @@ function renderMemoryBoard() {
     title: "Snapshots",
     body: `${numeric(versions.count, 0)} versions`,
     detail: Array.isArray(versions.versions) && versions.versions.length ? versions.versions.slice(0, 2).join(", ") : "No snapshots created yet.",
+  });
+  appendSummaryCard(grid, {
+    title: "Doctor",
+    body: state.memoryDoctor
+      ? (doctor.ok === false
+        ? "error"
+        : `${numeric(doctorCounts.total, 0)} entries | ${doctor.repair_applied ? "repair applied" : "read-only"}`)
+      : "no live snapshot",
+    detail: state.memoryDoctor
+      ? (doctor.ok === false
+        ? `${String(doctorError.type || "error")} | ${String(doctorError.message || "Memory doctor failed.")}`
+        : `corrupt ${numeric(doctorDiagnostics.history_read_corrupt_lines, 0)} | repaired ${numeric(doctorDiagnostics.history_repaired_files, 0)} | history ${numeric((doctorFiles.history || {}).size_bytes, 0)} bytes`)
+      : "Run Memory doctor to inspect file integrity and repair counters.",
   });
   appendSummaryCard(grid, {
     title: "Identity context",
@@ -1661,6 +1680,7 @@ function renderKnowledge() {
     profile: memory.profile || {},
     suggestions: memory.suggestions || {},
     quality: memory.quality || {},
+    doctor_live: state.memoryDoctor || {},
   });
 
   setBadge("workspace-status", workspace.failed_count ? "attention" : "healthy", workspace.failed_count ? "warn" : "ok");
@@ -1683,7 +1703,18 @@ function renderKnowledge() {
       ? `${enabledUnavailableCount} blocked`
       : `${numeric(skillsSummary.available, 0)} available`;
   setBadge("skills-status", skillsBadge, skillsTone);
-  setBadge("memory-status", memoryMonitor.enabled ? "monitoring" : "disabled", memoryMonitor.enabled ? "ok" : "warn");
+  const doctorLines = numeric((state.memoryDoctor || {}).diagnostics?.history_read_corrupt_lines, 0);
+  const doctorRepairs = numeric((state.memoryDoctor || {}).diagnostics?.history_repaired_files, 0);
+  const doctorHasIssues = Boolean(state.memoryDoctor) && (
+    (state.memoryDoctor || {}).ok === false || doctorLines > 0 || doctorRepairs > 0
+  );
+  const memoryBadge = (state.memoryDoctor || {}).ok === false
+    ? "doctor failed"
+    : (doctorHasIssues ? "doctor attention" : (memoryMonitor.enabled ? "monitoring" : "disabled"));
+  const memoryTone = (state.memoryDoctor || {}).ok === false
+    ? "danger"
+    : (doctorHasIssues ? "warn" : (memoryMonitor.enabled ? "ok" : "warn"));
+  setBadge("memory-status", memoryBadge, memoryTone);
   renderSkillsBoard();
   renderMemoryBoard();
 }
@@ -2723,6 +2754,42 @@ async function triggerMemorySuggestRefresh() {
   }
 }
 
+async function triggerMemoryDoctor() {
+  const button = byId("run-memory-doctor");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.memory_doctor || "/v1/control/memory/doctor", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ repair: false }),
+    });
+    const summary = payload.summary || {};
+    const diagnostics = summary.diagnostics || {};
+    state.memoryDoctor = summary;
+    recordEvent(
+      summary.ok === false ? "danger" : (numeric(diagnostics.history_read_corrupt_lines, 0) > 0 ? "warn" : "ok"),
+      summary.ok === false ? "Memory doctor failed" : "Memory doctor finished",
+      summary.ok === false
+        ? String((summary.error || {}).message || (summary.error || {}).type || "Memory doctor failed.")
+        : `${numeric((summary.counts || {}).total, 0)} entries | corrupt ${numeric(diagnostics.history_read_corrupt_lines, 0)} | repaired ${numeric(diagnostics.history_repaired_files, 0)}`,
+      appendRequestIdMeta("memory-doctor", payload),
+    );
+    renderAll();
+  } catch (error) {
+    state.memoryDoctor = null;
+    recordEvent("danger", "Memory doctor failed", error.message, appendRequestIdMeta("memory-doctor", error));
+    renderAll();
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function triggerMemorySnapshotCreate() {
   const button = byId("create-memory-snapshot");
   if (button) {
@@ -2743,6 +2810,7 @@ async function triggerMemorySnapshotCreate() {
       `${String(summary.version_id || "unknown")} | tag ${String(summary.tag || "")}`,
       appendRequestIdMeta("memory", payload),
     );
+    state.memoryDoctor = null;
     await refreshAll("memory-snapshot-create");
   } catch (error) {
     recordEvent("danger", "Memory snapshot creation failed", error.message, appendRequestIdMeta("memory", error));
@@ -2785,6 +2853,7 @@ async function triggerMemorySnapshotRollback() {
       summary.ok === false ? String(summary.error || "unknown_error") : `${versionId} restored`,
       appendRequestIdMeta("memory", payload),
     );
+    state.memoryDoctor = null;
     if (input) {
       input.value = "";
     }
@@ -3164,6 +3233,9 @@ function bindEvents() {
   });
   byId("trigger-autonomy-wake").addEventListener("click", () => {
     void triggerAutonomyWake();
+  });
+  byId("run-memory-doctor").addEventListener("click", () => {
+    void triggerMemoryDoctor();
   });
   byId("refresh-memory-suggestions").addEventListener("click", () => {
     void triggerMemorySuggestRefresh();

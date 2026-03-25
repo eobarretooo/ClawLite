@@ -151,7 +151,7 @@ from clawlite.gateway.runtime_builder import RuntimeContainer, _provider_config,
 from clawlite.gateway.webhooks import GatewayWebhookHandlers
 from clawlite.gateway.websocket_handlers import GatewayWebSocketHandlers
 from clawlite.cli.onboarding import build_dashboard_handoff
-from clawlite.cli.ops import memory_profile_snapshot, memory_snapshot_create, memory_snapshot_rollback, memory_suggest_snapshot, memory_version_snapshot
+from clawlite.cli.ops import memory_doctor_snapshot, memory_profile_snapshot, memory_snapshot_create, memory_snapshot_rollback, memory_suggest_snapshot, memory_version_snapshot
 from clawlite.utils.logging import bind_event, setup_logging
 
 
@@ -307,6 +307,10 @@ class AutonomyWakeRequest(BaseModel):
 
 
 class MemorySuggestRefreshRequest(BaseModel):
+    noop: bool = False
+
+
+class MemoryDoctorRequest(BaseModel):
     noop: bool = False
 
 
@@ -2410,6 +2414,7 @@ def create_app(
         diagnostics_require_auth=cfg.gateway.diagnostics.require_auth,
         runtime=runtime,
         heartbeat_enabled=bool(cfg.gateway.heartbeat.enabled),
+        memory_doctor_fn=memory_doctor_snapshot,
         memory_snapshot_create_fn=memory_snapshot_create,
         memory_snapshot_rollback_fn=memory_snapshot_rollback,
         submit_heartbeat_wake=_submit_heartbeat_wake,
@@ -3814,6 +3819,18 @@ def create_app(
         request: Request, payload: MemorySuggestRefreshRequest | None = None
     ) -> dict[str, Any]:
         return await control_handlers.memory_suggest_refresh(request, payload or MemorySuggestRefreshRequest())
+
+    @app.post("/v1/control/memory/doctor")
+    async def memory_doctor(
+        request: Request, payload: MemoryDoctorRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.memory_doctor(request, payload or MemoryDoctorRequest())
+
+    @app.post("/api/memory/doctor")
+    async def api_memory_doctor(
+        request: Request, payload: MemoryDoctorRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.memory_doctor(request, payload or MemoryDoctorRequest())
 
     @app.post("/v1/control/skills/refresh")
     async def skills_refresh(

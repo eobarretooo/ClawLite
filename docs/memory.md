@@ -223,6 +223,8 @@ clawlite memory export --out ./memory-export.json
 clawlite memory import ./memory-export.json
 ```
 
+The packaged dashboard now also exposes the safe read-only doctor path directly through `Run memory doctor`, backed by `POST /v1/control/memory/doctor` and `POST /api/memory/doctor`. That live snapshot stays separate from the normal dashboard-state payload on purpose, so operators can inspect file-integrity counters and repair diagnostics on demand without mutating memory or forcing a full runtime refresh.
+
 ## Session Logs vs Memory
 
 Session logs are not the same as memory.

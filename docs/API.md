@@ -393,6 +393,44 @@ Example response:
 
 Alias compatível: `GET /api/skills/managed`.
 
+## `POST /v1/control/memory/doctor`
+
+Runs the same read-only memory diagnostics used by `clawlite memory doctor`, but from the running control plane.
+
+Example request:
+
+```json
+{}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "ok": true,
+    "repair_applied": false,
+    "counts": {
+      "history": 12,
+      "curated": 4,
+      "total": 16
+    },
+    "diagnostics": {
+      "history_read_corrupt_lines": 0,
+      "history_repaired_files": 0
+    },
+    "files": {
+      "history": {
+        "size_bytes": 2048
+      }
+    }
+  }
+}
+```
+
+Alias compatível: `POST /api/memory/doctor`.
+
 ## `POST /v1/control/memory/snapshot/create`
 
 Creates a new memory snapshot version from the live runtime state.

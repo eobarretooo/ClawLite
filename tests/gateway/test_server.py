@@ -3097,6 +3097,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert "Recent Sessions" in body
         assert "Validate skills inventory" in body
         assert "Sync managed skills" in body
+        assert "Run memory doctor" in body
         assert "Catalog Signals" in body
         assert 'id="tool-signals"' in body
         assert 'window.__CLAWLITE_DASHBOARD_BOOTSTRAP__ = {' in body
@@ -3123,6 +3124,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"skills_doctor": "/v1/control/skills/doctor"' in body
         assert '"skills_validate": "/v1/control/skills/validate"' in body
         assert '"skills_managed": "/v1/control/skills/managed"' in body
+        assert '"memory_doctor": "/v1/control/memory/doctor"' in body
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
@@ -3199,6 +3201,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Managed skills inspected" in js.text
     assert "validate-skills-inventory" in js.text
     assert "sync-managed-skills" in js.text
+    assert "triggerMemoryDoctor" in js.text
+    assert 'paths.memory_doctor || "/v1/control/memory/doctor"' in js.text
+    assert "Memory doctor finished" in js.text
+    assert "doctor_live: state.memoryDoctor || {}" in js.text
+    assert "run-memory-doctor" in js.text
     assert "managed-skills-status-filter" in js.text
     assert "managed-skills-query-filter" in js.text
     assert "inspect-managed-skills" in js.text
@@ -7334,6 +7341,81 @@ def test_gateway_memory_suggest_refresh_endpoint_returns_snapshot(tmp_path: Path
     assert payload["ok"] is True
     assert payload["summary"]["ok"] is True
     assert "count" in payload["summary"]
+
+
+def test_gateway_memory_doctor_endpoint_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+
+    def _fake_memory_doctor(_config: AppConfig, repair: bool = False) -> dict[str, Any]:
+        calls.append(bool(repair))
+        return {
+            "ok": True,
+            "repair_applied": repair,
+            "counts": {"history": 2, "curated": 1, "total": 3},
+            "diagnostics": {"history_read_corrupt_lines": 1, "history_repaired_files": 0},
+            "files": {"history": {"size_bytes": 123}},
+            "paths": {"history": "history", "curated": "curated", "checkpoints": "checkpoints"},
+            "analysis": {"recent": {}, "temporal_marked_count": 0, "top_sources": []},
+            "schema": {"curated": {}, "checkpoints": {}},
+        }
+
+    monkeypatch.setattr(gateway_server, "memory_doctor_snapshot", _fake_memory_doctor)
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/memory/doctor", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["repair_applied"] is False
+    assert payload["summary"]["counts"]["total"] == 3
+    assert payload["summary"]["diagnostics"]["history_read_corrupt_lines"] == 1
+    assert calls == [False]
+
+
+def test_gateway_api_memory_doctor_alias_returns_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+
+    def _fake_memory_doctor(_config: AppConfig, repair: bool = False) -> dict[str, Any]:
+        calls.append(bool(repair))
+        return {
+            "ok": True,
+            "repair_applied": repair,
+            "counts": {"history": 1, "curated": 0, "total": 1},
+            "diagnostics": {"history_read_corrupt_lines": 0, "history_repaired_files": 1},
+            "files": {"history": {"size_bytes": 64}},
+            "paths": {"history": "history", "curated": "curated", "checkpoints": "checkpoints"},
+            "analysis": {"recent": {}, "temporal_marked_count": 0, "top_sources": []},
+            "schema": {"curated": {}, "checkpoints": {}},
+        }
+
+    monkeypatch.setattr(gateway_server, "memory_doctor_snapshot", _fake_memory_doctor)
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        response = client.post("/api/memory/doctor", json={"repair": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["repair_applied"] is False
+    assert payload["summary"]["diagnostics"]["history_repaired_files"] == 1
+    assert calls == [False]
 
 
 def test_gateway_skills_refresh_endpoint_returns_summary(tmp_path: Path) -> None:
