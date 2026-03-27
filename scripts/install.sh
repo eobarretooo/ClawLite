@@ -171,10 +171,7 @@ def install_local() -> None:
     req_file = Path(ROOT_DIR) / "requirements.txt"
     if req_file.exists():
         run(PIP + ["install", "--upgrade", "-r", str(req_file)], "pip requirements")
-    run(
-        PIP + ["install", "--upgrade", "--force-reinstall", "--no-deps", "-e", ROOT_DIR],
-        "install local",
-    )
+    run(PIP + ["install", "--upgrade", "-e", ROOT_DIR], "install local")
 
 
 def install_from_git() -> None:

@@ -27,7 +27,7 @@ if ! proot-distro login "${DISTRO_NAME}" -- true >/dev/null 2>&1; then
 fi
 
 echo "[3/5] Preparing Ubuntu packages..."
-proot-distro login "${DISTRO_NAME}" --shared-tmp -- env REPO_URL="${REPO_URL}" INSTALL_DIR="${INSTALL_DIR}" /bin/bash -lc '
+proot-distro login "${DISTRO_NAME}" --shared-tmp -- env REPO_URL="${REPO_URL}" INSTALL_DIR="${INSTALL_DIR}" SYNC_HELPER_URL="${SYNC_HELPER_URL}" /bin/bash -lc '
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update

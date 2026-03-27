@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - provider probe cache state now also has a first-class live control-plane surface through `GET /v1/control/provider/status` / `GET /api/provider/status`, the packaged dashboard Automation tab can inspect that cached status directly, and `GET /api/dashboard/state` now includes additive `provider.status` data so cached `last_live_probe` / `last_capability_probe` posture is visible without leaving the control plane
 
 ### Fixed
+- local repo installs through `scripts/install.sh` now stay dependency-aware instead of dropping `pyproject.toml` requirements such as `portalocker` on the editable install pass, and the Termux/proot wrapper now passes `SYNC_HELPER_URL` into the inner Ubuntu shell so the repository sync helper no longer dies on an unbound variable before install starts
 - Telegram inbound media download now creates its local chat directory inline before best-effort OCR/PDF enrichment, and the Telegram media regression tests now keep OCR/PDF work hermetic instead of relying on real `asyncio.to_thread(...)` behavior in the test harness
 - `clawlite memory suggest` now uses a synchronous `MemoryMonitor.scan_sync()` path in CLI snapshots, avoiding another `asyncio.to_thread(...)` hang on empty/local stores while keeping the async runtime scan path unchanged
 - Discord inbound interactions now also route modal submissions as fresh turns with compact field text plus allowlisted modal field ids/labels, instead of ignoring `MODAL_SUBMIT` payloads entirely
