@@ -450,6 +450,8 @@ Common checks:
 
 That same cached provider surface is now also visible from the live runtime itself: `GET /v1/control/provider/status` and `GET /api/provider/status` expose the same compact cached status for the currently selected provider, and the packaged dashboard Automation tab reuses that snapshot through `Inspect provider cache` plus the additive `provider.status` block in `GET /api/dashboard/state`.
 
+The dashboard now also derives a bounded `provider.health` summary from that cached status plus live provider autonomy/telemetry state. That gives the packaged Automation tab a dedicated `Provider Health` card showing the active route, cached live-probe posture, cached capability posture, and the current recovery hint, so operator triage no longer depends on mentally combining `provider.status`, suppression state, and the raw recovery card.
+
 ## Telegram Transcription Provider
 
 Telegram voice/audio transcription is a separate provider path from the main LLM provider. It uses:

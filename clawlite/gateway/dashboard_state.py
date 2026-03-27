@@ -345,6 +345,166 @@ def dashboard_runtime_policy_summary(*, self_evolution_payload: dict[str, Any]) 
     }
 
 
+def dashboard_provider_health_summary(
+    *,
+    provider_telemetry_payload: dict[str, Any],
+    provider_autonomy_payload: dict[str, Any],
+    provider_status_payload: dict[str, Any],
+) -> dict[str, Any]:
+    telemetry = dict(provider_telemetry_payload or {}) if isinstance(provider_telemetry_payload, dict) else {}
+    autonomy = dict(provider_autonomy_payload or {}) if isinstance(provider_autonomy_payload, dict) else {}
+    status = dict(provider_status_payload or {}) if isinstance(provider_status_payload, dict) else {}
+    summary = dict(telemetry.get("summary") or {}) if isinstance(telemetry.get("summary"), dict) else {}
+    live_probe = dict(status.get("last_live_probe") or {}) if isinstance(status.get("last_live_probe"), dict) else {}
+    capability = (
+        dict(status.get("last_capability_probe") or {})
+        if isinstance(status.get("last_capability_probe"), dict)
+        else {}
+    )
+
+    provider_name = str(
+        status.get("provider")
+        or status.get("selected_provider")
+        or autonomy.get("provider")
+        or telemetry.get("provider")
+        or ""
+    ).strip()
+    transport = str(status.get("transport") or summary.get("transport") or "").strip()
+    active_model = str(status.get("active_model") or status.get("model") or "").strip()
+    base_url = str(status.get("base_url") or "").strip()
+    active_matches_selected = bool(status.get("active_matches_selected", False))
+    summary_state = str(summary.get("state", autonomy.get("state", "healthy")) or "healthy").strip().lower()
+    suppression_reason = str(
+        autonomy.get("suppression_reason") or summary.get("suppression_reason") or ""
+    ).strip().lower()
+    suppression_backoff_s = round(_runtime_posture_number(autonomy.get("suppression_backoff_s")), 3)
+    last_error_class = str(autonomy.get("last_error_class") or "").strip().lower()
+
+    if not provider_name:
+        health_posture = "unconfigured"
+        health_tone = "warn"
+        operator_hint = "No provider route is configured yet."
+    elif status.get("ok") is False:
+        health_posture = "status_error"
+        health_tone = "danger"
+        operator_hint = str(status.get("error") or "Provider status failed to load.").strip()
+    elif summary_state == "circuit_open":
+        health_posture = "circuit_open"
+        health_tone = "danger"
+        operator_hint = str(
+            autonomy.get("suppression_hint")
+            or "Provider recovery is blocked by an open circuit; wait for cooldown or recover the route."
+        ).strip()
+    elif suppression_reason in {"auth", "quota", "config"}:
+        health_posture = "suppressed"
+        health_tone = "danger"
+        operator_hint = str(
+            autonomy.get("suppression_hint")
+            or f"Provider is suppressed by {suppression_reason}; fix the route before retrying."
+        ).strip()
+    elif live_probe and live_probe.get("ok") is False:
+        health_posture = "probe_error"
+        health_tone = "danger"
+        operator_hint = str(
+            live_probe.get("error") or "The latest cached live probe failed for the active provider route."
+        ).strip()
+    elif live_probe and (
+        not active_matches_selected
+        or not bool(live_probe.get("matches_current_model", False))
+        or not bool(live_probe.get("matches_current_base_url", False))
+    ):
+        health_posture = "cache_stale"
+        health_tone = "warn"
+        operator_hint = "Cached probe posture no longer matches the active provider route."
+    elif capability and bool(capability.get("checked", False)) and not bool(capability.get("current_model_listed", False)):
+        health_posture = "model_not_listed"
+        health_tone = "warn"
+        operator_hint = "The active model is not present in the latest cached remote model list."
+    elif summary_state in {"cooldown", "degraded"}:
+        health_posture = summary_state
+        health_tone = "warn"
+        operator_hint = str(
+            autonomy.get("suppression_hint")
+            or (summary.get("hints", [""]) or [""])[0]
+            or "Provider recovery is still in progress."
+        ).strip()
+    elif not live_probe:
+        health_posture = "probe_missing"
+        health_tone = "warn"
+        operator_hint = "No cached live probe is recorded yet for the selected provider."
+    elif not capability:
+        health_posture = "capability_missing"
+        health_tone = "warn"
+        operator_hint = "No cached capability summary is recorded yet for the selected provider."
+    else:
+        health_posture = "healthy"
+        health_tone = "ok"
+        operator_hint = str(
+            (summary.get("hints", [""]) or [""])[0] or "Cached provider route and capability posture look steady."
+        ).strip()
+
+    probe_posture = "missing"
+    if live_probe:
+        if live_probe.get("ok") is False:
+            probe_posture = "error"
+        elif bool(live_probe.get("matches_current_model", False)) and bool(live_probe.get("matches_current_base_url", False)):
+            probe_posture = "matched"
+        else:
+            probe_posture = "stale"
+
+    capability_posture = "missing"
+    if capability:
+        if not bool(capability.get("checked", False)):
+            capability_posture = "unknown"
+        elif bool(capability.get("current_model_listed", False)):
+            capability_posture = "listed"
+        else:
+            capability_posture = "model_not_listed"
+
+    return {
+        "provider": provider_name,
+        "transport": transport,
+        "health_posture": health_posture,
+        "health_tone": health_tone,
+        "operator_hint": operator_hint,
+        "route": {
+            "selected_provider": str(status.get("selected_provider") or provider_name),
+            "active_provider": str(status.get("active_provider") or ""),
+            "active_model": active_model,
+            "base_url": base_url,
+            "base_url_source": str(status.get("base_url_source") or ""),
+            "active_matches_selected": active_matches_selected,
+        },
+        "probe": {
+            "recorded": bool(live_probe),
+            "posture": probe_posture,
+            "transport": str(live_probe.get("transport") or transport or ""),
+            "checked_at": str(live_probe.get("checked_at") or ""),
+            "ok": bool(live_probe.get("ok", False)) if live_probe else False,
+            "status_code": int(live_probe.get("status_code", 0) or 0) if live_probe else 0,
+            "error": str(live_probe.get("error") or ""),
+            "matches_current_model": bool(live_probe.get("matches_current_model", False)) if live_probe else False,
+            "matches_current_base_url": bool(live_probe.get("matches_current_base_url", False)) if live_probe else False,
+        },
+        "capability": {
+            "recorded": bool(capability),
+            "posture": capability_posture,
+            "detail": str(capability.get("detail") or ""),
+            "checked_at": str(capability.get("checked_at") or ""),
+            "current_model_listed": bool(capability.get("current_model_listed", False)) if capability else False,
+            "matched_model": str(capability.get("matched_model") or ""),
+            "listed_model_count": int(capability.get("listed_model_count", 0) or 0) if capability else 0,
+            "listed_model_sample": list(capability.get("listed_model_sample", []) or [])[:5] if capability else [],
+        },
+        "autonomy": {
+            "state": summary_state,
+            "suppression_reason": suppression_reason,
+            "suppression_backoff_s": suppression_backoff_s,
+            "last_error_class": last_error_class,
+        },
+    }
+
+
 def dashboard_state_payload(
     *,
     contract_version: str,
@@ -374,6 +534,7 @@ def dashboard_state_payload(
     provider_telemetry_payload: dict[str, Any],
     provider_autonomy_payload: dict[str, Any],
     provider_status_payload: dict[str, Any],
+    provider_health_payload: dict[str, Any],
     self_evolution_payload: dict[str, Any],
     runtime_posture_payload: dict[str, Any],
     runtime_policy_payload: dict[str, Any],
@@ -406,6 +567,7 @@ def dashboard_state_payload(
             "telemetry": provider_telemetry_payload,
             "autonomy": provider_autonomy_payload,
             "status": provider_status_payload,
+            "health": provider_health_payload,
         },
         "self_evolution": self_evolution_payload,
         "runtime": {

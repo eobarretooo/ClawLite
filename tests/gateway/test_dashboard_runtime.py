@@ -46,6 +46,7 @@ def test_dashboard_state_payload_runtime_assembles_sections() -> None:
         dashboard_self_evolution_summary_payload=lambda **kwargs: {"enabled": True, "runner": dict(kwargs["runner_state"])},
         dashboard_runtime_posture_summary_payload=lambda **kwargs: {"autonomy_posture": "running"},
         dashboard_runtime_policy_summary_payload=lambda **kwargs: {"policy_posture": "manual_only"},
+        dashboard_provider_health_summary_payload=lambda **kwargs: {"health_posture": "healthy"},
         dashboard_memory_summary_payload=lambda **kwargs: {"enabled": True},
         operator_channel_summary=lambda channel: {"available": True, "channel": channel["name"]},
         provider_telemetry_snapshot=lambda provider: {"provider": provider.__class__.__name__},
@@ -65,6 +66,7 @@ def test_dashboard_state_payload_runtime_assembles_sections() -> None:
     assert payload["memory_payload"] == {"enabled": True}
     assert payload["provider_telemetry_payload"] == {"provider": "object"}
     assert payload["provider_status_payload"] == {"ok": True, "provider": "openai"}
+    assert payload["provider_health_payload"] == {"health_posture": "healthy"}
     assert payload["self_evolution_payload"] == {"enabled": True, "runner": {"running": True}}
     assert payload["runtime_posture_payload"] == {"autonomy_posture": "running"}
     assert payload["runtime_policy_payload"] == {"policy_posture": "manual_only"}

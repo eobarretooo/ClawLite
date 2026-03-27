@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary,
     dashboard_cron_summary,
+    dashboard_provider_health_summary,
     dashboard_preview,
     dashboard_runtime_policy_summary,
     dashboard_runtime_posture_summary,
@@ -252,6 +253,121 @@ def test_dashboard_runtime_policy_summary_marks_disabled_background_loop_as_manu
     assert "only explicit/manual runs can proceed" in payload["policy_hint"]
 
 
+def test_dashboard_provider_health_summary_surfaces_healthy_cached_route() -> None:
+    payload = dashboard_provider_health_summary(
+        provider_telemetry_payload={
+            "provider": "openai",
+            "summary": {
+                "state": "healthy",
+                "transport": "openai_compatible",
+                "hints": ["Cached provider route and capability posture look steady."],
+            },
+        },
+        provider_autonomy_payload={
+            "provider": "openai",
+            "state": "healthy",
+            "suppression_reason": "",
+            "suppression_backoff_s": 0.0,
+        },
+        provider_status_payload={
+            "ok": True,
+            "provider": "openai",
+            "selected_provider": "openai",
+            "active_provider": "openai",
+            "active_model": "openai/gpt-4o-mini",
+            "transport": "openai_compatible",
+            "base_url": "https://api.openai.com/v1",
+            "active_matches_selected": True,
+            "last_live_probe": {
+                "ok": True,
+                "transport": "openai_compatible",
+                "checked_at": "2026-03-27T12:00:00+00:00",
+                "matches_current_model": True,
+                "matches_current_base_url": True,
+            },
+            "last_capability_probe": {
+                "checked": True,
+                "detail": "model_listed",
+                "current_model_listed": True,
+                "matched_model": "openai/gpt-4o-mini",
+                "listed_model_count": 2,
+                "listed_model_sample": ["openai/gpt-4o-mini", "openai/gpt-4.1-mini"],
+            },
+        },
+    )
+
+    assert payload["health_posture"] == "healthy"
+    assert payload["health_tone"] == "ok"
+    assert payload["probe"]["posture"] == "matched"
+    assert payload["capability"]["posture"] == "listed"
+    assert payload["route"]["active_matches_selected"] is True
+
+
+def test_dashboard_provider_health_summary_prefers_provider_suppression() -> None:
+    payload = dashboard_provider_health_summary(
+        provider_telemetry_payload={
+            "provider": "failover",
+            "summary": {
+                "state": "degraded",
+                "suppression_reason": "quota",
+            },
+        },
+        provider_autonomy_payload={
+            "provider": "failover",
+            "state": "degraded",
+            "suppression_reason": "quota",
+            "suppression_backoff_s": 1800.0,
+            "suppression_hint": "Provider is suppressed because quota is exhausted.",
+            "last_error_class": "quota",
+        },
+        provider_status_payload={
+            "ok": True,
+            "provider": "failover",
+            "selected_provider": "failover",
+        },
+    )
+
+    assert payload["health_posture"] == "suppressed"
+    assert payload["health_tone"] == "danger"
+    assert payload["autonomy"]["suppression_reason"] == "quota"
+    assert payload["probe"]["posture"] == "missing"
+    assert "quota" in payload["operator_hint"]
+
+
+def test_dashboard_provider_health_summary_preserves_selected_and_active_route_context() -> None:
+    payload = dashboard_provider_health_summary(
+        provider_telemetry_payload={
+            "provider": "anthropic",
+            "summary": {
+                "state": "healthy",
+            },
+        },
+        provider_autonomy_payload={
+            "provider": "anthropic",
+            "state": "healthy",
+        },
+        provider_status_payload={
+            "ok": True,
+            "provider": "anthropic",
+            "selected_provider": "anthropic",
+            "active_provider": "openai",
+            "active_model": "openai/gpt-4o-mini",
+            "transport": "openai_compatible",
+            "active_matches_selected": False,
+            "last_live_probe": {
+                "ok": True,
+                "matches_current_model": False,
+                "matches_current_base_url": False,
+            },
+        },
+    )
+
+    assert payload["health_posture"] == "cache_stale"
+    assert payload["route"]["selected_provider"] == "anthropic"
+    assert payload["route"]["active_provider"] == "openai"
+    assert payload["route"]["active_matches_selected"] is False
+
+
 def test_dashboard_state_payload_assembles_sections() -> None:
     payload = dashboard_state_payload(
         contract_version="2026-03-02",
@@ -280,6 +396,7 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         provider_telemetry_payload={"provider": "ollama"},
         provider_autonomy_payload={"mode": "allowed"},
         provider_status_payload={"ok": True, "provider": "openai"},
+        provider_health_payload={"health_posture": "healthy"},
         self_evolution_payload={"enabled": False},
         runtime_posture_payload={"autonomy_posture": "disabled"},
         runtime_policy_payload={"policy_posture": "manual_only"},
@@ -290,6 +407,7 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         "telemetry": {"provider": "ollama"},
         "autonomy": {"mode": "allowed"},
         "status": {"ok": True, "provider": "openai"},
+        "health": {"health_posture": "healthy"},
     }
     assert payload["runtime"] == {
         "posture": {"autonomy_posture": "disabled"},

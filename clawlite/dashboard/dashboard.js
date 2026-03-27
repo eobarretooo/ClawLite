@@ -1501,6 +1501,209 @@ function renderRuntimePolicyBoard() {
   setBadge("runtime-policy-status", statusLabel, tone);
 }
 
+function deriveProviderHealthSnapshot(providerPayload, statusOverride) {
+  const provider = providerPayload || {};
+  const telemetry = provider.telemetry || {};
+  const summary = telemetry.summary || {};
+  const autonomy = provider.autonomy || {};
+  const cachedHealth = provider.health || {};
+  const status = (statusOverride && typeof statusOverride === "object") ? statusOverride : (provider.status || {});
+  const liveProbe = (status.last_live_probe && typeof status.last_live_probe === "object") ? status.last_live_probe : {};
+  const capability = (status.last_capability_probe && typeof status.last_capability_probe === "object") ? status.last_capability_probe : {};
+  const selectedProvider = String(
+    status.selected_provider || status.provider || ((cachedHealth.route || {}).selected_provider) || autonomy.provider || telemetry.provider || ""
+  );
+  const activeProvider = String(status.active_provider || ((cachedHealth.route || {}).active_provider) || "");
+  const displayProvider = activeProvider || selectedProvider || String(cachedHealth.provider || "");
+  const transport = String(status.transport || cachedHealth.transport || summary.transport || "");
+  const summaryState = String(autonomy.state || summary.state || ((cachedHealth.autonomy || {}).state) || "healthy").toLowerCase();
+  const suppressionReason = String(
+    autonomy.suppression_reason || summary.suppression_reason || ((cachedHealth.autonomy || {}).suppression_reason) || ""
+  ).toLowerCase();
+  const suppressionHint = String(autonomy.suppression_hint || "").trim();
+  const activeMatchesSelected = Object.prototype.hasOwnProperty.call(status, "active_matches_selected")
+    ? Boolean(status.active_matches_selected)
+    : Boolean((cachedHealth.route || {}).active_matches_selected);
+  const liveProbeRecorded = Object.keys(liveProbe).length > 0;
+  const capabilityRecorded = Object.keys(capability).length > 0;
+
+  let healthPosture = String(cachedHealth.health_posture || "");
+  let healthTone = String(cachedHealth.health_tone || "");
+  let operatorHint = String(cachedHealth.operator_hint || "");
+
+  if (!displayProvider) {
+    healthPosture = "unconfigured";
+    healthTone = "warn";
+    operatorHint = "No provider route is configured yet.";
+  } else if (status.ok === false) {
+    healthPosture = "status_error";
+    healthTone = "danger";
+    operatorHint = String(status.error || "Provider status failed to load.");
+  } else if (summaryState === "circuit_open") {
+    healthPosture = "circuit_open";
+    healthTone = "danger";
+    operatorHint = suppressionHint || "Provider recovery is blocked by an open circuit; wait for cooldown or recover the route.";
+  } else if (["auth", "quota", "config"].includes(suppressionReason)) {
+    healthPosture = "suppressed";
+    healthTone = "danger";
+    operatorHint = suppressionHint || `Provider is suppressed by ${suppressionReason}; fix the route before retrying.`;
+  } else if (liveProbeRecorded && liveProbe.ok === false) {
+    healthPosture = "probe_error";
+    healthTone = "danger";
+    operatorHint = String(liveProbe.error || "The latest cached live probe failed for the active provider route.");
+  } else if (liveProbeRecorded && (!activeMatchesSelected || !liveProbe.matches_current_model || !liveProbe.matches_current_base_url)) {
+    healthPosture = "cache_stale";
+    healthTone = "warn";
+    operatorHint = "Cached probe posture no longer matches the active provider route.";
+  } else if (capabilityRecorded && capability.checked && !capability.current_model_listed) {
+    healthPosture = "model_not_listed";
+    healthTone = "warn";
+    operatorHint = "The active model is not present in the latest cached remote model list.";
+  } else if (["cooldown", "degraded"].includes(summaryState)) {
+    healthPosture = summaryState;
+    healthTone = "warn";
+    operatorHint = suppressionHint || String((Array.isArray(summary.hints) ? summary.hints[0] : "") || "Provider recovery is still in progress.");
+  } else if (!liveProbeRecorded) {
+    healthPosture = "probe_missing";
+    healthTone = "warn";
+    operatorHint = "No cached live probe is recorded yet for the selected provider.";
+  } else if (!capabilityRecorded) {
+    healthPosture = "capability_missing";
+    healthTone = "warn";
+    operatorHint = "No cached capability summary is recorded yet for the selected provider.";
+  } else {
+    healthPosture = "healthy";
+    healthTone = "ok";
+    operatorHint = String((Array.isArray(summary.hints) ? summary.hints[0] : "") || "Cached provider route and capability posture look steady.");
+  }
+
+  return {
+    provider: displayProvider,
+    transport,
+    health_posture: healthPosture,
+    health_tone: healthTone,
+    operator_hint: operatorHint,
+    route: {
+      selected_provider: selectedProvider,
+      active_provider: activeProvider,
+      active_model: String(status.active_model || status.model || ((cachedHealth.route || {}).active_model) || ""),
+      base_url: String(status.base_url || ((cachedHealth.route || {}).base_url) || ""),
+      base_url_source: String(status.base_url_source || ((cachedHealth.route || {}).base_url_source) || ""),
+      active_matches_selected: activeMatchesSelected,
+    },
+    probe: {
+      recorded: liveProbeRecorded,
+      posture: !liveProbeRecorded ? "missing" : (liveProbe.ok === false ? "error" : ((liveProbe.matches_current_model && liveProbe.matches_current_base_url) ? "matched" : "stale")),
+      transport: String(liveProbe.transport || transport || ""),
+      checked_at: String(liveProbe.checked_at || ""),
+      ok: liveProbeRecorded ? Boolean(liveProbe.ok) : false,
+      status_code: numeric(liveProbe.status_code, 0),
+      error: String(liveProbe.error || ""),
+      matches_current_model: liveProbeRecorded ? Boolean(liveProbe.matches_current_model) : false,
+      matches_current_base_url: liveProbeRecorded ? Boolean(liveProbe.matches_current_base_url) : false,
+    },
+    capability: {
+      recorded: capabilityRecorded,
+      posture: !capabilityRecorded ? "missing" : (!capability.checked ? "unknown" : (capability.current_model_listed ? "listed" : "model_not_listed")),
+      detail: String(capability.detail || ""),
+      checked_at: String(capability.checked_at || ""),
+      current_model_listed: capabilityRecorded ? Boolean(capability.current_model_listed) : false,
+      matched_model: String(capability.matched_model || ""),
+      listed_model_count: numeric(capability.listed_model_count, 0),
+      listed_model_sample: Array.isArray(capability.listed_model_sample) ? capability.listed_model_sample : [],
+    },
+    autonomy: {
+      state: summaryState,
+      suppression_reason: suppressionReason,
+      suppression_backoff_s: numeric(autonomy.suppression_backoff_s, numeric((cachedHealth.autonomy || {}).suppression_backoff_s, 0)),
+      last_error_class: String(autonomy.last_error_class || ((cachedHealth.autonomy || {}).last_error_class) || ""),
+    },
+  };
+}
+
+function renderProviderHealthBoard() {
+  const grid = byId("provider-health-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const provider = (state.dashboardState || {}).provider || {};
+  const providerStatus = state.providerStatus || provider.status || {};
+  const health = deriveProviderHealthSnapshot(provider, providerStatus);
+  const route = health.route || {};
+  const probe = health.probe || {};
+  const capability = health.capability || {};
+  const autonomy = health.autonomy || {};
+  const cards = [];
+
+  if (!Object.keys(health).length) {
+    appendSummaryCard(grid, {
+      title: "Provider health",
+      body: "not available",
+      detail: "No compact provider health snapshot is available yet.",
+    });
+    setBadge("provider-health-status", "pending", "warn");
+    return;
+  }
+
+  cards.push({
+    title: "Active route",
+    body: `${String(route.active_provider || route.selected_provider || health.provider || "provider")} | ${String(health.transport || "unknown")}`,
+    detail: [
+      String(route.active_model || "").trim(),
+      String(route.base_url || "").trim(),
+      route.active_matches_selected ? "active route matched" : "active route differs from selection",
+    ].filter(Boolean).join(" | ") || "No active provider route is available.",
+  });
+
+  cards.push({
+    title: "Live probe",
+    body: `${String(probe.posture || "unknown")} | ${probe.recorded ? "cached" : "missing"}`,
+    detail: [
+      String(probe.error || "").trim() || (numeric(probe.status_code, 0) ? `HTTP ${numeric(probe.status_code, 0)}` : ""),
+      probe.matches_current_model ? "model matched" : (probe.recorded ? "model drift" : ""),
+      probe.matches_current_base_url ? "base URL matched" : (probe.recorded ? "base URL drift" : ""),
+      String(probe.checked_at || "").trim(),
+    ].filter(Boolean).join(" | ") || "No cached live probe is recorded yet.",
+  });
+
+  cards.push({
+    title: "Capability posture",
+    body: `${String(capability.posture || "unknown")} | ${numeric(capability.listed_model_count, 0)} listed`,
+    detail: [
+      String(capability.detail || "").trim(),
+      capability.current_model_listed ? `Current model listed${capability.matched_model ? ` as ${String(capability.matched_model)}` : ""}` : "",
+      Array.isArray(capability.listed_model_sample) && capability.listed_model_sample.length
+        ? `sample ${capability.listed_model_sample.map((value) => String(value)).join(", ")}`
+        : "",
+    ].filter(Boolean).join(" | ") || "No cached capability summary is available yet.",
+  });
+
+  cards.push({
+    title: "Recovery hint",
+    body: String(health.operator_hint || "Provider posture looks steady."),
+    detail: [
+      String(autonomy.state || "").trim(),
+      String(autonomy.suppression_reason || "").trim(),
+      autonomy.suppression_backoff_s ? `backoff ${formatDuration(autonomy.suppression_backoff_s)}` : "",
+      String(autonomy.last_error_class || "").trim(),
+    ].filter(Boolean).join(" | "),
+  });
+
+  cards.forEach((item) => appendSummaryCard(grid, item));
+
+  const statusLabel = String(health.health_posture || "unknown");
+  const tone = String(health.health_tone || "").trim() || (
+    ["healthy"].includes(statusLabel)
+      ? "ok"
+      : (["probe_missing", "capability_missing", "cache_stale", "model_not_listed", "cooldown", "degraded", "unconfigured"].includes(statusLabel)
+        ? "warn"
+        : "danger")
+  );
+  setBadge("provider-health-status", statusLabel, tone);
+}
+
 function renderProviderRecoveryBoard() {
   const grid = byId("provider-grid");
   if (!grid) {
@@ -1819,6 +2022,7 @@ function renderAutomation() {
   renderSupervisorBoard();
   renderRuntimePostureBoard();
   renderRuntimePolicyBoard();
+  renderProviderHealthBoard();
   renderProviderRecoveryBoard();
 
   const selfEvolution = payload.self_evolution || {};

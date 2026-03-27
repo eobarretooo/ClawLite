@@ -39,6 +39,7 @@ The newest onboarding/config follow-up now also trims the quickstart happy path 
 The newest provider follow-up now adds a persistent live-probe snapshot for provider operations: `provider_live_probe()` stores the latest live result per provider under local state, while `clawlite provider status` and `clawlite validate provider` now surface that additive `last_live_probe` block with timestamp, transport, last error/result, and whether the cached live probe still matches the current model/base-url selection.
 The newest provider follow-up now also derives and reuses a compact capability summary from that same persisted probe cache: `last_capability_probe` surfaces whether the provider exposed a remote model list, whether the current model appeared in it, plus a bounded listed-model sample/count, and older cached snapshots still get that summary derived lazily instead of breaking on missing fields.
 The newest provider follow-up now also promotes that cached probe posture into the live control plane itself: `GET /v1/control/provider/status` plus `GET /api/provider/status` expose the same compact cached provider summary used by `clawlite provider status`, the packaged dashboard Automation tab can inspect that snapshot directly through `Inspect provider cache`, and `GET /api/dashboard/state` now carries additive `provider.status` data so cached `last_live_probe` / `last_capability_probe` signals are visible without leaving the control plane.
+The newest provider follow-up now also adds a bounded `provider.health` operator summary to that same control plane: `GET /api/dashboard/state` carries additive `provider.health` data derived from cached probe posture plus live provider autonomy/telemetry state, and the packaged Automation tab now renders a compact `Provider Health` card so suppression, cache drift, capability posture, and route guidance are visible without reconstructing them from several raw provider blocks.
 The newest core/runtime follow-up now adds a compact operator posture surface to that same packaged Automation tab: `GET /api/dashboard/state` carries additive `runtime.posture` data derived from autonomy, autonomy-wake, supervisor, and self-evolution state, and the dashboard renders it as a bounded `Runtime Posture` card with `autonomy_posture`, `wake_posture`, `approval_posture`, and a short operator hint instead of forcing operators back into full diagnostics JSON.
 The newest core/runtime follow-up now also adds an explicit operator policy surface next to that posture card: `GET /api/dashboard/state` carries additive `runtime.policy` data derived from self-evolution status/runner policy, and the Automation tab now renders a bounded `Runtime Policy` card with approval mode, canary scope, policy block, and policy hint so manual-only/canary/approval posture becomes visible without reconstructing it from raw self-evolution JSON.
 The newest install follow-up now closes two real setup regressions before the roadmap continues: local checkout installs through `scripts/install.sh` no longer lose `pyproject.toml` dependencies during the editable install pass, and the Termux/proot wrapper now forwards `SYNC_HELPER_URL` into the inner Ubuntu shell so the repository sync helper can actually run during bootstrap instead of failing on an unset variable.
@@ -57,7 +58,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2050 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2053 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -188,7 +189,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2050 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2053 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -202,8 +203,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: `Core/Runtime` now lifts both runtime posture and runtime policy into the existing control plane — `dashboard/state` carries additive `runtime.posture` plus `runtime.policy` data derived from autonomy, wake, supervisor, and self-evolution state, and the packaged Automation tab renders those signals in bounded `Runtime Posture` / `Runtime Policy` cards instead of forcing operators back to raw diagnostics JSON
-- Next slice: the next safe high-value follow-up is still likely to stay in `Core/Runtime`; the smallest useful step is probably a more explicit policy-drift or approval-mode/operator-safety summary before reopening broader provider budget/quota work
+- Current slice: `Providers` now also lifts a bounded health summary into the existing control plane — `dashboard/state` carries additive `provider.health` data derived from provider cache, provider autonomy suppression, and provider telemetry, and the packaged Automation tab renders those signals in a compact `Provider Health` card instead of forcing operators to reconstruct provider posture from several raw blocks
+- Next slice: the next safe high-value follow-up is likely to stay in `Providers`; the smallest useful step is probably a richer live provider health/capability surface or a compact budget/quota posture summary before reopening deeper runtime policy work
 
 ## Delivery Policy
 

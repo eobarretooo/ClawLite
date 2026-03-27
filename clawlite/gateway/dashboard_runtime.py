@@ -56,6 +56,20 @@ def dashboard_runtime_policy_summary(
     )
 
 
+def dashboard_provider_health_summary(
+    *,
+    provider_telemetry_payload: dict[str, Any],
+    provider_autonomy_payload: dict[str, Any],
+    provider_status_payload: dict[str, Any],
+    dashboard_provider_health_summary_payload: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    return dashboard_provider_health_summary_payload(
+        provider_telemetry_payload=provider_telemetry_payload,
+        provider_autonomy_payload=provider_autonomy_payload,
+        provider_status_payload=provider_status_payload,
+    )
+
+
 def dashboard_memory_summary(
     *,
     runtime: Any,
@@ -91,6 +105,7 @@ def dashboard_state_payload(
     dashboard_self_evolution_summary_payload: Callable[..., dict[str, Any]],
     dashboard_runtime_posture_summary_payload: Callable[..., dict[str, Any]],
     dashboard_runtime_policy_summary_payload: Callable[..., dict[str, Any]],
+    dashboard_provider_health_summary_payload: Callable[..., dict[str, Any]],
     dashboard_memory_summary_payload: Callable[..., dict[str, Any]],
     operator_channel_summary: Callable[[Any], dict[str, Any]],
     provider_telemetry_snapshot: Callable[[Any], dict[str, Any]],
@@ -107,6 +122,12 @@ def dashboard_state_payload(
     provider_telemetry = provider_telemetry_snapshot(runtime.engine.provider)
     provider_autonomy = provider_autonomy_snapshot(provider=runtime.engine.provider)
     provider_status = provider_status_payload_fn()
+    provider_health = dashboard_provider_health_summary(
+        provider_telemetry_payload=provider_telemetry,
+        provider_autonomy_payload=provider_autonomy,
+        provider_status_payload=provider_status if isinstance(provider_status, dict) else {},
+        dashboard_provider_health_summary_payload=dashboard_provider_health_summary_payload,
+    )
     self_evolution_payload = dashboard_self_evolution_summary(
         runtime=runtime,
         runner_state=self_evolution_runner_state,
@@ -161,6 +182,7 @@ def dashboard_state_payload(
         provider_telemetry_payload=provider_telemetry,
         provider_autonomy_payload=provider_autonomy,
         provider_status_payload=provider_status if isinstance(provider_status, dict) else {},
+        provider_health_payload=provider_health if isinstance(provider_health, dict) else {},
         self_evolution_payload=self_evolution_payload,
         runtime_posture_payload=runtime_posture_payload if isinstance(runtime_posture_payload, dict) else {},
         runtime_policy_payload=runtime_policy_payload if isinstance(runtime_policy_payload, dict) else {},
@@ -172,6 +194,7 @@ __all__ = [
     "dashboard_cron_summary",
     "dashboard_memory_summary",
     "dashboard_operator_summary",
+    "dashboard_provider_health_summary",
     "dashboard_runtime_policy_summary",
     "dashboard_runtime_posture_summary",
     "dashboard_self_evolution_summary",

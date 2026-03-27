@@ -3098,6 +3098,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="managed-skills-query-filter"' in body
         assert 'id="inspect-managed-skills"' in body
         assert 'id="provider-grid"' in body
+        assert 'id="provider-health-grid"' in body
         assert 'id="runtime-posture-grid"' in body
         assert 'id="runtime-policy-grid"' in body
         assert 'id="inspect-provider-status"' in body
@@ -3207,6 +3208,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderSupervisorBoard" in js.text
     assert "renderRuntimePostureBoard" in js.text
     assert "renderRuntimePolicyBoard" in js.text
+    assert "deriveProviderHealthSnapshot" in js.text
+    assert "renderProviderHealthBoard" in js.text
     assert "renderProviderRecoveryBoard" in js.text
     assert "triggerDeadLetterReplay" in js.text
     assert "triggerChannelRecovery" in js.text
@@ -3285,9 +3288,14 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "runtime-posture-status" in js.text
     assert "runtime-policy-grid" in js.text
     assert "runtime-policy-status" in js.text
+    assert "provider-health-grid" in js.text
+    assert "provider-health-status" in js.text
+    assert "route.active_provider || route.selected_provider" in js.text
     assert "Runtime hint" in js.text
     assert "Policy hint" in js.text
     assert "Canary scope" in js.text
+    assert "Capability posture" in js.text
+    assert "Recovery hint" in js.text
     assert "Approval audit" in js.text
     assert "Select exact grant" in js.text
     assert "Cacheable tools" in js.text
@@ -3437,6 +3445,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "telemetry" in payload["provider"]
     assert "autonomy" in payload["provider"]
     assert "status" in payload["provider"]
+    assert "health" in payload["provider"]
     assert "posture" in payload["runtime"]
     assert "policy" in payload["runtime"]
     assert "items" in payload["channels"]
@@ -3556,9 +3565,13 @@ def test_gateway_provider_status_endpoint_returns_cached_probe_summary(tmp_path:
     assert dashboard_response.status_code == 200
     dashboard_payload = dashboard_response.json()
     provider_status = dashboard_payload["provider"]["status"]
+    provider_health = dashboard_payload["provider"]["health"]
     assert provider_status["provider"] == "openai"
     assert provider_status["last_live_probe"]["provider"] == "openai"
     assert provider_status["last_capability_probe"]["current_model_listed"] is True
+    assert provider_health["health_posture"] == "suppressed"
+    assert provider_health["probe"]["recorded"] is True
+    assert provider_health["capability"]["posture"] == "listed"
 
 
 def test_gateway_provider_status_endpoint_prefers_live_runtime_model_over_config_model(tmp_path: Path) -> None:
