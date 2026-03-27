@@ -67,6 +67,7 @@ def dashboard_state_payload(
     operator_channel_summary: Callable[[Any], dict[str, Any]],
     provider_telemetry_snapshot: Callable[[Any], dict[str, Any]],
     provider_autonomy_snapshot: Callable[..., dict[str, Any]],
+    provider_status_payload_fn: Callable[[], dict[str, Any]],
     build_dashboard_handoff: Callable[[Any], dict[str, Any]],
     memory_profile_snapshot_fn: Callable[..., dict[str, Any]],
     memory_suggest_snapshot_fn: Callable[..., dict[str, Any]],
@@ -77,6 +78,7 @@ def dashboard_state_payload(
 ) -> dict[str, Any]:
     provider_telemetry = provider_telemetry_snapshot(runtime.engine.provider)
     provider_autonomy = provider_autonomy_snapshot(provider=runtime.engine.provider)
+    provider_status = provider_status_payload_fn()
     skills = runtime.skills_loader.diagnostics_report()
     return dashboard_state_payload_builder(
         contract_version=contract_version,
@@ -115,6 +117,7 @@ def dashboard_state_payload(
         ),
         provider_telemetry_payload=provider_telemetry,
         provider_autonomy_payload=provider_autonomy,
+        provider_status_payload=provider_status if isinstance(provider_status, dict) else {},
         self_evolution_payload=dashboard_self_evolution_summary(
             runtime=runtime,
             runner_state=self_evolution_runner_state,

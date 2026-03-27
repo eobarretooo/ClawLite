@@ -103,6 +103,8 @@ clawlite provider login gemini-oauth   # authenticate
 clawlite provider status gemini-oauth  # check status
 ```
 
+The packaged dashboard Automation tab now also exposes `Inspect provider cache`, which reuses the same cached `last_live_probe` / `last_capability_probe` surface through the live gateway control plane.
+
 Full auth details → [`docs/providers.md`](docs/providers.md)
 
 ---
@@ -123,7 +125,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2040 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2042 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 

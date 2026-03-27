@@ -9,7 +9,7 @@ Default base URL: `http://127.0.0.1:8787`
 - `gateway.auth.mode=required`: requires token (except loopback when `allow_loopback_without_auth=true`).
 - Token can be sent via configurable header (default `Authorization`, with or without `Bearer ` prefix) or configurable query param (default `token`).
 - If a gateway token is configured, the control-plane routes (`/v1/status`, `/v1/dashboard/state`, `/v1/chat`, control mutations, approvals/grants, and `WS /v1/ws`) require that token even when the gateway is otherwise open on loopback.
-- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/tools/approvals`, `/api/tools/approvals/*`, `/api/tools/approvals/audit`, `/api/tools/approvals/audit/export`, `/api/tools/grants/revoke`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. The short-lived handoff itself is consumed on the first successful exchange in the running gateway process, which blocks replay of the same bootstrap credential. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token. The packaged Tools tab now uses that same scoped flow not only for live approval inspection/review but also for filtered grant cleanup, read-only approval audit inspection, and bounded audit export.
+- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/tools/approvals`, `/api/tools/approvals/*`, `/api/tools/approvals/audit`, `/api/tools/approvals/audit/export`, `/api/tools/grants/revoke`, `/api/provider/status`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. The short-lived handoff itself is consumed on the first successful exchange in the running gateway process, which blocks replay of the same bootstrap credential. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token. The packaged Tools tab now uses that same scoped flow not only for live approval inspection/review but also for filtered grant cleanup, read-only approval audit inspection, and bounded audit export.
 - `/health` only requires auth when `gateway.auth.protect_health=true` and mode is `required`.
 - `/v1/diagnostics` depends on `gateway.diagnostics.enabled` and may require auth with `gateway.diagnostics.require_auth=true`.
 - Every HTTP response now includes `X-Request-ID`. HTTP error envelopes also echo that same value as `request_id` in the JSON body.
@@ -129,6 +129,42 @@ Example response:
 Alias compatível: `GET /api/dashboard/state` (mesmo payload). When a gateway token is configured, the packaged dashboard alias also accepts the derived dashboard-session credential described above; `/v1/dashboard/state` itself still expects the raw gateway token.
 
 This aggregated dashboard payload now also includes queue/dead-letter stats plus `channels_dispatcher`, `channels_delivery`, `channels_inbound`, `channels_recovery`, `supervisor`, and a compact `ws` block so the packaged control plane can render operator recovery cards and recent WebSocket correlation hints without scraping the full diagnostics payload. The dashboard handoff block intentionally redacts raw gateway secrets: it keeps `gateway_url` plus `gateway_token_masked`, but does not return `gateway_token` or `dashboard_url_with_token`.
+
+The additive `provider.status` block now mirrors the current cached provider status used by `clawlite provider status`: it includes the selected/active provider hint plus any persisted `last_live_probe` and `last_capability_probe` summaries so the packaged dashboard can surface cached provider probe posture without forcing a new network probe on every refresh.
+
+## `GET /v1/control/provider/status`
+
+Returns the compact cached provider status for the provider currently selected by the runtime/config, reusing the same local probe cache surfaced by `clawlite provider status`.
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "provider": "openai",
+  "selected_provider": "openai",
+  "active_provider": "openai",
+  "active_model": "openai/gpt-4o-mini",
+  "transport": "openai_compatible",
+  "base_url": "https://api.openai.com/v1",
+  "last_live_probe": {
+    "provider": "openai",
+    "transport": "openai_compatible",
+    "ok": true,
+    "checked_at": "2026-03-27T10:00:00+00:00"
+  },
+  "last_capability_probe": {
+    "provider": "openai",
+    "checked": true,
+    "current_model_listed": true,
+    "detail": "model_listed",
+    "listed_model_count": 2,
+    "listed_model_sample": ["openai/gpt-4o-mini", "openai/gpt-4.1-mini"]
+  }
+}
+```
+
+Alias compatível: `GET /api/provider/status`. When a gateway token is configured, the packaged dashboard alias also accepts the derived dashboard-session credential; `GET /v1/control/provider/status` itself still expects the raw gateway token.
 
 ## `POST /v1/control/memory/suggest/refresh`
 
@@ -1700,7 +1736,7 @@ Troca um bootstrap de dashboard por uma credencial derivada e efêmera para o da
 - Também requer um client id do dashboard no header `X-ClawLite-Dashboard-Client` (ou no nome configurado informado pelo bootstrap).
 - Retorna um `session_token` opaco com `token_type=\"dashboard_session\"`, `bootstrap_kind`, `expires_at`, `expires_in_s`, e os nomes de header/query aceitos pelo shell do dashboard tanto para o handoff bootstrap quanto para a sessão derivada e o client binding.
 - A credencial derivada fica vinculada a esse client id de aba e só é aceita quando o mesmo identificador acompanha os requests HTTP/WS do dashboard.
-- Essa credencial derivada é aceita apenas nas superfícies de dashboard/control-plane que optam por ela (`/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/v1/control/*`, e `WS /ws`).
+- Essa credencial derivada é aceita apenas nas superfícies de dashboard/control-plane que optam por ela (`/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/provider/status`, `/v1/control/*`, e `WS /ws`).
 - A mesma credencial não substitui o gateway token bruto em `/v1/status`, `/v1/chat`, `/v1/tools/*`, ou `WS /v1/ws`.
 
 ## `POST <telegram webhook path>`

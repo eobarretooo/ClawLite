@@ -448,6 +448,8 @@ Common checks:
 
 `clawlite validate preflight --provider-live` now also persists the latest live probe snapshot in local state. After that, `clawlite provider status <provider>` and `clawlite validate provider` reuse that additive cache in two ways: `last_live_probe` keeps the last known raw result, timestamp, and model/base-url match flags, while `last_capability_probe` summarizes the last remote model-list/capability signal (`checked`, `current_model_listed`, listed-model count, and a bounded sample) without re-running a network probe every time.
 
+That same cached provider surface is now also visible from the live runtime itself: `GET /v1/control/provider/status` and `GET /api/provider/status` expose the same compact cached status for the currently selected provider, and the packaged dashboard Automation tab reuses that snapshot through `Inspect provider cache` plus the additive `provider.status` block in `GET /api/dashboard/state`.
+
 ## Telegram Transcription Provider
 
 Telegram voice/audio transcription is a separate provider path from the main LLM provider. It uses:

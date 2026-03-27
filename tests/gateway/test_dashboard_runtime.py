@@ -46,6 +46,7 @@ def test_dashboard_state_payload_runtime_assembles_sections() -> None:
         operator_channel_summary=lambda channel: {"available": True, "channel": channel["name"]},
         provider_telemetry_snapshot=lambda provider: {"provider": provider.__class__.__name__},
         provider_autonomy_snapshot=lambda **kwargs: {"suppressed": False},
+        provider_status_payload_fn=lambda: {"ok": True, "provider": "openai"},
         build_dashboard_handoff=lambda config: {"next": "chat"},
         memory_profile_snapshot_fn=lambda *args, **kwargs: {"profile": True},
         memory_suggest_snapshot_fn=lambda *args, **kwargs: {"suggest": True},
@@ -59,4 +60,5 @@ def test_dashboard_state_payload_runtime_assembles_sections() -> None:
     assert payload["telegram_payload"] == {"available": True, "channel": "telegram"}
     assert payload["memory_payload"] == {"enabled": True}
     assert payload["provider_telemetry_payload"] == {"provider": "object"}
+    assert payload["provider_status_payload"] == {"ok": True, "provider": "openai"}
     assert payload["self_evolution_payload"] == {"enabled": True, "runner": {"running": True}}

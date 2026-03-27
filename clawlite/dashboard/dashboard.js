@@ -120,6 +120,7 @@ const state = {
   dashboardState: null,
   diagnostics: null,
   tools: null,
+  providerStatus: null,
   toolApprovals: null,
   toolApprovalAudit: null,
   skillsManaged: null,
@@ -1350,6 +1351,7 @@ function renderProviderRecoveryBoard() {
   const provider = (state.dashboardState || {}).provider || {};
   const telemetry = provider.telemetry || {};
   const summary = telemetry.summary || {};
+  const status = state.providerStatus || provider.status || {};
   const candidates = [];
 
   const suppressionReason = String(summary.suppression_reason || "");
@@ -1361,6 +1363,13 @@ function renderProviderRecoveryBoard() {
     title: "Provider state",
     body: `${String(summary.state || "unknown")} | ${String(provider.autonomy?.provider || telemetry.provider || "provider")}`,
     detail: String(provider.autonomy?.suppression_hint || summary.onboarding_hint || "No additional guidance yet."),
+  });
+
+  candidates.push({
+    title: "Configured route",
+    body: `${String(status.provider || status.selected_provider || provider.autonomy?.provider || telemetry.provider || "provider")} | ${String(status.transport || "unknown")}`,
+    detail: [String(status.active_model || status.model || "").trim(), String(status.base_url || "").trim()].filter(Boolean).join(" | ")
+      || "No configured provider route available.",
   });
 
   candidates.push({
@@ -1401,6 +1410,43 @@ function renderProviderRecoveryBoard() {
       title: "Operator hint",
       body: String(hints[0] || ""),
       detail: hints.length > 1 ? String(hints[1] || "") : "",
+    });
+  }
+
+  const lastLiveProbe = status.last_live_probe || {};
+  if (Object.keys(lastLiveProbe).length) {
+    candidates.push({
+      title: "Cached live probe",
+      body: `${lastLiveProbe.ok === false ? "probe error" : "probe cached"} | ${String(lastLiveProbe.transport || status.transport || "unknown")}`,
+      detail: [
+        String(lastLiveProbe.error || "").trim() || `HTTP ${numeric(lastLiveProbe.status_code, 0) || 200}`,
+        String(lastLiveProbe.checked_at || "").trim(),
+      ].filter(Boolean).join(" | "),
+    });
+  } else {
+    candidates.push({
+      title: "Cached live probe",
+      body: "not recorded",
+      detail: "Run clawlite validate preflight --provider-live to persist a fresh runtime probe snapshot.",
+    });
+  }
+
+  const lastCapabilityProbe = status.last_capability_probe || {};
+  if (Object.keys(lastCapabilityProbe).length) {
+    candidates.push({
+      title: "Capability cache",
+      body: `${String(lastCapabilityProbe.detail || "model_list_unavailable")} | ${numeric(lastCapabilityProbe.listed_model_count, 0)} listed`,
+      detail: lastCapabilityProbe.current_model_listed
+        ? `Current model listed${lastCapabilityProbe.matched_model ? ` as ${lastCapabilityProbe.matched_model}` : ""}.`
+        : (Array.isArray(lastCapabilityProbe.listed_model_sample) && lastCapabilityProbe.listed_model_sample.length
+            ? `Sample: ${lastCapabilityProbe.listed_model_sample.join(", ")}`
+            : "No remote model list cached yet."),
+    });
+  } else {
+    candidates.push({
+      title: "Capability cache",
+      body: "not recorded",
+      detail: "No cached capability summary is available for the selected provider yet.",
     });
   }
 
@@ -1599,12 +1645,14 @@ function renderAutomation() {
   const provider = payload.provider || {};
   const providerAutonomy = provider.autonomy || {};
   const providerTelemetry = provider.telemetry || {};
+  const providerStatus = state.providerStatus || provider.status || {};
   setText("metric-provider-state", String(providerAutonomy.state || providerTelemetry.summary?.state || "unknown"));
   setText("metric-provider-backoff", formatDuration(providerAutonomy.suppression_backoff_s || providerAutonomy.cooldown_remaining_s || 0));
   setCode("provider-preview", {
     autonomy: providerAutonomy,
     summary: providerTelemetry.summary || {},
     counters: providerTelemetry.counters || {},
+    status: providerStatus,
   });
   setBadge("provider-status", String(providerAutonomy.state || "unknown"), toneForState(providerAutonomy.state));
   renderDeliveryBoard();
@@ -2725,6 +2773,8 @@ async function refreshStatus() {
 
 async function refreshDashboardState() {
   state.dashboardState = await fetchJson(paths.dashboard_state || "/api/dashboard/state");
+  const provider = ((state.dashboardState || {}).provider) || {};
+  state.providerStatus = provider.status && typeof provider.status === "object" ? provider.status : null;
   syncGatewayWsEvents();
 }
 
@@ -3191,6 +3241,38 @@ async function triggerProviderRecovery() {
     await refreshAll("provider-recover");
   } catch (error) {
     recordEvent("danger", "Provider recovery failed", error.message, appendRequestIdMeta("provider", error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function triggerProviderStatusInspect() {
+  const button = byId("inspect-provider-status");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(paths.provider_status || "/api/provider/status");
+    const lastLiveProbe = payload.last_live_probe || {};
+    const lastCapabilityProbe = payload.last_capability_probe || {};
+    state.providerStatus = payload;
+    recordEvent(
+      payload.ok === false ? "warn" : "ok",
+      "Provider cache inspected",
+      [
+        String(payload.provider || payload.selected_provider || "provider"),
+        String(payload.transport || "unknown"),
+        Object.keys(lastLiveProbe).length ? String(lastLiveProbe.error || lastLiveProbe.detail || "live probe cached") : "no live probe cache",
+        Object.keys(lastCapabilityProbe).length ? String(lastCapabilityProbe.detail || "capability cached") : "no capability cache",
+      ].filter(Boolean).join(" | "),
+      appendRequestIdMeta("provider", payload),
+    );
+    renderAll();
+  } catch (error) {
+    recordEvent("danger", "Provider cache inspection failed", error.message, appendRequestIdMeta("provider", error));
+    renderAll();
   } finally {
     if (button) {
       button.disabled = false;
@@ -4402,6 +4484,9 @@ function bindEvents() {
   });
   byId("recover-provider").addEventListener("click", () => {
     void triggerProviderRecovery();
+  });
+  byId("inspect-provider-status").addEventListener("click", () => {
+    void triggerProviderStatusInspect();
   });
   byId("inspect-tool-approvals").addEventListener("click", () => {
     void triggerToolApprovalsInspect();

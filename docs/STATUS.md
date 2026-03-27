@@ -1,6 +1,6 @@
 # ClawLite Status
 
-Last updated: 2026-03-25
+Last updated: 2026-03-27
 
 ## Summary
 
@@ -38,6 +38,7 @@ The newest onboarding/config follow-up now also skips redundant API-key prompts 
 The newest onboarding/config follow-up now also trims the quickstart happy path further: when a local-runtime provider like `ollama` or `vllm` is already clearly resolved with a compatible loopback base URL and canonical default model, quickstart reuses those resolved defaults and skips the redundant base-URL/model prompts, while the advanced flow keeps the explicit override path intact.
 The newest provider follow-up now adds a persistent live-probe snapshot for provider operations: `provider_live_probe()` stores the latest live result per provider under local state, while `clawlite provider status` and `clawlite validate provider` now surface that additive `last_live_probe` block with timestamp, transport, last error/result, and whether the cached live probe still matches the current model/base-url selection.
 The newest provider follow-up now also derives and reuses a compact capability summary from that same persisted probe cache: `last_capability_probe` surfaces whether the provider exposed a remote model list, whether the current model appeared in it, plus a bounded listed-model sample/count, and older cached snapshots still get that summary derived lazily instead of breaking on missing fields.
+The newest provider follow-up now also promotes that cached probe posture into the live control plane itself: `GET /v1/control/provider/status` plus `GET /api/provider/status` expose the same compact cached provider summary used by `clawlite provider status`, the packaged dashboard Automation tab can inspect that snapshot directly through `Inspect provider cache`, and `GET /api/dashboard/state` now carries additive `provider.status` data so cached `last_live_probe` / `last_capability_probe` signals are visible without leaving the control plane.
 The newest skills follow-up now adds a compact managed-marketplace lifecycle summary to `skills.diagnostics_report()`: dashboard/control-plane payloads can now see managed `count`, `ready_count`, `blocked_count`, `disabled_count`, bounded `items`, and `status_counts`, and the Knowledge tab surfaces those managed marketplace signals directly instead of leaving marketplace lifecycle visible only in the CLI `skills managed` path.
 The newest skills follow-up now promotes that same managed lifecycle into a first-class live control-plane surface: `GET /v1/control/skills/managed` and `GET /api/skills/managed` expose the full managed inventory with live filters/counts, and the packaged dashboard Knowledge tab now offers `Inspect managed skills` to fetch that snapshot on demand instead of relying only on the bounded diagnostics preview.
 The newest dashboard follow-up now makes that live managed inventory usable in-place: the packaged Knowledge tab exposes `status` and free-text `query` controls before `Inspect managed skills`, so operators can fetch only one managed lifecycle slice or search one marketplace skill directly from the control plane instead of falling back to CLI flags for every triage pass.
@@ -53,7 +54,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2040 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2042 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -184,7 +185,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2040 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2042 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -198,8 +199,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: `Security` now adds a small but explicit audit/export surface on top of the live tools approval loop — the runtime keeps a bounded audit ring for review/revoke actions, gateway + CLI expose that trail read-only, the packaged dashboard can inspect those rows under the same dashboard-scoped auth, the same audit surface supports explicit `request_id` drill-down, and the filtered slice can now also be exported directly as NDJSON instead of forcing operators to reconstruct or copy review lineage by hand
-- Next slice: the next safe high-value follow-up is still likely in `Security`, but now after the read-only trail, request drill-down, and bounded export all exist — the smallest useful step is probably richer reason history or a persisted handoff index instead of reopening RBAC or broader policy refactors
+- Current slice: `Providers` now lifts the cached provider probe posture into the live control plane — the runtime exposes compact cached status through `GET /v1/control/provider/status` / `GET /api/provider/status`, the packaged dashboard can inspect that same cached snapshot directly, and `dashboard/state` now carries additive `provider.status` data so operators can see `last_live_probe` / `last_capability_probe` without forcing a fresh network probe
+- Next slice: the next safe high-value follow-up is now likely a pivot into `Core/Runtime`, where the scorecard is about to become the lowest again; the smallest useful step is probably a compact operator surface for approval/no-approval/autonomy posture instead of reopening provider budget/quota work immediately
 
 ## Delivery Policy
 

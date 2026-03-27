@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the tools approval flow now also exports a bounded live audit trail through `GET /v1/tools/approvals/audit` / `/api/tools/approvals/audit`, `clawlite tools approval-audit`, and a packaged `Approval Audit` dashboard card, so review/revoke history is inspectable without mining raw logs or inferring state from the current queue alone
 - that live tools approval audit surface now also supports explicit `request_id` drill-down across runtime, gateway, CLI, and dashboard, and broad revoke rows still match when the requested id appears only inside the removed-grant list
 - that same tools approval audit surface can now also export the current filtered slice as bounded NDJSON through gateway aliases, `clawlite tools approval-audit --format ndjson`, and a packaged dashboard export action
+- provider probe cache state now also has a first-class live control-plane surface through `GET /v1/control/provider/status` / `GET /api/provider/status`, the packaged dashboard Automation tab can inspect that cached status directly, and `GET /api/dashboard/state` now includes additive `provider.status` data so cached `last_live_probe` / `last_capability_probe` posture is visible without leaving the control plane
 
 ### Fixed
 - Telegram inbound media download now creates its local chat directory inline before best-effort OCR/PDF enrichment, and the Telegram media regression tests now keep OCR/PDF work hermetic instead of relying on real `asyncio.to_thread(...)` behavior in the test harness

@@ -122,6 +122,7 @@ def dashboard_state_payload(
     memory_payload: dict[str, Any],
     provider_telemetry_payload: dict[str, Any],
     provider_autonomy_payload: dict[str, Any],
+    provider_status_payload: dict[str, Any],
     self_evolution_payload: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -151,6 +152,7 @@ def dashboard_state_payload(
         "provider": {
             "telemetry": provider_telemetry_payload,
             "autonomy": provider_autonomy_payload,
+            "status": provider_status_payload,
         },
         "self_evolution": self_evolution_payload,
     }

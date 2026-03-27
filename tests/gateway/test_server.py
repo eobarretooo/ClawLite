@@ -39,6 +39,7 @@ from clawlite.gateway.server import (
     create_app,
 )
 from clawlite.providers.base import LLMResult
+from clawlite.providers.probe_cache import save_provider_probe_snapshot
 from clawlite.scheduler.heartbeat import HeartbeatDecision
 from clawlite.utils import logging as logging_utils
 from clawlite.workspace.loader import WorkspaceLoader
@@ -3088,6 +3089,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="managed-skills-query-filter"' in body
         assert 'id="inspect-managed-skills"' in body
         assert 'id="provider-grid"' in body
+        assert 'id="inspect-provider-status"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
         assert 'id="replay-dead-letters"' in body
@@ -3152,6 +3154,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"memory_suggest_refresh": "/v1/control/memory/suggest/refresh"' in body
         assert '"memory_snapshot_create": "/v1/control/memory/snapshot/create"' in body
         assert '"memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback"' in body
+        assert '"provider_status": "/api/provider/status"' in body
         assert '"provider_recover": "/v1/control/provider/recover"' in body
         assert '"autonomy_wake": "/v1/control/autonomy/wake"' in body
         assert '"supervisor_recover": "/v1/control/supervisor/recover"' in body
@@ -3412,6 +3415,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "memory" in payload
     assert "telemetry" in payload["provider"]
     assert "autonomy" in payload["provider"]
+    assert "status" in payload["provider"]
     assert "items" in payload["channels"]
     assert "enabled" in payload["self_evolution"]
     assert "managed" in payload["skills"]
@@ -3453,6 +3457,116 @@ def test_gateway_dashboard_state_includes_ws_correlation_summary(tmp_path: Path)
         assert ws_payload["last_error_code"] == "unsupported_method"
         assert ws_payload["last_error_message"]
         assert ws_payload["last_error_status"] == 400
+
+
+def test_gateway_provider_status_endpoint_returns_cached_probe_summary(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        provider={"model": "openai/gpt-4o-mini"},
+        channels={},
+    )
+    save_provider_probe_snapshot(
+        cfg.state_path,
+        provider="openai",
+        payload={
+            "provider": "openai",
+            "model": "openai/gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1",
+            "base_url_source": "spec:openai.default_base_url",
+            "transport": "openai_compatible",
+            "probe_method": "GET",
+            "endpoint": "/models",
+            "ok": True,
+            "status_code": 200,
+            "family": "openai_compatible",
+            "model_check": {
+                "checked": True,
+                "ok": True,
+                "matched_model": "openai/gpt-4o-mini",
+                "available_models": ["openai/gpt-4o-mini", "openai/gpt-4.1-mini"],
+            },
+        },
+    )
+    app = create_app(cfg)
+
+    with TestClient(app) as client:
+        v1_response = client.get("/v1/control/provider/status")
+        api_response = client.get("/api/provider/status")
+        dashboard_response = client.get("/api/dashboard/state")
+
+    for response in (v1_response, api_response):
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["provider"] == "openai"
+        assert payload["selected_provider"] == "openai"
+        assert payload["last_live_probe"]["provider"] == "openai"
+        assert payload["last_live_probe"]["transport"] == "openai_compatible"
+        assert payload["last_capability_probe"]["provider"] == "openai"
+        assert payload["last_capability_probe"]["current_model_listed"] is True
+        assert payload["last_capability_probe"]["matched_model"] == "openai/gpt-4o-mini"
+        assert payload["last_capability_probe"]["listed_model_count"] == 2
+
+    assert dashboard_response.status_code == 200
+    dashboard_payload = dashboard_response.json()
+    provider_status = dashboard_payload["provider"]["status"]
+    assert provider_status["provider"] == "openai"
+    assert provider_status["last_live_probe"]["provider"] == "openai"
+    assert provider_status["last_capability_probe"]["current_model_listed"] is True
+
+
+def test_gateway_provider_status_endpoint_prefers_live_runtime_model_over_config_model(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        provider={"model": "anthropic/claude-3-5-haiku-latest"},
+        channels={},
+    )
+    save_provider_probe_snapshot(
+        cfg.state_path,
+        provider="openai",
+        payload={
+            "provider": "openai",
+            "model": "openai/gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1",
+            "base_url_source": "spec:openai.default_base_url",
+            "transport": "openai_compatible",
+            "probe_method": "GET",
+            "endpoint": "/models",
+            "ok": True,
+            "status_code": 200,
+            "family": "openai_compatible",
+            "model_check": {
+                "checked": True,
+                "ok": True,
+                "matched_model": "openai/gpt-4o-mini",
+                "available_models": ["openai/gpt-4o-mini", "openai/gpt-4.1-mini"],
+            },
+        },
+    )
+    app = create_app(cfg)
+    app.state.runtime.engine.provider = SimpleNamespace(
+        provider_name="openai",
+        model="openai/gpt-4o-mini",
+        base_url="https://api.openai.com/v1",
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/v1/control/provider/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "openai"
+    assert payload["selected_provider"] == "openai"
+    assert payload["active_provider"] == "openai"
+    assert payload["model"] == "openai/gpt-4o-mini"
+    assert payload["active_model"] == "openai/gpt-4o-mini"
+    assert payload["last_live_probe"]["matches_current_model"] is True
+    assert payload["last_live_probe"]["matches_current_base_url"] is True
+    assert payload["last_capability_probe"]["current_model_listed"] is True
 
 
 def test_gateway_dashboard_state_redacts_sensitive_handoff_token_fields(tmp_path: Path) -> None:
@@ -5374,6 +5488,10 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
 
         api_tools = client.get("/api/tools/catalog", headers=session_headers)
         assert api_tools.status_code == 200
+
+        api_provider_status = client.get("/api/provider/status", headers=session_headers)
+        assert api_provider_status.status_code == 200
+        assert api_provider_status.json()["ok"] is True
 
         api_tool_approvals = client.get("/api/tools/approvals", headers=session_headers)
         assert api_tool_approvals.status_code == 200

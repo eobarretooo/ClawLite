@@ -139,6 +139,7 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         memory_payload={"profile": {}},
         provider_telemetry_payload={"provider": "ollama"},
         provider_autonomy_payload={"mode": "allowed"},
+        provider_status_payload={"ok": True, "provider": "openai"},
         self_evolution_payload={"enabled": False},
     )
 
@@ -146,5 +147,6 @@ def test_dashboard_state_payload_assembles_sections() -> None:
     assert payload["provider"] == {
         "telemetry": {"provider": "ollama"},
         "autonomy": {"mode": "allowed"},
+        "status": {"ok": True, "provider": "openai"},
     }
     assert payload["skills"] == {"loaded": 4}

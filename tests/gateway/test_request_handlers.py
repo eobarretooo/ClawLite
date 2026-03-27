@@ -37,6 +37,7 @@ def _build_handlers() -> GatewayRequestHandlers:
             "count": len(schema),
             "include_schema": include_schema,
         },
+        provider_status_payload_fn=lambda: {"ok": True, "provider": "openai"},
         parse_include_schema_flag_fn=lambda params: bool(params.get("include_schema")),
         control_plane_payload_fn=lambda: {"contract_version": "2026-03-04"},
         dashboard_asset_text_fn=lambda asset_name: f"asset:{asset_name}",
@@ -94,11 +95,13 @@ def test_request_handlers_tools_and_dashboard_assets() -> None:
     request = SimpleNamespace(query_params={"include_schema": "true"})
 
     tools_payload = asyncio.run(handlers.tools_catalog(request))
+    provider_payload = asyncio.run(handlers.provider_status(request))
     css_response = asyncio.run(handlers.dashboard_css())
     js_response = asyncio.run(handlers.dashboard_js())
     root_response = asyncio.run(handlers.root())
 
     assert tools_payload["include_schema"] is True
+    assert provider_payload == {"ok": True, "provider": "openai"}
     assert css_response.body == b"asset:dashboard.css"
     assert js_response.body == b"asset:dashboard.js"
     assert b'data-root="/_clawlite"' in root_response.body

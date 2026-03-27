@@ -23,6 +23,7 @@ class GatewayRequestHandlers:
     provider_error_payload_fn: Callable[[RuntimeError], tuple[int, str]]
     finalize_bootstrap_for_user_turn_fn: Callable[[str], None]
     build_tools_catalog_payload_fn: Callable[..., dict[str, Any]]
+    provider_status_payload_fn: Callable[[], dict[str, Any]]
     parse_include_schema_flag_fn: Callable[[Any], bool]
     control_plane_payload_fn: Callable[[], Any]
     dashboard_asset_text_fn: Callable[[str], str]
@@ -123,6 +124,10 @@ class GatewayRequestHandlers:
         self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
         include_schema = self.parse_include_schema_flag_fn(request.query_params)
         return self.build_tools_catalog_payload_fn(self.runtime.engine.tools.schema(), include_schema=include_schema)
+
+    async def provider_status(self, request: Request, *, allow_dashboard_session: bool = False) -> dict[str, Any]:
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
+        return dict(self.provider_status_payload_fn() or {})
 
     async def tools_approvals(
         self,

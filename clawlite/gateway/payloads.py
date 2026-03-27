@@ -88,6 +88,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
             "memory_suggest_refresh": "/v1/control/memory/suggest/refresh",
             "memory_snapshot_create": "/v1/control/memory/snapshot/create",
             "memory_snapshot_rollback": "/v1/control/memory/snapshot/rollback",
+            "provider_status": "/api/provider/status",
             "provider_recover": "/v1/control/provider/recover",
             "autonomy_wake": "/v1/control/autonomy/wake",
             "supervisor_recover": "/v1/control/supervisor/recover",

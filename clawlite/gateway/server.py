@@ -22,10 +22,12 @@ from pydantic import BaseModel, Field
 from clawlite.bus.queue import MessageQueue
 from clawlite.config.loader import load_config
 from clawlite.config.schema import AppConfig
+from clawlite.cli.ops import provider_status as _provider_status_cli
 from clawlite.core.engine import AgentEngine
 from clawlite.core.memory_monitor import MemoryMonitor, MemorySuggestion
 from clawlite.providers import detect_provider_name
 from clawlite.providers.catalog import default_provider_model, provider_profile
+from clawlite.providers.probe_cache import normalize_provider_probe_base_url, provider_probe_capability_summary
 from clawlite.providers.reliability import is_quota_429_error
 from clawlite.scheduler.heartbeat import HeartbeatDecision
 from clawlite.runtime import (
@@ -3359,6 +3361,68 @@ def create_app(
             return ""
         return " " + " ".join(tail_parts)
 
+    def _provider_status_payload() -> dict[str, Any]:
+        provider_obj = getattr(runtime.engine, "provider", None)
+        active_provider, active_model = _active_provider_context()
+        active_base_url = str(getattr(provider_obj, "base_url", "") or "").strip()
+        selected_provider = active_provider or detect_provider_name(
+            str(cfg.agents.defaults.model or cfg.provider.model)
+        )
+        try:
+            payload = _provider_status_cli(cfg, provider=selected_provider)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": selected_provider,
+                "active_provider": active_provider,
+                "active_model": active_model,
+                "selected_provider": selected_provider,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            }
+        if not isinstance(payload, dict):
+            return {
+                "ok": False,
+                "provider": selected_provider,
+                "active_provider": active_provider,
+                "active_model": active_model,
+                "selected_provider": selected_provider,
+                "error": "provider_status_invalid_payload",
+            }
+        summary = dict(payload)
+        if active_model:
+            summary["model"] = active_model
+        if active_base_url:
+            summary["base_url"] = active_base_url.rstrip("/")
+            summary["base_url_source"] = "runtime:provider.base_url"
+        last_live_probe = summary.get("last_live_probe")
+        if isinstance(last_live_probe, dict):
+            live_probe = dict(last_live_probe)
+            cached_model = str(live_probe.get("model", "") or "").strip()
+            current_model = str(active_model or summary.get("model", "") or "").strip()
+            current_base_url = normalize_provider_probe_base_url(
+                selected_provider,
+                str(active_base_url or summary.get("base_url", "") or "").strip(),
+            )
+            cached_base_url = normalize_provider_probe_base_url(
+                selected_provider,
+                str(live_probe.get("base_url", "") or "").strip(),
+            )
+            live_probe["matches_current_model"] = bool(current_model) and cached_model == current_model
+            live_probe["matches_current_base_url"] = cached_base_url == current_base_url
+            capability_payload = dict(live_probe)
+            if current_model:
+                capability_payload["model"] = current_model
+            capability_summary = dict(provider_probe_capability_summary(capability_payload) or {})
+            live_probe["capability_summary"] = capability_summary
+            summary["last_live_probe"] = live_probe
+            summary["last_capability_probe"] = capability_summary
+        summary["active_provider"] = active_provider
+        summary["active_model"] = active_model
+        summary["selected_provider"] = selected_provider
+        summary["active_matches_selected"] = bool(active_provider and selected_provider and active_provider == selected_provider)
+        return summary
+
     def _provider_error_payload(exc: RuntimeError) -> tuple[int, str]:
         message = str(exc)
         active_provider, active_model = _active_provider_context()
@@ -3534,6 +3598,7 @@ def create_app(
             operator_channel_summary=_operator_channel_summary,
             provider_telemetry_snapshot=_provider_telemetry_snapshot,
             provider_autonomy_snapshot=_provider_autonomy_snapshot,
+            provider_status_payload_fn=_provider_status_payload,
             build_dashboard_handoff=build_dashboard_handoff,
             memory_profile_snapshot_fn=memory_profile_snapshot,
             memory_suggest_snapshot_fn=memory_suggest_snapshot,
@@ -3671,6 +3736,7 @@ def create_app(
         provider_error_payload_fn=_provider_error_payload,
         finalize_bootstrap_for_user_turn_fn=_finalize_bootstrap_for_user_turn,
         build_tools_catalog_payload_fn=build_tools_catalog_payload,
+        provider_status_payload_fn=_provider_status_payload,
         parse_include_schema_flag_fn=parse_include_schema_flag,
         control_plane_payload_fn=_control_plane_payload,
         dashboard_asset_text_fn=_dashboard_asset_text,
@@ -3820,6 +3886,14 @@ def create_app(
     @app.post("/api/provider/recover")
     async def api_provider_recover(request: Request, payload: ProviderRecoverRequest | None = None) -> dict[str, Any]:
         return await control_handlers.provider_recover(request, payload or ProviderRecoverRequest())
+
+    @app.get("/v1/control/provider/status")
+    async def provider_status(request: Request) -> dict[str, Any]:
+        return await request_handlers.provider_status(request, allow_dashboard_session=False)
+
+    @app.get("/api/provider/status")
+    async def api_provider_status(request: Request) -> dict[str, Any]:
+        return await request_handlers.provider_status(request, allow_dashboard_session=True)
 
     @app.post("/v1/control/autonomy/wake")
     async def autonomy_wake(request: Request, payload: AutonomyWakeRequest | None = None) -> dict[str, Any]:
