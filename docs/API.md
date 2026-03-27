@@ -134,6 +134,8 @@ The additive `provider.status` block now mirrors the current cached provider sta
 
 The additive `runtime.posture` block now mirrors the runtime/operator posture already implied by autonomy, wake, supervisor, and self-evolution state: it summarizes `autonomy_posture`, `wake_posture`, `approval_posture`, a derived `summary_posture` / `summary_tone`, and a compact `operator_hint`, while also carrying bounded nested detail for `autonomy`, `autonomy_wake`, `self_evolution`, and `supervisor` so the packaged Automation tab can show a compact runtime posture card without scraping the full diagnostics payload.
 
+The additive `runtime.policy` block now mirrors the active self-evolution/operator policy instead of runtime activity: it summarizes `approval_mode`, `activation_scope`, `policy_posture`, `policy_tone`, `policy_block`, and `policy_hint`, while also carrying bounded nested detail for self-evolution policy inputs such as `enabled_for_sessions_count`, `enabled_for_sessions_sample`, `autonomy_session_id`, `current_session_allowed`, `activation_reason`, and `last_review_status` so the packaged Automation tab can surface canary/manual-only/approval policy without scraping full diagnostics.
+
 ## `GET /v1/control/provider/status`
 
 Returns the compact cached provider status for the provider currently selected by the runtime/config, reusing the same local probe cache surfaced by `clawlite provider status`.

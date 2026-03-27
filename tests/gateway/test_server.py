@@ -315,11 +315,20 @@ class FakeSelfEvolutionEngine:
         return self.status()
 
     def status(self) -> dict[str, object]:
+        if not self.enabled:
+            activation_mode = "disabled"
+            activation_reason = "disabled_by_config"
+        elif self._background_enabled:
+            activation_mode = "global"
+            activation_reason = ""
+        else:
+            activation_mode = "session_canary"
+            activation_reason = "autonomy_session_not_allowlisted"
         return {
             "enabled": self.enabled,
             "background_enabled": self._background_enabled,
-            "activation_mode": "global" if self.enabled and self._background_enabled else "session_canary",
-            "activation_reason": "" if self._background_enabled else "autonomy_session_not_allowlisted",
+            "activation_mode": activation_mode,
+            "activation_reason": activation_reason,
             "enabled_for_sessions": list(self.enabled_for_sessions),
             "autonomy_session_id": self.autonomy_session_id,
             "run_count": self._run_count,
@@ -3090,6 +3099,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="inspect-managed-skills"' in body
         assert 'id="provider-grid"' in body
         assert 'id="runtime-posture-grid"' in body
+        assert 'id="runtime-policy-grid"' in body
         assert 'id="inspect-provider-status"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3196,6 +3206,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderDeliveryBoard" in js.text
     assert "renderSupervisorBoard" in js.text
     assert "renderRuntimePostureBoard" in js.text
+    assert "renderRuntimePolicyBoard" in js.text
     assert "renderProviderRecoveryBoard" in js.text
     assert "triggerDeadLetterReplay" in js.text
     assert "triggerChannelRecovery" in js.text
@@ -3272,7 +3283,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "revoke-tool-grant" in js.text
     assert "runtime-posture-grid" in js.text
     assert "runtime-posture-status" in js.text
+    assert "runtime-policy-grid" in js.text
+    assert "runtime-policy-status" in js.text
     assert "Runtime hint" in js.text
+    assert "Policy hint" in js.text
+    assert "Canary scope" in js.text
     assert "Approval audit" in js.text
     assert "Select exact grant" in js.text
     assert "Cacheable tools" in js.text
@@ -3423,9 +3438,31 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "autonomy" in payload["provider"]
     assert "status" in payload["provider"]
     assert "posture" in payload["runtime"]
+    assert "policy" in payload["runtime"]
     assert "items" in payload["channels"]
     assert "enabled" in payload["self_evolution"]
     assert "managed" in payload["skills"]
+
+
+def test_gateway_dashboard_state_surfaces_manual_only_runtime_policy_when_self_evolution_disabled(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    app.state.runtime.self_evolution = FakeSelfEvolutionEngine(enabled=False, background_enabled=False)
+
+    with TestClient(app) as client:
+        response = client.get("/api/dashboard/state")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runtime"]["policy"]["approval_mode"] == "disabled"
+    assert payload["runtime"]["policy"]["activation_scope"] == "disabled"
+    assert payload["runtime"]["policy"]["policy_posture"] == "manual_only"
+    assert payload["runtime"]["policy"]["policy_block"] == "disabled_by_config"
 
 
 def test_gateway_dashboard_state_includes_ws_correlation_summary(tmp_path: Path) -> None:

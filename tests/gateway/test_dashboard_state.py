@@ -7,6 +7,7 @@ from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary,
     dashboard_cron_summary,
     dashboard_preview,
+    dashboard_runtime_policy_summary,
     dashboard_runtime_posture_summary,
     dashboard_state_payload,
     dashboard_self_evolution_summary,
@@ -198,6 +199,59 @@ def test_dashboard_runtime_posture_summary_prefers_wake_error_and_disabled_revie
     assert payload["summary_tone"] == "danger"
 
 
+def test_dashboard_runtime_policy_summary_surfaces_canary_block_and_review_gate() -> None:
+    payload = dashboard_runtime_policy_summary(
+        self_evolution_payload={
+            "status": {
+                "enabled": True,
+                "background_enabled": False,
+                "activation_mode": "session_canary",
+                "activation_reason": "autonomy_session_not_allowlisted",
+                "enabled_for_sessions": ["autonomy:canary-a", "autonomy:canary-b"],
+                "autonomy_session_id": "autonomy:system",
+                "require_approval": True,
+                "last_review_status": "awaiting_approval",
+            },
+            "runner": {
+                "enabled": True,
+                "activation_mode": "session_canary",
+            },
+        }
+    )
+
+    assert payload["approval_mode"] == "approval_required"
+    assert payload["activation_scope"] == "session_canary"
+    assert payload["policy_posture"] == "blocked"
+    assert payload["policy_tone"] == "warn"
+    assert payload["policy_block"] == "autonomy_session_not_allowlisted"
+    assert payload["self_evolution"]["current_session_allowed"] is False
+    assert payload["self_evolution"]["enabled_for_sessions_sample"] == ["autonomy:canary-a", "autonomy:canary-b"]
+    assert "outside the canary allowlist" in payload["policy_hint"]
+
+
+def test_dashboard_runtime_policy_summary_marks_disabled_background_loop_as_manual_only() -> None:
+    payload = dashboard_runtime_policy_summary(
+        self_evolution_payload={
+            "status": {
+                "enabled": False,
+                "background_enabled": False,
+                "require_approval": False,
+            },
+            "runner": {
+                "enabled": False,
+            },
+        }
+    )
+
+    assert payload["approval_mode"] == "disabled"
+    assert payload["activation_scope"] == "disabled"
+    assert payload["policy_posture"] == "manual_only"
+    assert payload["policy_tone"] == "warn"
+    assert payload["policy_block"] == "disabled_by_config"
+    assert payload["self_evolution"]["current_session_allowed"] is False
+    assert "only explicit/manual runs can proceed" in payload["policy_hint"]
+
+
 def test_dashboard_state_payload_assembles_sections() -> None:
     payload = dashboard_state_payload(
         contract_version="2026-03-02",
@@ -228,6 +282,7 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         provider_status_payload={"ok": True, "provider": "openai"},
         self_evolution_payload={"enabled": False},
         runtime_posture_payload={"autonomy_posture": "disabled"},
+        runtime_policy_payload={"policy_posture": "manual_only"},
     )
 
     assert payload["control_plane"] == {"wrapped": {"ok": True}}
@@ -236,5 +291,8 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         "autonomy": {"mode": "allowed"},
         "status": {"ok": True, "provider": "openai"},
     }
-    assert payload["runtime"] == {"posture": {"autonomy_posture": "disabled"}}
+    assert payload["runtime"] == {
+        "posture": {"autonomy_posture": "disabled"},
+        "policy": {"policy_posture": "manual_only"},
+    }
     assert payload["skills"] == {"loaded": 4}

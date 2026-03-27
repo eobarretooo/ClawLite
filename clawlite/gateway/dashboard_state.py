@@ -258,6 +258,93 @@ def dashboard_runtime_posture_summary(
     }
 
 
+def dashboard_runtime_policy_summary(*, self_evolution_payload: dict[str, Any]) -> dict[str, Any]:
+    self_evolution = dict(self_evolution_payload or {}) if isinstance(self_evolution_payload, dict) else {}
+    evolution_status = dict(self_evolution.get("status") or {}) if isinstance(self_evolution.get("status"), dict) else {}
+    evolution_runner = dict(self_evolution.get("runner") or {}) if isinstance(self_evolution.get("runner"), dict) else {}
+
+    evolution_enabled = bool(evolution_status.get("enabled", False))
+    background_enabled = bool(evolution_status.get("background_enabled", False))
+    require_approval = bool(evolution_status.get("require_approval", False))
+    activation_scope = str(evolution_status.get("activation_mode", "") or evolution_runner.get("activation_mode", "") or "").strip()
+    activation_reason = str(
+        evolution_status.get("activation_reason", "") or evolution_runner.get("activation_reason", "") or ""
+    ).strip()
+    enabled_for_sessions = list(evolution_status.get("enabled_for_sessions", []) or evolution_runner.get("enabled_for_sessions", []) or [])
+    autonomy_session_id = str(
+        evolution_status.get("autonomy_session_id", "") or evolution_runner.get("autonomy_session_id", "") or ""
+    ).strip()
+    last_review_status = str(evolution_status.get("last_review_status", "") or "").strip()
+    cooldown_remaining_s = round(_runtime_posture_number(evolution_status.get("cooldown_remaining_s")), 3)
+
+    if not evolution_enabled:
+        activation_scope = "disabled"
+    elif not activation_scope:
+        activation_scope = "session_canary" if enabled_for_sessions else "global"
+
+    if not evolution_enabled:
+        approval_mode = "disabled"
+        policy_posture = "manual_only"
+        policy_tone = "warn"
+        policy_block = activation_reason or "disabled_by_config"
+        current_session_allowed = False
+        policy_hint = "Background self-evolution is disabled; only explicit/manual runs can proceed."
+    else:
+        approval_mode = "approval_required" if require_approval else "direct_commit"
+        current_session_allowed = not enabled_for_sessions or (
+            bool(autonomy_session_id) and autonomy_session_id in enabled_for_sessions
+        )
+        if activation_reason:
+            policy_posture = "blocked"
+            policy_tone = "warn"
+            policy_block = activation_reason
+            if activation_reason == "autonomy_session_not_allowlisted":
+                policy_hint = (
+                    f"Current autonomy session {autonomy_session_id or 'unbound'} is outside the canary allowlist."
+                )
+            else:
+                policy_hint = f"Runtime policy is currently blocked by {activation_reason}."
+        elif activation_scope == "session_canary":
+            policy_posture = "session_canary"
+            policy_tone = "warn"
+            policy_block = ""
+            policy_hint = (
+                f"Canary policy restricts background self-evolution to {len(enabled_for_sessions)} allowlisted session(s)."
+            )
+        elif approval_mode == "approval_required":
+            policy_posture = "approval_required"
+            policy_tone = "warn"
+            policy_block = ""
+            policy_hint = "Runtime policy requires approval before merge."
+        else:
+            policy_posture = "direct_commit"
+            policy_tone = "ok"
+            policy_block = ""
+            policy_hint = "Runtime policy allows direct commits; monitor recent outcomes before widening scope."
+
+    return {
+        "approval_mode": approval_mode,
+        "activation_scope": activation_scope,
+        "policy_posture": policy_posture,
+        "policy_tone": policy_tone,
+        "policy_block": policy_block,
+        "policy_hint": policy_hint,
+        "self_evolution": {
+            "enabled": evolution_enabled,
+            "background_enabled": background_enabled,
+            "require_approval": require_approval,
+            "activation_scope": activation_scope,
+            "activation_reason": activation_reason,
+            "autonomy_session_id": autonomy_session_id,
+            "enabled_for_sessions_count": len(enabled_for_sessions),
+            "enabled_for_sessions_sample": enabled_for_sessions[:3],
+            "current_session_allowed": current_session_allowed,
+            "last_review_status": last_review_status,
+            "cooldown_remaining_s": cooldown_remaining_s,
+        },
+    }
+
+
 def dashboard_state_payload(
     *,
     contract_version: str,
@@ -289,6 +376,7 @@ def dashboard_state_payload(
     provider_status_payload: dict[str, Any],
     self_evolution_payload: dict[str, Any],
     runtime_posture_payload: dict[str, Any],
+    runtime_policy_payload: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "contract_version": contract_version,
@@ -322,6 +410,7 @@ def dashboard_state_payload(
         "self_evolution": self_evolution_payload,
         "runtime": {
             "posture": runtime_posture_payload,
+            "policy": runtime_policy_payload,
         },
     }
 

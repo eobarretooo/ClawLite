@@ -1426,6 +1426,81 @@ function renderRuntimePostureBoard() {
   setBadge("runtime-posture-status", statusLabel, tone);
 }
 
+function renderRuntimePolicyBoard() {
+  const grid = byId("runtime-policy-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const runtime = ((state.dashboardState || {}).runtime) || {};
+  const policy = runtime.policy || {};
+  const evolution = policy.self_evolution || {};
+  const cards = [];
+
+  if (!Object.keys(policy).length) {
+    appendSummaryCard(grid, {
+      title: "Runtime policy",
+      body: "not available",
+      detail: "No compact runtime policy snapshot is available yet.",
+    });
+    setBadge("runtime-policy-status", "pending", "warn");
+    return;
+  }
+
+  cards.push({
+    title: "Review gate",
+    body: `${String(policy.approval_mode || "unknown")} | ${String(policy.activation_scope || "unknown")}`,
+    detail: [
+      evolution.enabled ? "engine enabled" : "engine disabled",
+      evolution.background_enabled ? "background enabled" : "background disabled",
+      evolution.last_review_status ? `review ${String(evolution.last_review_status)}` : "",
+      evolution.cooldown_remaining_s ? `cooldown ${formatDuration(evolution.cooldown_remaining_s)}` : "",
+    ].filter(Boolean).join(" | ") || "No runtime review policy available.",
+  });
+
+  cards.push({
+    title: "Canary scope",
+    body: `${numeric(evolution.enabled_for_sessions_count, 0)} allowlisted | ${String(evolution.autonomy_session_id || "unbound")}`,
+    detail: [
+      evolution.current_session_allowed ? "current session allowed" : "current session blocked",
+      Array.isArray(evolution.enabled_for_sessions_sample) && evolution.enabled_for_sessions_sample.length
+        ? `sample ${evolution.enabled_for_sessions_sample.map((value) => String(value)).join(", ")}`
+        : "",
+    ].filter(Boolean).join(" | ") || "No canary scope is configured.",
+  });
+
+  cards.push({
+    title: "Policy block",
+    body: `${String(policy.policy_posture || "unknown")} | ${String(policy.policy_block || "none")}`,
+    detail: [
+      String(evolution.activation_reason || "").trim(),
+      !evolution.activation_reason ? "No active policy block." : "",
+    ].filter(Boolean).join(" | "),
+  });
+
+  cards.push({
+    title: "Policy hint",
+    body: String(policy.policy_hint || "Runtime policy looks steady."),
+    detail: [
+      evolution.require_approval ? "approval before merge" : "no approval gate",
+      String(policy.policy_tone || "").trim(),
+    ].filter(Boolean).join(" | "),
+  });
+
+  cards.forEach((item) => appendSummaryCard(grid, item));
+
+  const statusLabel = String(policy.policy_posture || policy.approval_mode || "unknown");
+  const tone = String(policy.policy_tone || "").trim() || (
+    ["direct_commit"].includes(statusLabel)
+      ? "ok"
+      : (["approval_required", "manual_only", "session_canary", "blocked", "disabled"].includes(statusLabel)
+        ? "warn"
+        : "danger")
+  );
+  setBadge("runtime-policy-status", statusLabel, tone);
+}
+
 function renderProviderRecoveryBoard() {
   const grid = byId("provider-grid");
   if (!grid) {
@@ -1743,6 +1818,7 @@ function renderAutomation() {
   renderDeliveryBoard();
   renderSupervisorBoard();
   renderRuntimePostureBoard();
+  renderRuntimePolicyBoard();
   renderProviderRecoveryBoard();
 
   const selfEvolution = payload.self_evolution || {};

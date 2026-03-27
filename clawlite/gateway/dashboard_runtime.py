@@ -44,6 +44,18 @@ def dashboard_runtime_posture_summary(
     )
 
 
+def dashboard_runtime_policy_summary(
+    *,
+    runtime: Any,
+    self_evolution_payload: dict[str, Any],
+    dashboard_runtime_policy_summary_payload: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    del runtime
+    return dashboard_runtime_policy_summary_payload(
+        self_evolution_payload=self_evolution_payload,
+    )
+
+
 def dashboard_memory_summary(
     *,
     runtime: Any,
@@ -78,6 +90,7 @@ def dashboard_state_payload(
     dashboard_cron_summary_payload: Callable[..., dict[str, Any]],
     dashboard_self_evolution_summary_payload: Callable[..., dict[str, Any]],
     dashboard_runtime_posture_summary_payload: Callable[..., dict[str, Any]],
+    dashboard_runtime_policy_summary_payload: Callable[..., dict[str, Any]],
     dashboard_memory_summary_payload: Callable[..., dict[str, Any]],
     operator_channel_summary: Callable[[Any], dict[str, Any]],
     provider_telemetry_snapshot: Callable[[Any], dict[str, Any]],
@@ -103,6 +116,11 @@ def dashboard_state_payload(
         runtime=runtime,
         self_evolution_payload=self_evolution_payload,
         dashboard_runtime_posture_summary_payload=dashboard_runtime_posture_summary_payload,
+    )
+    runtime_policy_payload = dashboard_runtime_policy_summary(
+        runtime=runtime,
+        self_evolution_payload=self_evolution_payload,
+        dashboard_runtime_policy_summary_payload=dashboard_runtime_policy_summary_payload,
     )
     skills = runtime.skills_loader.diagnostics_report()
     return dashboard_state_payload_builder(
@@ -145,6 +163,7 @@ def dashboard_state_payload(
         provider_status_payload=provider_status if isinstance(provider_status, dict) else {},
         self_evolution_payload=self_evolution_payload,
         runtime_posture_payload=runtime_posture_payload if isinstance(runtime_posture_payload, dict) else {},
+        runtime_policy_payload=runtime_policy_payload if isinstance(runtime_policy_payload, dict) else {},
     )
 
 
@@ -153,6 +172,7 @@ __all__ = [
     "dashboard_cron_summary",
     "dashboard_memory_summary",
     "dashboard_operator_summary",
+    "dashboard_runtime_policy_summary",
     "dashboard_runtime_posture_summary",
     "dashboard_self_evolution_summary",
     "dashboard_state_payload",

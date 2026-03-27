@@ -125,13 +125,13 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2047 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2050 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
 CI runs on Python 3.10 and 3.12.
 
-The packaged dashboard Automation tab now also exposes a compact `Runtime Posture` card, surfacing additive `runtime.posture` signals from `GET /api/dashboard/state` so operators can quickly see autonomy, wake, approval, and the current summary posture without opening full diagnostics.
+The packaged dashboard Automation tab now also exposes compact `Runtime Posture` and `Runtime Policy` cards, surfacing additive `runtime.posture` / `runtime.policy` signals from `GET /api/dashboard/state` so operators can quickly see autonomy, wake, approval, canary scope, and current policy blocks without opening full diagnostics.
 
 ---
 
