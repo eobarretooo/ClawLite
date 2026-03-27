@@ -1074,6 +1074,15 @@ def test_tool_registry_approval_audit_snapshot_tracks_review_and_revoke_actions(
         assert len(reviews_only) == 1
         assert reviews_only[0]["action"] == "review"
 
+        by_request = reg.approval_audit_snapshot(
+            action="review",
+            request_id=pending[0]["request_id"],
+            tool="browser",
+            rule="browser:evaluate",
+        )
+        assert len(by_request) == 1
+        assert by_request[0]["request_id"] == pending[0]["request_id"]
+
     asyncio.run(_scenario())
 
 
@@ -1104,6 +1113,15 @@ def test_tool_registry_approval_audit_snapshot_filters_broad_revoke_rows_by_remo
     )
     assert len(by_channel) == 1
     assert by_channel[0]["removed_count"] == 2
+
+    by_request = reg.approval_audit_snapshot(
+        action="revoke_grant",
+        request_id="req-1",
+        rule="browser:evaluate",
+    )
+    assert len(by_request) == 1
+    assert by_request[0]["removed_count"] == 2
+    assert {item["request_id"] for item in by_request[0]["removed"]} == {"req-1", "req-2"}
 
 
 def test_tool_registry_approval_audit_snapshot_captures_denied_review_attempts() -> None:

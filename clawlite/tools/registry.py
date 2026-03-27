@@ -1113,6 +1113,7 @@ class ToolRegistry:
         action: str = "",
         session_id: str = "",
         channel: str = "",
+        request_id: str = "",
         tool: str = "",
         rule: str = "",
         limit: int = 50,
@@ -1121,6 +1122,7 @@ class ToolRegistry:
         normalized_action = str(action or "").strip().lower()
         normalized_session = str(session_id or "").strip()
         normalized_channel = str(channel or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
         normalized_tool = str(tool or "").strip().lower()
         normalized_rule = str(rule or "").strip().lower()
         max_rows = max(1, int(limit or 1))
@@ -1146,6 +1148,14 @@ class ToolRegistry:
                 }
                 row_channels.discard("")
                 if normalized_channel not in row_channels:
+                    continue
+            if normalized_request_id:
+                row_request_ids = {
+                    str(row.get("request_id", "") or "").strip(),
+                    *(str((item or {}).get("request_id", "") or "").strip() for item in row.get("removed", []) or []),
+                }
+                row_request_ids.discard("")
+                if normalized_request_id not in row_request_ids:
                     continue
             if normalized_tool:
                 row_tools = {

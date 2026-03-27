@@ -777,6 +777,7 @@ def fetch_gateway_tool_approval_audit(
     action: str = "",
     session_id: str = "",
     channel: str = "",
+    request_id: str = "",
     tool: str = "",
     rule: str = "",
     limit: int = 50,
@@ -795,6 +796,7 @@ def fetch_gateway_tool_approval_audit(
             "action": normalized_action,
             "session_id": str(session_id or "").strip(),
             "channel": str(channel or "").strip().lower(),
+            "request_id": str(request_id or "").strip(),
             "tool": str(tool or "").strip().lower(),
             "rule": str(rule or "").strip().lower(),
             "limit": max(1, int(limit or 1)),
@@ -807,6 +809,7 @@ def fetch_gateway_tool_approval_audit(
         payload["action"] = str(body.get("action", "") or "")
         payload["session_id"] = str(body.get("session_id", "") or "")
         payload["channel"] = str(body.get("channel", "") or "")
+        payload["request_id"] = str(body.get("request_id", "") or "")
         payload["tool"] = str(body.get("tool", "") or "")
         payload["rule"] = str(body.get("rule", "") or "")
         payload["count"] = int(body.get("count", 0) or 0)

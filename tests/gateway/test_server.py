@@ -3108,6 +3108,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="tool-approvals-grid"' in body
         assert 'id="tool-approvals-preview"' in body
         assert 'id="tool-approval-audit-action-filter"' in body
+        assert 'id="tool-approval-audit-request-id"' in body
         assert 'id="inspect-tool-approval-audit"' in body
         assert 'id="tool-approval-audit-grid"' in body
         assert 'id="tool-approval-audit-preview"' in body
@@ -3203,6 +3204,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "tool-approvals-preview" in js.text
     assert "tool-approval-audit-grid" in js.text
     assert "tool-approval-audit-preview" in js.text
+    assert "tool-approval-audit-request-id" in js.text
     assert "readToolApprovalAuditFilter" in js.text
     assert "summarizeToolApprovalAuditFilter" in js.text
     assert "readToolApprovalsFilter" in js.text
@@ -3243,6 +3245,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Tool approval audit refresh failed" in js.text
     assert "pendingVisible" in js.text
     assert "tool-approval-audit-action-filter" in js.text
+    assert "tool-approval-audit-request-id" in js.text
     assert "inspect-tool-approval-audit" in js.text
     assert "tool-approval-request-id" in js.text
     assert "tool-grant-selection" in js.text
@@ -4007,6 +4010,44 @@ def test_gateway_tools_approval_audit_endpoints_return_recent_rows(tmp_path: Pat
     assert api_payload["entries"][0]["approval_context"] == {"tool": "browser", "action": "evaluate"}
 
 
+def test_gateway_tools_approval_audit_filters_review_rows_by_request_id(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    registry = app.state.runtime.engine.tools
+    registry._approval_requests["req-1"] = {
+        "request_id": "req-1",
+        "tool": "browser",
+        "session_id": "telegram:1",
+        "channel": "telegram",
+        "matched_approval_specifiers": ["browser:evaluate"],
+        "status": "pending",
+        "created_at_monotonic": time.monotonic() - 1.0,
+        "expires_at_monotonic": time.monotonic() + 300.0,
+        "arguments_preview": '{"action":"evaluate"}',
+        "approval_context": {"tool": "browser", "action": "evaluate"},
+        "notified_count": 1,
+    }
+    registry._approval_request_order.append("req-1")
+    approved = registry.review_approval_request("req-1", decision="approved", actor="telegram:1", trusted_actor=True)
+    assert approved["ok"] is True
+
+    with TestClient(app) as client:
+        response = client.get("/v1/tools/approvals/audit?action=review&request_id=req-1&tool=browser&rule=browser:evaluate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["request_id"] == "req-1"
+    assert payload["count"] == 1
+    assert payload["entries"][0]["request_id"] == "req-1"
+    assert payload["entries"][0]["action"] == "review"
+
+
 def test_gateway_tools_approval_audit_filters_broad_revoke_rows_by_removed_session(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),
@@ -4036,6 +4077,35 @@ def test_gateway_tools_approval_audit_filters_broad_revoke_rows_by_removed_sessi
     assert payload["entries"][0]["action"] == "revoke_grant"
     assert payload["entries"][0]["removed_count"] == 2
     assert {item["session_id"] for item in payload["entries"][0]["removed"]} == {"telegram:1", "telegram:2"}
+
+
+def test_gateway_tools_approval_audit_filters_broad_revoke_rows_by_removed_request_id(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    registry = app.state.runtime.engine.tools
+    registry._approval_grants["exact::req-1::telegram:1::telegram::browser:evaluate"] = time.monotonic() + 120.0
+    registry._approval_grants["exact::req-2::telegram:2::telegram::browser:evaluate"] = time.monotonic() + 120.0
+
+    revoked = registry.revoke_approval_grants(rule="browser:evaluate", scope="exact")
+    assert revoked["ok"] is True
+    assert revoked["removed_count"] == 2
+
+    with TestClient(app) as client:
+        response = client.get("/v1/tools/approvals/audit?action=revoke_grant&request_id=req-1&rule=browser:evaluate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["request_id"] == "req-1"
+    assert payload["count"] == 1
+    assert payload["entries"][0]["action"] == "revoke_grant"
+    assert payload["entries"][0]["removed_count"] == 2
+    assert {item["request_id"] for item in payload["entries"][0]["removed"]} == {"req-1", "req-2"}
 
 
 def test_gateway_tools_approval_review_endpoint_updates_request(tmp_path: Path) -> None:

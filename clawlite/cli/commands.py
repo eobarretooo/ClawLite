@@ -1728,6 +1728,7 @@ def cmd_tools_approval_audit(args: argparse.Namespace) -> int:
         action=str(args.action or ""),
         session_id=str(args.session_id or ""),
         channel=str(args.channel or ""),
+        request_id=str(args.request_id or ""),
         tool=str(args.tool or ""),
         rule=str(args.rule or ""),
         limit=max(1, int(args.limit or 1)),
@@ -2741,6 +2742,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_tools_approval_audit.add_argument("--action", choices=["review", "revoke_grant", "all"], default="all")
     p_tools_approval_audit.add_argument("--session-id", default="", help="Optional session filter")
     p_tools_approval_audit.add_argument("--channel", default="", help="Optional channel filter")
+    p_tools_approval_audit.add_argument("--request-id", default="", help="Optional request id filter")
     p_tools_approval_audit.add_argument("--tool", default="", help="Optional tool filter")
     p_tools_approval_audit.add_argument("--rule", default="", help="Optional approval rule filter")
     p_tools_approval_audit.add_argument("--limit", type=int, default=50)

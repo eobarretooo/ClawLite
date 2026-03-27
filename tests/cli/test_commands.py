@@ -1077,6 +1077,7 @@ def test_cli_tools_approval_audit_uses_gateway_endpoint(tmp_path: Path, capsys, 
         action="",
         session_id="",
         channel="",
+        request_id="",
         tool="",
         rule="",
         limit=50,
@@ -1087,6 +1088,7 @@ def test_cli_tools_approval_audit_uses_gateway_endpoint(tmp_path: Path, capsys, 
         assert action == "review"
         assert session_id == "telegram:1"
         assert channel == "telegram"
+        assert request_id == "req-1"
         assert tool == "browser"
         assert rule == "browser:evaluate"
         assert limit == 10
@@ -1112,6 +1114,8 @@ def test_cli_tools_approval_audit_uses_gateway_endpoint(tmp_path: Path, capsys, 
             "telegram:1",
             "--channel",
             "telegram",
+            "--request-id",
+            "req-1",
             "--tool",
             "browser",
             "--rule",

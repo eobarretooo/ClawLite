@@ -196,6 +196,7 @@ class GatewayRequestHandlers:
         action: str = "",
         session_id: str = "",
         channel: str = "",
+        request_id: str = "",
         tool: str = "",
         rule: str = "",
         limit: int = 50,
@@ -207,6 +208,7 @@ class GatewayRequestHandlers:
             normalized_action = ""
         normalized_session = str(session_id or "").strip()
         normalized_channel = str(channel or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
         normalized_tool = str(tool or "").strip().lower()
         normalized_rule = str(rule or "").strip().lower()
         max_rows = max(1, int(limit or 1))
@@ -217,6 +219,7 @@ class GatewayRequestHandlers:
                 "action": normalized_action,
                 "session_id": normalized_session,
                 "channel": normalized_channel,
+                "request_id": normalized_request_id,
                 "tool": normalized_tool,
                 "rule": normalized_rule,
                 "count": 0,
@@ -232,6 +235,7 @@ class GatewayRequestHandlers:
             action=normalized_action,
             session_id=normalized_session,
             channel=normalized_channel,
+            request_id=normalized_request_id,
             tool=normalized_tool,
             rule=normalized_rule,
             limit=max_rows,
@@ -254,6 +258,7 @@ class GatewayRequestHandlers:
             "action": normalized_action,
             "session_id": normalized_session,
             "channel": normalized_channel,
+            "request_id": normalized_request_id,
             "tool": normalized_tool,
             "rule": normalized_rule,
             "count": len(entries),

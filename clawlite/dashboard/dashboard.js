@@ -428,9 +428,11 @@ function summarizeToolApprovalsFilter(summary) {
 
 function readToolApprovalAuditFilter() {
   const action = String(byId("tool-approval-audit-action-filter")?.value || "").trim().toLowerCase();
+  const requestId = String(byId("tool-approval-audit-request-id")?.value || "").trim();
   const approvals = readToolApprovalsFilter();
   return {
     action: action && action !== "all" ? action : "",
+    request_id: requestId,
     tool: approvals.tool,
     rule: approvals.rule,
   };
@@ -438,11 +440,15 @@ function readToolApprovalAuditFilter() {
 
 function summarizeToolApprovalAuditFilter(summary) {
   const action = String((summary || {}).action || "").trim().toLowerCase();
+  const requestId = String((summary || {}).request_id || "").trim();
   const tool = String((summary || {}).tool || "").trim();
   const rule = String((summary || {}).rule || "").trim();
   const parts = [];
   if (action) {
     parts.push(`action ${action}`);
+  }
+  if (requestId) {
+    parts.push(`request ${requestId}`);
   }
   if (tool) {
     parts.push(`tool ${tool}`);
@@ -1125,11 +1131,12 @@ function renderToolApprovalAuditSummary() {
   const latestStatus = String(latest.status || "").trim() || "unknown";
   const latestTool = approvalToolLabel(latest) || "tool";
   const latestRule = approvalRuleLabel(latest);
+  const latestRequestId = String(latest.request_id || "").trim();
   const latestTarget = [
     latestTool,
     latestRule,
     String(latest.scope || "").trim(),
-    String(latest.request_id || "").trim(),
+    latestRequestId,
   ].filter(Boolean).join(" | ");
   const filterMeta = summarizeToolApprovalAuditFilter(audit);
   const errorCount = numeric(audit.error_count, 0);
@@ -1154,6 +1161,11 @@ function renderToolApprovalAuditSummary() {
     title: "Latest",
     body: `${latestAction} | ${latestStatus}`,
     detail: latestTarget || "No recent audit row.",
+  });
+  appendSummaryCard(grid, {
+    title: "Request drill-down",
+    body: latestRequestId || String(audit.request_id || "").trim() || "none",
+    detail: String(audit.request_id || "").trim() ? "active request filter" : "Showing mixed recent request history.",
   });
 
   setBadge("tool-approval-audit-status", entries.length ? `${entries.length} rows` : "empty", badgeTone);
@@ -3263,6 +3275,9 @@ async function fetchToolApprovalAuditSnapshot(filter = readToolApprovalAuditFilt
   if (filter.action) {
     url.searchParams.set("action", filter.action);
   }
+  if (filter.request_id) {
+    url.searchParams.set("request_id", filter.request_id);
+  }
   if (filter.tool) {
     url.searchParams.set("tool", filter.tool);
   }
@@ -4339,6 +4354,12 @@ function bindEvents() {
     }
   });
   byId("tool-approval-audit-action-filter").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void triggerToolApprovalAuditInspect();
+    }
+  });
+  byId("tool-approval-audit-request-id").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       void triggerToolApprovalAuditInspect();

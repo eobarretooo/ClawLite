@@ -1506,6 +1506,7 @@ Query params:
 - `action`: optional action filter (`review`, `revoke_grant`, or empty for all)
 - `session_id`: optional session filter
 - `channel`: optional channel filter
+- `request_id`: optional request/grant lineage filter
 - `tool`: optional exact tool filter
 - `rule`: optional exact approval rule filter
 - `limit`: max rows to return
