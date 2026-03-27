@@ -3447,6 +3447,7 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "profile" in payload["memory"]
     assert "suggestions" in payload["memory"]
     assert "quality" in payload["memory"]
+    assert "remediation" in payload["memory"]
     assert "versions" in payload["memory"]
     assert "status" in payload["cron"]
     assert "jobs" in payload["cron"]

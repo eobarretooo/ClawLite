@@ -233,6 +233,8 @@ Those live snapshots stay separate from the normal dashboard-state payload on pu
 
 The same Memory card now also turns those read-only signals into a more guided triage surface: it highlights the top live quality recommendation and the highest-priority pending proactive-memory suggestion directly in the dashboard instead of leaving that interpretation entirely to raw JSON or the CLI.
 
+It now also carries an additive `memory.remediation` summary in the normal dashboard-state payload. That bounded summary is intentionally read-only: it picks the next safe operator action from the existing memory signals, for example refreshing suggestions, inspecting quality, improving semantic coverage, or creating the first snapshot, without automatically mutating memory state.
+
 ## Session Logs vs Memory
 
 Session logs are not the same as memory.

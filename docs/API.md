@@ -142,6 +142,8 @@ The additive `runtime.policy` block now mirrors the active self-evolution/operat
 
 That same additive `runtime.policy` block now also carries a bounded nested `drift` section so operators can compare configured self-evolution policy against the effective runtime policy without reconstructing it by hand. The `drift` payload includes `posture`, `tone`, `reason`, `hint`, plus compact `configured` and `effective` snapshots for enablement, approval gate, activation scope, canary allowlist counts/samples, and autonomy session binding.
 
+The additive `memory.remediation` block now mirrors a bounded next-step summary derived from the normal dashboard memory payload (`analysis`, `quality`, `suggestions`, and `versions`). It includes `posture`, `tone`, `priority`, `summary`, `hint`, plus compact nested `suggestions`, `quality`, `analysis`, and `versions` detail so the packaged Knowledge tab can surface which safe memory action should come next without scraping raw counters first.
+
 ## `GET /v1/control/provider/status`
 
 Returns the compact cached provider status for the provider currently selected by the runtime/config, reusing the same local probe cache surfaced by `clawlite provider status`.

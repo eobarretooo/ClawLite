@@ -2707,6 +2707,114 @@ function memorySuggestionSummary(suggest) {
   };
 }
 
+function memoryRemediationSnapshot({ memory, liveDoctor, liveOverview, liveQuality, recommendationSummary, suggestionSummary }) {
+  const remediation = (memory.remediation && typeof memory.remediation === "object") ? memory.remediation : {};
+  const doctor = (liveDoctor && typeof liveDoctor === "object") ? liveDoctor : {};
+  const overview = (liveOverview && typeof liveOverview === "object") ? liveOverview : {};
+  const quality = (liveQuality && typeof liveQuality === "object") ? liveQuality : {};
+  const qualityReport = quality.report || {};
+  const qualityState = quality.state || {};
+  const qualityCurrent = qualityState.current || {};
+  const qualityTrend = qualityState.trend || {};
+  const doctorDiagnostics = doctor.diagnostics || {};
+  const doctorCorrupt = numeric(doctorDiagnostics.history_read_corrupt_lines, 0);
+  const doctorRepaired = numeric(doctorDiagnostics.history_repaired_files, 0);
+  if (liveDoctor) {
+    if (doctor.ok === false) {
+      const error = doctor.error || {};
+      return {
+        posture: "doctor_failed",
+        tone: "danger",
+        priority: "run_doctor",
+        summary: "doctor failed",
+        hint: `${String(error.type || "error")} | ${String(error.message || "Memory doctor failed.")}`,
+      };
+    }
+    if (doctorCorrupt > 0 || doctorRepaired > 0) {
+      return {
+        posture: "doctor_attention",
+        tone: "warn",
+        priority: "review_doctor",
+        summary: `${doctorCorrupt} corrupt | ${doctorRepaired} repaired`,
+        hint: "Review Memory doctor output before acting on lower-priority quality or suggestion work.",
+      };
+    }
+  }
+  if (liveQuality) {
+    if (quality.ok === false) {
+      const error = quality.error || {};
+      return {
+        posture: "quality_failed",
+        tone: "danger",
+        priority: "run_quality",
+        summary: "quality failed",
+        hint: `${String(error.type || "error")} | ${String(error.message || "Memory quality snapshot failed.")}`,
+      };
+    }
+    if (String(recommendationSummary.recommendation || "").trim()) {
+      return {
+        posture: "quality_attention",
+        tone: "warn",
+        priority: "inspect_quality",
+        summary: recommendationSummary.body,
+        hint: "Start with the top quality recommendation before lower-priority cleanup.",
+      };
+    }
+    const liveScore = numeric(qualityReport.score, numeric(qualityCurrent.score, 0));
+    const liveDrift = String(
+      ((qualityReport.drift || qualityCurrent.drift || {}).assessment || qualityTrend.assessment || ""),
+    ).trim();
+    if (liveScore > 0 && (liveDrift === "degrading" || liveScore < 65)) {
+      return {
+        posture: "quality_attention",
+        tone: "warn",
+        priority: "inspect_quality",
+        summary: `${liveScore} score | ${liveDrift || "drift unknown"}`,
+        hint: "Inspect memory quality before lower-priority cleanup even when no explicit recommendation was emitted.",
+      };
+    }
+  }
+  if (liveOverview) {
+    if (overview.ok === false) {
+      const error = overview.error || {};
+      return {
+        posture: "overview_failed",
+        tone: "danger",
+        priority: "run_overview",
+        summary: "overview failed",
+        hint: `${String(error.type || "error")} | ${String(error.message || "Memory overview failed.")}`,
+      };
+    }
+    const total = numeric((overview.counts || {}).total, 0);
+    const semanticCoverage = Number(overview.semantic_coverage || 0);
+    if (total > 0 && semanticCoverage < 0.4) {
+      return {
+        posture: "coverage_attention",
+        tone: "warn",
+        priority: "inspect_overview",
+        summary: `${Math.round(semanticCoverage * 100)}% semantic coverage`,
+        hint: "Inspect memory overview and raise semantic coverage before relying on proactive recall.",
+      };
+    }
+  }
+  if (String(suggestionSummary.text || "").trim()) {
+    return {
+      posture: String(remediation.posture || "guided"),
+      tone: String(remediation.tone || "warn"),
+      priority: String(remediation.priority || "review_suggestion"),
+      summary: suggestionSummary.body,
+      hint: String(remediation.hint || "Review the highest-priority memory suggestion next."),
+    };
+  }
+  return {
+    posture: String(remediation.posture || "clear"),
+    tone: String(remediation.tone || "ok"),
+    priority: String(remediation.priority || "none"),
+    summary: String(remediation.summary || "no immediate remediation"),
+    hint: String(remediation.hint || "Current memory signals do not suggest immediate operator action."),
+  };
+}
+
 function renderMemoryBoard() {
   const grid = byId("memory-grid");
   if (!grid) {
@@ -2742,6 +2850,14 @@ function renderMemoryBoard() {
   const profilePayload = profile.profile || {};
   const recommendationSummary = memoryRecommendationSummary({ liveQuality: liveQualitySnapshot, quality });
   const suggestionSummary = memorySuggestionSummary(suggest);
+  const remediationSummary = memoryRemediationSnapshot({
+    memory,
+    liveDoctor: state.memoryDoctor,
+    liveOverview: state.memoryOverview,
+    liveQuality: state.memoryQuality,
+    recommendationSummary,
+    suggestionSummary,
+  });
   const triage = memoryTriageSummary({
     suggestionsCount: numeric(suggest.count, 0),
     snapshotCount: numeric(versions.count, 0),
@@ -2761,6 +2877,11 @@ function renderMemoryBoard() {
     title: "Triage",
     body: triage.body,
     detail: triage.detail,
+  });
+  appendSummaryCard(grid, {
+    title: "Remediation",
+    body: `${String(remediationSummary.priority || "none")} | ${String(remediationSummary.summary || "no immediate remediation")}`,
+    detail: String(remediationSummary.hint || "Current memory signals do not suggest immediate operator action."),
   });
   appendSummaryCard(grid, {
     title: "Top recommendation",
@@ -2999,6 +3120,16 @@ function renderKnowledge() {
     : (((skills.managed || {}).blockers) || {});
   const memory = payload.memory || {};
   const memoryMonitor = memory.monitor || {};
+  const memoryRecommendation = memoryRecommendationSummary({ liveQuality: state.memoryQuality, quality: memory.quality || {} });
+  const memoryNextSuggestion = memorySuggestionSummary(memory.suggestions || {});
+  const remediationSummary = memoryRemediationSnapshot({
+    memory,
+    liveDoctor: state.memoryDoctor,
+    liveOverview: state.memoryOverview,
+    liveQuality: state.memoryQuality,
+    recommendationSummary: memoryRecommendation,
+    suggestionSummary: memoryNextSuggestion,
+  });
 
   setText(
     "metric-workspace-health",
@@ -3062,9 +3193,11 @@ function renderKnowledge() {
     profile: memory.profile || {},
     suggestions: memory.suggestions || {},
     quality: memory.quality || {},
+    remediation: memory.remediation || {},
     triage_guidance: {
-      recommendation: memoryRecommendationSummary({ liveQuality: state.memoryQuality, quality: memory.quality || {} }),
-      next_suggestion: memorySuggestionSummary(memory.suggestions || {}),
+      remediation: remediationSummary,
+      recommendation: memoryRecommendation,
+      next_suggestion: memoryNextSuggestion,
     },
     overview_live: state.memoryOverview || {},
     quality_live: state.memoryQuality || {},
