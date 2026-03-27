@@ -3222,7 +3222,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderHttpCorrelationBoard" in js.text
     assert "renderSkillsBoard" in js.text
     assert "Managed marketplace" in js.text
+    assert "Managed blockers" in js.text
     assert "skills.managed || {}" in js.text
+    assert "managed_blockers" in js.text
+    assert "const managedBlockers = (((state.skillsManaged || {}).blockers)" in js.text
+    assert "blocker_kind" in js.text
     assert "tool-signals" in js.text
     assert "tool-approvals-grid" in js.text
     assert "tool-approvals-preview" in js.text
@@ -8451,10 +8455,65 @@ def test_gateway_skills_managed_endpoint_returns_live_summary(
     assert payload["summary"]["count"] == 1
     assert payload["summary"]["total_count"] == 2
     assert payload["summary"]["blocked_count"] == 1
+    assert payload["summary"]["visible_blocked_count"] == 1
     assert payload["summary"]["status_filter"] == "missing_requirements"
     assert payload["summary"]["query"] == "github"
+    assert payload["summary"]["blockers"]["count"] == 1
+    assert payload["summary"]["blockers"]["by_kind"] == {"env": 1}
+    assert payload["summary"]["blockers"]["top_kind"] == "env"
+    assert payload["summary"]["blockers"]["top_detail"] == "GH_TOKEN"
     assert payload["summary"]["skills"][0]["slug"] == "github-helper"
+    assert payload["summary"]["skills"][0]["blocker_kind"] == "env"
     assert "GH_TOKEN" in payload["summary"]["skills"][0]["hint"]
+
+
+def test_gateway_skills_managed_endpoint_keeps_total_and_visible_blockers_separate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    managed_root = tmp_path / ".clawlite" / "marketplace" / "skills"
+    ready_skill = managed_root / "jira-helper"
+    ready_skill.mkdir(parents=True, exist_ok=True)
+    (ready_skill / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: ready managed\ncommand: echo hi\n---\nbody\n",
+        encoding="utf-8",
+    )
+    blocked_skill = managed_root / "github-helper"
+    blocked_skill.mkdir(parents=True, exist_ok=True)
+    (blocked_skill / "SKILL.md").write_text(
+        "---\n"
+        "name: GitHub Helper\n"
+        "description: blocked managed\n"
+        "metadata:\n"
+        "  clawlite:\n"
+        "    primaryEnv: GH_TOKEN\n"
+        "    requires:\n"
+        "      env: [GH_TOKEN]\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    app.state.runtime.skills_loader = SkillsLoader(
+        builtin_root=tmp_path / "builtin",
+        state_path=tmp_path / "state" / "skills-state.json",
+    )
+
+    with TestClient(app) as client:
+        payload = client.get("/v1/control/skills/managed", params={"status": "ready"}).json()
+
+    assert payload["summary"]["count"] == 1
+    assert payload["summary"]["blocked_count"] == 1
+    assert payload["summary"]["visible_blocked_count"] == 0
+    assert payload["summary"]["blockers"]["count"] == 0
+    assert payload["summary"]["skills"][0]["slug"] == "jira-helper"
 
 
 def test_gateway_api_skills_managed_alias_returns_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

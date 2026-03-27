@@ -27,7 +27,7 @@ Resumo agregado para o dashboard local.
 If a gateway token is configured, this endpoint requires that token even when the gateway is otherwise open on loopback.
 
 Additive note:
-- `skills.managed` now carries a compact marketplace-lifecycle summary for the packaged dashboard, with `count`, `ready_count`, `blocked_count`, `disabled_count`, `status_counts`, and a bounded `items` preview of managed marketplace skills.
+- `skills.managed` now carries a compact marketplace-lifecycle summary for the packaged dashboard, with `count`, `ready_count`, unfiltered `blocked_count`, additive `visible_blocked_count`, `disabled_count`, `status_counts`, a bounded `items` preview of managed marketplace skills, and an additive `blockers` summary (`count`, `by_kind`, `top_kind`, `top_detail`, `top_hint`, and bounded `examples`) for the currently visible managed blocker slice.
 
 Example response:
 
@@ -416,6 +416,7 @@ Example response:
     "total_count": 2,
     "ready_count": 1,
     "blocked_count": 1,
+    "visible_blocked_count": 1,
     "disabled_count": 0,
     "status_filter": "missing_requirements",
     "query": "github",
@@ -423,11 +424,30 @@ Example response:
       "missing_requirements": 1,
       "ready": 1
     },
+    "blockers": {
+      "count": 1,
+      "by_kind": {
+        "env": 1
+      },
+      "top_kind": "env",
+      "top_detail": "GH_TOKEN",
+      "top_hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github.",
+      "examples": [
+        {
+          "slug": "github-helper",
+          "status": "missing_requirements",
+          "blocker_kind": "env",
+          "blocker_detail": "GH_TOKEN"
+        }
+      ]
+    },
     "skills": [
       {
         "slug": "github-helper",
         "name": "GitHub Helper",
         "status": "missing_requirements",
+        "blocker_kind": "env",
+        "blocker_detail": "GH_TOKEN",
         "hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
       }
     ]
@@ -436,6 +456,8 @@ Example response:
 ```
 
 Alias compatível: `GET /api/skills/managed`.
+
+The additive `summary.blockers` block and `visible_blocked_count` are scoped to the currently visible slice after `status` and `query` filters are applied, while `blocked_count` remains the unfiltered blocked total for the full managed inventory. That split lets dashboard/CLI operators distinguish “all managed blockers” from “the blockers still visible in this filtered triage pass”.
 
 ## `POST /v1/control/memory/doctor`
 

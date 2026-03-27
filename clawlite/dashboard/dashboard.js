@@ -2803,9 +2803,20 @@ function renderSkillsBoard() {
   const managedTrackedCount = numeric(managedLive.total_count, numeric(managed.count, 0));
   const managedReadyCount = numeric(managedLive.ready_count, numeric(managed.ready_count, 0));
   const managedBlockedCount = numeric(managedLive.blocked_count, numeric(managed.blocked_count, 0));
+  const managedVisibleBlockedCount = numeric(
+    managedLive.visible_blocked_count,
+    numeric(managed.visible_blocked_count, managedBlockedCount),
+  );
   const managedDisabledCount = numeric(managedLive.disabled_count, numeric(managed.disabled_count, 0));
   const managedVisibleCount = numeric(managedLive.count, managedTrackedCount);
   const managedFilterMeta = summarizeManagedFilter(managedLive);
+  const managedBlockers = (managedLive.blockers && typeof managedLive.blockers === "object")
+    ? managedLive.blockers
+    : (managed.blockers || {});
+  const managedBlockerKinds = (managedBlockers.by_kind && typeof managedBlockers.by_kind === "object")
+    ? managedBlockers.by_kind
+    : {};
+  const managedBlockerExamples = Array.isArray(managedBlockers.examples) ? managedBlockers.examples : [];
   const blockedSkills = skillRows.filter((row) => {
     if (!row || row.enabled === false) {
       return false;
@@ -2833,13 +2844,27 @@ function renderSkillsBoard() {
     title: "Managed marketplace",
     body: `${managedTrackedCount} tracked | ${managedReadyCount} ready`,
     detail: managedTrackedCount > 0
-      ? [
+        ? [
           `${managedVisibleCount} visible`,
-          `${managedBlockedCount} blocked`,
+          managedFilterMeta ? `${managedVisibleBlockedCount} blocked visible` : `${managedBlockedCount} blocked`,
+          managedFilterMeta ? `${managedBlockedCount} blocked total` : "",
           `${managedDisabledCount} disabled`,
           managedFilterMeta,
         ].filter(Boolean).join(" | ")
       : "No managed marketplace skills discovered.",
+  });
+  appendSummaryCard(grid, {
+    title: "Managed blockers",
+    body: `${numeric(managedBlockers.count, managedVisibleBlockedCount)} visible | ${String(managedBlockers.top_kind || "none")}`,
+    detail: numeric(managedBlockers.count, managedVisibleBlockedCount) > 0
+      ? [
+          String(managedBlockers.top_detail || "").trim(),
+          Object.entries(managedBlockerKinds)
+            .map(([name, count]) => `${name} ${numeric(count, 0)}`)
+            .join(" | "),
+          String(managedBlockers.top_hint || "").trim(),
+        ].filter(Boolean).join(" | ")
+      : "No blocked managed marketplace skills are visible in the current slice.",
   });
 
   const missingEnvItems = ((missingRequirements.env || {}).items) || [];
@@ -2865,10 +2890,28 @@ function renderSkillsBoard() {
   });
 
   managedPreviewItems.slice(0, 3).forEach((row) => {
+    const blockerKind = String(row.blocker_kind || "").trim();
+    const blockerDetail = String(row.blocker_detail || "").trim();
     appendSummaryCard(grid, {
       title: String(row.slug || row.name || "managed skill"),
-      body: `${String(row.status || "unknown")} | ${String(row.version || "unversioned")}`,
-      detail: String(row.hint || "Inspect this skill through managed live inventory for more lifecycle details."),
+      body: blockerKind
+        ? `${String(row.status || "unknown")} | ${blockerKind}`
+        : `${String(row.status || "unknown")} | ${String(row.version || "unversioned")}`,
+      detail: [
+        blockerDetail,
+        String(row.hint || ""),
+      ].filter(Boolean).join(" | ") || "Inspect this skill through managed live inventory for more lifecycle details.",
+    });
+  });
+
+  managedBlockerExamples.slice(0, 2).forEach((row) => {
+    appendSummaryCard(grid, {
+      title: `Blocked: ${String(row.slug || row.name || "managed skill")}`,
+      body: `${String(row.status || "unknown")} | ${String(row.blocker_kind || "unknown")}`,
+      detail: [
+        String(row.blocker_detail || "").trim(),
+        String(row.hint || "").trim(),
+      ].filter(Boolean).join(" | "),
     });
   });
 
@@ -2896,6 +2939,9 @@ function renderKnowledge() {
   const bootstrap = payload.bootstrap || {};
   const skills = payload.skills || {};
   const skillRows = Array.isArray(skills.skills) ? skills.skills : [];
+  const managedBlockers = (((state.skillsManaged || {}).blockers) && typeof ((state.skillsManaged || {}).blockers) === "object")
+    ? (state.skillsManaged || {}).blockers
+    : (((skills.managed || {}).blockers) || {});
   const memory = payload.memory || {};
   const memoryMonitor = memory.monitor || {};
 
@@ -2951,6 +2997,7 @@ function renderKnowledge() {
     watcher: skills.watcher || {},
     managed: skills.managed || {},
     managed_live: state.skillsManaged || {},
+    managed_blockers: managedBlockers,
     sources: skills.sources || {},
     missing_requirements: skills.missing_requirements || {},
   });
@@ -4374,16 +4421,22 @@ async function triggerSkillsManagedInspect() {
     const summary = payload.summary || {};
     const rows = Array.isArray(summary.skills) ? summary.skills : [];
     const topRow = rows[0] || {};
+    const blockers = (summary.blockers && typeof summary.blockers === "object") ? summary.blockers : {};
     const filterMeta = summarizeManagedFilter(summary);
     state.skillsManaged = summary;
     recordEvent(
-      numeric(summary.blocked_count, 0) > 0 ? "warn" : "ok",
+      numeric(summary.visible_blocked_count, numeric(blockers.count, 0)) > 0 ? "warn" : "ok",
       "Managed skills inspected",
       rows.length
         ? [
             `${numeric(summary.count, 0)} visible`,
             `${numeric(summary.total_count, 0)} total`,
             filterMeta,
+            numeric(summary.visible_blocked_count, numeric(blockers.count, 0)) > 0
+              ? `${numeric(summary.visible_blocked_count, numeric(blockers.count, 0))} blocker(s) visible`
+              : "",
+            filterMeta ? `${numeric(summary.blocked_count, 0)} blocker(s) total` : "",
+            String(blockers.top_kind || "").trim() ? `${String(blockers.top_kind)}:${String(blockers.top_detail || "top")}` : "",
             `${String(topRow.slug || topRow.name || "managed skill")} ${String(topRow.status || "unknown")}`,
           ].filter(Boolean).join(" | ")
         : [

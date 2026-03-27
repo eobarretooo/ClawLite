@@ -48,6 +48,7 @@ The newest skills follow-up now adds a compact managed-marketplace lifecycle sum
 The newest skills follow-up now promotes that same managed lifecycle into a first-class live control-plane surface: `GET /v1/control/skills/managed` and `GET /api/skills/managed` expose the full managed inventory with live filters/counts, and the packaged dashboard Knowledge tab now offers `Inspect managed skills` to fetch that snapshot on demand instead of relying only on the bounded diagnostics preview.
 The newest dashboard follow-up now makes that live managed inventory usable in-place: the packaged Knowledge tab exposes `status` and free-text `query` controls before `Inspect managed skills`, so operators can fetch only one managed lifecycle slice or search one marketplace skill directly from the control plane instead of falling back to CLI flags for every triage pass.
 The newest skills follow-up now adds the first safe managed-lifecycle mutation to that same surface: `POST /v1/control/skills/sync` and `POST /api/skills/sync` run the same bulk `clawhub update --all` path as `clawlite skills sync`, refresh runtime discovery immediately afterward, and the packaged dashboard Knowledge tab now exposes that through `Sync managed skills` before operators re-run filtered live inspection.
+The newest skills follow-up now also turns that live managed inventory into a blocker drill-down surface: `skills managed`, `GET /v1/control/skills/managed`, and the additive `skills.managed` diagnostics summary now all expose compact blocker metadata (`blocker_kind`, `blocker_detail`, `visible_blocked_count`, and a visible-slice `blockers` summary), while keeping `blocked_count` as the unfiltered total for the whole managed inventory. The packaged Knowledge tab uses that split to render `Managed blockers` cards plus bounded blocked-skill examples without overstating blockers outside the current filtered slice.
 The newest memory follow-up now extends that live operator surface again: alongside the existing read-only `memory doctor` and live `memory quality` routes, `POST /v1/control/memory/overview` and `POST /api/memory/overview` now expose the same lightweight runtime counts/coverage snapshot as `clawlite memory overview`, and the packaged dashboard Knowledge tab uses that new snapshot to drive a more compact memory triage summary next to the existing doctor and quality views.
 The earlier approval state remains exposed through the gateway/CLI (`tools approvals|approve|reject|revoke-grant`) with exact `tool` / `rule` filters, `exec` approvals understand shell/env/cwd-derived specifiers such as `exec:shell` and `exec:env-key:git-ssh-command`, and skills gained richer local operator visibility through `skills doctor`, `skills managed`, `skills search local_matches`, and the new `skills config` write path for `skills.entries.<skillKey>`. Docker also moved into the next parity slice: the official image now runs rootless as `clawlite`, a `scripts/docker_setup.sh` helper bootstraps build/configure/up, and CI now validates `docker compose config` plus an image build smoke.
 The current hardening slice also closes the remaining `plano.md` runtime gaps: `ContextWindowManager` now budgets assistant `tool_calls`, session listing is mtime-sorted, empty frontmatter skill names are flagged in diagnostics, prompt history now has a larger cap with optional semantic trimming and oversized tool-result compaction, OAuth-backed Gemini/Qwen providers can refresh file-backed credentials once on `401`, tool execution supports per-tool timeout overrides, and cron now exposes richer status/list/get/enable/disable control-plane routes plus a cross-process `portalocker` fallback when `fcntl` is unavailable.
@@ -59,7 +60,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2056 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2058 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -190,7 +191,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2056 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2058 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -204,8 +205,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: `Providers` now also lifts a bounded health summary into the existing control plane — `dashboard/state` carries additive `provider.health` data derived from provider cache, provider autonomy suppression, and provider telemetry, and the packaged Automation tab renders those signals in a compact `Provider Health` card instead of forcing operators to reconstruct provider posture from several raw blocks
-- Next slice: the next safe high-value follow-up is likely to stay in `Providers`; the smallest useful step is probably a richer live provider health/capability surface or a compact budget/quota posture summary before reopening deeper runtime policy work
+- Current slice: `Skills` now also exposes blocker drill-down on top of the existing managed lifecycle surface — `skills managed`, `GET /v1/control/skills/managed`, and `skills.diagnostics_report()` carry additive blocker summaries and the packaged Knowledge tab renders those signals in compact `Managed blockers` cards for visible-slice triage
+- Next slice: the next safe high-value follow-up is likely to stay in `Skills`; the smallest useful step is probably a richer managed blocker drill-down or bounded blocker-history surfacing before reopening deeper managed lifecycle mutation work
 
 ## Delivery Policy
 

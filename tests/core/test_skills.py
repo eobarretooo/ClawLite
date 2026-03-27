@@ -909,8 +909,17 @@ def test_skills_loader_diagnostics_report_aggregates_deterministically(tmp_path:
         "count": 0,
         "ready_count": 0,
         "blocked_count": 0,
+        "visible_blocked_count": 0,
         "disabled_count": 0,
         "status_counts": {},
+        "blockers": {
+            "count": 0,
+            "by_kind": {},
+            "top_kind": "",
+            "top_detail": "",
+            "top_hint": "",
+            "examples": [],
+        },
         "items": [],
     }
 
@@ -976,10 +985,17 @@ def test_skills_loader_diagnostics_report_summarizes_managed_marketplace_rows(
     assert managed["count"] == 2
     assert managed["ready_count"] == 1
     assert managed["blocked_count"] == 1
+    assert managed["visible_blocked_count"] == 1
     assert managed["disabled_count"] == 0
     assert managed["status_counts"] == {"missing_requirements": 1, "ready": 1}
+    assert managed["blockers"]["count"] == 1
+    assert managed["blockers"]["by_kind"] == {"env": 1}
+    assert managed["blockers"]["top_kind"] == "env"
+    assert managed["blockers"]["top_detail"] == "GH_TOKEN"
     assert [row["slug"] for row in managed["items"]] == ["github-helper", "jira-helper"]
     assert managed["items"][0]["status"] == "missing_requirements"
+    assert managed["items"][0]["blocker_kind"] == "env"
+    assert managed["items"][0]["blocker_detail"] == "GH_TOKEN"
     assert "GH_TOKEN" in str(managed["items"][0]["hint"])
 
 
@@ -1025,8 +1041,55 @@ def test_skills_managed_report_supports_filters_and_counts(
     assert payload["status_filter"] == "missing_requirements"
     assert payload["query"] == "github"
     assert payload["status_counts"] == {"missing_requirements": 1, "ready": 1}
+    assert payload["blockers"]["count"] == 1
+    assert payload["visible_blocked_count"] == 1
+    assert payload["blockers"]["by_kind"] == {"env": 1}
+    assert payload["blockers"]["top_kind"] == "env"
+    assert payload["blockers"]["top_detail"] == "GH_TOKEN"
     assert payload["skills"][0]["slug"] == "github-helper"
+    assert payload["skills"][0]["blocker_kind"] == "env"
     assert "GH_TOKEN" in str(payload["skills"][0]["hint"])
+
+
+def test_skills_managed_report_keeps_total_blocked_count_separate_from_visible_slice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    builtin_root = tmp_path / "builtin"
+    builtin_root.mkdir(parents=True, exist_ok=True)
+
+    ready_dir = tmp_path / ".clawlite" / "marketplace" / "skills" / "jira-helper"
+    ready_dir.mkdir(parents=True, exist_ok=True)
+    (ready_dir / "SKILL.md").write_text(
+        "---\nname: Jira Helper\ndescription: ready managed\ncommand: echo hi\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    blocked_dir = tmp_path / ".clawlite" / "marketplace" / "skills" / "github-helper"
+    blocked_dir.mkdir(parents=True, exist_ok=True)
+    (blocked_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: GitHub Helper\n"
+        "description: blocked managed\n"
+        "metadata:\n"
+        "  clawlite:\n"
+        "    primaryEnv: GH_TOKEN\n"
+        "    requires:\n"
+        "      env: [GH_TOKEN]\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    loader = SkillsLoader(builtin_root=builtin_root)
+    payload = skills_managed_report(loader, status="ready")
+
+    assert payload["count"] == 1
+    assert payload["blocked_count"] == 1
+    assert payload["visible_blocked_count"] == 0
+    assert payload["blockers"]["count"] == 0
+    assert payload["skills"][0]["slug"] == "jira-helper"
 
 
 def test_skills_managed_report_keeps_marketplace_rows_when_workspace_shadows_name(

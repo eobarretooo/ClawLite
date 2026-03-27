@@ -1386,10 +1386,15 @@ class SkillsLoader:
                 "count": int(managed_report.get("total_count", len(managed_rows)) or 0),
                 "ready_count": int(managed_report.get("ready_count", managed_status_counts.get("ready", 0)) or 0),
                 "blocked_count": int(managed_report.get("blocked_count", managed_blocked_count) or 0),
+                "visible_blocked_count": int(
+                    managed_report.get("visible_blocked_count", managed_report.get("blocked_count", managed_blocked_count))
+                    or 0
+                ),
                 "disabled_count": int(
                     managed_report.get("disabled_count", managed_status_counts.get("disabled", 0)) or 0
                 ),
                 "status_counts": dict(managed_report.get("status_counts", {}) or {}),
+                "blockers": dict(managed_report.get("blockers", {}) or {}),
                 "items": list(managed_report.get("skills", []) or [])[:5],
             },
             "contract_issues": {
@@ -1518,6 +1523,7 @@ def _managed_skill_report_payload(row: SkillSpec) -> dict[str, object]:
         "contract_issues": list(row.contract_issues or []),
         "fallback_hint": row.fallback_hint,
     }
+    blocker_kind, blocker_detail = _managed_blocker_reason(doctor_row)
     return {
         "slug": _managed_skill_slug(row.path),
         "name": row.name,
@@ -1532,6 +1538,9 @@ def _managed_skill_report_payload(row: SkillSpec) -> dict[str, object]:
         "version": row.version,
         "version_pin": row.version_pin,
         "missing": sorted(str(item) for item in list(row.missing or [])),
+        "contract_issues": sorted(str(item) for item in list(row.contract_issues or [])),
+        "blocker_kind": blocker_kind,
+        "blocker_detail": blocker_detail,
         "homepage": row.homepage,
         "fallback_hint": row.fallback_hint,
         "path": str(row.path),
@@ -1553,6 +1562,78 @@ def _managed_marketplace_specs(loader: SkillsLoader) -> list[SkillSpec]:
 
 def _managed_marketplace_root(loader: SkillsLoader) -> Path:
     return loader.roots[2].parent
+
+
+def _managed_blocker_reason(row: Mapping[str, object]) -> tuple[str, str]:
+    contract_issues = [str(item or "").strip() for item in list(row.get("contract_issues", []) or []) if str(item or "").strip()]
+    if contract_issues:
+        return "contract", contract_issues[0]
+
+    missing = [str(item or "").strip() for item in list(row.get("missing", []) or []) if str(item or "").strip()]
+    if "policy:bundled_not_allowed" in missing:
+        return "policy", "bundled_not_allowed"
+
+    env_items = [item.split(":", 1)[1] for item in missing if item.startswith("env:")]
+    if env_items:
+        return "env", env_items[0]
+
+    config_items = [item.split(":", 1)[1] for item in missing if item.startswith("config:")]
+    if config_items:
+        return "config", config_items[0]
+
+    bin_items = [item.split(":", 1)[1] for item in missing if item.startswith("bin:")]
+    any_bin_items = [item.split(":", 1)[1] for item in missing if item.startswith("any_bin:")]
+    if bin_items:
+        return "bin", bin_items[0]
+    if any_bin_items:
+        return "bin", any_bin_items[0]
+
+    os_items = [item.split(":", 1)[1] for item in missing if item.startswith("os:")]
+    if os_items:
+        return "os", os_items[0]
+
+    other_missing = [item for item in missing if item]
+    if other_missing:
+        return "other", other_missing[0]
+
+    if not bool(row.get("available", False)) and bool(row.get("enabled", True)):
+        return "unavailable", "runtime_unavailable"
+    return "", ""
+
+
+def _managed_blockers_summary(rows: list[dict[str, object]]) -> dict[str, object]:
+    blocked_statuses = {"missing_requirements", "policy_blocked", "invalid_contract", "unavailable"}
+    blocked_rows = [
+        row for row in rows
+        if str(row.get("status", "") or "").strip().lower() in blocked_statuses
+    ]
+    by_kind: dict[str, int] = {}
+    for row in blocked_rows:
+        kind = str(row.get("blocker_kind", "") or "").strip().lower()
+        if not kind:
+            continue
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+
+    examples = [
+        {
+            "slug": str(row.get("slug", "") or ""),
+            "name": str(row.get("name", "") or ""),
+            "status": str(row.get("status", "") or ""),
+            "blocker_kind": str(row.get("blocker_kind", "") or ""),
+            "blocker_detail": str(row.get("blocker_detail", "") or ""),
+            "hint": str(row.get("hint", "") or ""),
+        }
+        for row in blocked_rows[:3]
+    ]
+    top_example = examples[0] if examples else {}
+    return {
+        "count": len(blocked_rows),
+        "by_kind": {key: by_kind[key] for key in sorted(by_kind)},
+        "top_kind": str(top_example.get("blocker_kind", "") or ""),
+        "top_detail": str(top_example.get("blocker_detail", "") or ""),
+        "top_hint": str(top_example.get("hint", "") or ""),
+        "examples": examples,
+    }
 
 
 def _run_clawhub_command(loader: SkillsLoader, *action_args: str) -> tuple[int, dict[str, object]]:
@@ -1635,6 +1716,12 @@ def skills_managed_report(
         int(status_counts.get(key, 0) or 0)
         for key in ("missing_requirements", "policy_blocked", "invalid_contract", "unavailable")
     )
+    visible_blocked_count = sum(
+        1
+        for row in filtered_rows
+        if str(row.get("status", "") or "").strip().lower()
+        in {"missing_requirements", "policy_blocked", "invalid_contract", "unavailable"}
+    )
     return {
         "ok": True,
         "action": "managed",
@@ -1644,10 +1731,12 @@ def skills_managed_report(
         "total_count": len(all_rows),
         "ready_count": int(status_counts.get("ready", 0) or 0),
         "blocked_count": blocked_count,
+        "visible_blocked_count": visible_blocked_count,
         "disabled_count": int(status_counts.get("disabled", 0) or 0),
         "status_filter": wanted_status,
         "query": wanted_query,
         "status_counts": {key: status_counts[key] for key in sorted(status_counts)},
+        "blockers": _managed_blockers_summary(filtered_rows),
         "skills": filtered_rows,
     }
 
