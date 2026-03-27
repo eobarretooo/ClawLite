@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -51,6 +52,16 @@ class GatewayRequestHandlers:
             status = str(row.get("last_status", "") or "idle").strip() or "idle"
             counts[status] = counts.get(status, 0) + 1
         return dict(sorted(counts.items()))
+
+    @staticmethod
+    def approval_audit_export_text(entries: list[dict[str, Any]] | None) -> str:
+        rows = list(entries or [])
+        if not rows:
+            return ""
+        return "".join(
+            json.dumps(dict(row or {}), ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            for row in rows
+        )
 
     def _cron_list_payload(self, *, session_id: str = "") -> dict[str, Any]:
         scoped_session = str(session_id or "").strip()

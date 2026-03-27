@@ -8,6 +8,8 @@ import types
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 # Keep CLI command tests importable while channel modules are being replaced in
 # parallel worktrees. These tests do not exercise WhatsApp channel behavior.
 if importlib.util.find_spec("clawlite.channels.whatsapp") is None:
@@ -23,6 +25,7 @@ from clawlite.cli.commands import cmd_provider_login
 from clawlite.cli.commands import cmd_provider_logout
 from clawlite.cli.commands import docker_preflight_probe
 from clawlite.cli.commands import main
+from clawlite.cli.ops import fetch_gateway_tool_approval_audit_export
 from clawlite.cli.ops import provider_live_probe
 from clawlite.channels.telegram_pairing import TelegramPairingStore
 from clawlite.config.loader import load_config
@@ -1132,6 +1135,92 @@ def test_cli_tools_approval_audit_uses_gateway_endpoint(tmp_path: Path, capsys, 
     assert payload["audit_action_filter"] == "review"
     assert payload["count"] == 1
     assert payload["changed_count"] == 1
+
+
+def test_cli_tools_approval_audit_ndjson_uses_export_endpoint(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    def _fake_export(
+        config,
+        *,
+        gateway_url="",
+        token="",
+        timeout=10.0,
+        action="",
+        session_id="",
+        channel="",
+        request_id="",
+        tool="",
+        rule="",
+        limit=50,
+    ):
+        assert action == "review"
+        assert request_id == "req-1"
+        assert tool == "browser"
+        assert rule == "browser:evaluate"
+        return {
+            "ok": True,
+            "content": '{"action":"review","request_id":"req-1"}\n',
+            "line_count": 1,
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.fetch_gateway_tool_approval_audit_export", _fake_export)
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "tools",
+            "approval-audit",
+            "--format",
+            "ndjson",
+            "--action",
+            "review",
+            "--request-id",
+            "req-1",
+            "--tool",
+            "browser",
+            "--rule",
+            "browser:evaluate",
+        ]
+    )
+
+    assert rc == 0
+    assert capsys.readouterr().out == '{"action":"review","request_id":"req-1"}\n'
+
+
+def test_fetch_gateway_tool_approval_audit_export_preserves_single_line_ndjson(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    config = load_config(config_path)
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, params=None):
+            del params
+            request = httpx.Request("GET", url)
+            return httpx.Response(200, request=request, content=b'{"action":"review","request_id":"req-1"}\n')
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _Client)
+
+    payload = fetch_gateway_tool_approval_audit_export(
+        config,
+        action="review",
+        request_id="req-1",
+    )
+
+    assert payload["ok"] is True
+    assert payload["content"] == '{"action":"review","request_id":"req-1"}\n'
+    assert payload["line_count"] == 1
 
 
 def test_cli_tools_revoke_grant_posts_revoke(tmp_path: Path, capsys, monkeypatch) -> None:

@@ -3109,6 +3109,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="tool-approvals-preview"' in body
         assert 'id="tool-approval-audit-action-filter"' in body
         assert 'id="tool-approval-audit-request-id"' in body
+        assert 'id="export-tool-approval-audit"' in body
         assert 'id="inspect-tool-approval-audit"' in body
         assert 'id="tool-approval-audit-grid"' in body
         assert 'id="tool-approval-audit-preview"' in body
@@ -3158,6 +3159,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert '"tools": "/api/tools/catalog"' in body
         assert '"tools_approvals": "/api/tools/approvals"' in body
         assert '"tools_approvals_audit": "/api/tools/approvals/audit"' in body
+        assert '"tools_approvals_audit_export": "/api/tools/approvals/audit/export"' in body
         assert '"tools_grants_revoke": "/api/tools/grants/revoke"' in body
         assert '"ws": "/ws"' in body
         assert 'value="dashboard:operator"' not in body
@@ -3205,6 +3207,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "tool-approval-audit-grid" in js.text
     assert "tool-approval-audit-preview" in js.text
     assert "tool-approval-audit-request-id" in js.text
+    assert "export-tool-approval-audit" in js.text
     assert "readToolApprovalAuditFilter" in js.text
     assert "summarizeToolApprovalAuditFilter" in js.text
     assert "readToolApprovalsFilter" in js.text
@@ -3217,7 +3220,11 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "populateToolGrantSelection" in js.text
     assert "fetchToolApprovalsSnapshot" in js.text
     assert "fetchToolApprovalAuditSnapshot" in js.text
+    assert "exportToolApprovalAudit" in js.text
+    assert "downloadTextFile" in js.text
+    assert "fetchText" in js.text
     assert "toolApprovalAuditPath" in js.text
+    assert "toolApprovalAuditExportPath" in js.text
     assert "toolApprovalReviewPath" in js.text
     assert "toolGrantRevokePath" in js.text
     assert "renderToolApprovalAuditSummary" in js.text
@@ -3227,12 +3234,17 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "triggerToolApprovalAuditInspect" in js.text
     assert 'paths.tools_approvals || "/api/tools/approvals"' in js.text
     assert 'paths.tools_approvals_audit || "/api/tools/approvals/audit"' in js.text
+    assert 'paths.tools_approvals_audit_export || "/api/tools/approvals/audit/export"' in js.text
     assert 'paths.tools_grants_revoke || "/api/tools/grants/revoke"' in js.text
     assert 'url.searchParams.set("include_grants", "true");' in js.text
     assert "Tool approvals inspected" in js.text
     assert "Tool approvals inspection failed" in js.text
     assert "Tool approval audit inspected" in js.text
     assert "Tool approval audit failed" in js.text
+    assert "Tool approval audit exported" in js.text
+    assert "Tool approval audit export failed" in js.text
+    assert 'payload.detail || payload.error || response.statusText || "request_failed"' in js.text
+    assert 'response.status === 401 && state.dashboardSessionToken && !state.token' in js.text
     assert "Tool approval approved" in js.text
     assert "Tool approval already reviewed" in js.text
     assert "Tool approval rejected" in js.text
@@ -3246,6 +3258,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "pendingVisible" in js.text
     assert "tool-approval-audit-action-filter" in js.text
     assert "tool-approval-audit-request-id" in js.text
+    assert "export-tool-approval-audit" in js.text
     assert "inspect-tool-approval-audit" in js.text
     assert "tool-approval-request-id" in js.text
     assert "tool-grant-selection" in js.text
@@ -4008,6 +4021,47 @@ def test_gateway_tools_approval_audit_endpoints_return_recent_rows(tmp_path: Pat
     assert api_payload["entries"][0]["request_id"] == "req-1"
     assert api_payload["entries"][0]["action"] == "review"
     assert api_payload["entries"][0]["approval_context"] == {"tool": "browser", "action": "evaluate"}
+
+
+def test_gateway_tools_approval_audit_export_endpoints_return_ndjson_rows(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    registry = app.state.runtime.engine.tools
+    registry._approval_requests["req-1"] = {
+        "request_id": "req-1",
+        "tool": "browser",
+        "session_id": "telegram:1",
+        "channel": "telegram",
+        "matched_approval_specifiers": ["browser:evaluate"],
+        "status": "pending",
+        "created_at_monotonic": time.monotonic() - 1.0,
+        "expires_at_monotonic": time.monotonic() + 300.0,
+        "arguments_preview": '{"action":"evaluate"}',
+        "approval_context": {"tool": "browser", "action": "evaluate"},
+        "notified_count": 1,
+    }
+    registry._approval_request_order.append("req-1")
+    approved = registry.review_approval_request("req-1", decision="approved", actor="telegram:1", trusted_actor=True)
+    assert approved["ok"] is True
+
+    with TestClient(app) as client:
+        v1_response = client.get("/v1/tools/approvals/audit/export?action=review&request_id=req-1&tool=browser")
+        api_response = client.get("/api/tools/approvals/audit/export?action=review&request_id=req-1&tool=browser")
+
+    for response in (v1_response, api_response):
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/x-ndjson")
+        assert "clawlite-tools-approval-audit.ndjson" in response.headers.get("content-disposition", "")
+        rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+        assert len(rows) == 1
+        assert rows[0]["action"] == "review"
+        assert rows[0]["request_id"] == "req-1"
+        assert rows[0]["approval_context"] == {"tool": "browser", "action": "evaluate"}
 
 
 def test_gateway_tools_approval_audit_filters_review_rows_by_request_id(tmp_path: Path) -> None:
@@ -5329,6 +5383,10 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         assert api_tool_approval_audit.status_code == 200
         assert api_tool_approval_audit.json()["ok"] is True
 
+        api_tool_approval_audit_export = client.get("/api/tools/approvals/audit/export", headers=session_headers)
+        assert api_tool_approval_audit_export.status_code == 200
+        assert api_tool_approval_audit_export.headers["content-type"].startswith("application/x-ndjson")
+
         api_tool_approve = client.post(
             "/api/tools/approvals/req-dashboard/approve",
             headers=session_headers,
@@ -5382,6 +5440,10 @@ def test_gateway_dashboard_session_scopes_to_dashboard_surfaces(tmp_path: Path) 
         v1_tool_approval_audit = client.get("/v1/tools/approvals/audit", headers=session_headers)
         assert v1_tool_approval_audit.status_code == 401
         assert v1_tool_approval_audit.json()["error"] == "gateway_auth_required"
+
+        v1_tool_approval_audit_export = client.get("/v1/tools/approvals/audit/export", headers=session_headers)
+        assert v1_tool_approval_audit_export.status_code == 401
+        assert v1_tool_approval_audit_export.json()["error"] == "gateway_auth_required"
 
         v1_tool_approve = client.post(
             "/v1/tools/approvals/req-dashboard/reject",

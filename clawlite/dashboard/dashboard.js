@@ -3266,8 +3266,54 @@ function toolApprovalAuditPath() {
   return String(paths.tools_approvals_audit || "/api/tools/approvals/audit").trim() || "/api/tools/approvals/audit";
 }
 
+function toolApprovalAuditExportPath() {
+  return String(paths.tools_approvals_audit_export || "/api/tools/approvals/audit/export").trim() || "/api/tools/approvals/audit/export";
+}
+
 function toolGrantRevokePath() {
   return String(paths.tools_grants_revoke || "/api/tools/grants/revoke").trim() || "/api/tools/grants/revoke";
+}
+
+async function fetchText(path, options = {}) {
+  const response = await fetch(path, {
+    headers: {
+      ...authHeaders(),
+      ...(options.headers || {}),
+    },
+    method: options.method || "GET",
+    body: options.body,
+  });
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch (_error) {
+    payload = { raw: text };
+  }
+  const requestId = String(response.headers.get("X-Request-ID") || payload.request_id || "").trim();
+  if (!response.ok) {
+    const detail = payload.detail || payload.error || response.statusText || "request_failed";
+    if (response.status === 401 && state.dashboardSessionToken && !state.token) {
+      persistDashboardSession("");
+    }
+    const error = new Error(`${response.status} ${detail}`);
+    error.requestId = requestId;
+    error.status = response.status;
+    throw error;
+  }
+  return { text, request_id: requestId, status: response.status };
+}
+
+function downloadTextFile(filename, text) {
+  const blob = new Blob([String(text || "")], { type: "application/x-ndjson;charset=utf-8" });
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
 }
 
 async function fetchToolApprovalAuditSnapshot(filter = readToolApprovalAuditFilter()) {
@@ -3286,6 +3332,46 @@ async function fetchToolApprovalAuditSnapshot(filter = readToolApprovalAuditFilt
   }
   url.searchParams.set("limit", "20");
   return await fetchJson(`${url.pathname}${url.search}`);
+}
+
+async function exportToolApprovalAudit() {
+  const button = byId("export-tool-approval-audit");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const filter = readToolApprovalAuditFilter();
+    const url = new URL(toolApprovalAuditExportPath(), window.location.origin);
+    if (filter.action) {
+      url.searchParams.set("action", filter.action);
+    }
+    if (filter.request_id) {
+      url.searchParams.set("request_id", filter.request_id);
+    }
+    if (filter.tool) {
+      url.searchParams.set("tool", filter.tool);
+    }
+    if (filter.rule) {
+      url.searchParams.set("rule", filter.rule);
+    }
+    url.searchParams.set("limit", "200");
+    const payload = await fetchText(`${url.pathname}${url.search}`);
+    const lineCount = payload.text ? payload.text.split(/\r?\n/).filter((line) => String(line || "").trim()).length : 0;
+    const suffix = String(filter.request_id || "").trim() || String(filter.action || "").trim() || "latest";
+    downloadTextFile(`clawlite-tools-approval-audit-${suffix}.ndjson`, payload.text || "");
+    recordEvent(
+      lineCount > 0 ? "ok" : "warn",
+      "Tool approval audit exported",
+      [`${lineCount} rows`, summarizeToolApprovalAuditFilter(filter) || "latest audit snapshot"].filter(Boolean).join(" | "),
+      appendRequestIdMeta("tools-approval-audit-export", payload),
+    );
+  } catch (error) {
+    recordEvent("danger", "Tool approval audit export failed", error.message, appendRequestIdMeta("tools-approval-audit-export", error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
 }
 
 async function triggerToolApprovalAuditInspect() {
@@ -4322,6 +4408,9 @@ function bindEvents() {
   });
   byId("inspect-tool-approval-audit").addEventListener("click", () => {
     void triggerToolApprovalAuditInspect();
+  });
+  byId("export-tool-approval-audit").addEventListener("click", () => {
+    void exportToolApprovalAudit();
   });
   byId("approve-tool-request").addEventListener("click", () => {
     void reviewToolApproval("approved");

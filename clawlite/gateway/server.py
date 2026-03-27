@@ -4087,6 +4087,35 @@ def create_app(
             limit=limit,
         )
 
+    @app.get("/v1/tools/approvals/audit/export")
+    async def tools_approvals_audit_export(
+        request: Request,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        request_id: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> Response:
+        payload = await request_handlers.tools_approval_audit(
+            request,
+            allow_dashboard_session=False,
+            action=action,
+            session_id=session_id,
+            channel=channel,
+            request_id=request_id,
+            tool=tool,
+            rule=rule,
+            limit=limit,
+        )
+        body = request_handlers.approval_audit_export_text(list(payload.get("entries", []) or []))
+        return Response(
+            content=body,
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": 'attachment; filename="clawlite-tools-approval-audit.ndjson"'},
+        )
+
     @app.get("/api/tools/approvals/audit")
     async def api_tools_approvals_audit(
         request: Request,
@@ -4108,6 +4137,35 @@ def create_app(
             tool=tool,
             rule=rule,
             limit=limit,
+        )
+
+    @app.get("/api/tools/approvals/audit/export")
+    async def api_tools_approvals_audit_export(
+        request: Request,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        request_id: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> Response:
+        payload = await request_handlers.tools_approval_audit(
+            request,
+            allow_dashboard_session=True,
+            action=action,
+            session_id=session_id,
+            channel=channel,
+            request_id=request_id,
+            tool=tool,
+            rule=rule,
+            limit=limit,
+        )
+        body = request_handlers.approval_audit_export_text(list(payload.get("entries", []) or []))
+        return Response(
+            content=body,
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": 'attachment; filename="clawlite-tools-approval-audit.ndjson"'},
         )
 
     @app.post("/v1/tools/approvals/{request_id}/approve")

@@ -17,6 +17,7 @@ from clawlite.cli.ops import channels_validation
 from clawlite.cli.ops import diagnostics_snapshot
 from clawlite.cli.ops import fetch_gateway_diagnostics
 from clawlite.cli.ops import fetch_gateway_tool_approval_audit
+from clawlite.cli.ops import fetch_gateway_tool_approval_audit_export
 from clawlite.cli.ops import fetch_gateway_tool_approvals
 from clawlite.cli.ops import memory_eval_snapshot
 from clawlite.cli.ops import memory_branch_checkout
@@ -1720,6 +1721,28 @@ def cmd_tools_approvals(args: argparse.Namespace) -> int:
 
 def cmd_tools_approval_audit(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    format_name = str(args.format or "json").strip().lower() or "json"
+    if format_name == "ndjson":
+        payload = fetch_gateway_tool_approval_audit_export(
+            config,
+            gateway_url=str(args.gateway_url or ""),
+            token=str(args.token or ""),
+            timeout=float(args.timeout),
+            action=str(args.action or ""),
+            session_id=str(args.session_id or ""),
+            channel=str(args.channel or ""),
+            request_id=str(args.request_id or ""),
+            tool=str(args.tool or ""),
+            rule=str(args.rule or ""),
+            limit=max(1, int(args.limit or 1)),
+        )
+        if payload.get("ok", False):
+            sys.stdout.write(str(payload.get("content", "") or ""))
+            return 0
+        payload["action"] = "tools_approval_audit_export"
+        _print_json(payload)
+        return 2
+
     payload = fetch_gateway_tool_approval_audit(
         config,
         gateway_url=str(args.gateway_url or ""),
@@ -2739,6 +2762,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_tools_approval_audit.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
     p_tools_approval_audit.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
     p_tools_approval_audit.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_tools_approval_audit.add_argument("--format", choices=["json", "ndjson"], default="json")
     p_tools_approval_audit.add_argument("--action", choices=["review", "revoke_grant", "all"], default="all")
     p_tools_approval_audit.add_argument("--session-id", default="", help="Optional session filter")
     p_tools_approval_audit.add_argument("--channel", default="", help="Optional channel filter")
