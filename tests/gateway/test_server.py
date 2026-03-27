@@ -3269,6 +3269,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Tool approval audit failed" in js.text
     assert "Tool approval audit exported" in js.text
     assert "Tool approval audit export failed" in js.text
+    assert "Latest reason" in js.text
+    assert "Reason history" in js.text
     assert 'payload.detail || payload.error || response.statusText || "request_failed"' in js.text
     assert 'response.status === 401 && state.dashboardSessionToken && !state.token' in js.text
     assert "Tool approval approved" in js.text
@@ -4192,10 +4194,14 @@ def test_gateway_tools_approval_audit_endpoints_return_recent_rows(tmp_path: Pat
     assert v1_payload["ok"] is True
     assert v1_payload["count"] == 2
     assert v1_payload["changed_count"] == 2
+    assert v1_payload["latest_reason"] == "removed 1 grant(s) [exact]"
+    assert v1_payload["latest_reason_source"] == "result"
     assert v1_payload["action_counts"]["review"] == 1
     assert v1_payload["action_counts"]["revoke_grant"] == 1
     assert v1_payload["entries"][0]["action"] == "revoke_grant"
+    assert v1_payload["entries"][0]["reason_summary"] == "removed 1 grant(s) [exact]"
     assert v1_payload["entries"][1]["action"] == "review"
+    assert v1_payload["entries"][1]["reason_summary"] == "approved"
     assert v1_payload["entries"][1]["approval_context"] == {"tool": "browser", "action": "evaluate"}
 
     assert api_response.status_code == 200
@@ -4203,6 +4209,8 @@ def test_gateway_tools_approval_audit_endpoints_return_recent_rows(tmp_path: Pat
     assert api_payload["ok"] is True
     assert api_payload["action"] == "review"
     assert api_payload["count"] == 1
+    assert api_payload["latest_reason"] == "approved"
+    assert api_payload["latest_reason_source"] == "decision"
     assert api_payload["action_counts"]["review"] == 1
     assert api_payload["entries"][0]["request_id"] == "req-1"
     assert api_payload["entries"][0]["action"] == "review"
@@ -4284,8 +4292,72 @@ def test_gateway_tools_approval_audit_filters_review_rows_by_request_id(tmp_path
     assert payload["ok"] is True
     assert payload["request_id"] == "req-1"
     assert payload["count"] == 1
+    assert payload["latest_reason"] == "approved"
+    assert payload["latest_reason_source"] == "decision"
+    assert payload["request_history_request_id"] == "req-1"
+    assert payload["request_history_count"] == 1
+    assert payload["request_history"][0]["request_id"] == "req-1"
+    assert payload["request_history"][0]["reason_summary"] == "approved"
     assert payload["entries"][0]["request_id"] == "req-1"
     assert payload["entries"][0]["action"] == "review"
+
+
+def test_gateway_tools_approval_audit_request_history_tracks_review_and_revoke_for_request(
+    tmp_path: Path,
+) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+    registry = app.state.runtime.engine.tools
+    registry._approval_requests["req-1"] = {
+        "request_id": "req-1",
+        "tool": "browser",
+        "session_id": "telegram:1",
+        "channel": "telegram",
+        "matched_approval_specifiers": ["browser:evaluate"],
+        "status": "pending",
+        "created_at_monotonic": time.monotonic() - 1.0,
+        "expires_at_monotonic": time.monotonic() + 300.0,
+        "arguments_preview": '{"action":"evaluate"}',
+        "approval_context": {"tool": "browser", "action": "evaluate"},
+        "notified_count": 1,
+    }
+    registry._approval_request_order.append("req-1")
+    approved = registry.review_approval_request(
+        "req-1",
+        decision="approved",
+        actor="telegram:1",
+        trusted_actor=True,
+        note="approved after review",
+    )
+    assert approved["ok"] is True
+    revoked = registry.revoke_approval_grants(
+        session_id="telegram:1",
+        channel="telegram",
+        rule="browser:evaluate",
+        request_id="req-1",
+        scope="exact",
+    )
+    assert revoked["ok"] is True
+
+    with TestClient(app) as client:
+        response = client.get("/v1/tools/approvals/audit?action=review&request_id=req-1&tool=browser&rule=browser:evaluate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["count"] == 1
+    assert payload["request_history_request_id"] == "req-1"
+    assert payload["request_history_count"] == 2
+    assert payload["latest_reason"] == "approved after review"
+    assert payload["latest_reason_source"] == "note"
+    assert payload["entries"][0]["action"] == "review"
+    assert payload["request_history"][0]["reason_summary"] == "removed 1 grant(s) [exact]"
+    assert payload["request_history"][1]["reason_summary"] == "approved after review"
 
 
 def test_gateway_tools_approval_audit_filters_broad_revoke_rows_by_removed_session(tmp_path: Path) -> None:

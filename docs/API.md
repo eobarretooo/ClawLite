@@ -1582,9 +1582,14 @@ Response baseline:
 - `changed_count`: rows that changed approval/grant state
 - `unchanged_count`: rows that were no-op or denied
 - `error_count`: rows that carry an `error`
+- `latest_reason`: bounded reason/note/error summary for the latest visible audit row
+- `latest_reason_source`: where that latest reason came from (`note`, `error`, `decision`, `status`, or `result`)
+- `request_history_request_id`: echoed request drill-down id when one is active
+- `request_history_count`: bounded count of history rows for that drilled-down request lineage
+- `request_history`: compact bounded request history for the active `request_id`, ignoring the current `action` filter so one request can show review plus revoke lineage together
 - `action_counts`: additive counts by action (`review`, `revoke_grant`)
 - `status_counts`: additive counts by row status
-- `entries`: audit rows with `action`, `status`, `changed`, request/grant identifiers, sanitized `approval_context`, and additive timing fields such as `audit_age_s`
+- `entries`: audit rows with `action`, `status`, `changed`, request/grant identifiers, sanitized `approval_context`, additive `reason_source` / `reason_summary`, and timing fields such as `audit_age_s`
 
 Alias compatível: `GET /api/tools/approvals/audit`.
 

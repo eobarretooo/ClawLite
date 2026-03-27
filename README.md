@@ -125,13 +125,13 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2058 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2059 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
 CI runs on Python 3.10 and 3.12.
 
-The packaged dashboard Automation tab now also exposes compact `Runtime Posture`, `Runtime Policy`, `Provider Health`, and `Provider Budget` cards, surfacing additive `runtime.posture`, `runtime.policy`, `provider.health`, and `provider.budget` signals from `GET /api/dashboard/state` so operators can quickly see autonomy, wake, approval, canary scope, provider suppression/cache drift, and whether the current provider issue is quota, rate limiting, or a non-budget block without opening full diagnostics. The Knowledge tab now also adds `Managed blockers` cards on top of the existing managed marketplace inventory so skill blockers are grouped by kind instead of staying as row-by-row hints only.
+The packaged dashboard Automation tab now also exposes compact `Runtime Posture`, `Runtime Policy`, `Provider Health`, and `Provider Budget` cards, surfacing additive `runtime.posture`, `runtime.policy`, `provider.health`, and `provider.budget` signals from `GET /api/dashboard/state` so operators can quickly see autonomy, wake, approval, canary scope, provider suppression/cache drift, and whether the current provider issue is quota, rate limiting, or a non-budget block without opening full diagnostics. The Knowledge tab now also adds `Managed blockers` cards on top of the existing managed marketplace inventory so skill blockers are grouped by kind instead of staying as row-by-row hints only. The Tools tab now also surfaces latest approval-audit reason plus bounded request-scoped reason history when one `request_id` is under review.
 
 ---
 

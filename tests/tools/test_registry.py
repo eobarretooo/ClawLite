@@ -1063,9 +1063,13 @@ def test_tool_registry_approval_audit_snapshot_tracks_review_and_revoke_actions(
         assert audit[0]["action"] == "revoke_grant"
         assert audit[0]["changed"] is True
         assert audit[0]["removed_count"] == 1
+        assert audit[0]["reason_source"] == "result"
+        assert audit[0]["reason_summary"] == "removed 1 grant(s) [exact]"
         assert audit[1]["action"] == "review"
         assert audit[1]["status"] == "approved"
         assert audit[1]["note"] == "looks good"
+        assert audit[1]["reason_source"] == "note"
+        assert audit[1]["reason_summary"] == "looks good"
         assert audit[1]["rule"] == "browser:evaluate"
         assert audit[1]["approval_context"] == {"tool": "browser", "action": "evaluate"}
         assert audit[1]["audit_age_s"] >= 0.0
@@ -1156,6 +1160,8 @@ def test_tool_registry_approval_audit_snapshot_captures_denied_review_attempts()
         assert len(audit) == 1
         assert audit[0]["changed"] is False
         assert audit[0]["error"] == "approval_actor_mismatch"
+        assert audit[0]["reason_source"] == "error"
+        assert audit[0]["reason_summary"] == "approval_actor_mismatch"
         assert audit[0]["status"] == "pending"
         assert audit[0]["requester_actor"] == "telegram:42"
         assert audit[0]["approval_context"] == {"tool": "run_skill", "name": "github"}

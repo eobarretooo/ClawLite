@@ -34,6 +34,7 @@ The newest tools follow-up now also makes that same queue more explicit and more
 The newest security follow-up now turns that same approval flow into an auditable live surface: `ToolRegistry` keeps a bounded recent approval/grant audit trail, `GET /v1/tools/approvals/audit` plus `GET /api/tools/approvals/audit` export compact review/revoke rows, `clawlite tools approval-audit` mirrors that live view for CLI operators, and the packaged Tools tab now includes an `Approval Audit` card so dashboard users can inspect recent review/revoke history with the same tool/rule context instead of falling back to logs or raw request snapshots.
 The newest security follow-up now also adds explicit request-level drill-down on top of that audit surface: the runtime, gateway, CLI, and packaged dashboard can all filter approval audit rows by `request_id`, and broad revoke rows still match when that id only exists inside the removed-grant list instead of the top-level revoke request.
 The newest security follow-up now also adds a bounded export path on top of that same audit surface: `GET /v1/tools/approvals/audit/export` plus `GET /api/tools/approvals/audit/export` return the current filtered audit slice as NDJSON, `clawlite tools approval-audit --format ndjson` mirrors that export for CLI handoff, and the packaged `Approval Audit` card can now download the same bounded filtered slice without leaving the dashboard.
+The newest security follow-up now also makes that drill-down more informative instead of just narrower: approval audit rows now carry additive `reason_source` / `reason_summary`, and filtered `request_id` responses now include bounded `request_history` so the packaged `Approval Audit` card can surface latest reason plus review/revoke lineage for one request without forcing operators back into raw JSON diffing.
 The newest onboarding/config follow-up now also skips redundant API-key prompts in the clear env-backed cases: when provider, reusable env auth, and base URL are already resolved for the selected backend, `configure` goes straight to the model choice and live probe while still keeping config-backed credentials, Azure, ambiguous, and incompatible-auth cases on the explicit prompt path.
 The newest onboarding/config follow-up now also trims the quickstart happy path further: when a local-runtime provider like `ollama` or `vllm` is already clearly resolved with a compatible loopback base URL and canonical default model, quickstart reuses those resolved defaults and skips the redundant base-URL/model prompts, while the advanced flow keeps the explicit override path intact.
 The newest provider follow-up now adds a persistent live-probe snapshot for provider operations: `provider_live_probe()` stores the latest live result per provider under local state, while `clawlite provider status` and `clawlite validate provider` now surface that additive `last_live_probe` block with timestamp, transport, last error/result, and whether the cached live probe still matches the current model/base-url selection.
@@ -60,7 +61,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2058 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2059 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -191,7 +192,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2058 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2059 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed

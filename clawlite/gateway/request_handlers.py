@@ -64,6 +64,24 @@ class GatewayRequestHandlers:
             for row in rows
         )
 
+    @staticmethod
+    def _approval_audit_history_entry(row: dict[str, Any] | None) -> dict[str, Any]:
+        payload = row if isinstance(row, dict) else {}
+        entry = {
+            "recorded_at": str(payload.get("recorded_at", "") or "").strip(),
+            "action": str(payload.get("action", "") or "").strip().lower(),
+            "status": str(payload.get("status", "") or "").strip().lower(),
+            "changed": bool(payload.get("changed", False)),
+            "request_id": str(payload.get("request_id", "") or "").strip(),
+            "rule": str(payload.get("rule", "") or "").strip().lower(),
+            "actor": str(payload.get("actor", "") or "").strip(),
+            "reason_source": str(payload.get("reason_source", "") or "").strip().lower(),
+            "reason_summary": str(payload.get("reason_summary", "") or "").strip(),
+            "note": str(payload.get("note", "") or "").strip(),
+            "error": str(payload.get("error", "") or "").strip(),
+        }
+        return {key: value for key, value in entry.items() if value not in ("", [], {}, None, False)}
+
     def _cron_list_payload(self, *, session_id: str = "") -> dict[str, Any]:
         scoped_session = str(session_id or "").strip()
         jobs = self.runtime.cron.list_jobs(session_id=scoped_session or None)
@@ -269,6 +287,23 @@ class GatewayRequestHandlers:
                 changed_count += 1
             if str((row or {}).get("error", "") or "").strip():
                 error_count += 1
+        request_history: list[dict[str, Any]] = []
+        if normalized_request_id and callable(list_audit):
+            history_rows = list_audit(
+                action="",
+                session_id=normalized_session,
+                channel=normalized_channel,
+                request_id=normalized_request_id,
+                tool=normalized_tool,
+                rule=normalized_rule,
+                limit=max(max_rows, 20),
+            )
+            request_history = [self._approval_audit_history_entry(row) for row in history_rows]
+        latest_reason = ""
+        latest_reason_source = ""
+        if entries:
+            latest_reason = str((entries[0] or {}).get("reason_summary", "") or "").strip()
+            latest_reason_source = str((entries[0] or {}).get("reason_source", "") or "").strip().lower()
         return {
             "ok": True,
             "action": normalized_action,
@@ -281,6 +316,11 @@ class GatewayRequestHandlers:
             "changed_count": changed_count,
             "unchanged_count": max(0, len(entries) - changed_count),
             "error_count": error_count,
+            "latest_reason": latest_reason,
+            "latest_reason_source": latest_reason_source,
+            "request_history_request_id": normalized_request_id,
+            "request_history_count": len(request_history),
+            "request_history": request_history,
             "action_counts": dict(sorted(action_counts.items())),
             "status_counts": dict(sorted(status_counts.items())),
             "entries": entries,

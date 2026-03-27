@@ -1127,6 +1127,7 @@ function renderToolApprovalAuditSummary() {
   const entries = Array.isArray(audit.entries) ? audit.entries : [];
   const actionCounts = audit.action_counts && typeof audit.action_counts === "object" ? audit.action_counts : {};
   const statusCounts = audit.status_counts && typeof audit.status_counts === "object" ? audit.status_counts : {};
+  const requestHistory = Array.isArray(audit.request_history) ? audit.request_history : [];
   const latest = entries[0] || {};
   const latestAction = String(latest.action || "").trim() || "unknown";
   const latestStatus = String(latest.status || "").trim() || "unknown";
@@ -1141,6 +1142,16 @@ function renderToolApprovalAuditSummary() {
   ].filter(Boolean).join(" | ");
   const filterMeta = summarizeToolApprovalAuditFilter(audit);
   const errorCount = numeric(audit.error_count, 0);
+  const latestReason = String(audit.latest_reason || latest.reason_summary || "").trim();
+  const latestReasonSource = String(audit.latest_reason_source || latest.reason_source || "").trim();
+  const requestHistoryRequestId = String(audit.request_history_request_id || "").trim();
+  const historyPreview = requestHistory.slice(0, 3).map((row) => {
+    const reason = String((row || {}).reason_summary || "").trim();
+    const source = String((row || {}).reason_source || "").trim();
+    const action = String((row || {}).action || "").trim();
+    const status = String((row || {}).status || "").trim();
+    return [action, status, source, reason].filter(Boolean).join(" | ");
+  }).filter(Boolean).join(" || ");
   const badgeTone = errorCount > 0 ? "warn" : entries.length ? "ok" : "warn";
 
   appendSummaryCard(grid, {
@@ -1167,6 +1178,18 @@ function renderToolApprovalAuditSummary() {
     title: "Request drill-down",
     body: latestRequestId || String(audit.request_id || "").trim() || "none",
     detail: String(audit.request_id || "").trim() ? "active request filter" : "Showing mixed recent request history.",
+  });
+  appendSummaryCard(grid, {
+    title: "Latest reason",
+    body: latestReasonSource || "none",
+    detail: latestReason || "No explicit note/error/reason was recorded for the latest visible audit row.",
+  });
+  appendSummaryCard(grid, {
+    title: "Reason history",
+    body: `${numeric(audit.request_history_count, requestHistory.length)} rows`,
+    detail: requestHistoryRequestId
+      ? [requestHistoryRequestId, historyPreview || "No request-scoped reason history found."].filter(Boolean).join(" | ")
+      : "Set a request id to inspect bounded review/revoke reason history for one request lineage.",
   });
 
   setBadge("tool-approval-audit-status", entries.length ? `${entries.length} rows` : "empty", badgeTone);
@@ -4086,6 +4109,7 @@ async function triggerToolApprovalAuditInspect() {
             `${numeric(payload.count, entries.length)} rows`,
             `${numeric(payload.changed_count, 0)} changed`,
             filterMeta,
+            String(payload.latest_reason || "").trim() ? String(payload.latest_reason).trim() : "",
             `${String(latest.action || "review")} ${String(latest.status || "").trim() || "unknown"}`,
           ].filter(Boolean).join(" | ")
         : [filterMeta, "No approval audit rows matched."].filter(Boolean).join(" | "),

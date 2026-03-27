@@ -493,6 +493,55 @@ class ToolRegistry:
         }
         return {key: item for key, item in payload.items() if item not in ("", [], {}, None, False)}
 
+    @staticmethod
+    def _review_reason_summary(*, decision: str, status: str, note: str, error: str) -> tuple[str, str]:
+        normalized_note = str(note or "").strip()
+        if normalized_note:
+            return "note", normalized_note
+        normalized_error = str(error or "").strip()
+        if normalized_error:
+            return "error", normalized_error
+        normalized_decision = str(decision or "").strip().lower()
+        if normalized_decision:
+            return "decision", normalized_decision
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status:
+            return "status", normalized_status
+        return "", ""
+
+    @staticmethod
+    def _grant_revoke_reason_summary(
+        *,
+        removed: list[dict[str, Any]],
+        scope: str,
+        request_id: str,
+        rule: str,
+        session_id: str,
+        channel: str,
+    ) -> tuple[str, str]:
+        removed_count = len(list(removed or []))
+        normalized_scope = str(scope or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
+        normalized_rule = str(rule or "").strip().lower()
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        filters = [
+            normalized_scope,
+            normalized_request_id,
+            normalized_rule,
+            normalized_session,
+            normalized_channel,
+        ]
+        if removed_count > 0:
+            detail = f"removed {removed_count} grant(s)"
+            if normalized_scope:
+                detail = f"{detail} [{normalized_scope}]"
+            return "result", detail
+        if any(filters):
+            scope_label = normalized_scope or "selected"
+            return "result", f"no matching grants [{scope_label}]"
+        return "", ""
+
     def _request_review_audit_row(
         self,
         *,
@@ -512,6 +561,12 @@ class ToolRegistry:
             for item in request_payload.get("matched_approval_specifiers", []) or []
             if str(item or "").strip()
         ]
+        reason_source, reason_summary = self._review_reason_summary(
+            decision=decision,
+            status=status,
+            note=note,
+            error=error,
+        )
         row: dict[str, Any] = {
             "action": "review",
             "changed": bool(changed),
@@ -527,6 +582,8 @@ class ToolRegistry:
             "actor": str(actor or "").strip(),
             "note": str(note or "").strip(),
             "trusted_actor": bool(trusted_actor),
+            "reason_source": reason_source,
+            "reason_summary": reason_summary,
         }
         if rules:
             row["rule"] = rules[0]
@@ -552,6 +609,14 @@ class ToolRegistry:
         selected_tool = self._approval_rule_tool(normalized_rule)
         if not selected_tool and removed:
             selected_tool = self._approval_rule_tool((removed[0] or {}).get("rule", ""))
+        reason_source, reason_summary = self._grant_revoke_reason_summary(
+            removed=removed,
+            scope=normalized_scope,
+            request_id=normalized_request_id,
+            rule=normalized_rule,
+            session_id=normalized_session,
+            channel=normalized_channel,
+        )
         return {
             "action": "revoke_grant",
             "changed": bool(removed),
@@ -564,6 +629,8 @@ class ToolRegistry:
             "request_id": normalized_request_id,
             "scope": normalized_scope,
             "removed": list(removed),
+            "reason_source": reason_source,
+            "reason_summary": reason_summary,
         }
 
     def _prune_approval_state(self) -> None:
