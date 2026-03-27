@@ -9,7 +9,7 @@ Default base URL: `http://127.0.0.1:8787`
 - `gateway.auth.mode=required`: requires token (except loopback when `allow_loopback_without_auth=true`).
 - Token can be sent via configurable header (default `Authorization`, with or without `Bearer ` prefix) or configurable query param (default `token`).
 - If a gateway token is configured, the control-plane routes (`/v1/status`, `/v1/dashboard/state`, `/v1/chat`, control mutations, approvals/grants, and `WS /v1/ws`) require that token even when the gateway is otherwise open on loopback.
-- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/tools/approvals`, `/api/tools/approvals/*`, `/api/tools/grants/revoke`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. The short-lived handoff itself is consumed on the first successful exchange in the running gateway process, which blocks replay of the same bootstrap credential. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token. The packaged Tools tab now uses that same scoped flow not only for live approval inspection/review but also for filtered grant cleanup through `/api/tools/grants/revoke`.
+- The packaged dashboard now prefers a short-lived `#handoff=` bootstrap credential instead of putting the raw gateway token in the browser URL. `POST /api/dashboard/session` still accepts the raw gateway token for legacy/manual flows, but the packaged shell exchanges the handoff first and then uses the derived dashboard-session credential only on dashboard-scoped aliases such as `/api/status`, `/api/dashboard/state`, `/api/diagnostics`, `/api/token`, `/api/message`, `/api/tools/catalog`, `/api/tools/approvals`, `/api/tools/approvals/*`, `/api/tools/approvals/audit`, `/api/tools/grants/revoke`, `/v1/control/*`, and `WS /ws`. That derived credential is bound to a per-tab dashboard client id, so dashboard-scoped requests must present both values. The short-lived handoff itself is consumed on the first successful exchange in the running gateway process, which blocks replay of the same bootstrap credential. Generic `/v1/*` routes and `WS /v1/ws` still require the raw gateway token. The packaged Tools tab now uses that same scoped flow not only for live approval inspection/review but also for filtered grant cleanup and read-only approval audit inspection.
 - `/health` only requires auth when `gateway.auth.protect_health=true` and mode is `required`.
 - `/v1/diagnostics` depends on `gateway.diagnostics.enabled` and may require auth with `gateway.diagnostics.require_auth=true`.
 - Every HTTP response now includes `X-Request-ID`. HTTP error envelopes also echo that same value as `request_id` in the JSON body.
@@ -1495,6 +1495,31 @@ Response baseline:
 - `grants`: active grants with `session_id`, `channel`, `rule`, `scope`, optional `request_id`, and `expires_in_s`
 
 Alias compatível: `GET /api/tools/approvals`.
+
+## `GET /v1/tools/approvals/audit`
+
+Returns the recent bounded in-memory audit trail for tool approval reviews and grant revokes tracked by the running gateway.
+Rows are additive and read-only, and keep a compact sanitized `approval_context` instead of replaying raw arguments.
+If a gateway token is configured, this endpoint requires that token even when the gateway is otherwise open on loopback.
+
+Query params:
+- `action`: optional action filter (`review`, `revoke_grant`, or empty for all)
+- `session_id`: optional session filter
+- `channel`: optional channel filter
+- `tool`: optional exact tool filter
+- `rule`: optional exact approval rule filter
+- `limit`: max rows to return
+
+Response baseline:
+- `count`: number of returned audit rows
+- `changed_count`: rows that changed approval/grant state
+- `unchanged_count`: rows that were no-op or denied
+- `error_count`: rows that carry an `error`
+- `action_counts`: additive counts by action (`review`, `revoke_grant`)
+- `status_counts`: additive counts by row status
+- `entries`: audit rows with `action`, `status`, `changed`, request/grant identifiers, sanitized `approval_context`, and additive timing fields such as `audit_age_s`
+
+Alias compatível: `GET /api/tools/approvals/audit`.
 
 ## `POST /v1/tools/approvals/{request_id}/approve`
 

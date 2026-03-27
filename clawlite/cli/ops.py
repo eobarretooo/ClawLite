@@ -768,6 +768,60 @@ def fetch_gateway_tool_approvals(
     return payload
 
 
+def fetch_gateway_tool_approval_audit(
+    config: AppConfig,
+    *,
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+    action: str = "",
+    session_id: str = "",
+    channel: str = "",
+    tool: str = "",
+    rule: str = "",
+    limit: int = 50,
+) -> dict[str, Any]:
+    normalized_action = str(action or "").strip().lower()
+    if normalized_action == "all":
+        normalized_action = ""
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="GET",
+        endpoint="/v1/tools/approvals/audit",
+        query_params={
+            "action": normalized_action,
+            "session_id": str(session_id or "").strip(),
+            "channel": str(channel or "").strip().lower(),
+            "tool": str(tool or "").strip().lower(),
+            "rule": str(rule or "").strip().lower(),
+            "limit": max(1, int(limit or 1)),
+        },
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict):
+        payload["ok"] = True
+        payload["action"] = str(body.get("action", "") or "")
+        payload["session_id"] = str(body.get("session_id", "") or "")
+        payload["channel"] = str(body.get("channel", "") or "")
+        payload["tool"] = str(body.get("tool", "") or "")
+        payload["rule"] = str(body.get("rule", "") or "")
+        payload["count"] = int(body.get("count", 0) or 0)
+        payload["changed_count"] = int(body.get("changed_count", 0) or 0)
+        payload["unchanged_count"] = int(body.get("unchanged_count", 0) or 0)
+        payload["error_count"] = int(body.get("error_count", 0) or 0)
+        payload["action_counts"] = dict(body.get("action_counts", {}) or {})
+        payload["status_counts"] = dict(body.get("status_counts", {}) or {})
+        payload["entries"] = list(body.get("entries", []) or [])
+        return payload
+    detail = body.get("detail", body.get("error", "tool_approval_audit_fetch_failed")) if isinstance(body, dict) else str(body or "tool_approval_audit_fetch_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
 def review_gateway_tool_approval(
     config: AppConfig,
     *,

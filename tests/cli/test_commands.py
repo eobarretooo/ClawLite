@@ -1064,6 +1064,72 @@ def test_cli_tools_approve_posts_review(tmp_path: Path, capsys, monkeypatch) -> 
     assert payload["summary"]["status"] == "approved"
 
 
+def test_cli_tools_approval_audit_uses_gateway_endpoint(tmp_path: Path, capsys, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    def _fake_fetch(
+        config,
+        *,
+        gateway_url="",
+        token="",
+        timeout=10.0,
+        action="",
+        session_id="",
+        channel="",
+        tool="",
+        rule="",
+        limit=50,
+    ):
+        assert gateway_url == ""
+        assert token == ""
+        assert timeout == 10.0
+        assert action == "review"
+        assert session_id == "telegram:1"
+        assert channel == "telegram"
+        assert tool == "browser"
+        assert rule == "browser:evaluate"
+        assert limit == 10
+        return {
+            "ok": True,
+            "action": "review",
+            "count": 1,
+            "changed_count": 1,
+            "entries": [{"action": "review", "status": "approved", "request_id": "req-1"}],
+        }
+
+    monkeypatch.setattr("clawlite.cli.commands.fetch_gateway_tool_approval_audit", _fake_fetch)
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "tools",
+            "approval-audit",
+            "--action",
+            "review",
+            "--session-id",
+            "telegram:1",
+            "--channel",
+            "telegram",
+            "--tool",
+            "browser",
+            "--rule",
+            "browser:evaluate",
+            "--limit",
+            "10",
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action"] == "tools_approval_audit"
+    assert payload["audit_action_filter"] == "review"
+    assert payload["count"] == 1
+    assert payload["changed_count"] == 1
+
+
 def test_cli_tools_revoke_grant_posts_revoke(tmp_path: Path, capsys, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")

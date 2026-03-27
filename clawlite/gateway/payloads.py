@@ -63,6 +63,7 @@ def dashboard_bootstrap_payload(*, control_plane: Any, dashboard_asset_root: str
             "token": "/api/token",
             "tools": "/api/tools/catalog",
             "tools_approvals": "/api/tools/approvals",
+            "tools_approvals_audit": "/api/tools/approvals/audit",
             "tools_grants_revoke": "/api/tools/grants/revoke",
             "channels_replay": "/v1/control/channels/replay",
             "channels_recover": "/v1/control/channels/recover",

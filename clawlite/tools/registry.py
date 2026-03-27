@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import hashlib
 import json
 import re
@@ -80,6 +81,7 @@ class ToolRegistry:
     _EXEC_WINDOWS_SHELL_FLAGS = frozenset({"/c", "-c", "-command"})
 
     _APPROVAL_REQUEST_LIMIT = 256
+    _APPROVAL_AUDIT_LIMIT = 200
 
     def __init__(
         self,
@@ -101,6 +103,7 @@ class ToolRegistry:
         self._approval_grants: dict[str, float] = {}
         self._approval_requests: dict[str, dict[str, Any]] = {}
         self._approval_request_order: list[str] = []
+        self._approval_audits: list[dict[str, Any]] = []
 
     @staticmethod
     def _tool_exception_retryable(exc: Exception) -> bool:
@@ -448,6 +451,121 @@ class ToolRegistry:
             "rule": str(rule_part or "").strip().lower(),
         }
 
+    @staticmethod
+    def _approval_rule_tool(rule: Any) -> str:
+        text = str(rule or "").strip().lower()
+        if not text:
+            return ""
+        return str(text.split(":", 1)[0] or "").strip().lower()
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _append_approval_audit(self, row: dict[str, Any]) -> None:
+        if not isinstance(row, dict) or not row:
+            return
+        payload = dict(row)
+        payload.setdefault("recorded_at", self._utc_now_iso())
+        payload.setdefault("recorded_at_monotonic", time.monotonic())
+        try:
+            cloned = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+            normalized = cloned if isinstance(cloned, dict) else payload
+        except Exception:
+            normalized = payload
+        self._approval_audits.append(normalized)
+        if len(self._approval_audits) > self._APPROVAL_AUDIT_LIMIT:
+            self._approval_audits = self._approval_audits[-self._APPROVAL_AUDIT_LIMIT :]
+
+    @staticmethod
+    def _approval_audit_context(value: Any) -> dict[str, Any]:
+        context = value if isinstance(value, dict) else {}
+        payload = {
+            "tool": str(context.get("tool", "") or "").strip().lower(),
+            "command_binary": str(context.get("command_binary", "") or "").strip(),
+            "shell_wrapper": bool(context.get("shell_wrapper", False)),
+            "env_keys": list(context.get("env_keys", []) or []),
+            "cwd": str(context.get("cwd", "") or "").strip(),
+            "action": str(context.get("action", "") or "").strip().lower(),
+            "method": str(context.get("method", "") or "").strip().upper(),
+            "host": str(context.get("host", "") or "").strip().lower(),
+            "name": str(context.get("name", "") or "").strip(),
+        }
+        return {key: item for key, item in payload.items() if item not in ("", [], {}, None, False)}
+
+    def _request_review_audit_row(
+        self,
+        *,
+        payload: dict[str, Any] | None,
+        request_id: str,
+        decision: str,
+        actor: str,
+        note: str,
+        trusted_actor: bool,
+        changed: bool,
+        status: str,
+        error: str = "",
+    ) -> dict[str, Any]:
+        request_payload = payload if isinstance(payload, dict) else {}
+        rules = [
+            str(item or "").strip().lower()
+            for item in request_payload.get("matched_approval_specifiers", []) or []
+            if str(item or "").strip()
+        ]
+        row: dict[str, Any] = {
+            "action": "review",
+            "changed": bool(changed),
+            "status": str(status or "").strip().lower(),
+            "decision": str(decision or "").strip().lower(),
+            "request_id": str(request_id or "").strip(),
+            "tool": str(request_payload.get("tool", "") or "").strip().lower(),
+            "session_id": str(request_payload.get("session_id", "") or "").strip(),
+            "channel": str(request_payload.get("channel", "") or "").strip().lower(),
+            "requester_actor": str(request_payload.get("requester_actor", "") or "").strip(),
+            "rules": rules,
+            "approval_context": self._approval_audit_context(request_payload.get("approval_context")),
+            "actor": str(actor or "").strip(),
+            "note": str(note or "").strip(),
+            "trusted_actor": bool(trusted_actor),
+        }
+        if rules:
+            row["rule"] = rules[0]
+        if error:
+            row["error"] = str(error or "").strip()
+        return row
+
+    def _grant_revoke_audit_row(
+        self,
+        *,
+        session_id: str,
+        channel: str,
+        rule: str,
+        request_id: str,
+        scope: str,
+        removed: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_rule = str(rule or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
+        normalized_scope = str(scope or "").strip().lower()
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        selected_tool = self._approval_rule_tool(normalized_rule)
+        if not selected_tool and removed:
+            selected_tool = self._approval_rule_tool((removed[0] or {}).get("rule", ""))
+        return {
+            "action": "revoke_grant",
+            "changed": bool(removed),
+            "status": "removed" if removed else "unchanged",
+            "removed_count": len(removed),
+            "session_id": normalized_session,
+            "channel": normalized_channel,
+            "rule": normalized_rule,
+            "tool": selected_tool,
+            "request_id": normalized_request_id,
+            "scope": normalized_scope,
+            "removed": list(removed),
+        }
+
     def _prune_approval_state(self) -> None:
         now = time.monotonic()
         expired_grants = [key for key, expires_at in self._approval_grants.items() if expires_at <= now]
@@ -680,10 +798,36 @@ class ToolRegistry:
             return {"ok": False, "error": "invalid_review_decision"}
         payload = self._approval_requests.get(normalized_request_id)
         if payload is None:
+            self._append_approval_audit(
+                {
+                    "action": "review",
+                    "changed": False,
+                    "status": "missing",
+                    "decision": normalized_decision,
+                    "request_id": normalized_request_id,
+                    "actor": str(actor or "").strip(),
+                    "note": str(note or "").strip(),
+                    "trusted_actor": bool(trusted_actor),
+                    "error": "approval_request_not_found",
+                }
+            )
             return {"ok": False, "error": "approval_request_not_found"}
         expected_actor = str(payload.get("requester_actor", "") or "").strip()
         normalized_actor = str(actor or "").strip()
         if expected_actor and not trusted_actor:
+            self._append_approval_audit(
+                self._request_review_audit_row(
+                    payload=payload,
+                    request_id=normalized_request_id,
+                    decision=normalized_decision,
+                    actor=normalized_actor,
+                    note=note,
+                    trusted_actor=trusted_actor,
+                    changed=False,
+                    status=str(payload.get("status", "pending") or "pending"),
+                    error="approval_channel_bound",
+                )
+            )
             return {
                 "ok": False,
                 "error": "approval_channel_bound",
@@ -694,6 +838,19 @@ class ToolRegistry:
                 "expected_actor": expected_actor,
             }
         if expected_actor and not normalized_actor:
+            self._append_approval_audit(
+                self._request_review_audit_row(
+                    payload=payload,
+                    request_id=normalized_request_id,
+                    decision=normalized_decision,
+                    actor=normalized_actor,
+                    note=note,
+                    trusted_actor=trusted_actor,
+                    changed=False,
+                    status=str(payload.get("status", "pending") or "pending"),
+                    error="approval_actor_required",
+                )
+            )
             return {
                 "ok": False,
                 "error": "approval_actor_required",
@@ -704,6 +861,19 @@ class ToolRegistry:
                 "expected_actor": expected_actor,
             }
         if expected_actor and normalized_actor != expected_actor:
+            self._append_approval_audit(
+                self._request_review_audit_row(
+                    payload=payload,
+                    request_id=normalized_request_id,
+                    decision=normalized_decision,
+                    actor=normalized_actor,
+                    note=note,
+                    trusted_actor=trusted_actor,
+                    changed=False,
+                    status=str(payload.get("status", "pending") or "pending"),
+                    error="approval_actor_mismatch",
+                )
+            )
             return {
                 "ok": False,
                 "error": "approval_actor_mismatch",
@@ -715,6 +885,18 @@ class ToolRegistry:
             }
         status = str(payload.get("status", "pending") or "pending").strip().lower()
         if status != "pending":
+            self._append_approval_audit(
+                self._request_review_audit_row(
+                    payload=payload,
+                    request_id=normalized_request_id,
+                    decision=normalized_decision,
+                    actor=normalized_actor,
+                    note=note,
+                    trusted_actor=trusted_actor,
+                    changed=False,
+                    status=status,
+                )
+            )
             return {
                 "ok": True,
                 "changed": False,
@@ -741,6 +923,18 @@ class ToolRegistry:
                 self._approval_grants[key] = expires_at
             payload["grant_expires_at_monotonic"] = expires_at
             payload["grant_scope"] = "exact"
+        self._append_approval_audit(
+            self._request_review_audit_row(
+                payload=payload,
+                request_id=normalized_request_id,
+                decision=normalized_decision,
+                actor=normalized_actor,
+                note=note,
+                trusted_actor=trusted_actor,
+                changed=True,
+                status=normalized_decision,
+            )
+        )
 
         return {
             "ok": True,
@@ -891,6 +1085,17 @@ class ToolRegistry:
                 }
             )
 
+        self._append_approval_audit(
+            self._grant_revoke_audit_row(
+                session_id=normalized_session,
+                channel=normalized_channel,
+                rule=normalized_rule,
+                request_id=normalized_request_id,
+                scope=normalized_scope,
+                removed=removed,
+            )
+        )
+
         return {
             "ok": True,
             "removed": removed,
@@ -901,6 +1106,73 @@ class ToolRegistry:
             "request_id": normalized_request_id,
             "scope": normalized_scope,
         }
+
+    def approval_audit_snapshot(
+        self,
+        *,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        self._prune_approval_state()
+        normalized_action = str(action or "").strip().lower()
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_tool = str(tool or "").strip().lower()
+        normalized_rule = str(rule or "").strip().lower()
+        max_rows = max(1, int(limit or 1))
+        now = time.monotonic()
+        rows: list[dict[str, Any]] = []
+
+        for payload in reversed(self._approval_audits):
+            row = dict(payload or {})
+            if normalized_action and str(row.get("action", "") or "").strip().lower() != normalized_action:
+                continue
+            if normalized_session:
+                row_sessions = {
+                    str(row.get("session_id", "") or "").strip(),
+                    *(str((item or {}).get("session_id", "") or "").strip() for item in row.get("removed", []) or []),
+                }
+                row_sessions.discard("")
+                if normalized_session not in row_sessions:
+                    continue
+            if normalized_channel:
+                row_channels = {
+                    str(row.get("channel", "") or "").strip().lower(),
+                    *(str((item or {}).get("channel", "") or "").strip().lower() for item in row.get("removed", []) or []),
+                }
+                row_channels.discard("")
+                if normalized_channel not in row_channels:
+                    continue
+            if normalized_tool:
+                row_tools = {
+                    str(row.get("tool", "") or "").strip().lower(),
+                    self._approval_rule_tool(row.get("rule", "")),
+                }
+                row_tools.update(self._approval_rule_tool(item) for item in row.get("rules", []) or [])
+                row_tools.update(self._approval_rule_tool((item or {}).get("rule", "")) for item in row.get("removed", []) or [])
+                row_tools.discard("")
+                if normalized_tool not in row_tools:
+                    continue
+            if normalized_rule:
+                row_rules = {
+                    str(row.get("rule", "") or "").strip().lower(),
+                    *(str(item or "").strip().lower() for item in row.get("rules", []) or []),
+                    *(str((item or {}).get("rule", "") or "").strip().lower() for item in row.get("removed", []) or []),
+                }
+                row_rules.discard("")
+                if normalized_rule not in row_rules:
+                    continue
+            recorded_at_monotonic = float(row.get("recorded_at_monotonic", 0.0) or 0.0)
+            if recorded_at_monotonic > 0.0:
+                row["audit_age_s"] = max(0.0, now - recorded_at_monotonic)
+            rows.append(row)
+            if len(rows) >= max_rows:
+                break
+        return rows
 
     def safety_decision(
         self,

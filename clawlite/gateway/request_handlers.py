@@ -188,6 +188,83 @@ class GatewayRequestHandlers:
             "grants": grants,
         }
 
+    async def tools_approval_audit(
+        self,
+        request: Request,
+        *,
+        allow_dashboard_session: bool = False,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        self._check_sensitive_control(request, allow_dashboard_session=allow_dashboard_session)
+        tools = getattr(self.runtime.engine, "tools", None)
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "all":
+            normalized_action = ""
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_tool = str(tool or "").strip().lower()
+        normalized_rule = str(rule or "").strip().lower()
+        max_rows = max(1, int(limit or 1))
+        list_audit = getattr(tools, "approval_audit_snapshot", None)
+        if not callable(list_audit):
+            return {
+                "ok": True,
+                "action": normalized_action,
+                "session_id": normalized_session,
+                "channel": normalized_channel,
+                "tool": normalized_tool,
+                "rule": normalized_rule,
+                "count": 0,
+                "changed_count": 0,
+                "unchanged_count": 0,
+                "error_count": 0,
+                "action_counts": {},
+                "status_counts": {},
+                "entries": [],
+            }
+
+        entries = list_audit(
+            action=normalized_action,
+            session_id=normalized_session,
+            channel=normalized_channel,
+            tool=normalized_tool,
+            rule=normalized_rule,
+            limit=max_rows,
+        )
+        action_counts: dict[str, int] = {}
+        status_counts: dict[str, int] = {}
+        changed_count = 0
+        error_count = 0
+        for row in entries:
+            action_name = str((row or {}).get("action", "") or "unknown").strip().lower() or "unknown"
+            status_name = str((row or {}).get("status", "") or "unknown").strip().lower() or "unknown"
+            action_counts[action_name] = action_counts.get(action_name, 0) + 1
+            status_counts[status_name] = status_counts.get(status_name, 0) + 1
+            if bool((row or {}).get("changed", False)):
+                changed_count += 1
+            if str((row or {}).get("error", "") or "").strip():
+                error_count += 1
+        return {
+            "ok": True,
+            "action": normalized_action,
+            "session_id": normalized_session,
+            "channel": normalized_channel,
+            "tool": normalized_tool,
+            "rule": normalized_rule,
+            "count": len(entries),
+            "changed_count": changed_count,
+            "unchanged_count": max(0, len(entries) - changed_count),
+            "error_count": error_count,
+            "action_counts": dict(sorted(action_counts.items())),
+            "status_counts": dict(sorted(status_counts.items())),
+            "entries": entries,
+        }
+
     async def tools_approval_review(
         self,
         request: Request,

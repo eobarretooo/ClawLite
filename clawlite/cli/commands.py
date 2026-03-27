@@ -16,6 +16,7 @@ from clawlite import __version__
 from clawlite.cli.ops import channels_validation
 from clawlite.cli.ops import diagnostics_snapshot
 from clawlite.cli.ops import fetch_gateway_diagnostics
+from clawlite.cli.ops import fetch_gateway_tool_approval_audit
 from clawlite.cli.ops import fetch_gateway_tool_approvals
 from clawlite.cli.ops import memory_eval_snapshot
 from clawlite.cli.ops import memory_branch_checkout
@@ -1717,6 +1718,26 @@ def cmd_tools_approvals(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok", False) else 2
 
 
+def cmd_tools_approval_audit(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    payload = fetch_gateway_tool_approval_audit(
+        config,
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
+        action=str(args.action or ""),
+        session_id=str(args.session_id or ""),
+        channel=str(args.channel or ""),
+        tool=str(args.tool or ""),
+        rule=str(args.rule or ""),
+        limit=max(1, int(args.limit or 1)),
+    )
+    payload["audit_action_filter"] = str(payload.get("action", "") or "")
+    payload["action"] = "tools_approval_audit"
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
+
+
 def cmd_tools_approve(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     payload = review_gateway_tool_approval(
@@ -2712,6 +2733,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_tools_approvals.add_argument("--include-grants", action="store_true", help="Include active approval grants in the response")
     p_tools_approvals.add_argument("--limit", type=int, default=50)
     p_tools_approvals.set_defaults(handler=cmd_tools_approvals)
+
+    p_tools_approval_audit = tools_sub.add_parser("approval-audit", help="List recent live tool approval/grant audit rows from the gateway")
+    p_tools_approval_audit.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_tools_approval_audit.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_tools_approval_audit.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_tools_approval_audit.add_argument("--action", choices=["review", "revoke_grant", "all"], default="all")
+    p_tools_approval_audit.add_argument("--session-id", default="", help="Optional session filter")
+    p_tools_approval_audit.add_argument("--channel", default="", help="Optional channel filter")
+    p_tools_approval_audit.add_argument("--tool", default="", help="Optional tool filter")
+    p_tools_approval_audit.add_argument("--rule", default="", help="Optional approval rule filter")
+    p_tools_approval_audit.add_argument("--limit", type=int, default=50)
+    p_tools_approval_audit.set_defaults(handler=cmd_tools_approval_audit)
 
     p_tools_approve = tools_sub.add_parser("approve", help="Approve one pending tool request through the gateway")
     p_tools_approve.add_argument("request_id")

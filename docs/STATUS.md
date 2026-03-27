@@ -31,6 +31,7 @@ The newest tools follow-up now also lifts the live approval queue into that same
 The newest tools follow-up now also makes that same queue minimally operable from the packaged dashboard: the `Approval Queue` card auto-selects the top pending request id when possible and can approve or reject that selected request through the `/api/tools/approvals/{request_id}/approve|reject` aliases under the same dashboard-scoped session flow, reducing another CLI-only operator step without opening broader destructive controls yet.
 The newest tools follow-up now also closes the remaining grant side of that same flow: the packaged `Approval Queue` card can revoke the top visible exact matching grant through the dashboard-scoped `/api/tools/grants/revoke` alias plus the snapshot's own `request_id` / `scope` metadata, so filtered approval review and temporary-grant cleanup now live in the same operator surface without silently widening grant shutdown beyond the visible item.
 The newest tools follow-up now also makes that same queue more explicit and more audit-friendly: the packaged `Approval Queue` card now exposes a dedicated exact-grant selector derived from the current filtered snapshot, and the top request summary surfaces a compact structured `approval_context` hint, so operators no longer have to rely on an implicit “top grant” assumption or raw preview JSON to understand what they are reviewing.
+The newest security follow-up now turns that same approval flow into an auditable live surface: `ToolRegistry` keeps a bounded recent approval/grant audit trail, `GET /v1/tools/approvals/audit` plus `GET /api/tools/approvals/audit` export compact review/revoke rows, `clawlite tools approval-audit` mirrors that live view for CLI operators, and the packaged Tools tab now includes an `Approval Audit` card so dashboard users can inspect recent review/revoke history with the same tool/rule context instead of falling back to logs or raw request snapshots.
 The newest onboarding/config follow-up now also skips redundant API-key prompts in the clear env-backed cases: when provider, reusable env auth, and base URL are already resolved for the selected backend, `configure` goes straight to the model choice and live probe while still keeping config-backed credentials, Azure, ambiguous, and incompatible-auth cases on the explicit prompt path.
 The newest onboarding/config follow-up now also trims the quickstart happy path further: when a local-runtime provider like `ollama` or `vllm` is already clearly resolved with a compatible loopback base URL and canonical default model, quickstart reuses those resolved defaults and skips the redundant base-URL/model prompts, while the advanced flow keeps the explicit override path intact.
 The newest provider follow-up now adds a persistent live-probe snapshot for provider operations: `provider_live_probe()` stores the latest live result per provider under local state, while `clawlite provider status` and `clawlite validate provider` now surface that additive `last_live_probe` block with timestamp, transport, last error/result, and whether the cached live probe still matches the current model/base-url selection.
@@ -50,7 +51,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2029 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2035 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -181,7 +182,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2029 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2035 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
@@ -195,8 +196,8 @@ clawlite validate config
 
 ## Next Major Track
 
-- Current slice: `Tools` now extend the packaged dashboard with a live `Approval Queue` summary plus selected-request approve/reject actions, explicit exact-grant selection, and exact grant revoke backed by the `/api/tools/approvals*` and `/api/tools/grants/revoke` aliases, so operators can inspect, review, and close temporary grants from the packaged shell under dashboard-scoped auth instead of dropping back to CLI-only approval tooling
-- Next slice: the next safe high-value follow-up is still likely in `Tools`, but now after the basic request/grant loop is explicit — the smallest useful step is probably richer audit/reason history or grant/request drill-down in the same queue instead of opening a second tools panel
+- Current slice: `Security` now adds a small but explicit audit/export surface on top of the live tools approval loop — the runtime keeps a bounded audit ring for review/revoke actions, gateway + CLI expose that trail read-only, and the packaged dashboard can inspect those rows under the same dashboard-scoped auth instead of forcing operators to reconstruct approval history from current queue state or logs
+- Next slice: the next safe high-value follow-up is still likely in `Security`, but now after the read-only audit trail exists — the smallest useful step is probably export/drill-down polish (for example richer reason history or bounded persisted export) instead of reopening RBAC or broader policy refactors
 
 ## Delivery Policy
 

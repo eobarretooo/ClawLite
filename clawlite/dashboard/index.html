@@ -503,6 +503,23 @@
 
               <article class="panel-card">
                 <div class="panel-card__header">
+                  <h2>Approval Audit</h2>
+                  <div class="button-row">
+                    <select class="ghost-input" id="tool-approval-audit-action-filter" aria-label="Approval audit action filter">
+                      <option value="all">All actions</option>
+                      <option value="review">Reviews</option>
+                      <option value="revoke_grant">Grant revokes</option>
+                    </select>
+                    <button class="ghost-button" id="inspect-tool-approval-audit" type="button">Inspect audit</button>
+                    <span class="badge" id="tool-approval-audit-status">pending</span>
+                  </div>
+                </div>
+                <div class="summary-grid" id="tool-approval-audit-grid"></div>
+                <pre class="code-block" id="tool-approval-audit-preview">Waiting for live approval audit rows...</pre>
+              </article>
+
+              <article class="panel-card">
+                <div class="panel-card__header">
                   <h2>Catalog Signals</h2>
                   <span class="badge">summary</span>
                 </div>

@@ -1013,6 +1013,138 @@ def test_tool_registry_revoke_approval_grants_filters_by_session_channel_and_rul
     assert remaining[0]["session_id"] == "telegram:2"
 
 
+def test_tool_registry_approval_audit_snapshot_tracks_review_and_revoke_actions() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry(
+            safety=ToolSafetyPolicyConfig(
+                enabled=True,
+                approval_specifiers=["browser:evaluate"],
+                approval_channels=["telegram"],
+                approval_grant_ttl_s=300,
+            )
+        )
+        reg.register(BrowserLikeTool())
+        try:
+            await reg.execute(
+                "browser",
+                {"action": "evaluate"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="7",
+                requester_id="7",
+            )
+            raise AssertionError("expected approval requirement")
+        except RuntimeError:
+            pass
+
+        pending = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(pending) == 1
+        review = reg.review_approval_request(
+            pending[0]["request_id"],
+            decision="approved",
+            actor="telegram:7",
+            trusted_actor=True,
+            note="looks good",
+        )
+        assert review["ok"] is True
+
+        revoke = reg.revoke_approval_grants(
+            session_id="telegram:1",
+            channel="telegram",
+            rule="browser:evaluate",
+            request_id=pending[0]["request_id"],
+            scope="exact",
+        )
+        assert revoke["ok"] is True
+        assert revoke["removed_count"] == 1
+
+        audit = reg.approval_audit_snapshot(tool="browser", rule="browser:evaluate")
+        assert len(audit) == 2
+        assert audit[0]["action"] == "revoke_grant"
+        assert audit[0]["changed"] is True
+        assert audit[0]["removed_count"] == 1
+        assert audit[1]["action"] == "review"
+        assert audit[1]["status"] == "approved"
+        assert audit[1]["note"] == "looks good"
+        assert audit[1]["rule"] == "browser:evaluate"
+        assert audit[1]["approval_context"] == {"tool": "browser", "action": "evaluate"}
+        assert audit[1]["audit_age_s"] >= 0.0
+
+        reviews_only = reg.approval_audit_snapshot(action="review", tool="browser", rule="browser:evaluate")
+        assert len(reviews_only) == 1
+        assert reviews_only[0]["action"] == "review"
+
+    asyncio.run(_scenario())
+
+
+def test_tool_registry_approval_audit_snapshot_filters_broad_revoke_rows_by_removed_session_and_channel() -> None:
+    reg = ToolRegistry(safety=ToolSafetyPolicyConfig(enabled=True))
+    reg._approval_grants["exact::req-1::telegram:1::telegram::browser:evaluate"] = time.monotonic() + 120.0
+    reg._approval_grants["exact::req-2::telegram:2::telegram::browser:evaluate"] = time.monotonic() + 120.0
+
+    revoke = reg.revoke_approval_grants(rule="browser:evaluate", scope="exact")
+
+    assert revoke["ok"] is True
+    assert revoke["removed_count"] == 2
+
+    by_session = reg.approval_audit_snapshot(
+        action="revoke_grant",
+        session_id="telegram:1",
+        rule="browser:evaluate",
+    )
+    assert len(by_session) == 1
+    assert by_session[0]["action"] == "revoke_grant"
+    assert by_session[0]["removed_count"] == 2
+    assert {item["session_id"] for item in by_session[0]["removed"]} == {"telegram:1", "telegram:2"}
+
+    by_channel = reg.approval_audit_snapshot(
+        action="revoke_grant",
+        channel="telegram",
+        rule="browser:evaluate",
+    )
+    assert len(by_channel) == 1
+    assert by_channel[0]["removed_count"] == 2
+
+
+def test_tool_registry_approval_audit_snapshot_captures_denied_review_attempts() -> None:
+    async def _scenario() -> None:
+        reg = ToolRegistry()
+        reg.register(RunSkillLikeTool())
+        try:
+            await reg.execute(
+                "run_skill",
+                {"name": "github"},
+                session_id="telegram:1",
+                channel="telegram",
+                user_id="1",
+                requester_id="42",
+            )
+            raise AssertionError("expected approval requirement")
+        except RuntimeError:
+            pass
+
+        pending = reg.consume_pending_approval_requests(session_id="telegram:1", channel="telegram")
+        assert len(pending) == 1
+        review = reg.review_approval_request(
+            pending[0]["request_id"],
+            decision="approved",
+            actor="telegram:99",
+            trusted_actor=True,
+        )
+        assert review["ok"] is False
+        assert review["error"] == "approval_actor_mismatch"
+
+        audit = reg.approval_audit_snapshot(action="review", tool="run_skill")
+        assert len(audit) == 1
+        assert audit[0]["changed"] is False
+        assert audit[0]["error"] == "approval_actor_mismatch"
+        assert audit[0]["status"] == "pending"
+        assert audit[0]["requester_actor"] == "telegram:42"
+        assert audit[0]["approval_context"] == {"tool": "run_skill", "name": "github"}
+
+    asyncio.run(_scenario())
+
+
 def test_tool_registry_legacy_approval_grants_remain_visible_and_usable() -> None:
     async def _scenario() -> None:
         reg = ToolRegistry(

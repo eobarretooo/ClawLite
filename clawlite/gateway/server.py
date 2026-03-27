@@ -4064,6 +4064,48 @@ def create_app(
             limit=limit,
         )
 
+    @app.get("/v1/tools/approvals/audit")
+    async def tools_approvals_audit(
+        request: Request,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return await request_handlers.tools_approval_audit(
+            request,
+            allow_dashboard_session=False,
+            action=action,
+            session_id=session_id,
+            channel=channel,
+            tool=tool,
+            rule=rule,
+            limit=limit,
+        )
+
+    @app.get("/api/tools/approvals/audit")
+    async def api_tools_approvals_audit(
+        request: Request,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return await request_handlers.tools_approval_audit(
+            request,
+            allow_dashboard_session=True,
+            action=action,
+            session_id=session_id,
+            channel=channel,
+            tool=tool,
+            rule=rule,
+            limit=limit,
+        )
+
     @app.post("/v1/tools/approvals/{request_id}/approve")
     async def tools_approval_approve(
         request_id: str,

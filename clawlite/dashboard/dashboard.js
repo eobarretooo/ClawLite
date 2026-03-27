@@ -121,6 +121,7 @@ const state = {
   diagnostics: null,
   tools: null,
   toolApprovals: null,
+  toolApprovalAudit: null,
   skillsManaged: null,
   memoryDoctor: null,
   memoryOverview: null,
@@ -415,6 +416,33 @@ function summarizeToolApprovalsFilter(summary) {
   const parts = [];
   if (status) {
     parts.push(`status ${status}`);
+  }
+  if (tool) {
+    parts.push(`tool ${tool}`);
+  }
+  if (rule) {
+    parts.push(`rule ${rule}`);
+  }
+  return parts.join(" | ");
+}
+
+function readToolApprovalAuditFilter() {
+  const action = String(byId("tool-approval-audit-action-filter")?.value || "").trim().toLowerCase();
+  const approvals = readToolApprovalsFilter();
+  return {
+    action: action && action !== "all" ? action : "",
+    tool: approvals.tool,
+    rule: approvals.rule,
+  };
+}
+
+function summarizeToolApprovalAuditFilter(summary) {
+  const action = String((summary || {}).action || "").trim().toLowerCase();
+  const tool = String((summary || {}).tool || "").trim();
+  const rule = String((summary || {}).rule || "").trim();
+  const parts = [];
+  if (action) {
+    parts.push(`action ${action}`);
   }
   if (tool) {
     parts.push(`tool ${tool}`);
@@ -1067,6 +1095,69 @@ function renderToolApprovalsSummary() {
     grantSelect.disabled = actionableGrants.length <= 0;
   }
   setCode("tool-approvals-preview", approvals);
+}
+
+function renderToolApprovalAuditSummary() {
+  const grid = byId("tool-approval-audit-grid");
+  const preview = byId("tool-approval-audit-preview");
+  if (!grid || !preview) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const audit = state.toolApprovalAudit || null;
+  if (!audit) {
+    appendSummaryCard(grid, {
+      title: "Approval audit",
+      body: "idle",
+      detail: "Run Inspect audit to fetch recent approval review and grant revoke rows.",
+    });
+    setBadge("tool-approval-audit-status", "idle", "warn");
+    setCode("tool-approval-audit-preview", { note: "Run Inspect audit to fetch recent approval audit rows." });
+    return;
+  }
+
+  const entries = Array.isArray(audit.entries) ? audit.entries : [];
+  const actionCounts = audit.action_counts && typeof audit.action_counts === "object" ? audit.action_counts : {};
+  const statusCounts = audit.status_counts && typeof audit.status_counts === "object" ? audit.status_counts : {};
+  const latest = entries[0] || {};
+  const latestAction = String(latest.action || "").trim() || "unknown";
+  const latestStatus = String(latest.status || "").trim() || "unknown";
+  const latestTool = approvalToolLabel(latest) || "tool";
+  const latestRule = approvalRuleLabel(latest);
+  const latestTarget = [
+    latestTool,
+    latestRule,
+    String(latest.scope || "").trim(),
+    String(latest.request_id || "").trim(),
+  ].filter(Boolean).join(" | ");
+  const filterMeta = summarizeToolApprovalAuditFilter(audit);
+  const errorCount = numeric(audit.error_count, 0);
+  const badgeTone = errorCount > 0 ? "warn" : entries.length ? "ok" : "warn";
+
+  appendSummaryCard(grid, {
+    title: "Trail",
+    body: `${numeric(audit.count, entries.length)} rows`,
+    detail: filterMeta || "live approval/grant audit snapshot",
+  });
+  appendSummaryCard(grid, {
+    title: "Changes",
+    body: `${numeric(audit.changed_count, 0)} changed`,
+    detail: `${numeric(audit.unchanged_count, 0)} unchanged | ${errorCount} with error`,
+  });
+  appendSummaryCard(grid, {
+    title: "Actions",
+    body: `${numeric(actionCounts.review, 0)} reviews | ${numeric(actionCounts.revoke_grant, 0)} revokes`,
+    detail: Object.entries(statusCounts).map(([name, count]) => `${name} ${count}`).join(" | ") || "No status counts yet.",
+  });
+  appendSummaryCard(grid, {
+    title: "Latest",
+    body: `${latestAction} | ${latestStatus}`,
+    detail: latestTarget || "No recent audit row.",
+  });
+
+  setBadge("tool-approval-audit-status", entries.length ? `${entries.length} rows` : "empty", badgeTone);
+  setCode("tool-approval-audit-preview", audit);
 }
 
 function appendSummaryCard(container, item) {
@@ -2392,6 +2483,7 @@ function renderRuntime() {
   renderHttpCorrelationBoard();
   renderToolsSummary();
   renderToolApprovalsSummary();
+  renderToolApprovalAuditSummary();
 }
 
 function renderControlPlaneCorrelationBoard() {
@@ -3158,8 +3250,63 @@ function toolApprovalReviewPath(requestId, decision) {
   return `${base}/${encodeURIComponent(String(requestId || "").trim())}/${action}`;
 }
 
+function toolApprovalAuditPath() {
+  return String(paths.tools_approvals_audit || "/api/tools/approvals/audit").trim() || "/api/tools/approvals/audit";
+}
+
 function toolGrantRevokePath() {
   return String(paths.tools_grants_revoke || "/api/tools/grants/revoke").trim() || "/api/tools/grants/revoke";
+}
+
+async function fetchToolApprovalAuditSnapshot(filter = readToolApprovalAuditFilter()) {
+  const url = new URL(toolApprovalAuditPath(), window.location.origin);
+  if (filter.action) {
+    url.searchParams.set("action", filter.action);
+  }
+  if (filter.tool) {
+    url.searchParams.set("tool", filter.tool);
+  }
+  if (filter.rule) {
+    url.searchParams.set("rule", filter.rule);
+  }
+  url.searchParams.set("limit", "20");
+  return await fetchJson(`${url.pathname}${url.search}`);
+}
+
+async function triggerToolApprovalAuditInspect() {
+  const button = byId("inspect-tool-approval-audit");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const payload = await fetchToolApprovalAuditSnapshot();
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+    const latest = entries[0] || {};
+    const filterMeta = summarizeToolApprovalAuditFilter(payload);
+    state.toolApprovalAudit = payload;
+    recordEvent(
+      numeric(payload.error_count, 0) > 0 ? "warn" : "ok",
+      "Tool approval audit inspected",
+      entries.length
+        ? [
+            `${numeric(payload.count, entries.length)} rows`,
+            `${numeric(payload.changed_count, 0)} changed`,
+            filterMeta,
+            `${String(latest.action || "review")} ${String(latest.status || "").trim() || "unknown"}`,
+          ].filter(Boolean).join(" | ")
+        : [filterMeta, "No approval audit rows matched."].filter(Boolean).join(" | "),
+      appendRequestIdMeta("tools-approval-audit", payload),
+    );
+    renderAll();
+  } catch (error) {
+    state.toolApprovalAudit = null;
+    recordEvent("danger", "Tool approval audit failed", error.message, appendRequestIdMeta("tools-approval-audit", error));
+    renderAll();
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
 }
 
 async function reviewToolApproval(decision) {
@@ -3218,6 +3365,19 @@ async function reviewToolApproval(decision) {
         refreshError.message,
         appendRequestIdMeta("tools-approvals", refreshError),
       );
+    }
+    if (state.toolApprovalAudit) {
+      try {
+        state.toolApprovalAudit = await fetchToolApprovalAuditSnapshot();
+      } catch (refreshError) {
+        state.toolApprovalAudit = null;
+        recordEvent(
+          "warn",
+          "Tool approval audit refresh failed",
+          refreshError.message,
+          appendRequestIdMeta("tools-approval-audit", refreshError),
+        );
+      }
     }
     renderAll();
   } catch (error) {
@@ -3280,6 +3440,19 @@ async function revokeSelectedToolGrant() {
         refreshError.message,
         appendRequestIdMeta("tools-approvals", refreshError),
       );
+    }
+    if (state.toolApprovalAudit) {
+      try {
+        state.toolApprovalAudit = await fetchToolApprovalAuditSnapshot();
+      } catch (refreshError) {
+        state.toolApprovalAudit = null;
+        recordEvent(
+          "warn",
+          "Tool approval audit refresh failed",
+          refreshError.message,
+          appendRequestIdMeta("tools-approval-audit", refreshError),
+        );
+      }
     }
     renderAll();
   } catch (error) {
@@ -4132,6 +4305,9 @@ function bindEvents() {
   byId("inspect-tool-approvals").addEventListener("click", () => {
     void triggerToolApprovalsInspect();
   });
+  byId("inspect-tool-approval-audit").addEventListener("click", () => {
+    void triggerToolApprovalAuditInspect();
+  });
   byId("approve-tool-request").addEventListener("click", () => {
     void reviewToolApproval("approved");
   });
@@ -4160,6 +4336,12 @@ function bindEvents() {
     if (event.key === "Enter") {
       event.preventDefault();
       void triggerToolApprovalsInspect();
+    }
+  });
+  byId("tool-approval-audit-action-filter").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void triggerToolApprovalAuditInspect();
     }
   });
   byId("tool-approval-note").addEventListener("keydown", (event) => {
