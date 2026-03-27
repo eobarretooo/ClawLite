@@ -3486,6 +3486,8 @@ def test_gateway_dashboard_state_surfaces_manual_only_runtime_policy_when_self_e
     assert payload["runtime"]["policy"]["activation_scope"] == "disabled"
     assert payload["runtime"]["policy"]["policy_posture"] == "manual_only"
     assert payload["runtime"]["policy"]["policy_block"] == "disabled_by_config"
+    assert payload["runtime"]["policy"]["drift"]["posture"] == "aligned"
+    assert payload["runtime"]["policy"]["drift"]["configured"]["activation_scope"] == "disabled"
 
 
 def test_gateway_dashboard_state_includes_ws_correlation_summary(tmp_path: Path) -> None:

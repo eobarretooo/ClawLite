@@ -1459,6 +1459,9 @@ function renderRuntimePolicyBoard() {
   const runtime = ((state.dashboardState || {}).runtime) || {};
   const policy = runtime.policy || {};
   const evolution = policy.self_evolution || {};
+  const drift = (policy.drift && typeof policy.drift === "object") ? policy.drift : {};
+  const driftConfigured = (drift.configured && typeof drift.configured === "object") ? drift.configured : {};
+  const driftEffective = (drift.effective && typeof drift.effective === "object") ? drift.effective : {};
   const cards = [];
 
   if (!Object.keys(policy).length) {
@@ -1511,16 +1514,45 @@ function renderRuntimePolicyBoard() {
     ].filter(Boolean).join(" | "),
   });
 
+  cards.push({
+    title: "Policy drift",
+    body: `${String(drift.posture || "unknown")} | ${String(drift.reason || "aligned")}`,
+    detail: [
+      `${String(driftConfigured.activation_scope || "unknown")} -> ${String(driftEffective.activation_scope || "unknown")}`,
+      Object.prototype.hasOwnProperty.call(driftConfigured, "require_approval")
+        ? `${Boolean(driftConfigured.require_approval) ? "approval" : "direct"} -> ${Boolean(driftEffective.require_approval) ? "approval" : "direct"}`
+        : "",
+      String(drift.hint || "").trim(),
+    ].filter(Boolean).join(" | ") || "No runtime policy drift snapshot is available.",
+  });
+
   cards.forEach((item) => appendSummaryCard(grid, item));
 
-  const statusLabel = String(policy.policy_posture || policy.approval_mode || "unknown");
-  const tone = String(policy.policy_tone || "").trim() || (
+  let statusLabel = String(policy.policy_posture || policy.approval_mode || "unknown");
+  let tone = String(policy.policy_tone || "").trim() || (
     ["direct_commit"].includes(statusLabel)
       ? "ok"
       : (["approval_required", "manual_only", "session_canary", "blocked", "disabled"].includes(statusLabel)
         ? "warn"
         : "danger")
   );
+  const toneSeverity = (value) => {
+    const normalized = String(value || "").trim();
+    if (normalized === "danger") {
+      return 3;
+    }
+    if (normalized === "warn") {
+      return 2;
+    }
+    if (normalized === "ok") {
+      return 1;
+    }
+    return 0;
+  };
+  if (toneSeverity(drift.tone) > toneSeverity(tone)) {
+    statusLabel = String(drift.posture || statusLabel || "unknown");
+    tone = String(drift.tone || tone || "warn");
+  }
   setBadge("runtime-policy-status", statusLabel, tone);
 }
 

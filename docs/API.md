@@ -140,6 +140,8 @@ The additive `runtime.posture` block now mirrors the runtime/operator posture al
 
 The additive `runtime.policy` block now mirrors the active self-evolution/operator policy instead of runtime activity: it summarizes `approval_mode`, `activation_scope`, `policy_posture`, `policy_tone`, `policy_block`, and `policy_hint`, while also carrying bounded nested detail for self-evolution policy inputs such as `enabled_for_sessions_count`, `enabled_for_sessions_sample`, `autonomy_session_id`, `current_session_allowed`, `activation_reason`, and `last_review_status` so the packaged Automation tab can surface canary/manual-only/approval policy without scraping full diagnostics.
 
+That same additive `runtime.policy` block now also carries a bounded nested `drift` section so operators can compare configured self-evolution policy against the effective runtime policy without reconstructing it by hand. The `drift` payload includes `posture`, `tone`, `reason`, `hint`, plus compact `configured` and `effective` snapshots for enablement, approval gate, activation scope, canary allowlist counts/samples, and autonomy session binding.
+
 ## `GET /v1/control/provider/status`
 
 Returns the compact cached provider status for the provider currently selected by the runtime/config, reusing the same local probe cache surfaced by `clawlite provider status`.

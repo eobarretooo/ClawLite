@@ -203,6 +203,16 @@ def test_dashboard_runtime_posture_summary_prefers_wake_error_and_disabled_revie
 
 def test_dashboard_runtime_policy_summary_surfaces_canary_block_and_review_gate() -> None:
     payload = dashboard_runtime_policy_summary(
+        config=SimpleNamespace(
+            gateway=SimpleNamespace(
+                autonomy=SimpleNamespace(
+                    self_evolution_enabled=True,
+                    self_evolution_require_approval=True,
+                    self_evolution_enabled_for_sessions=["autonomy:canary-a", "autonomy:canary-b"],
+                    session_id="autonomy:system",
+                )
+            )
+        ),
         self_evolution_payload={
             "status": {
                 "enabled": True,
@@ -228,11 +238,25 @@ def test_dashboard_runtime_policy_summary_surfaces_canary_block_and_review_gate(
     assert payload["policy_block"] == "autonomy_session_not_allowlisted"
     assert payload["self_evolution"]["current_session_allowed"] is False
     assert payload["self_evolution"]["enabled_for_sessions_sample"] == ["autonomy:canary-a", "autonomy:canary-b"]
+    assert payload["drift"]["posture"] == "aligned_blocked"
+    assert payload["drift"]["reason"] == "autonomy_session_not_allowlisted"
+    assert payload["drift"]["configured"]["activation_scope"] == "session_canary"
+    assert payload["drift"]["effective"]["activation_scope"] == "session_canary"
     assert "outside the canary allowlist" in payload["policy_hint"]
 
 
 def test_dashboard_runtime_policy_summary_marks_disabled_background_loop_as_manual_only() -> None:
     payload = dashboard_runtime_policy_summary(
+        config=SimpleNamespace(
+            gateway=SimpleNamespace(
+                autonomy=SimpleNamespace(
+                    self_evolution_enabled=False,
+                    self_evolution_require_approval=False,
+                    self_evolution_enabled_for_sessions=[],
+                    session_id="autonomy:system",
+                )
+            )
+        ),
         self_evolution_payload={
             "status": {
                 "enabled": False,
@@ -251,7 +275,118 @@ def test_dashboard_runtime_policy_summary_marks_disabled_background_loop_as_manu
     assert payload["policy_tone"] == "warn"
     assert payload["policy_block"] == "disabled_by_config"
     assert payload["self_evolution"]["current_session_allowed"] is False
+    assert payload["drift"]["posture"] == "aligned"
+    assert payload["drift"]["configured"]["activation_scope"] == "disabled"
+    assert payload["drift"]["effective"]["activation_scope"] == "disabled"
     assert "only explicit/manual runs can proceed" in payload["policy_hint"]
+
+
+def test_dashboard_runtime_policy_summary_surfaces_runtime_policy_drift_against_config() -> None:
+    payload = dashboard_runtime_policy_summary(
+        config=SimpleNamespace(
+            gateway=SimpleNamespace(
+                autonomy=SimpleNamespace(
+                    self_evolution_enabled=True,
+                    self_evolution_require_approval=False,
+                    self_evolution_enabled_for_sessions=[],
+                    session_id="autonomy:system",
+                )
+            )
+        ),
+        self_evolution_payload={
+            "status": {
+                "enabled": True,
+                "background_enabled": True,
+                "activation_mode": "global",
+                "activation_reason": "",
+                "enabled_for_sessions": [],
+                "autonomy_session_id": "autonomy:system",
+                "require_approval": True,
+                "last_review_status": "awaiting_approval",
+            },
+            "runner": {
+                "enabled": True,
+                "activation_mode": "global",
+            },
+        },
+    )
+
+    assert payload["approval_mode"] == "approval_required"
+    assert payload["drift"]["posture"] == "approval_mismatch"
+    assert payload["drift"]["reason"] == "approval_mode_mismatch"
+    assert payload["drift"]["configured"]["require_approval"] is False
+    assert payload["drift"]["effective"]["require_approval"] is True
+
+
+def test_dashboard_runtime_policy_summary_treats_reordered_allowlist_as_aligned() -> None:
+    payload = dashboard_runtime_policy_summary(
+        config=SimpleNamespace(
+            gateway=SimpleNamespace(
+                autonomy=SimpleNamespace(
+                    self_evolution_enabled=True,
+                    self_evolution_require_approval=False,
+                    self_evolution_enabled_for_sessions=["autonomy:canary-a", "autonomy:canary-b"],
+                    session_id="autonomy:canary-a",
+                )
+            )
+        ),
+        self_evolution_payload={
+            "status": {
+                "enabled": True,
+                "background_enabled": True,
+                "activation_mode": "session_canary",
+                "activation_reason": "",
+                "enabled_for_sessions": ["autonomy:canary-b", "autonomy:canary-a"],
+                "autonomy_session_id": "autonomy:canary-a",
+                "require_approval": False,
+            },
+            "runner": {
+                "enabled": True,
+                "activation_mode": "session_canary",
+                "enabled_for_sessions": ["autonomy:canary-b", "autonomy:canary-a"],
+                "autonomy_session_id": "autonomy:canary-a",
+            },
+        },
+    )
+
+    assert payload["drift"]["posture"] == "aligned"
+    assert payload["drift"]["reason"] == ""
+
+
+def test_dashboard_runtime_policy_summary_uses_effective_enabled_state_when_background_runner_active() -> None:
+    payload = dashboard_runtime_policy_summary(
+        config=SimpleNamespace(
+            gateway=SimpleNamespace(
+                autonomy=SimpleNamespace(
+                    self_evolution_enabled=True,
+                    self_evolution_require_approval=False,
+                    self_evolution_enabled_for_sessions=[],
+                    session_id="autonomy:system",
+                )
+            )
+        ),
+        self_evolution_payload={
+            "status": {
+                "enabled": False,
+                "background_enabled": True,
+                "activation_mode": "global",
+                "activation_reason": "",
+                "enabled_for_sessions": [],
+                "autonomy_session_id": "autonomy:system",
+                "require_approval": False,
+            },
+            "runner": {
+                "enabled": True,
+                "activation_mode": "global",
+                "autonomy_session_id": "autonomy:system",
+            },
+        },
+    )
+
+    assert payload["approval_mode"] == "direct_commit"
+    assert payload["policy_posture"] == "direct_commit"
+    assert payload["self_evolution"]["enabled"] is True
+    assert payload["drift"]["posture"] == "aligned"
 
 
 def test_dashboard_provider_health_summary_surfaces_healthy_cached_route() -> None:

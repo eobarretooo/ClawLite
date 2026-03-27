@@ -101,6 +101,67 @@ def _runtime_posture_number(value: Any, *, default: float = 0.0) -> float:
         return float(default)
 
 
+def _dashboard_field(payload: Any, key: str, default: Any = None) -> Any:
+    if isinstance(payload, dict):
+        return payload.get(key, default)
+    return getattr(payload, key, default)
+
+
+def _runtime_policy_session_ids(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        raw_values = [values]
+    else:
+        try:
+            raw_values = list(values)
+        except TypeError:
+            raw_values = [values]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        item = str(raw or "").strip()
+        if not item or item in seen:
+            continue
+        normalized.append(item)
+        seen.add(item)
+    return normalized
+
+
+def _runtime_policy_config_snapshot(config: Any) -> dict[str, Any]:
+    gateway = _dashboard_field(config, "gateway")
+    autonomy = _dashboard_field(gateway, "autonomy")
+    enabled = bool(_dashboard_field(autonomy, "self_evolution_enabled", False))
+    require_approval = bool(_dashboard_field(autonomy, "self_evolution_require_approval", False))
+    enabled_for_sessions = _runtime_policy_session_ids(
+        _dashboard_field(autonomy, "self_evolution_enabled_for_sessions", [])
+    )
+    autonomy_session_id = str(_dashboard_field(autonomy, "session_id", "") or "").strip()
+    if not enabled:
+        activation_scope = "disabled"
+    elif enabled_for_sessions:
+        activation_scope = "session_canary"
+    else:
+        activation_scope = "global"
+    return {
+        "enabled": enabled,
+        "require_approval": require_approval,
+        "activation_scope": activation_scope,
+        "enabled_for_sessions": enabled_for_sessions,
+        "enabled_for_sessions_count": len(enabled_for_sessions),
+        "enabled_for_sessions_sample": enabled_for_sessions[:3],
+        "autonomy_session_id": autonomy_session_id,
+    }
+
+
+def _runtime_policy_effective_enabled(evolution_status: dict[str, Any], evolution_runner: dict[str, Any]) -> bool:
+    return bool(
+        evolution_status.get("enabled", False)
+        or evolution_status.get("background_enabled", False)
+        or evolution_runner.get("enabled", False)
+    )
+
+
 def _runtime_posture_severity(label: Any) -> tuple[int, str]:
     normalized = str(label or "").strip()
     if normalized in {"error", "provider_backoff"}:
@@ -161,11 +222,7 @@ def dashboard_runtime_posture_summary(
     else:
         wake_posture = "stopped"
 
-    evolution_enabled = bool(
-        evolution_status.get("enabled", False)
-        or evolution_status.get("background_enabled", False)
-        or evolution_runner.get("enabled", False)
-    )
+    evolution_enabled = _runtime_policy_effective_enabled(evolution_status, evolution_runner)
     activation_mode = str(evolution_status.get("activation_mode", "") or evolution_runner.get("activation_mode", "") or "").strip()
     enabled_for_sessions = list(evolution_status.get("enabled_for_sessions", []) or evolution_runner.get("enabled_for_sessions", []) or [])
     last_review_status = str(evolution_status.get("last_review_status", "") or "").strip()
@@ -235,7 +292,7 @@ def dashboard_runtime_posture_summary(
             "last_error": wake_error,
         },
         "self_evolution": {
-            "enabled": bool(evolution_status.get("enabled", False)),
+            "enabled": evolution_enabled,
             "background_enabled": bool(evolution_status.get("background_enabled", False)),
             "activation_mode": activation_mode,
             "activation_reason": str(
@@ -258,24 +315,28 @@ def dashboard_runtime_posture_summary(
     }
 
 
-def dashboard_runtime_policy_summary(*, self_evolution_payload: dict[str, Any]) -> dict[str, Any]:
+def dashboard_runtime_policy_summary(*, self_evolution_payload: dict[str, Any], config: Any = None) -> dict[str, Any]:
     self_evolution = dict(self_evolution_payload or {}) if isinstance(self_evolution_payload, dict) else {}
     evolution_status = dict(self_evolution.get("status") or {}) if isinstance(self_evolution.get("status"), dict) else {}
     evolution_runner = dict(self_evolution.get("runner") or {}) if isinstance(self_evolution.get("runner"), dict) else {}
+    config_snapshot = _runtime_policy_config_snapshot(config)
 
-    evolution_enabled = bool(evolution_status.get("enabled", False))
+    evolution_enabled = _runtime_policy_effective_enabled(evolution_status, evolution_runner)
     background_enabled = bool(evolution_status.get("background_enabled", False))
     require_approval = bool(evolution_status.get("require_approval", False))
     activation_scope = str(evolution_status.get("activation_mode", "") or evolution_runner.get("activation_mode", "") or "").strip()
     activation_reason = str(
         evolution_status.get("activation_reason", "") or evolution_runner.get("activation_reason", "") or ""
     ).strip()
-    enabled_for_sessions = list(evolution_status.get("enabled_for_sessions", []) or evolution_runner.get("enabled_for_sessions", []) or [])
+    enabled_for_sessions = _runtime_policy_session_ids(
+        evolution_status.get("enabled_for_sessions", []) or evolution_runner.get("enabled_for_sessions", []) or []
+    )
     autonomy_session_id = str(
         evolution_status.get("autonomy_session_id", "") or evolution_runner.get("autonomy_session_id", "") or ""
     ).strip()
     last_review_status = str(evolution_status.get("last_review_status", "") or "").strip()
     cooldown_remaining_s = round(_runtime_posture_number(evolution_status.get("cooldown_remaining_s")), 3)
+    runner_enabled = bool(evolution_runner.get("enabled", False))
 
     if not evolution_enabled:
         activation_scope = "disabled"
@@ -322,6 +383,65 @@ def dashboard_runtime_policy_summary(*, self_evolution_payload: dict[str, Any]) 
             policy_block = ""
             policy_hint = "Runtime policy allows direct commits; monitor recent outcomes before widening scope."
 
+    configured_scope = str(config_snapshot.get("activation_scope", "disabled") or "disabled")
+    configured_allowlist = _runtime_policy_session_ids(config_snapshot.get("enabled_for_sessions", []))
+    configured_session_id = str(config_snapshot.get("autonomy_session_id", "") or "").strip()
+    configured_enabled = bool(config_snapshot.get("enabled", False))
+    configured_require_approval = bool(config_snapshot.get("require_approval", False))
+
+    effective_snapshot = {
+        "enabled": evolution_enabled,
+        "background_enabled": background_enabled,
+        "runner_enabled": runner_enabled,
+        "require_approval": require_approval,
+        "activation_scope": activation_scope,
+        "enabled_for_sessions_count": len(enabled_for_sessions),
+        "enabled_for_sessions_sample": enabled_for_sessions[:3],
+        "autonomy_session_id": autonomy_session_id,
+        "current_session_allowed": current_session_allowed,
+    }
+
+    if configured_enabled != evolution_enabled:
+        drift_posture = "engine_mismatch"
+        drift_tone = "danger"
+        drift_reason = "enabled_mismatch"
+        drift_hint = "Configured self-evolution enablement no longer matches the effective runtime state."
+    elif configured_require_approval != require_approval:
+        drift_posture = "approval_mismatch"
+        drift_tone = "warn"
+        drift_reason = "approval_mode_mismatch"
+        drift_hint = "Configured approval policy differs from the effective runtime review gate."
+    elif configured_scope != activation_scope:
+        drift_posture = "scope_mismatch"
+        drift_tone = "warn"
+        drift_reason = "activation_scope_mismatch"
+        drift_hint = "Configured activation scope differs from the effective runtime policy scope."
+    elif sorted(configured_allowlist) != sorted(enabled_for_sessions):
+        drift_posture = "allowlist_mismatch"
+        drift_tone = "warn"
+        drift_reason = "allowlist_mismatch"
+        drift_hint = "Configured canary allowlist differs from the effective runtime allowlist."
+    elif configured_session_id and autonomy_session_id and configured_session_id != autonomy_session_id:
+        drift_posture = "session_mismatch"
+        drift_tone = "warn"
+        drift_reason = "autonomy_session_mismatch"
+        drift_hint = "Configured autonomy session differs from the session bound to self-evolution."
+    elif configured_enabled and background_enabled and not runner_enabled:
+        drift_posture = "runner_mismatch"
+        drift_tone = "warn"
+        drift_reason = "background_runner_disabled"
+        drift_hint = "Runtime policy is enabled, but the background self-evolution runner is not marked active."
+    elif policy_posture == "blocked":
+        drift_posture = "aligned_blocked"
+        drift_tone = "warn"
+        drift_reason = policy_block or activation_reason or "runtime_blocked"
+        drift_hint = "Configured policy matches runtime state, but the current runtime context is still blocked."
+    else:
+        drift_posture = "aligned"
+        drift_tone = "ok"
+        drift_reason = ""
+        drift_hint = "Configured policy and effective runtime policy are aligned."
+
     return {
         "approval_mode": approval_mode,
         "activation_scope": activation_scope,
@@ -341,6 +461,14 @@ def dashboard_runtime_policy_summary(*, self_evolution_payload: dict[str, Any]) 
             "current_session_allowed": current_session_allowed,
             "last_review_status": last_review_status,
             "cooldown_remaining_s": cooldown_remaining_s,
+        },
+        "drift": {
+            "posture": drift_posture,
+            "tone": drift_tone,
+            "reason": drift_reason,
+            "hint": drift_hint,
+            "configured": config_snapshot,
+            "effective": effective_snapshot,
         },
     }
 

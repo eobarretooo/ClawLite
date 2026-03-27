@@ -50,8 +50,8 @@ def dashboard_runtime_policy_summary(
     self_evolution_payload: dict[str, Any],
     dashboard_runtime_policy_summary_payload: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
-    del runtime
     return dashboard_runtime_policy_summary_payload(
+        config=runtime.config,
         self_evolution_payload=self_evolution_payload,
     )
 

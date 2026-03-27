@@ -44,6 +44,7 @@ The newest provider follow-up now also adds a bounded `provider.health` operator
 The newest provider follow-up now also adds a bounded `provider.budget` operator summary next to that same health card: `GET /api/dashboard/state` carries additive `provider.budget` data derived from live provider telemetry plus suppression state, and the packaged Automation tab now renders a compact `Provider Budget` card so operators can tell quota exhaustion, rate limiting, and non-budget provider blocks apart without scraping raw counters.
 The newest core/runtime follow-up now adds a compact operator posture surface to that same packaged Automation tab: `GET /api/dashboard/state` carries additive `runtime.posture` data derived from autonomy, autonomy-wake, supervisor, and self-evolution state, and the dashboard renders it as a bounded `Runtime Posture` card with `autonomy_posture`, `wake_posture`, `approval_posture`, and a short operator hint instead of forcing operators back into full diagnostics JSON.
 The newest core/runtime follow-up now also adds an explicit operator policy surface next to that posture card: `GET /api/dashboard/state` carries additive `runtime.policy` data derived from self-evolution status/runner policy, and the Automation tab now renders a bounded `Runtime Policy` card with approval mode, canary scope, policy block, and policy hint so manual-only/canary/approval posture becomes visible without reconstructing it from raw self-evolution JSON.
+That same `runtime.policy` payload now also carries a bounded `drift` snapshot comparing configured self-evolution policy to the effective runtime state, and the dashboard surfaces it as a compact `Policy drift` card so operators can tell the difference between an aligned canary block and a real config/runtime mismatch.
 The newest install follow-up now closes two real setup regressions before the roadmap continues: local checkout installs through `scripts/install.sh` no longer lose `pyproject.toml` dependencies during the editable install pass, and the Termux/proot wrapper now forwards `SYNC_HELPER_URL` into the inner Ubuntu shell so the repository sync helper can actually run during bootstrap instead of failing on an unset variable.
 The newest skills follow-up now adds a compact managed-marketplace lifecycle summary to `skills.diagnostics_report()`: dashboard/control-plane payloads can now see managed `count`, `ready_count`, `blocked_count`, `disabled_count`, bounded `items`, and `status_counts`, and the Knowledge tab surfaces those managed marketplace signals directly instead of leaving marketplace lifecycle visible only in the CLI `skills managed` path.
 The newest skills follow-up now promotes that same managed lifecycle into a first-class live control-plane surface: `GET /v1/control/skills/managed` and `GET /api/skills/managed` expose the full managed inventory with live filters/counts, and the packaged dashboard Knowledge tab now offers `Inspect managed skills` to fetch that snapshot on demand instead of relying only on the bounded diagnostics preview.
@@ -61,7 +62,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2059 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2062 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -192,7 +193,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2059 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2062 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 7 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed
