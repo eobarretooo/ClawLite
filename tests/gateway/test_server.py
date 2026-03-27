@@ -3089,6 +3089,7 @@ def test_gateway_root_entrypoint_is_deterministic(tmp_path: Path) -> None:
         assert 'id="managed-skills-query-filter"' in body
         assert 'id="inspect-managed-skills"' in body
         assert 'id="provider-grid"' in body
+        assert 'id="runtime-posture-grid"' in body
         assert 'id="inspect-provider-status"' in body
         assert 'id="delivery-grid"' in body
         assert 'id="supervisor-grid"' in body
@@ -3194,6 +3195,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "handoff-grid" in js.text
     assert "renderDeliveryBoard" in js.text
     assert "renderSupervisorBoard" in js.text
+    assert "renderRuntimePostureBoard" in js.text
     assert "renderProviderRecoveryBoard" in js.text
     assert "triggerDeadLetterReplay" in js.text
     assert "triggerChannelRecovery" in js.text
@@ -3268,6 +3270,9 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "approve-tool-request" in js.text
     assert "reject-tool-request" in js.text
     assert "revoke-tool-grant" in js.text
+    assert "runtime-posture-grid" in js.text
+    assert "runtime-posture-status" in js.text
+    assert "Runtime hint" in js.text
     assert "Approval audit" in js.text
     assert "Select exact grant" in js.text
     assert "Cacheable tools" in js.text
@@ -3413,9 +3418,11 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "onboarding" in payload
     assert "bootstrap" in payload
     assert "memory" in payload
+    assert "runtime" in payload
     assert "telemetry" in payload["provider"]
     assert "autonomy" in payload["provider"]
     assert "status" in payload["provider"]
+    assert "posture" in payload["runtime"]
     assert "items" in payload["channels"]
     assert "enabled" in payload["self_evolution"]
     assert "managed" in payload["skills"]

@@ -104,6 +104,7 @@ from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_inc
 from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary as _dashboard_channels_summary_payload,
     dashboard_cron_summary as _dashboard_cron_summary_payload,
+    dashboard_runtime_posture_summary as _dashboard_runtime_posture_summary_payload,
     dashboard_state_payload as _dashboard_state_payload_builder,
     dashboard_self_evolution_summary as _dashboard_self_evolution_summary_payload,
     operator_channel_summary as _operator_channel_summary,
@@ -3594,6 +3595,7 @@ def create_app(
             dashboard_channels_summary_payload=_dashboard_channels_summary_payload,
             dashboard_cron_summary_payload=_dashboard_cron_summary_payload,
             dashboard_self_evolution_summary_payload=_dashboard_self_evolution_summary_payload,
+            dashboard_runtime_posture_summary_payload=_dashboard_runtime_posture_summary_payload,
             dashboard_memory_summary_payload=_dashboard_memory_summary_payload,
             operator_channel_summary=_operator_channel_summary,
             provider_telemetry_snapshot=_provider_telemetry_snapshot,

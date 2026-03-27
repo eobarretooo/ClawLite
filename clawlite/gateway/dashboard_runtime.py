@@ -30,6 +30,20 @@ def dashboard_self_evolution_summary(
     )
 
 
+def dashboard_runtime_posture_summary(
+    *,
+    runtime: Any,
+    self_evolution_payload: dict[str, Any],
+    dashboard_runtime_posture_summary_payload: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    return dashboard_runtime_posture_summary_payload(
+        autonomy_payload=runtime.autonomy.status() if runtime.autonomy is not None else {},
+        autonomy_wake_payload=runtime.autonomy_wake.status(),
+        supervisor_payload=runtime.supervisor.status() if runtime.supervisor is not None else {},
+        self_evolution_payload=self_evolution_payload,
+    )
+
+
 def dashboard_memory_summary(
     *,
     runtime: Any,
@@ -63,6 +77,7 @@ def dashboard_state_payload(
     dashboard_channels_summary_payload: Callable[[dict[str, Any]], dict[str, Any]],
     dashboard_cron_summary_payload: Callable[..., dict[str, Any]],
     dashboard_self_evolution_summary_payload: Callable[..., dict[str, Any]],
+    dashboard_runtime_posture_summary_payload: Callable[..., dict[str, Any]],
     dashboard_memory_summary_payload: Callable[..., dict[str, Any]],
     operator_channel_summary: Callable[[Any], dict[str, Any]],
     provider_telemetry_snapshot: Callable[[Any], dict[str, Any]],
@@ -79,6 +94,16 @@ def dashboard_state_payload(
     provider_telemetry = provider_telemetry_snapshot(runtime.engine.provider)
     provider_autonomy = provider_autonomy_snapshot(provider=runtime.engine.provider)
     provider_status = provider_status_payload_fn()
+    self_evolution_payload = dashboard_self_evolution_summary(
+        runtime=runtime,
+        runner_state=self_evolution_runner_state,
+        dashboard_self_evolution_summary_payload=dashboard_self_evolution_summary_payload,
+    )
+    runtime_posture_payload = dashboard_runtime_posture_summary(
+        runtime=runtime,
+        self_evolution_payload=self_evolution_payload,
+        dashboard_runtime_posture_summary_payload=dashboard_runtime_posture_summary_payload,
+    )
     skills = runtime.skills_loader.diagnostics_report()
     return dashboard_state_payload_builder(
         contract_version=contract_version,
@@ -118,11 +143,8 @@ def dashboard_state_payload(
         provider_telemetry_payload=provider_telemetry,
         provider_autonomy_payload=provider_autonomy,
         provider_status_payload=provider_status if isinstance(provider_status, dict) else {},
-        self_evolution_payload=dashboard_self_evolution_summary(
-            runtime=runtime,
-            runner_state=self_evolution_runner_state,
-            dashboard_self_evolution_summary_payload=dashboard_self_evolution_summary_payload,
-        ),
+        self_evolution_payload=self_evolution_payload,
+        runtime_posture_payload=runtime_posture_payload if isinstance(runtime_posture_payload, dict) else {},
     )
 
 
@@ -131,6 +153,7 @@ __all__ = [
     "dashboard_cron_summary",
     "dashboard_memory_summary",
     "dashboard_operator_summary",
+    "dashboard_runtime_posture_summary",
     "dashboard_self_evolution_summary",
     "dashboard_state_payload",
 ]

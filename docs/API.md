@@ -132,6 +132,8 @@ This aggregated dashboard payload now also includes queue/dead-letter stats plus
 
 The additive `provider.status` block now mirrors the current cached provider status used by `clawlite provider status`: it includes the selected/active provider hint plus any persisted `last_live_probe` and `last_capability_probe` summaries so the packaged dashboard can surface cached provider probe posture without forcing a new network probe on every refresh.
 
+The additive `runtime.posture` block now mirrors the runtime/operator posture already implied by autonomy, wake, supervisor, and self-evolution state: it summarizes `autonomy_posture`, `wake_posture`, `approval_posture`, a derived `summary_posture` / `summary_tone`, and a compact `operator_hint`, while also carrying bounded nested detail for `autonomy`, `autonomy_wake`, `self_evolution`, and `supervisor` so the packaged Automation tab can show a compact runtime posture card without scraping the full diagnostics payload.
+
 ## `GET /v1/control/provider/status`
 
 Returns the compact cached provider status for the provider currently selected by the runtime/config, reusing the same local probe cache surfaced by `clawlite provider status`.

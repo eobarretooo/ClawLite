@@ -7,6 +7,7 @@ from clawlite.gateway.dashboard_state import (
     dashboard_channels_summary,
     dashboard_cron_summary,
     dashboard_preview,
+    dashboard_runtime_posture_summary,
     dashboard_state_payload,
     dashboard_self_evolution_summary,
     operator_channel_summary,
@@ -112,6 +113,91 @@ def test_dashboard_cron_and_self_evolution_summaries() -> None:
     assert evo_payload["runner"] == {"running": True}
 
 
+def test_dashboard_runtime_posture_summary_surfaces_compact_operator_state() -> None:
+    payload = dashboard_runtime_posture_summary(
+        autonomy_payload={
+            "enabled": True,
+            "running": True,
+            "session_id": "autonomy:system",
+            "no_progress_reason": "repeated_idle_snapshot",
+            "no_progress_streak": 2,
+            "no_progress_backoff_remaining_s": 30.0,
+            "provider_backoff_remaining_s": 0.0,
+            "cooldown_remaining_s": 0.0,
+            "last_result_excerpt": "AUTONOMY_IDLE",
+        },
+        autonomy_wake_payload={
+            "running": True,
+            "queue_depth": 1,
+            "pending_count": 1,
+            "dropped_backpressure": 2,
+            "dropped_quota": 0,
+        },
+        supervisor_payload={
+            "worker_state": "running",
+            "incident_count": 1,
+            "consecutive_error_count": 0,
+        },
+        self_evolution_payload={
+            "status": {
+                "enabled": True,
+                "background_enabled": True,
+                "activation_mode": "session_canary",
+                "enabled_for_sessions": ["autonomy:canary"],
+                "require_approval": True,
+                "cooldown_remaining_s": 42.0,
+                "last_review_status": "awaiting_approval",
+            },
+            "runner": {
+                "enabled": True,
+                "activation_mode": "session_canary",
+            },
+        },
+    )
+
+    assert payload["autonomy_posture"] == "no_progress_backoff"
+    assert payload["wake_posture"] == "busy"
+    assert payload["approval_posture"] == "approval_required"
+    assert payload["summary_posture"] == "no_progress_backoff"
+    assert payload["summary_tone"] == "warn"
+    assert payload["self_evolution"]["enabled_for_sessions_count"] == 1
+    assert payload["autonomy"]["no_progress_reason"] == "repeated_idle_snapshot"
+    assert "no-progress guard" in payload["operator_hint"]
+
+
+def test_dashboard_runtime_posture_summary_prefers_wake_error_and_disabled_review_state() -> None:
+    payload = dashboard_runtime_posture_summary(
+        autonomy_payload={
+            "enabled": True,
+            "running": True,
+            "session_id": "autonomy:system",
+        },
+        autonomy_wake_payload={
+            "running": False,
+            "last_error": "wake crashed",
+            "queue_depth": 0,
+            "pending_count": 0,
+        },
+        supervisor_payload={},
+        self_evolution_payload={
+            "status": {
+                "enabled": False,
+                "background_enabled": False,
+                "require_approval": False,
+            },
+            "runner": {
+                "enabled": False,
+            },
+        },
+    )
+
+    assert payload["autonomy_posture"] == "running"
+    assert payload["wake_posture"] == "error"
+    assert payload["approval_posture"] == "disabled"
+    assert payload["summary_posture"] == "error"
+    assert payload["summary_tone"] == "danger"
+
+
 def test_dashboard_state_payload_assembles_sections() -> None:
     payload = dashboard_state_payload(
         contract_version="2026-03-02",
@@ -141,6 +227,7 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         provider_autonomy_payload={"mode": "allowed"},
         provider_status_payload={"ok": True, "provider": "openai"},
         self_evolution_payload={"enabled": False},
+        runtime_posture_payload={"autonomy_posture": "disabled"},
     )
 
     assert payload["control_plane"] == {"wrapped": {"ok": True}}
@@ -149,4 +236,5 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         "autonomy": {"mode": "allowed"},
         "status": {"ok": True, "provider": "openai"},
     }
+    assert payload["runtime"] == {"posture": {"autonomy_posture": "disabled"}}
     assert payload["skills"] == {"loaded": 4}

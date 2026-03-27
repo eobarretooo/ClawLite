@@ -1341,6 +1341,91 @@ function renderSupervisorBoard() {
   }
 }
 
+function renderRuntimePostureBoard() {
+  const grid = byId("runtime-posture-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const runtime = ((state.dashboardState || {}).runtime) || {};
+  const posture = runtime.posture || {};
+  const autonomy = posture.autonomy || {};
+  const autonomyWake = posture.autonomy_wake || {};
+  const evolution = posture.self_evolution || {};
+  const supervisor = posture.supervisor || {};
+  const cards = [];
+
+  if (!Object.keys(posture).length) {
+    appendSummaryCard(grid, {
+      title: "Runtime posture",
+      body: "not available",
+      detail: "No compact posture snapshot is available yet.",
+    });
+    setBadge("runtime-posture-status", "pending", "warn");
+    return;
+  }
+
+  cards.push({
+    title: "Autonomy loop",
+    body: `${String(posture.autonomy_posture || "unknown")} | ${String(autonomy.session_id || "autonomy:system")}`,
+    detail: [
+      autonomy.last_error ? String(autonomy.last_error) : String(autonomy.last_result_excerpt || "").trim(),
+      autonomy.no_progress_reason
+        ? `no-progress ${String(autonomy.no_progress_reason)} x${numeric(autonomy.no_progress_streak, 0)}`
+        : "",
+      autonomy.provider_backoff_remaining_s
+        ? `provider backoff ${formatDuration(autonomy.provider_backoff_remaining_s)}`
+        : (autonomy.cooldown_remaining_s ? `cooldown ${formatDuration(autonomy.cooldown_remaining_s)}` : ""),
+    ].filter(Boolean).join(" | ") || "Autonomy loop is steady.",
+  });
+
+  cards.push({
+    title: "Wake coordinator",
+    body: `${String(posture.wake_posture || "unknown")} | ${numeric(autonomyWake.queue_depth, 0)} queued`,
+    detail: [
+      `${numeric(autonomyWake.pending_count, 0)} pending`,
+      `${numeric(autonomyWake.dropped_backpressure, 0)} backpressure drops`,
+      `${numeric(autonomyWake.dropped_quota, 0)} quota drops`,
+      String(autonomyWake.last_error || "").trim(),
+    ].filter(Boolean).join(" | ") || "No wake pressure recorded yet.",
+  });
+
+  cards.push({
+    title: "Change review",
+    body: `${String(posture.approval_posture || "unknown")} | ${String(evolution.activation_mode || "disabled")}`,
+    detail: [
+      evolution.enabled ? "engine enabled" : "engine disabled",
+      evolution.background_enabled ? "background enabled" : "background disabled",
+      evolution.enabled_for_sessions_count ? `${numeric(evolution.enabled_for_sessions_count, 0)} canary sessions` : "",
+      evolution.last_review_status ? `review ${String(evolution.last_review_status)}` : "",
+      evolution.cooldown_remaining_s ? `cooldown ${formatDuration(evolution.cooldown_remaining_s)}` : "",
+    ].filter(Boolean).join(" | ") || "No self-evolution review posture available.",
+  });
+
+  cards.push({
+    title: "Runtime hint",
+    body: String(posture.operator_hint || "Runtime posture looks steady."),
+    detail: [
+      String(supervisor.worker_state || "").trim(),
+      numeric(supervisor.incident_count, 0) ? `${numeric(supervisor.incident_count, 0)} supervisor incidents` : "",
+      numeric(supervisor.consecutive_error_count, 0) ? `${numeric(supervisor.consecutive_error_count, 0)} consecutive supervisor errors` : "",
+    ].filter(Boolean).join(" | "),
+  });
+
+  cards.forEach((item) => appendSummaryCard(grid, item));
+
+  const statusLabel = String(posture.summary_posture || posture.wake_posture || posture.autonomy_posture || "unknown");
+  const tone = String(posture.summary_tone || "").trim() || (
+    ["running", "ready", "idle", "direct_commit"].includes(statusLabel)
+      ? "ok"
+      : (["disabled", "cooldown", "busy", "no_progress_backoff", "stopped", "approval_required"].includes(statusLabel)
+        ? "warn"
+        : "danger")
+  );
+  setBadge("runtime-posture-status", statusLabel, tone);
+}
+
 function renderProviderRecoveryBoard() {
   const grid = byId("provider-grid");
   if (!grid) {
@@ -1657,6 +1742,7 @@ function renderAutomation() {
   setBadge("provider-status", String(providerAutonomy.state || "unknown"), toneForState(providerAutonomy.state));
   renderDeliveryBoard();
   renderSupervisorBoard();
+  renderRuntimePostureBoard();
   renderProviderRecoveryBoard();
 
   const selfEvolution = payload.self_evolution || {};
