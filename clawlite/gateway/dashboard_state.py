@@ -505,6 +505,145 @@ def dashboard_provider_health_summary(
     }
 
 
+def dashboard_provider_budget_summary(
+    *,
+    provider_telemetry_payload: dict[str, Any],
+    provider_autonomy_payload: dict[str, Any],
+    provider_status_payload: dict[str, Any],
+) -> dict[str, Any]:
+    telemetry = dict(provider_telemetry_payload or {}) if isinstance(provider_telemetry_payload, dict) else {}
+    autonomy = dict(provider_autonomy_payload or {}) if isinstance(provider_autonomy_payload, dict) else {}
+    status = dict(provider_status_payload or {}) if isinstance(provider_status_payload, dict) else {}
+    summary = dict(telemetry.get("summary") or {}) if isinstance(telemetry.get("summary"), dict) else {}
+    counters = dict(telemetry.get("counters") or {}) if isinstance(telemetry.get("counters"), dict) else {}
+
+    provider_name = str(
+        status.get("active_provider")
+        or status.get("selected_provider")
+        or status.get("provider")
+        or autonomy.get("provider")
+        or telemetry.get("provider")
+        or ""
+    ).strip()
+    transport = str(status.get("transport") or summary.get("transport") or "").strip()
+    active_model = str(status.get("active_model") or status.get("model") or telemetry.get("model") or "").strip()
+    summary_state = str(summary.get("state") or autonomy.get("state") or "healthy").strip().lower() or "healthy"
+    suppression_reason = str(autonomy.get("suppression_reason") or summary.get("suppression_reason") or "").strip().lower()
+    last_error_class = str(
+        autonomy.get("last_error_class")
+        or telemetry.get("last_error_class")
+        or counters.get("last_error_class")
+        or ""
+    ).strip().lower()
+    suppression_backoff_s = round(
+        _runtime_posture_number(autonomy.get("suppression_backoff_s") or autonomy.get("cooldown_remaining_s")),
+        3,
+    )
+    rate_limit_errors = max(0, int(counters.get("rate_limit_errors", 0) or 0))
+    auth_errors = max(0, int(counters.get("auth_errors", 0) or 0))
+    http_errors = max(0, int(counters.get("http_errors", 0) or 0))
+    requests = max(0, int(counters.get("requests", 0) or 0))
+    successes = max(0, int(counters.get("successes", 0) or 0))
+    summary_hints = list(summary.get("hints", []) or []) if isinstance(summary.get("hints"), list) else []
+    first_hint = str(summary_hints[0] or "").strip() if summary_hints else ""
+
+    quota_signaled = suppression_reason == "quota" or last_error_class == "quota"
+    rate_limit_signaled = suppression_reason == "rate_limit" or last_error_class == "rate_limit"
+    non_budget_reason = ""
+    for candidate in (suppression_reason, last_error_class, summary_state):
+        normalized = str(candidate or "").strip().lower()
+        if normalized and normalized not in {"healthy", "ready", "ok"}:
+            non_budget_reason = normalized
+            break
+
+    if not provider_name:
+        budget_posture = "unconfigured"
+        budget_tone = "warn"
+        operator_hint = "No provider route is configured yet."
+    elif status.get("ok") is False:
+        budget_posture = "unknown"
+        budget_tone = "warn"
+        operator_hint = str(status.get("error") or "Provider status failed to load.").strip()
+    elif quota_signaled:
+        budget_posture = "quota_exhausted"
+        budget_tone = "danger"
+        operator_hint = str(
+            autonomy.get("suppression_hint")
+            or first_hint
+            or "Provider quota or billing appears exhausted; restore credits or switch the route."
+        ).strip()
+    elif rate_limit_signaled:
+        budget_posture = "rate_limited"
+        budget_tone = "warn"
+        operator_hint = str(
+            autonomy.get("suppression_hint")
+            or first_hint
+            or "Provider is rate-limited; wait for the window or switch the route."
+        ).strip()
+    elif non_budget_reason:
+        non_budget_messages = {
+            "auth": "Current provider issue is authentication-related, not quota-related.",
+            "config": "Current provider issue is configuration-related, not quota-related.",
+            "network": "Current provider issue is network-related, not quota-related.",
+            "http_transient": "Current provider issue is transient HTTP failure, not quota-related.",
+            "retry_exhausted": "Current provider issue is retry exhaustion, not quota-related.",
+            "cooldown": "Provider is cooling down, but no quota or rate-limit signal is active.",
+            "degraded": "Provider is degraded, but no quota or rate-limit signal is active.",
+            "circuit_open": "Provider recovery is waiting on circuit cooldown, not quota or billing.",
+        }
+        budget_posture = "non_budget_block"
+        budget_tone = "warn"
+        non_budget_prefix = non_budget_messages.get(non_budget_reason) or f"Current provider issue is {non_budget_reason}, not quota-related."
+        trailing_hint = str(autonomy.get("suppression_hint") or first_hint or "").strip()
+        operator_hint = non_budget_prefix if not trailing_hint else f"{non_budget_prefix} {trailing_hint}"
+    else:
+        budget_posture = "clear"
+        budget_tone = "ok"
+        operator_hint = first_hint or "No quota or rate-limit pressure is visible in current provider telemetry."
+
+    quota_posture = "unknown"
+    if provider_name:
+        quota_posture = "exhausted" if quota_signaled else "clear"
+    rate_limit_posture = "unknown"
+    if provider_name:
+        rate_limit_posture = "limited" if rate_limit_signaled else "clear"
+
+    return {
+        "provider": provider_name,
+        "transport": transport,
+        "budget_posture": budget_posture,
+        "budget_tone": budget_tone,
+        "operator_hint": operator_hint,
+        "route": {
+            "selected_provider": str(status.get("selected_provider") or status.get("provider") or provider_name),
+            "active_provider": str(status.get("active_provider") or ""),
+            "active_model": active_model,
+        },
+        "quota": {
+            "posture": quota_posture,
+            "suppression_reason": suppression_reason,
+            "last_error_class": last_error_class,
+            "backoff_s": suppression_backoff_s if quota_signaled else 0.0,
+        },
+        "rate_limit": {
+            "posture": rate_limit_posture,
+            "error_count": rate_limit_errors,
+            "suppression_reason": suppression_reason,
+            "last_error_class": last_error_class,
+            "backoff_s": suppression_backoff_s if rate_limit_signaled else 0.0,
+        },
+        "telemetry": {
+            "summary_state": summary_state,
+            "requests": requests,
+            "successes": successes,
+            "auth_errors": auth_errors,
+            "rate_limit_errors": rate_limit_errors,
+            "http_errors": http_errors,
+            "last_error_class": last_error_class,
+        },
+    }
+
+
 def dashboard_state_payload(
     *,
     contract_version: str,
@@ -535,6 +674,7 @@ def dashboard_state_payload(
     provider_autonomy_payload: dict[str, Any],
     provider_status_payload: dict[str, Any],
     provider_health_payload: dict[str, Any],
+    provider_budget_payload: dict[str, Any],
     self_evolution_payload: dict[str, Any],
     runtime_posture_payload: dict[str, Any],
     runtime_policy_payload: dict[str, Any],
@@ -568,6 +708,7 @@ def dashboard_state_payload(
             "autonomy": provider_autonomy_payload,
             "status": provider_status_payload,
             "health": provider_health_payload,
+            "budget": provider_budget_payload,
         },
         "self_evolution": self_evolution_payload,
         "runtime": {

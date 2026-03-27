@@ -452,6 +452,8 @@ That same cached provider surface is now also visible from the live runtime itse
 
 The dashboard now also derives a bounded `provider.health` summary from that cached status plus live provider autonomy/telemetry state. That gives the packaged Automation tab a dedicated `Provider Health` card showing the active route, cached live-probe posture, cached capability posture, and the current recovery hint, so operator triage no longer depends on mentally combining `provider.status`, suppression state, and the raw recovery card.
 
+That same Automation tab now also derives a bounded `provider.budget` summary from live telemetry plus provider suppression state. The dedicated `Provider Budget` card shows whether the current provider issue is quota exhaustion, rate limiting, or a non-budget block such as auth/config drift, together with the active route, recent backoff, and compact request/error counters.
+
 ## Telegram Transcription Provider
 
 Telegram voice/audio transcription is a separate provider path from the main LLM provider. It uses:

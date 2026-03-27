@@ -1621,6 +1621,127 @@ function deriveProviderHealthSnapshot(providerPayload, statusOverride) {
   };
 }
 
+function deriveProviderBudgetSnapshot(providerPayload, statusOverride) {
+  const provider = providerPayload || {};
+  const telemetry = provider.telemetry || {};
+  const summary = telemetry.summary || {};
+  const counters = telemetry.counters || {};
+  const autonomy = provider.autonomy || {};
+  const cachedBudget = provider.budget || {};
+  const status = (statusOverride && typeof statusOverride === "object") ? statusOverride : (provider.status || {});
+  const selectedProvider = String(
+    status.selected_provider || status.provider || ((cachedBudget.route || {}).selected_provider) || autonomy.provider || telemetry.provider || ""
+  );
+  const activeProvider = String(status.active_provider || ((cachedBudget.route || {}).active_provider) || "");
+  const displayProvider = activeProvider || selectedProvider || String(cachedBudget.provider || "");
+  const transport = String(status.transport || cachedBudget.transport || summary.transport || "");
+  const activeModel = String(
+    status.active_model || status.model || ((cachedBudget.route || {}).active_model) || telemetry.model || ""
+  );
+  const summaryState = String(autonomy.state || summary.state || ((cachedBudget.telemetry || {}).summary_state) || "healthy").toLowerCase();
+  const suppressionReason = String(
+    autonomy.suppression_reason || summary.suppression_reason || ((cachedBudget.quota || {}).suppression_reason) || ""
+  ).toLowerCase();
+  const lastErrorClass = String(
+    autonomy.last_error_class || telemetry.last_error_class || counters.last_error_class
+      || ((cachedBudget.telemetry || {}).last_error_class) || ""
+  ).toLowerCase();
+  const suppressionHint = String(autonomy.suppression_hint || "").trim();
+  const backoffSeconds = numeric(
+    autonomy.suppression_backoff_s,
+    numeric(autonomy.cooldown_remaining_s, numeric((cachedBudget.quota || {}).backoff_s, 0)),
+  );
+  const rateLimitErrors = numeric(counters.rate_limit_errors, numeric((cachedBudget.telemetry || {}).rate_limit_errors, 0));
+  const authErrors = numeric(counters.auth_errors, numeric((cachedBudget.telemetry || {}).auth_errors, 0));
+  const httpErrors = numeric(counters.http_errors, numeric((cachedBudget.telemetry || {}).http_errors, 0));
+  const requests = numeric(counters.requests, numeric((cachedBudget.telemetry || {}).requests, 0));
+  const successes = numeric(counters.successes, numeric((cachedBudget.telemetry || {}).successes, 0));
+  const firstHint = Array.isArray(summary.hints) && summary.hints.length ? String(summary.hints[0] || "").trim() : "";
+
+  const quotaSignaled = suppressionReason === "quota" || lastErrorClass === "quota";
+  const rateLimitSignaled = suppressionReason === "rate_limit" || lastErrorClass === "rate_limit";
+  const nonBudgetReason = [suppressionReason, lastErrorClass, summaryState]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .find((value) => value && !["healthy", "ready", "ok"].includes(value)) || "";
+
+  let budgetPosture = String(cachedBudget.budget_posture || "");
+  let budgetTone = String(cachedBudget.budget_tone || "");
+  let operatorHint = String(cachedBudget.operator_hint || "");
+
+  if (!displayProvider) {
+    budgetPosture = "unconfigured";
+    budgetTone = "warn";
+    operatorHint = "No provider route is configured yet.";
+  } else if (status.ok === false) {
+    budgetPosture = "unknown";
+    budgetTone = "warn";
+    operatorHint = String(status.error || "Provider status failed to load.");
+  } else if (quotaSignaled) {
+    budgetPosture = "quota_exhausted";
+    budgetTone = "danger";
+    operatorHint = suppressionHint || firstHint || "Provider quota or billing appears exhausted; restore credits or switch the route.";
+  } else if (rateLimitSignaled) {
+    budgetPosture = "rate_limited";
+    budgetTone = "warn";
+    operatorHint = suppressionHint || firstHint || "Provider is rate-limited; wait for the window or switch the route.";
+  } else if (nonBudgetReason) {
+    const nonBudgetMessages = {
+      auth: "Current provider issue is authentication-related, not quota-related.",
+      config: "Current provider issue is configuration-related, not quota-related.",
+      network: "Current provider issue is network-related, not quota-related.",
+      http_transient: "Current provider issue is transient HTTP failure, not quota-related.",
+      retry_exhausted: "Current provider issue is retry exhaustion, not quota-related.",
+      cooldown: "Provider is cooling down, but no quota or rate-limit signal is active.",
+      degraded: "Provider is degraded, but no quota or rate-limit signal is active.",
+      circuit_open: "Provider recovery is waiting on circuit cooldown, not quota or billing.",
+    };
+    budgetPosture = "non_budget_block";
+    budgetTone = "warn";
+    const nonBudgetPrefix = nonBudgetMessages[nonBudgetReason] || `Current provider issue is ${nonBudgetReason}, not quota-related.`;
+    const trailingHint = suppressionHint || firstHint || "";
+    operatorHint = trailingHint ? `${nonBudgetPrefix} ${trailingHint}` : nonBudgetPrefix;
+  } else {
+    budgetPosture = "clear";
+    budgetTone = "ok";
+    operatorHint = firstHint || "No quota or rate-limit pressure is visible in current provider telemetry.";
+  }
+
+  return {
+    provider: displayProvider,
+    transport,
+    budget_posture: budgetPosture,
+    budget_tone: budgetTone,
+    operator_hint: operatorHint,
+    route: {
+      selected_provider: selectedProvider,
+      active_provider: activeProvider,
+      active_model: activeModel,
+    },
+    quota: {
+      posture: !displayProvider ? "unknown" : (quotaSignaled ? "exhausted" : "clear"),
+      suppression_reason: suppressionReason,
+      last_error_class: lastErrorClass,
+      backoff_s: quotaSignaled ? backoffSeconds : 0,
+    },
+    rate_limit: {
+      posture: !displayProvider ? "unknown" : (rateLimitSignaled ? "limited" : "clear"),
+      error_count: rateLimitErrors,
+      suppression_reason: suppressionReason,
+      last_error_class: lastErrorClass,
+      backoff_s: rateLimitSignaled ? backoffSeconds : 0,
+    },
+    telemetry: {
+      summary_state: summaryState,
+      requests,
+      successes,
+      auth_errors: authErrors,
+      rate_limit_errors: rateLimitErrors,
+      http_errors: httpErrors,
+      last_error_class: lastErrorClass,
+    },
+  };
+}
+
 function renderProviderHealthBoard() {
   const grid = byId("provider-health-grid");
   if (!grid) {
@@ -1702,6 +1823,80 @@ function renderProviderHealthBoard() {
         : "danger")
   );
   setBadge("provider-health-status", statusLabel, tone);
+}
+
+function renderProviderBudgetBoard() {
+  const grid = byId("provider-budget-grid");
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = "";
+
+  const provider = (state.dashboardState || {}).provider || {};
+  const providerStatus = state.providerStatus || provider.status || {};
+  const budget = deriveProviderBudgetSnapshot(provider, providerStatus);
+  const route = budget.route || {};
+  const quota = budget.quota || {};
+  const rateLimit = budget.rate_limit || {};
+  const telemetry = budget.telemetry || {};
+
+  if (!Object.keys(budget).length) {
+    appendSummaryCard(grid, {
+      title: "Provider budget",
+      body: "not available",
+      detail: "No compact provider budget snapshot is available yet.",
+    });
+    setBadge("provider-budget-status", "pending", "warn");
+    return;
+  }
+
+  const cards = [
+    {
+      title: "Budget posture",
+      body: `${String(budget.budget_posture || "unknown")} | ${String(route.active_provider || route.selected_provider || budget.provider || "provider")}`,
+      detail: [
+        String(route.active_model || "").trim(),
+        String(budget.transport || "").trim(),
+      ].filter(Boolean).join(" | ") || "No active provider route is available.",
+    },
+    {
+      title: "Quota signal",
+      body: `${String(quota.posture || "unknown")} | ${quota.backoff_s ? formatDuration(quota.backoff_s) : "no backoff"}`,
+      detail: [
+        String(quota.suppression_reason || "").trim(),
+        String(quota.last_error_class || "").trim(),
+      ].filter(Boolean).join(" | ") || "No quota suppression is visible.",
+    },
+    {
+      title: "Rate limit signal",
+      body: `${String(rateLimit.posture || "unknown")} | ${numeric(rateLimit.error_count, 0)} errors`,
+      detail: [
+        rateLimit.backoff_s ? `backoff ${formatDuration(rateLimit.backoff_s)}` : "",
+        `requests ${numeric(telemetry.requests, 0)}`,
+        `successes ${numeric(telemetry.successes, 0)}`,
+      ].filter(Boolean).join(" | "),
+    },
+    {
+      title: "Operator hint",
+      body: String(budget.operator_hint || "No budget guidance is available yet."),
+      detail: [
+        String(telemetry.summary_state || "").trim(),
+        String(telemetry.last_error_class || "").trim(),
+        `auth ${numeric(telemetry.auth_errors, 0)}`,
+        `http ${numeric(telemetry.http_errors, 0)}`,
+      ].filter(Boolean).join(" | "),
+    },
+  ];
+
+  cards.forEach((item) => appendSummaryCard(grid, item));
+
+  const statusLabel = String(budget.budget_posture || "unknown");
+  const tone = String(budget.budget_tone || "").trim() || (
+    ["clear"].includes(statusLabel)
+      ? "ok"
+      : (["rate_limited", "non_budget_block", "unconfigured", "unknown"].includes(statusLabel) ? "warn" : "danger")
+  );
+  setBadge("provider-budget-status", statusLabel, tone);
 }
 
 function renderProviderRecoveryBoard() {
@@ -2009,6 +2204,7 @@ function renderAutomation() {
   const providerAutonomy = provider.autonomy || {};
   const providerTelemetry = provider.telemetry || {};
   const providerStatus = state.providerStatus || provider.status || {};
+  const providerBudget = deriveProviderBudgetSnapshot(provider, providerStatus);
   setText("metric-provider-state", String(providerAutonomy.state || providerTelemetry.summary?.state || "unknown"));
   setText("metric-provider-backoff", formatDuration(providerAutonomy.suppression_backoff_s || providerAutonomy.cooldown_remaining_s || 0));
   setCode("provider-preview", {
@@ -2016,6 +2212,7 @@ function renderAutomation() {
     summary: providerTelemetry.summary || {},
     counters: providerTelemetry.counters || {},
     status: providerStatus,
+    budget: providerBudget,
   });
   setBadge("provider-status", String(providerAutonomy.state || "unknown"), toneForState(providerAutonomy.state));
   renderDeliveryBoard();
@@ -2023,6 +2220,7 @@ function renderAutomation() {
   renderRuntimePostureBoard();
   renderRuntimePolicyBoard();
   renderProviderHealthBoard();
+  renderProviderBudgetBoard();
   renderProviderRecoveryBoard();
 
   const selfEvolution = payload.self_evolution || {};
