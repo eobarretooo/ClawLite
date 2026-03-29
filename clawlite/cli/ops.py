@@ -818,6 +818,7 @@ def fetch_gateway_tool_approval_audit(
         payload["error_count"] = int(body.get("error_count", 0) or 0)
         payload["action_counts"] = dict(body.get("action_counts", {}) or {})
         payload["status_counts"] = dict(body.get("status_counts", {}) or {})
+        payload["retention"] = dict(body.get("retention", {}) or {})
         payload["entries"] = list(body.get("entries", []) or [])
         return payload
     detail = body.get("detail", body.get("error", "tool_approval_audit_fetch_failed")) if isinstance(body, dict) else str(body or "tool_approval_audit_fetch_failed")
@@ -863,9 +864,18 @@ def fetch_gateway_tool_approval_audit_export(
         return payload
     if response.is_success:
         text = str(response.text or "")
+        retention = {
+            "limit": int(response.headers.get("X-ClawLite-Audit-Retention-Limit", "0") or 0),
+            "retained_count": int(response.headers.get("X-ClawLite-Audit-Retained-Count", "0") or 0),
+            "matched_count": int(response.headers.get("X-ClawLite-Audit-Matched-Count", "0") or 0),
+            "returned_count": int(response.headers.get("X-ClawLite-Audit-Returned-Count", "0") or 0),
+            "truncated": str(response.headers.get("X-ClawLite-Audit-Truncated", "false") or "").strip().lower()
+            in {"1", "true", "yes", "on"},
+        }
         payload["ok"] = True
         payload["content"] = text
         payload["line_count"] = len([line for line in text.splitlines() if str(line).strip()])
+        payload["retention"] = retention
         return payload
     detail = body.get("detail", body.get("error", "tool_approval_audit_export_failed")) if isinstance(body, dict) else str(body or "tool_approval_audit_export_failed")
     payload["error"] = str(detail)

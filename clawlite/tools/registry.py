@@ -1198,51 +1198,16 @@ class ToolRegistry:
 
         for payload in reversed(self._approval_audits):
             row = dict(payload or {})
-            if normalized_action and str(row.get("action", "") or "").strip().lower() != normalized_action:
+            if not self._approval_audit_row_matches(
+                row,
+                action=normalized_action,
+                session_id=normalized_session,
+                channel=normalized_channel,
+                request_id=normalized_request_id,
+                tool=normalized_tool,
+                rule=normalized_rule,
+            ):
                 continue
-            if normalized_session:
-                row_sessions = {
-                    str(row.get("session_id", "") or "").strip(),
-                    *(str((item or {}).get("session_id", "") or "").strip() for item in row.get("removed", []) or []),
-                }
-                row_sessions.discard("")
-                if normalized_session not in row_sessions:
-                    continue
-            if normalized_channel:
-                row_channels = {
-                    str(row.get("channel", "") or "").strip().lower(),
-                    *(str((item or {}).get("channel", "") or "").strip().lower() for item in row.get("removed", []) or []),
-                }
-                row_channels.discard("")
-                if normalized_channel not in row_channels:
-                    continue
-            if normalized_request_id:
-                row_request_ids = {
-                    str(row.get("request_id", "") or "").strip(),
-                    *(str((item or {}).get("request_id", "") or "").strip() for item in row.get("removed", []) or []),
-                }
-                row_request_ids.discard("")
-                if normalized_request_id not in row_request_ids:
-                    continue
-            if normalized_tool:
-                row_tools = {
-                    str(row.get("tool", "") or "").strip().lower(),
-                    self._approval_rule_tool(row.get("rule", "")),
-                }
-                row_tools.update(self._approval_rule_tool(item) for item in row.get("rules", []) or [])
-                row_tools.update(self._approval_rule_tool((item or {}).get("rule", "")) for item in row.get("removed", []) or [])
-                row_tools.discard("")
-                if normalized_tool not in row_tools:
-                    continue
-            if normalized_rule:
-                row_rules = {
-                    str(row.get("rule", "") or "").strip().lower(),
-                    *(str(item or "").strip().lower() for item in row.get("rules", []) or []),
-                    *(str((item or {}).get("rule", "") or "").strip().lower() for item in row.get("removed", []) or []),
-                }
-                row_rules.discard("")
-                if normalized_rule not in row_rules:
-                    continue
             recorded_at_monotonic = float(row.get("recorded_at_monotonic", 0.0) or 0.0)
             if recorded_at_monotonic > 0.0:
                 row["audit_age_s"] = max(0.0, now - recorded_at_monotonic)
@@ -1250,6 +1215,128 @@ class ToolRegistry:
             if len(rows) >= max_rows:
                 break
         return rows
+
+    def approval_audit_retention(
+        self,
+        *,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        request_id: str = "",
+        tool: str = "",
+        rule: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        self._prune_approval_state()
+        normalized_action = str(action or "").strip().lower()
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
+        normalized_tool = str(tool or "").strip().lower()
+        normalized_rule = str(rule or "").strip().lower()
+        max_rows = max(1, int(limit or 1))
+        retained_rows = list(self._approval_audits)
+        matched_count = 0
+        oldest_recorded_at = ""
+        newest_recorded_at = ""
+        oldest_recorded_at_monotonic = 0.0
+        newest_recorded_at_monotonic = 0.0
+
+        for payload in retained_rows:
+            row = dict(payload or {})
+            if self._approval_audit_row_matches(
+                row,
+                action=normalized_action,
+                session_id=normalized_session,
+                channel=normalized_channel,
+                request_id=normalized_request_id,
+                tool=normalized_tool,
+                rule=normalized_rule,
+            ):
+                matched_count += 1
+                if matched_count == 1:
+                    oldest_recorded_at = str(row.get("recorded_at", "") or "").strip()
+                    oldest_recorded_at_monotonic = float(row.get("recorded_at_monotonic", 0.0) or 0.0)
+                newest_recorded_at = str(row.get("recorded_at", "") or "").strip()
+                newest_recorded_at_monotonic = float(row.get("recorded_at_monotonic", 0.0) or 0.0)
+
+        now = time.monotonic()
+        return {
+            "limit": int(self._APPROVAL_AUDIT_LIMIT),
+            "retained_count": len(retained_rows),
+            "matched_count": matched_count,
+            "returned_count": min(matched_count, max_rows),
+            "truncated": matched_count > max_rows,
+            "oldest_recorded_at": oldest_recorded_at,
+            "newest_recorded_at": newest_recorded_at,
+            "oldest_age_s": max(0.0, now - oldest_recorded_at_monotonic) if oldest_recorded_at_monotonic > 0.0 else 0.0,
+            "newest_age_s": max(0.0, now - newest_recorded_at_monotonic) if newest_recorded_at_monotonic > 0.0 else 0.0,
+        }
+
+    def _approval_audit_row_matches(
+        self,
+        row: dict[str, Any],
+        *,
+        action: str = "",
+        session_id: str = "",
+        channel: str = "",
+        request_id: str = "",
+        tool: str = "",
+        rule: str = "",
+    ) -> bool:
+        normalized_action = str(action or "").strip().lower()
+        normalized_session = str(session_id or "").strip()
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_request_id = str(request_id or "").strip()
+        normalized_tool = str(tool or "").strip().lower()
+        normalized_rule = str(rule or "").strip().lower()
+
+        if normalized_action and str(row.get("action", "") or "").strip().lower() != normalized_action:
+            return False
+        if normalized_session:
+            row_sessions = {
+                str(row.get("session_id", "") or "").strip(),
+                *(str((item or {}).get("session_id", "") or "").strip() for item in row.get("removed", []) or []),
+            }
+            row_sessions.discard("")
+            if normalized_session not in row_sessions:
+                return False
+        if normalized_channel:
+            row_channels = {
+                str(row.get("channel", "") or "").strip().lower(),
+                *(str((item or {}).get("channel", "") or "").strip().lower() for item in row.get("removed", []) or []),
+            }
+            row_channels.discard("")
+            if normalized_channel not in row_channels:
+                return False
+        if normalized_request_id:
+            row_request_ids = {
+                str(row.get("request_id", "") or "").strip(),
+                *(str((item or {}).get("request_id", "") or "").strip() for item in row.get("removed", []) or []),
+            }
+            row_request_ids.discard("")
+            if normalized_request_id not in row_request_ids:
+                return False
+        if normalized_tool:
+            row_tools = {
+                str(row.get("tool", "") or "").strip().lower(),
+                self._approval_rule_tool(row.get("rule", "")),
+            }
+            row_tools.update(self._approval_rule_tool(item) for item in row.get("rules", []) or [])
+            row_tools.update(self._approval_rule_tool((item or {}).get("rule", "")) for item in row.get("removed", []) or [])
+            row_tools.discard("")
+            if normalized_tool not in row_tools:
+                return False
+        if normalized_rule:
+            row_rules = {
+                str(row.get("rule", "") or "").strip().lower(),
+                *(str(item or "").strip().lower() for item in row.get("rules", []) or []),
+                *(str((item or {}).get("rule", "") or "").strip().lower() for item in row.get("removed", []) or []),
+            }
+            row_rules.discard("")
+            if normalized_rule not in row_rules:
+                return False
+        return True
 
     def safety_decision(
         self,

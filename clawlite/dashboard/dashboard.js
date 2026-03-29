@@ -1127,6 +1127,7 @@ function renderToolApprovalAuditSummary() {
   const entries = Array.isArray(audit.entries) ? audit.entries : [];
   const actionCounts = audit.action_counts && typeof audit.action_counts === "object" ? audit.action_counts : {};
   const statusCounts = audit.status_counts && typeof audit.status_counts === "object" ? audit.status_counts : {};
+  const retention = audit.retention && typeof audit.retention === "object" ? audit.retention : {};
   const requestHistory = Array.isArray(audit.request_history) ? audit.request_history : [];
   const latest = entries[0] || {};
   const latestAction = String(latest.action || "").trim() || "unknown";
@@ -1145,6 +1146,11 @@ function renderToolApprovalAuditSummary() {
   const latestReason = String(audit.latest_reason || latest.reason_summary || "").trim();
   const latestReasonSource = String(audit.latest_reason_source || latest.reason_source || "").trim();
   const requestHistoryRequestId = String(audit.request_history_request_id || "").trim();
+  const retainedCount = numeric(retention.retained_count, entries.length);
+  const matchedCount = numeric(retention.matched_count, numeric(audit.count, entries.length));
+  const returnedCount = numeric(retention.returned_count, numeric(audit.count, entries.length));
+  const retentionLimit = numeric(retention.limit, retainedCount);
+  const retentionTruncated = Boolean(retention.truncated);
   const historyPreview = requestHistory.slice(0, 3).map((row) => {
     const reason = String((row || {}).reason_summary || "").trim();
     const source = String((row || {}).reason_source || "").trim();
@@ -1158,6 +1164,14 @@ function renderToolApprovalAuditSummary() {
     title: "Trail",
     body: `${numeric(audit.count, entries.length)} rows`,
     detail: filterMeta || "live approval/grant audit snapshot",
+  });
+  appendSummaryCard(grid, {
+    title: "Retention",
+    body: `${returnedCount}/${matchedCount} matched`,
+    detail: [
+      retentionLimit > 0 ? `${retainedCount}/${retentionLimit} retained` : `${retainedCount} retained`,
+      retentionTruncated ? "truncated by limit" : "not truncated",
+    ].filter(Boolean).join(" | "),
   });
   appendSummaryCard(grid, {
     title: "Changes",
@@ -4202,6 +4216,13 @@ async function fetchText(path, options = {}) {
     payload = { raw: text };
   }
   const requestId = String(response.headers.get("X-Request-ID") || payload.request_id || "").trim();
+  const retention = {
+    limit: numeric(response.headers.get("X-ClawLite-Audit-Retention-Limit"), 0),
+    retained_count: numeric(response.headers.get("X-ClawLite-Audit-Retained-Count"), 0),
+    matched_count: numeric(response.headers.get("X-ClawLite-Audit-Matched-Count"), 0),
+    returned_count: numeric(response.headers.get("X-ClawLite-Audit-Returned-Count"), 0),
+    truncated: String(response.headers.get("X-ClawLite-Audit-Truncated") || "").trim().toLowerCase() === "true",
+  };
   if (!response.ok) {
     const detail = payload.detail || payload.error || response.statusText || "request_failed";
     if (response.status === 401 && state.dashboardSessionToken && !state.token) {
@@ -4212,7 +4233,7 @@ async function fetchText(path, options = {}) {
     error.status = response.status;
     throw error;
   }
-  return { text, request_id: requestId, status: response.status };
+  return { text, request_id: requestId, status: response.status, retention };
 }
 
 function downloadTextFile(filename, text) {
@@ -4269,11 +4290,19 @@ async function exportToolApprovalAudit() {
     const payload = await fetchText(`${url.pathname}${url.search}`);
     const lineCount = payload.text ? payload.text.split(/\r?\n/).filter((line) => String(line || "").trim()).length : 0;
     const suffix = String(filter.request_id || "").trim() || String(filter.action || "").trim() || "latest";
+    const retention = payload.retention && typeof payload.retention === "object" ? payload.retention : {};
     downloadTextFile(`clawlite-tools-approval-audit-${suffix}.ndjson`, payload.text || "");
     recordEvent(
       lineCount > 0 ? "ok" : "warn",
       "Tool approval audit exported",
-      [`${lineCount} rows`, summarizeToolApprovalAuditFilter(filter) || "latest audit snapshot"].filter(Boolean).join(" | "),
+      [
+        `${lineCount} rows`,
+        summarizeToolApprovalAuditFilter(filter) || "latest audit snapshot",
+        numeric(retention.returned_count, 0) > 0 || numeric(retention.matched_count, 0) > 0
+          ? `${numeric(retention.returned_count, lineCount)}/${numeric(retention.matched_count, lineCount)} matched`
+          : "",
+        retention.truncated ? "truncated" : "",
+      ].filter(Boolean).join(" | "),
       appendRequestIdMeta("tools-approval-audit-export", payload),
     );
   } catch (error) {

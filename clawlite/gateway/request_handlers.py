@@ -65,6 +65,17 @@ class GatewayRequestHandlers:
         )
 
     @staticmethod
+    def approval_audit_export_headers(retention: dict[str, Any] | None) -> dict[str, str]:
+        payload = retention if isinstance(retention, dict) else {}
+        return {
+            "X-ClawLite-Audit-Retention-Limit": str(int(payload.get("limit", 0) or 0)),
+            "X-ClawLite-Audit-Retained-Count": str(int(payload.get("retained_count", 0) or 0)),
+            "X-ClawLite-Audit-Matched-Count": str(int(payload.get("matched_count", 0) or 0)),
+            "X-ClawLite-Audit-Returned-Count": str(int(payload.get("returned_count", 0) or 0)),
+            "X-ClawLite-Audit-Truncated": "true" if bool(payload.get("truncated", False)) else "false",
+        }
+
+    @staticmethod
     def _approval_audit_history_entry(row: dict[str, Any] | None) -> dict[str, Any]:
         payload = row if isinstance(row, dict) else {}
         entry = {
@@ -247,6 +258,18 @@ class GatewayRequestHandlers:
         normalized_rule = str(rule or "").strip().lower()
         max_rows = max(1, int(limit or 1))
         list_audit = getattr(tools, "approval_audit_snapshot", None)
+        retention_meta: dict[str, Any] = {
+            "limit": 0,
+            "retained_count": 0,
+            "matched_count": 0,
+            "returned_count": 0,
+            "truncated": False,
+            "oldest_recorded_at": "",
+            "newest_recorded_at": "",
+            "oldest_age_s": 0.0,
+            "newest_age_s": 0.0,
+        }
+        approval_retention = getattr(tools, "approval_audit_retention", None)
         if not callable(list_audit):
             return {
                 "ok": True,
@@ -262,8 +285,22 @@ class GatewayRequestHandlers:
                 "error_count": 0,
                 "action_counts": {},
                 "status_counts": {},
+                "retention": retention_meta,
                 "entries": [],
             }
+
+        if callable(approval_retention):
+            raw_retention = approval_retention(
+                action=normalized_action,
+                session_id=normalized_session,
+                channel=normalized_channel,
+                request_id=normalized_request_id,
+                tool=normalized_tool,
+                rule=normalized_rule,
+                limit=max_rows,
+            )
+            if isinstance(raw_retention, dict):
+                retention_meta.update(raw_retention)
 
         entries = list_audit(
             action=normalized_action,
@@ -323,6 +360,7 @@ class GatewayRequestHandlers:
             "request_history": request_history,
             "action_counts": dict(sorted(action_counts.items())),
             "status_counts": dict(sorted(status_counts.items())),
+            "retention": retention_meta,
             "entries": entries,
         }
 

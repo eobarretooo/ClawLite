@@ -1611,6 +1611,7 @@ Response baseline:
 - `request_history`: compact bounded request history for the active `request_id`, ignoring the current `action` filter so one request can show review plus revoke lineage together
 - `action_counts`: additive counts by action (`review`, `revoke_grant`)
 - `status_counts`: additive counts by row status
+- `retention`: bounded audit-retention metadata (`limit` and global `retained_count`, plus filtered `matched_count`, `returned_count`, `truncated`, and oldest/newest timestamps/ages for the current matched slice)
 - `entries`: audit rows with `action`, `status`, `changed`, request/grant identifiers, sanitized `approval_context`, additive `reason_source` / `reason_summary`, and timing fields such as `audit_age_s`
 
 Alias compatível: `GET /api/tools/approvals/audit`.
@@ -1634,6 +1635,7 @@ Response baseline:
 - body: UTF-8 NDJSON, one compact audit row per line
 - `Content-Type`: `application/x-ndjson`
 - `Content-Disposition`: attachment filename hint for the exported audit slice
+- additive retention headers: `X-ClawLite-Audit-Retention-Limit`, `X-ClawLite-Audit-Retained-Count`, `X-ClawLite-Audit-Matched-Count`, `X-ClawLite-Audit-Returned-Count`, and `X-ClawLite-Audit-Truncated`
 
 Alias compatível: `GET /api/tools/approvals/audit/export`.
 

@@ -3274,6 +3274,8 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Tool approval audit export failed" in js.text
     assert "Latest reason" in js.text
     assert "Reason history" in js.text
+    assert "Retention" in js.text
+    assert "X-ClawLite-Audit-Retained-Count" in js.text
     assert 'payload.detail || payload.error || response.statusText || "request_failed"' in js.text
     assert 'response.status === 401 && state.dashboardSessionToken && !state.token' in js.text
     assert "Tool approval approved" in js.text
@@ -4202,6 +4204,11 @@ def test_gateway_tools_approval_audit_endpoints_return_recent_rows(tmp_path: Pat
     assert v1_payload["changed_count"] == 2
     assert v1_payload["latest_reason"] == "removed 1 grant(s) [exact]"
     assert v1_payload["latest_reason_source"] == "result"
+    assert v1_payload["retention"]["limit"] == 200
+    assert v1_payload["retention"]["retained_count"] == 2
+    assert v1_payload["retention"]["matched_count"] == 2
+    assert v1_payload["retention"]["returned_count"] == 2
+    assert v1_payload["retention"]["truncated"] is False
     assert v1_payload["action_counts"]["review"] == 1
     assert v1_payload["action_counts"]["revoke_grant"] == 1
     assert v1_payload["entries"][0]["action"] == "revoke_grant"
@@ -4217,6 +4224,9 @@ def test_gateway_tools_approval_audit_endpoints_return_recent_rows(tmp_path: Pat
     assert api_payload["count"] == 1
     assert api_payload["latest_reason"] == "approved"
     assert api_payload["latest_reason_source"] == "decision"
+    assert api_payload["retention"]["matched_count"] == 1
+    assert api_payload["retention"]["returned_count"] == 1
+    assert api_payload["retention"]["truncated"] is False
     assert api_payload["action_counts"]["review"] == 1
     assert api_payload["entries"][0]["request_id"] == "req-1"
     assert api_payload["entries"][0]["action"] == "review"
@@ -4257,6 +4267,11 @@ def test_gateway_tools_approval_audit_export_endpoints_return_ndjson_rows(tmp_pa
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/x-ndjson")
         assert "clawlite-tools-approval-audit.ndjson" in response.headers.get("content-disposition", "")
+        assert response.headers["X-ClawLite-Audit-Retention-Limit"] == "200"
+        assert response.headers["X-ClawLite-Audit-Retained-Count"] == "1"
+        assert response.headers["X-ClawLite-Audit-Matched-Count"] == "1"
+        assert response.headers["X-ClawLite-Audit-Returned-Count"] == "1"
+        assert response.headers["X-ClawLite-Audit-Truncated"] == "false"
         rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
         assert len(rows) == 1
         assert rows[0]["action"] == "review"

@@ -1208,7 +1208,18 @@ def test_fetch_gateway_tool_approval_audit_export_preserves_single_line_ndjson(t
         def get(self, url, params=None):
             del params
             request = httpx.Request("GET", url)
-            return httpx.Response(200, request=request, content=b'{"action":"review","request_id":"req-1"}\n')
+            return httpx.Response(
+                200,
+                request=request,
+                content=b'{"action":"review","request_id":"req-1"}\n',
+                headers={
+                    "X-ClawLite-Audit-Retention-Limit": "200",
+                    "X-ClawLite-Audit-Retained-Count": "4",
+                    "X-ClawLite-Audit-Matched-Count": "1",
+                    "X-ClawLite-Audit-Returned-Count": "1",
+                    "X-ClawLite-Audit-Truncated": "false",
+                },
+            )
 
     monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _Client)
 
@@ -1221,6 +1232,13 @@ def test_fetch_gateway_tool_approval_audit_export_preserves_single_line_ndjson(t
     assert payload["ok"] is True
     assert payload["content"] == '{"action":"review","request_id":"req-1"}\n'
     assert payload["line_count"] == 1
+    assert payload["retention"] == {
+        "limit": 200,
+        "retained_count": 4,
+        "matched_count": 1,
+        "returned_count": 1,
+        "truncated": False,
+    }
 
 
 def test_cli_tools_revoke_grant_posts_revoke(tmp_path: Path, capsys, monkeypatch) -> None:

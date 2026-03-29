@@ -4192,10 +4192,12 @@ def create_app(
             limit=limit,
         )
         body = request_handlers.approval_audit_export_text(list(payload.get("entries", []) or []))
+        headers = {"Content-Disposition": 'attachment; filename="clawlite-tools-approval-audit.ndjson"'}
+        headers.update(request_handlers.approval_audit_export_headers(dict(payload.get("retention", {}) or {})))
         return Response(
             content=body,
             media_type="application/x-ndjson",
-            headers={"Content-Disposition": 'attachment; filename="clawlite-tools-approval-audit.ndjson"'},
+            headers=headers,
         )
 
     @app.get("/api/tools/approvals/audit")
@@ -4244,10 +4246,12 @@ def create_app(
             limit=limit,
         )
         body = request_handlers.approval_audit_export_text(list(payload.get("entries", []) or []))
+        headers = {"Content-Disposition": 'attachment; filename="clawlite-tools-approval-audit.ndjson"'}
+        headers.update(request_handlers.approval_audit_export_headers(dict(payload.get("retention", {}) or {})))
         return Response(
             content=body,
             media_type="application/x-ndjson",
-            headers={"Content-Disposition": 'attachment; filename="clawlite-tools-approval-audit.ndjson"'},
+            headers=headers,
         )
 
     @app.post("/v1/tools/approvals/{request_id}/approve")

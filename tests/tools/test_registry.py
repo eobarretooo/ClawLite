@@ -4,6 +4,8 @@ import asyncio
 import json
 import time
 
+import pytest
+
 from clawlite.config.schema import ToolSafetyLayerConfig, ToolSafetyPolicyConfig
 from clawlite.runtime.telemetry import set_test_tracer_factory
 from clawlite.tools.base import Tool, ToolContext
@@ -1167,6 +1169,75 @@ def test_tool_registry_approval_audit_snapshot_captures_denied_review_attempts()
         assert audit[0]["approval_context"] == {"tool": "run_skill", "name": "github"}
 
     asyncio.run(_scenario())
+
+
+def test_tool_registry_approval_audit_retention_reports_ring_and_truncation() -> None:
+    reg = ToolRegistry(safety=ToolSafetyPolicyConfig(enabled=True))
+    reg._append_approval_audit(
+        {
+            "action": "review",
+            "status": "approved",
+            "request_id": "req-1",
+            "rule": "browser:evaluate",
+            "recorded_at": "2026-03-29T00:00:00Z",
+            "recorded_at_monotonic": time.monotonic() - 20.0,
+        }
+    )
+    reg._append_approval_audit(
+        {
+            "action": "review",
+            "status": "rejected",
+            "request_id": "req-2",
+            "rule": "browser:evaluate",
+            "recorded_at": "2026-03-29T00:01:00Z",
+            "recorded_at_monotonic": time.monotonic() - 5.0,
+        }
+    )
+
+    retention = reg.approval_audit_retention(action="review", rule="browser:evaluate", limit=1)
+
+    assert retention["limit"] == 200
+    assert retention["retained_count"] == 2
+    assert retention["matched_count"] == 2
+    assert retention["returned_count"] == 1
+    assert retention["truncated"] is True
+    assert retention["oldest_recorded_at"] == "2026-03-29T00:00:00Z"
+    assert retention["newest_recorded_at"] == "2026-03-29T00:01:00Z"
+    assert retention["oldest_age_s"] >= retention["newest_age_s"] >= 0.0
+
+
+def test_tool_registry_approval_audit_retention_scopes_timestamps_to_filtered_slice() -> None:
+    reg = ToolRegistry(safety=ToolSafetyPolicyConfig(enabled=True))
+    reg._append_approval_audit(
+        {
+            "action": "review",
+            "status": "approved",
+            "request_id": "req-x",
+            "rule": "exec:shell",
+            "recorded_at": "2026-03-29T00:00:00Z",
+            "recorded_at_monotonic": time.monotonic() - 30.0,
+        }
+    )
+    reg._append_approval_audit(
+        {
+            "action": "review",
+            "status": "approved",
+            "request_id": "req-1",
+            "rule": "browser:evaluate",
+            "recorded_at": "2026-03-29T00:01:00Z",
+            "recorded_at_monotonic": time.monotonic() - 5.0,
+        }
+    )
+
+    retention = reg.approval_audit_retention(rule="browser:evaluate", limit=50)
+
+    assert retention["retained_count"] == 2
+    assert retention["matched_count"] == 1
+    assert retention["returned_count"] == 1
+    assert retention["truncated"] is False
+    assert retention["oldest_recorded_at"] == "2026-03-29T00:01:00Z"
+    assert retention["newest_recorded_at"] == "2026-03-29T00:01:00Z"
+    assert retention["oldest_age_s"] == pytest.approx(retention["newest_age_s"], rel=0.01)
 
 
 def test_tool_registry_legacy_approval_grants_remain_visible_and_usable() -> None:
