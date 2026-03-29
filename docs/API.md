@@ -27,7 +27,7 @@ Resumo agregado para o dashboard local.
 If a gateway token is configured, this endpoint requires that token even when the gateway is otherwise open on loopback.
 
 Additive note:
-- `skills.managed` now carries a compact marketplace-lifecycle summary for the packaged dashboard, with `count`, `ready_count`, unfiltered `blocked_count`, additive `visible_blocked_count`, `disabled_count`, `status_counts`, a bounded `items` preview of managed marketplace skills, and an additive `blockers` summary (`count`, `by_kind`, `top_kind`, `top_detail`, `top_hint`, and bounded `examples`) for the currently visible managed blocker slice.
+- `skills.managed` now carries a compact marketplace-lifecycle summary for the packaged dashboard, with `count`, `ready_count`, unfiltered `blocked_count`, additive `visible_blocked_count`, `disabled_count`, `status_counts`, a bounded `items` preview of managed marketplace skills, and an additive `blockers` summary (`count`, `by_kind`, `top_kind`, `top_detail`, `top_hint`, bounded `examples`, and bounded `remediation`) for the currently visible managed blocker slice.
 
 Example response:
 
@@ -436,6 +436,24 @@ Example response:
       "top_kind": "env",
       "top_detail": "GH_TOKEN",
       "top_hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github.",
+      "remediation": {
+        "kind": "env",
+        "count": 1,
+        "detail": "GH_TOKEN",
+        "summary": "Provide the missing secret or env value (GH_TOKEN) for the blocked managed skills.",
+        "next_step": "Export the missing env or configure the skill secret, then rerun Sync managed skills or Inspect managed skills.",
+        "hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github.",
+        "paths": [
+          {
+            "kind": "env",
+            "count": 1,
+            "detail": "GH_TOKEN",
+            "summary": "Provide the missing secret or env value (GH_TOKEN) for the blocked managed skills.",
+            "next_step": "Export the missing env or configure the skill secret, then rerun Sync managed skills or Inspect managed skills.",
+            "hint": "Export GH_TOKEN, set skills.entries.github.apiKey manually, or run clawlite skills config github."
+          }
+        ]
+      },
       "examples": [
         {
           "slug": "github-helper",
@@ -461,7 +479,7 @@ Example response:
 
 Alias compatível: `GET /api/skills/managed`.
 
-The additive `summary.blockers` block and `visible_blocked_count` are scoped to the currently visible slice after `status` and `query` filters are applied, while `blocked_count` remains the unfiltered blocked total for the full managed inventory. That split lets dashboard/CLI operators distinguish “all managed blockers” from “the blockers still visible in this filtered triage pass”.
+The additive `summary.blockers` block, including `blockers.remediation`, and `visible_blocked_count` are scoped to the currently visible slice after `status` and `query` filters are applied, while `blocked_count` remains the unfiltered blocked total for the full managed inventory. That split lets dashboard/CLI operators distinguish “all managed blockers” from “the blockers still visible in this filtered triage pass”.
 
 ## `POST /v1/control/memory/doctor`
 

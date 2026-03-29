@@ -918,6 +918,15 @@ def test_skills_loader_diagnostics_report_aggregates_deterministically(tmp_path:
             "top_kind": "",
             "top_detail": "",
             "top_hint": "",
+            "remediation": {
+                "kind": "",
+                "count": 0,
+                "detail": "",
+                "summary": "",
+                "next_step": "",
+                "hint": "",
+                "paths": [],
+            },
             "examples": [],
         },
         "items": [],
@@ -992,6 +1001,12 @@ def test_skills_loader_diagnostics_report_summarizes_managed_marketplace_rows(
     assert managed["blockers"]["by_kind"] == {"env": 1}
     assert managed["blockers"]["top_kind"] == "env"
     assert managed["blockers"]["top_detail"] == "GH_TOKEN"
+    assert managed["blockers"]["remediation"]["kind"] == "env"
+    assert managed["blockers"]["remediation"]["count"] == 1
+    assert managed["blockers"]["remediation"]["detail"] == "GH_TOKEN"
+    assert "Provide the missing secret" in managed["blockers"]["remediation"]["summary"]
+    assert "Sync managed skills" in managed["blockers"]["remediation"]["next_step"]
+    assert managed["blockers"]["remediation"]["paths"][0]["kind"] == "env"
     assert [row["slug"] for row in managed["items"]] == ["github-helper", "jira-helper"]
     assert managed["items"][0]["status"] == "missing_requirements"
     assert managed["items"][0]["blocker_kind"] == "env"
@@ -1046,6 +1061,9 @@ def test_skills_managed_report_supports_filters_and_counts(
     assert payload["blockers"]["by_kind"] == {"env": 1}
     assert payload["blockers"]["top_kind"] == "env"
     assert payload["blockers"]["top_detail"] == "GH_TOKEN"
+    assert payload["blockers"]["remediation"]["kind"] == "env"
+    assert payload["blockers"]["remediation"]["detail"] == "GH_TOKEN"
+    assert payload["blockers"]["remediation"]["paths"][0]["kind"] == "env"
     assert payload["skills"][0]["slug"] == "github-helper"
     assert payload["skills"][0]["blocker_kind"] == "env"
     assert "GH_TOKEN" in str(payload["skills"][0]["hint"])
@@ -1089,6 +1107,8 @@ def test_skills_managed_report_keeps_total_blocked_count_separate_from_visible_s
     assert payload["blocked_count"] == 1
     assert payload["visible_blocked_count"] == 0
     assert payload["blockers"]["count"] == 0
+    assert payload["blockers"]["remediation"]["kind"] == ""
+    assert payload["blockers"]["remediation"]["paths"] == []
     assert payload["skills"][0]["slug"] == "jira-helper"
 
 

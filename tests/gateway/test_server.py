@@ -3223,9 +3223,12 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "renderSkillsBoard" in js.text
     assert "Managed marketplace" in js.text
     assert "Managed blockers" in js.text
+    assert "Managed remediation" in js.text
     assert "skills.managed || {}" in js.text
     assert "managed_blockers" in js.text
+    assert "managed_remediation" in js.text
     assert "const managedBlockers = (((state.skillsManaged || {}).blockers)" in js.text
+    assert "const managedRemediation = (managedBlockers.remediation" in js.text
     assert "blocker_kind" in js.text
     assert "tool-signals" in js.text
     assert "tool-approvals-grid" in js.text
@@ -8537,6 +8540,9 @@ def test_gateway_skills_managed_endpoint_returns_live_summary(
     assert payload["summary"]["blockers"]["by_kind"] == {"env": 1}
     assert payload["summary"]["blockers"]["top_kind"] == "env"
     assert payload["summary"]["blockers"]["top_detail"] == "GH_TOKEN"
+    assert payload["summary"]["blockers"]["remediation"]["kind"] == "env"
+    assert payload["summary"]["blockers"]["remediation"]["detail"] == "GH_TOKEN"
+    assert payload["summary"]["blockers"]["remediation"]["paths"][0]["kind"] == "env"
     assert payload["summary"]["skills"][0]["slug"] == "github-helper"
     assert payload["summary"]["skills"][0]["blocker_kind"] == "env"
     assert "GH_TOKEN" in payload["summary"]["skills"][0]["hint"]
@@ -8588,6 +8594,8 @@ def test_gateway_skills_managed_endpoint_keeps_total_and_visible_blockers_separa
     assert payload["summary"]["blocked_count"] == 1
     assert payload["summary"]["visible_blocked_count"] == 0
     assert payload["summary"]["blockers"]["count"] == 0
+    assert payload["summary"]["blockers"]["remediation"]["kind"] == ""
+    assert payload["summary"]["blockers"]["remediation"]["paths"] == []
     assert payload["summary"]["skills"][0]["slug"] == "jira-helper"
 
 

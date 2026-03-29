@@ -1625,14 +1625,109 @@ def _managed_blockers_summary(rows: list[dict[str, object]]) -> dict[str, object
         }
         for row in blocked_rows[:3]
     ]
+    examples_by_kind: dict[str, dict[str, object]] = {}
+    for row in blocked_rows:
+        kind = str(row.get("blocker_kind", "") or "").strip().lower()
+        if not kind or kind in examples_by_kind:
+            continue
+        examples_by_kind[kind] = row
+    remediation_paths = [
+        _managed_blocker_remediation_payload(
+            kind,
+            count=count,
+            detail=str((examples_by_kind.get(kind) or {}).get("blocker_detail", "") or ""),
+            hint=str((examples_by_kind.get(kind) or {}).get("hint", "") or ""),
+        )
+        for kind, count in sorted(by_kind.items(), key=lambda item: (-item[1], item[0]))
+    ]
     top_example = examples[0] if examples else {}
+    top_remediation = remediation_paths[0] if remediation_paths else {}
     return {
         "count": len(blocked_rows),
         "by_kind": {key: by_kind[key] for key in sorted(by_kind)},
         "top_kind": str(top_example.get("blocker_kind", "") or ""),
         "top_detail": str(top_example.get("blocker_detail", "") or ""),
         "top_hint": str(top_example.get("hint", "") or ""),
+        "remediation": {
+            "kind": str(top_remediation.get("kind", "") or ""),
+            "count": int(top_remediation.get("count", 0) or 0),
+            "detail": str(top_remediation.get("detail", "") or ""),
+            "summary": str(top_remediation.get("summary", "") or ""),
+            "next_step": str(top_remediation.get("next_step", "") or ""),
+            "hint": str(top_remediation.get("hint", "") or ""),
+            "paths": remediation_paths[:3],
+        },
         "examples": examples,
+    }
+
+
+def _managed_blocker_remediation_payload(
+    kind: str,
+    *,
+    count: int,
+    detail: str,
+    hint: str,
+) -> dict[str, object]:
+    normalized_kind = str(kind or "").strip().lower()
+    normalized_detail = str(detail or "").strip()
+    normalized_hint = str(hint or "").strip()
+
+    if normalized_kind == "env":
+        summary = (
+            f"Provide the missing secret or env value ({normalized_detail}) for the blocked managed skills."
+            if normalized_detail
+            else "Provide the missing secret or environment value for the blocked managed skills."
+        )
+        next_step = "Export the missing env or configure the skill secret, then rerun Sync managed skills or Inspect managed skills."
+    elif normalized_kind == "config":
+        summary = (
+            f"Set the required config key ({normalized_detail}) for the blocked managed skills."
+            if normalized_detail
+            else "Set the required config key for the blocked managed skills."
+        )
+        next_step = "Write the missing config in the active profile, then rerun Inspect managed skills."
+    elif normalized_kind == "bin":
+        summary = (
+            f"Install the missing host binary ({normalized_detail}) for the blocked managed skills."
+            if normalized_detail
+            else "Install the missing host binary required by the blocked managed skills."
+        )
+        next_step = "Install the runtime dependency on the host or container, then rerun Sync managed skills."
+    elif normalized_kind == "os":
+        summary = (
+            f"Run the blocked managed skills on a supported OS ({normalized_detail})."
+            if normalized_detail
+            else "Run the blocked managed skills on a supported OS."
+        )
+        next_step = "Move the workload to a supported OS or disable the skill locally."
+    elif normalized_kind == "contract":
+        summary = (
+            f"Repair the managed SKILL.md contract ({normalized_detail})."
+            if normalized_detail
+            else "Repair the managed SKILL.md contract."
+        )
+        next_step = "Fix the contract metadata or update the marketplace package, then rerun Sync managed skills."
+    elif normalized_kind == "policy":
+        summary = "Local policy is blocking the managed skill from running."
+        next_step = "Allow the required policy path or install a local override before syncing again."
+    elif normalized_kind == "unavailable":
+        summary = "The managed skill is still unavailable at runtime."
+        next_step = "Inspect skills doctor output and local runtime dependencies, then rerun Sync managed skills."
+    else:
+        summary = (
+            f"Resolve the remaining managed blocker ({normalized_detail})."
+            if normalized_detail
+            else "Resolve the remaining managed blocker."
+        )
+        next_step = "Inspect the blocked skill row and rerun Inspect managed skills after the fix."
+
+    return {
+        "kind": normalized_kind,
+        "count": int(count or 0),
+        "detail": normalized_detail,
+        "summary": summary,
+        "next_step": next_step,
+        "hint": normalized_hint,
     }
 
 

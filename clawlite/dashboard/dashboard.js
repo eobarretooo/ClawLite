@@ -2992,6 +2992,10 @@ function renderSkillsBoard() {
   const managedBlockerKinds = (managedBlockers.by_kind && typeof managedBlockers.by_kind === "object")
     ? managedBlockers.by_kind
     : {};
+  const managedRemediation = (managedBlockers.remediation && typeof managedBlockers.remediation === "object")
+    ? managedBlockers.remediation
+    : {};
+  const managedRemediationPaths = Array.isArray(managedRemediation.paths) ? managedRemediation.paths : [];
   const managedBlockerExamples = Array.isArray(managedBlockers.examples) ? managedBlockers.examples : [];
   const blockedSkills = skillRows.filter((row) => {
     if (!row || row.enabled === false) {
@@ -3041,6 +3045,28 @@ function renderSkillsBoard() {
           String(managedBlockers.top_hint || "").trim(),
         ].filter(Boolean).join(" | ")
       : "No blocked managed marketplace skills are visible in the current slice.",
+  });
+  appendSummaryCard(grid, {
+    title: "Managed remediation",
+    body: numeric(managedBlockers.count, managedVisibleBlockedCount) > 0
+      ? `${String(managedRemediation.kind || managedBlockers.top_kind || "unknown")} | ${numeric(managedRemediation.count, 0)} path`
+      : "No remediation pending",
+    detail: numeric(managedBlockers.count, managedVisibleBlockedCount) > 0
+      ? [
+          String(managedRemediation.summary || "").trim(),
+          String(managedRemediation.next_step || "").trim(),
+          managedRemediationPaths
+            .slice(0, 2)
+            .map((row) => {
+              const kind = String(row.kind || "unknown").trim();
+              const count = numeric(row.count, 0);
+              const summary = String(row.summary || "").trim();
+              return [kind && `${kind} ${count}`, summary].filter(Boolean).join(": ");
+            })
+            .filter(Boolean)
+            .join(" | "),
+        ].filter(Boolean).join(" | ")
+      : "No safe remediation step is needed for the current managed blocker slice.",
   });
 
   const missingEnvItems = ((missingRequirements.env || {}).items) || [];
@@ -3118,6 +3144,9 @@ function renderKnowledge() {
   const managedBlockers = (((state.skillsManaged || {}).blockers) && typeof ((state.skillsManaged || {}).blockers) === "object")
     ? (state.skillsManaged || {}).blockers
     : (((skills.managed || {}).blockers) || {});
+  const managedRemediation = (managedBlockers.remediation && typeof managedBlockers.remediation === "object")
+    ? managedBlockers.remediation
+    : {};
   const memory = payload.memory || {};
   const memoryMonitor = memory.monitor || {};
   const memoryRecommendation = memoryRecommendationSummary({ liveQuality: state.memoryQuality, quality: memory.quality || {} });
@@ -3184,6 +3213,7 @@ function renderKnowledge() {
     managed: skills.managed || {},
     managed_live: state.skillsManaged || {},
     managed_blockers: managedBlockers,
+    managed_remediation: managedRemediation,
     sources: skills.sources || {},
     missing_requirements: skills.missing_requirements || {},
   });
