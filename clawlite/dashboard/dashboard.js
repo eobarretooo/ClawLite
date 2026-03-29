@@ -1238,11 +1238,13 @@ function renderDeliveryBoard() {
   grid.innerHTML = "";
 
   const payload = state.dashboardState || {};
+  const channels = payload.channels || {};
   const queue = payload.queue || {};
   const delivery = payload.channels_delivery || {};
   const dispatcher = payload.channels_dispatcher || {};
   const recovery = payload.channels_recovery || {};
   const inbound = payload.channels_inbound || {};
+  const posture = (channels.posture && typeof channels.posture === "object") ? channels.posture : {};
   const total = delivery.total || {};
   const persistence = delivery.persistence || {};
   const startupReplay = persistence.startup_replay || {};
@@ -1254,6 +1256,17 @@ function renderDeliveryBoard() {
   const latestDeadLetter = recentDeadLetters[0] || {};
 
   const cards = [
+    {
+      title: "Channel posture",
+      body: `${String(posture.summary_posture || "unknown")} | ${String(posture.dispatcher_posture || "unknown")}`,
+      detail: [
+        String(posture.operator_hint || "").trim(),
+        [
+          String(posture.queue_posture || "").trim(),
+          String(posture.recovery_posture || "").trim(),
+        ].filter(Boolean).join(" | "),
+      ].filter(Boolean).join(" | ") || "No compact channel posture snapshot is available yet.",
+    },
     {
       title: "Outbound queue",
       body: `${numeric(queue.outbound_size, 0)} queued`,
@@ -1304,8 +1317,15 @@ function renderDeliveryBoard() {
 
   cards.forEach((item) => appendSummaryCard(grid, item));
 
-  const deliveryHealthy = numeric(queue.dead_letter_size, 0) === 0 && String(dispatcher.task_state || "") === "running";
-  setBadge("delivery-status", deliveryHealthy ? "healthy" : "attention", deliveryHealthy ? "ok" : "warn");
+  const statusLabel = String(posture.summary_posture || "").trim() || (
+    numeric(queue.dead_letter_size, 0) === 0 && String(dispatcher.task_state || "") === "running"
+      ? "healthy"
+      : "attention"
+  );
+  const tone = String(posture.summary_tone || "").trim() || (
+    statusLabel === "healthy" ? "ok" : "warn"
+  );
+  setBadge("delivery-status", statusLabel, tone);
   const replayButton = byId("replay-dead-letters");
   if (replayButton) {
     const deadLetterCount = numeric(queue.dead_letter_size, 0);

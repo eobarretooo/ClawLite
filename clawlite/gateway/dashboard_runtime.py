@@ -14,6 +14,20 @@ def dashboard_channels_summary(*, runtime: Any, dashboard_channels_summary_paylo
     return dashboard_channels_summary_payload(runtime.channels.status())
 
 
+def dashboard_channel_posture_summary(
+    *,
+    runtime: Any,
+    dashboard_channel_posture_summary_payload: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    return dashboard_channel_posture_summary_payload(
+        queue_payload=runtime.bus.stats(),
+        channels_dispatcher_payload=runtime.channels.dispatcher_diagnostics(),
+        channels_delivery_payload=runtime.channels.delivery_diagnostics(),
+        channels_inbound_payload=runtime.channels.inbound_diagnostics(),
+        channels_recovery_payload=runtime.channels.recovery_diagnostics(),
+    )
+
+
 def dashboard_cron_summary(*, runtime: Any, dashboard_cron_summary_payload: Callable[..., dict[str, Any]], limit: int = 8) -> dict[str, Any]:
     return dashboard_cron_summary_payload(cron=runtime.cron, limit=limit)
 
@@ -115,6 +129,7 @@ def dashboard_state_payload(
     control_plane_to_dict: Callable[[Any], dict[str, Any]],
     recent_dashboard_sessions_payload: Callable[..., dict[str, Any]],
     dashboard_channels_summary_payload: Callable[[dict[str, Any]], dict[str, Any]],
+    dashboard_channel_posture_summary_payload: Callable[..., dict[str, Any]],
     dashboard_cron_summary_payload: Callable[..., dict[str, Any]],
     dashboard_self_evolution_summary_payload: Callable[..., dict[str, Any]],
     dashboard_runtime_posture_summary_payload: Callable[..., dict[str, Any]],
@@ -137,6 +152,11 @@ def dashboard_state_payload(
     provider_telemetry = provider_telemetry_snapshot(runtime.engine.provider)
     provider_autonomy = provider_autonomy_snapshot(provider=runtime.engine.provider)
     provider_status = provider_status_payload_fn()
+    queue_payload = runtime.bus.stats()
+    channels_dispatcher_payload = runtime.channels.dispatcher_diagnostics()
+    channels_delivery_payload = runtime.channels.delivery_diagnostics()
+    channels_inbound_payload = runtime.channels.inbound_diagnostics()
+    channels_recovery_payload = runtime.channels.recovery_diagnostics()
     provider_health = dashboard_provider_health_summary(
         provider_telemetry_payload=provider_telemetry,
         provider_autonomy_payload=provider_autonomy,
@@ -165,22 +185,30 @@ def dashboard_state_payload(
         dashboard_runtime_policy_summary_payload=dashboard_runtime_policy_summary_payload,
     )
     skills = runtime.skills_loader.diagnostics_report()
+    channels_posture_payload = dashboard_channel_posture_summary_payload(
+        queue_payload=queue_payload,
+        channels_dispatcher_payload=channels_dispatcher_payload,
+        channels_delivery_payload=channels_delivery_payload,
+        channels_inbound_payload=channels_inbound_payload,
+        channels_recovery_payload=channels_recovery_payload,
+    )
     return dashboard_state_payload_builder(
         contract_version=contract_version,
         generated_at=generated_at,
         control_plane=control_plane,
         control_plane_to_dict=control_plane_to_dict,
-        queue_payload=runtime.bus.stats(),
+        queue_payload=queue_payload,
         sessions_payload=recent_dashboard_sessions_payload(
             sessions=runtime.engine.sessions,
             subagents=runtime.engine.subagents,
             limit=8,
         ),
         channels_payload=dashboard_channels_summary(runtime=runtime, dashboard_channels_summary_payload=dashboard_channels_summary_payload),
-        channels_dispatcher_payload=runtime.channels.dispatcher_diagnostics(),
-        channels_delivery_payload=runtime.channels.delivery_diagnostics(),
-        channels_inbound_payload=runtime.channels.inbound_diagnostics(),
-        channels_recovery_payload=runtime.channels.recovery_diagnostics(),
+        channels_posture_payload=channels_posture_payload if isinstance(channels_posture_payload, dict) else {},
+        channels_dispatcher_payload=channels_dispatcher_payload,
+        channels_delivery_payload=channels_delivery_payload,
+        channels_inbound_payload=channels_inbound_payload,
+        channels_recovery_payload=channels_recovery_payload,
         discord_payload=dashboard_operator_summary(runtime=runtime, channel_name="discord", operator_channel_summary=operator_channel_summary),
         telegram_payload=dashboard_operator_summary(runtime=runtime, channel_name="telegram", operator_channel_summary=operator_channel_summary),
         cron_payload=dashboard_cron_summary(runtime=runtime, dashboard_cron_summary_payload=dashboard_cron_summary_payload),
@@ -212,6 +240,7 @@ def dashboard_state_payload(
 
 
 __all__ = [
+    "dashboard_channel_posture_summary",
     "dashboard_channels_summary",
     "dashboard_cron_summary",
     "dashboard_memory_summary",

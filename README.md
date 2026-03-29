@@ -103,7 +103,7 @@ clawlite provider login gemini-oauth   # authenticate
 clawlite provider status gemini-oauth  # check status
 ```
 
-The packaged dashboard Automation tab now also exposes `Inspect provider cache`, which reuses the same cached `last_live_probe` / `last_capability_probe` surface through the live gateway control plane. The Knowledge tab now also surfaces managed-marketplace blocker drill-down for the visible slice, so missing env/config/bin/policy blockers are visible without scanning each managed skill row manually.
+The packaged dashboard Automation tab now also exposes `Inspect provider cache`, which reuses the same cached `last_live_probe` / `last_capability_probe` surface through the live gateway control plane. The Delivery tab now also renders a compact `Channel posture` card sourced from additive `channels.posture` data in `GET /api/dashboard/state`, so queue pressure, dispatcher trouble, recovery trouble, and dead-letter backlog are visible without reading the raw delivery/recovery JSON blocks. The Knowledge tab now also surfaces managed-marketplace blocker drill-down for the visible slice, so missing env/config/bin/policy blockers are visible without scanning each managed skill row manually.
 
 Full auth details → [`docs/providers.md`](docs/providers.md)
 
@@ -125,13 +125,13 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2067 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2070 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
 CI runs on Python 3.10 and 3.12.
 
-The packaged dashboard Automation tab now also exposes compact `Runtime Posture`, `Runtime Policy`, `Provider Health`, and `Provider Budget` cards, surfacing additive `runtime.posture`, `runtime.policy`, `provider.health`, and `provider.budget` signals from `GET /api/dashboard/state` so operators can quickly see autonomy, wake, approval, canary scope, config-versus-runtime policy drift, provider suppression/cache drift, and whether the current provider issue is quota, rate limiting, or a non-budget block without opening full diagnostics. The Knowledge tab now also adds `Managed blockers` and `Managed remediation` cards on top of the existing managed marketplace inventory so skill blockers are grouped by kind and each visible blocker slice exposes the next safe remediation path instead of staying as row-by-row hints only, and the Memory card now also carries additive `memory.remediation` guidance so the next safe memory action is visible next to doctor/overview/quality instead of being inferred from raw counters alone. The Tools tab now also surfaces latest approval-audit reason, bounded request-scoped reason history, and a compact retention summary so operators can tell when the in-memory audit slice is truncated before exporting or handing it off.
+The packaged dashboard Automation tab now also exposes compact `Runtime Posture`, `Runtime Policy`, `Provider Health`, and `Provider Budget` cards, surfacing additive `runtime.posture`, `runtime.policy`, `provider.health`, and `provider.budget` signals from `GET /api/dashboard/state` so operators can quickly see autonomy, wake, approval, canary scope, config-versus-runtime policy drift, provider suppression/cache drift, and whether the current provider issue is quota, rate limiting, or a non-budget block without opening full diagnostics. The Delivery tab now also adds a compact `Channel posture` card sourced from additive `channels.posture`, so queue pressure, dispatcher trouble, recovery trouble, and dead-letter backlog are visible without mentally recombining the raw channel-manager diagnostics blocks. The Knowledge tab now also adds `Managed blockers` and `Managed remediation` cards on top of the existing managed marketplace inventory so skill blockers are grouped by kind and each visible blocker slice exposes the next safe remediation path instead of staying as row-by-row hints only, and the Memory card now also carries additive `memory.remediation` guidance so the next safe memory action is visible next to doctor/overview/quality instead of being inferred from raw counters alone. The Tools tab now also surfaces latest approval-audit reason, bounded request-scoped reason history, and a compact retention summary so operators can tell when the in-memory audit slice is truncated before exporting or handing it off.
 
 ---
 

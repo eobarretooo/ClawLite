@@ -67,6 +67,142 @@ def dashboard_channels_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def dashboard_channel_posture_summary(
+    *,
+    queue_payload: dict[str, Any],
+    channels_dispatcher_payload: dict[str, Any],
+    channels_delivery_payload: dict[str, Any],
+    channels_inbound_payload: dict[str, Any],
+    channels_recovery_payload: dict[str, Any],
+) -> dict[str, Any]:
+    queue = dict(queue_payload or {}) if isinstance(queue_payload, dict) else {}
+    dispatcher = dict(channels_dispatcher_payload or {}) if isinstance(channels_dispatcher_payload, dict) else {}
+    delivery = dict(channels_delivery_payload or {}) if isinstance(channels_delivery_payload, dict) else {}
+    inbound = dict(channels_inbound_payload or {}) if isinstance(channels_inbound_payload, dict) else {}
+    recovery = dict(channels_recovery_payload or {}) if isinstance(channels_recovery_payload, dict) else {}
+    total = dict(delivery.get("total") or {}) if isinstance(delivery.get("total"), dict) else {}
+    inbound_persistence = dict(inbound.get("persistence") or {}) if isinstance(inbound.get("persistence"), dict) else {}
+    recovery_total = dict(recovery.get("total") or {}) if isinstance(recovery.get("total"), dict) else {}
+
+    outbound_size = max(0, int(queue.get("outbound_size", 0) or 0))
+    dead_letter_size = max(0, int(queue.get("dead_letter_size", 0) or 0))
+    inbound_pending = max(0, int(inbound_persistence.get("pending", 0) or 0))
+    dispatcher_enabled = bool(dispatcher.get("enabled", True))
+    dispatcher_running = bool(dispatcher.get("running", False))
+    dispatcher_task_state = str(dispatcher.get("task_state", "unknown") or "unknown").strip().lower() or "unknown"
+    dispatcher_error = str(dispatcher.get("last_error", "") or "").strip()
+    dispatcher_active_tasks = max(0, int(dispatcher.get("active_tasks", 0) or 0))
+    dispatcher_active_sessions = max(0, int(dispatcher.get("active_sessions", 0) or 0))
+    recovery_enabled = bool(recovery.get("enabled", True))
+    recovery_running = bool(recovery.get("running", False))
+    recovery_task_state = str(recovery.get("task_state", "unknown") or "unknown").strip().lower() or "unknown"
+    recovery_error = str(recovery.get("last_error", "") or "").strip()
+    recovery_success = max(0, int(recovery_total.get("success", 0) or 0))
+    recovery_failures = max(0, int(recovery_total.get("failures", 0) or 0))
+    recovery_cooldown_skips = max(0, int(recovery_total.get("skipped_cooldown", 0) or 0))
+    delivery_confirmed = max(0, int(total.get("delivery_confirmed", total.get("success", 0)) or 0))
+    delivery_failed_final = max(0, int(total.get("delivery_failed_final", total.get("failures", 0)) or 0))
+    dead_lettered = max(0, int(total.get("dead_lettered", 0) or 0))
+
+    if dispatcher_error:
+        dispatcher_posture = "error"
+    elif not dispatcher_enabled:
+        dispatcher_posture = "disabled"
+    elif not dispatcher_running:
+        dispatcher_posture = "stopped"
+    elif dispatcher_active_tasks > 0 or dispatcher_active_sessions > 0:
+        dispatcher_posture = "busy"
+    else:
+        dispatcher_posture = "steady"
+
+    if recovery_error:
+        recovery_posture = "error"
+    elif not recovery_enabled:
+        recovery_posture = "disabled"
+    elif not recovery_running:
+        recovery_posture = "stopped"
+    elif recovery_failures > 0 or recovery_cooldown_skips > 0:
+        recovery_posture = "recovering"
+    else:
+        recovery_posture = "steady"
+
+    if dead_letter_size > 0:
+        queue_posture = "dead_letter_backlog"
+    elif outbound_size > 0 or inbound_pending > 0:
+        queue_posture = "queued"
+    else:
+        queue_posture = "clear"
+
+    if dispatcher_error:
+        summary_posture = "dispatcher_error"
+        summary_tone = "danger"
+        operator_hint = "Channel dispatcher reported an error; inspect diagnostics or run channel recovery before replaying more work."
+    elif dispatcher_enabled and not dispatcher_running:
+        summary_posture = "dispatcher_stopped"
+        summary_tone = "danger"
+        operator_hint = "Channel dispatcher is stopped while enabled; restart channel recovery to restore delivery flow."
+    elif recovery_error:
+        summary_posture = "recovery_error"
+        summary_tone = "danger"
+        operator_hint = "Channel recovery loop reported an error; inspect the recovery supervisor before retrying failed deliveries."
+    elif recovery_enabled and not recovery_running:
+        summary_posture = "recovery_stopped"
+        summary_tone = "warn"
+        operator_hint = "Channel recovery loop is not running, so failed workers will not self-heal until it is restarted."
+    elif dead_letter_size > 0:
+        summary_posture = "dead_letter_backlog"
+        summary_tone = "warn"
+        operator_hint = "Dead letters are pending; replay or inspect the failing channel before more messages accumulate."
+    elif recovery_failures > 0 or recovery_cooldown_skips > 0:
+        summary_posture = "recovering"
+        summary_tone = "warn"
+        operator_hint = "Recent channel recovery activity is still in progress; watch cooldown skips and repeated failures."
+    elif outbound_size > 0 or inbound_pending > 0 or dispatcher_active_tasks > 0:
+        summary_posture = "busy"
+        summary_tone = "ok"
+        operator_hint = "Channel delivery is active; queue and replay activity are currently moving through the dispatcher."
+    else:
+        summary_posture = "healthy"
+        summary_tone = "ok"
+        operator_hint = "Channel delivery and recovery loops look steady."
+
+    return {
+        "summary_posture": summary_posture,
+        "summary_tone": summary_tone,
+        "operator_hint": operator_hint,
+        "queue_posture": queue_posture,
+        "dispatcher_posture": dispatcher_posture,
+        "recovery_posture": recovery_posture,
+        "queue": {
+            "outbound_size": outbound_size,
+            "dead_letter_size": dead_letter_size,
+            "inbound_pending": inbound_pending,
+        },
+        "delivery": {
+            "delivery_confirmed": delivery_confirmed,
+            "delivery_failed_final": delivery_failed_final,
+            "dead_lettered": dead_lettered,
+        },
+        "dispatcher": {
+            "enabled": dispatcher_enabled,
+            "running": dispatcher_running,
+            "task_state": dispatcher_task_state,
+            "active_tasks": dispatcher_active_tasks,
+            "active_sessions": dispatcher_active_sessions,
+            "last_error": dispatcher_error,
+        },
+        "recovery": {
+            "enabled": recovery_enabled,
+            "running": recovery_running,
+            "task_state": recovery_task_state,
+            "success": recovery_success,
+            "failures": recovery_failures,
+            "skipped_cooldown": recovery_cooldown_skips,
+            "last_error": recovery_error,
+        },
+    }
+
+
 def dashboard_cron_summary(*, cron: Any, limit: int = 8) -> dict[str, Any]:
     jobs = cron.list_jobs()
     enabled_count = sum(1 for row in jobs if bool(row.get("enabled", False)))
@@ -781,6 +917,7 @@ def dashboard_state_payload(
     queue_payload: dict[str, Any],
     sessions_payload: dict[str, Any],
     channels_payload: dict[str, Any],
+    channels_posture_payload: dict[str, Any],
     channels_dispatcher_payload: dict[str, Any],
     channels_delivery_payload: dict[str, Any],
     channels_inbound_payload: dict[str, Any],
@@ -807,13 +944,15 @@ def dashboard_state_payload(
     runtime_posture_payload: dict[str, Any],
     runtime_policy_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    channels_summary = dict(channels_payload or {}) if isinstance(channels_payload, dict) else {}
+    channels_summary["posture"] = dict(channels_posture_payload or {}) if isinstance(channels_posture_payload, dict) else {}
     return {
         "contract_version": contract_version,
         "generated_at": generated_at,
         "control_plane": control_plane_to_dict(control_plane),
         "queue": queue_payload,
         "sessions": sessions_payload,
-        "channels": channels_payload,
+        "channels": channels_summary,
         "channels_dispatcher": channels_dispatcher_payload,
         "channels_delivery": channels_delivery_payload,
         "channels_inbound": channels_inbound_payload,

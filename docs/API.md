@@ -28,6 +28,7 @@ If a gateway token is configured, this endpoint requires that token even when th
 
 Additive note:
 - `skills.managed` now carries a compact marketplace-lifecycle summary for the packaged dashboard, with `count`, `ready_count`, unfiltered `blocked_count`, additive `visible_blocked_count`, `disabled_count`, `status_counts`, a bounded `items` preview of managed marketplace skills, and an additive `blockers` summary (`count`, `by_kind`, `top_kind`, `top_detail`, `top_hint`, bounded `examples`, and bounded `remediation`) for the currently visible managed blocker slice.
+- `channels.posture` now carries a compact delivery/recovery operator summary for the packaged dashboard, with `summary_posture`, `summary_tone`, `operator_hint`, per-loop posture hints (`queue_posture`, `dispatcher_posture`, `recovery_posture`), and bounded nested `queue`, `delivery`, `dispatcher`, and `recovery` detail derived from the same live channel-manager diagnostics already present in the dashboard payload.
 
 Example response:
 
@@ -65,7 +66,15 @@ Example response:
         "state": "running",
         "summary": "enabled | running"
       }
-    ]
+    ],
+    "posture": {
+      "summary_posture": "healthy",
+      "summary_tone": "ok",
+      "operator_hint": "Channel delivery and recovery loops look steady.",
+      "queue_posture": "clear",
+      "dispatcher_posture": "steady",
+      "recovery_posture": "steady"
+    }
   },
   "cron": {
     "status": {"running": true, "jobs": 1},
@@ -128,7 +137,9 @@ Example response:
 
 Alias compatível: `GET /api/dashboard/state` (mesmo payload). When a gateway token is configured, the packaged dashboard alias also accepts the derived dashboard-session credential described above; `/v1/dashboard/state` itself still expects the raw gateway token.
 
-This aggregated dashboard payload now also includes queue/dead-letter stats plus `channels_dispatcher`, `channels_delivery`, `channels_inbound`, `channels_recovery`, `supervisor`, and a compact `ws` block so the packaged control plane can render operator recovery cards and recent WebSocket correlation hints without scraping the full diagnostics payload. The dashboard handoff block intentionally redacts raw gateway secrets: it keeps `gateway_url` plus `gateway_token_masked`, but does not return `gateway_token` or `dashboard_url_with_token`.
+This aggregated dashboard payload now also includes queue/dead-letter stats plus `channels_dispatcher`, `channels_delivery`, `channels_inbound`, `channels_recovery`, an additive `channels.posture` summary, `supervisor`, and a compact `ws` block so the packaged control plane can render operator recovery cards and recent WebSocket correlation hints without scraping the full diagnostics payload. The dashboard handoff block intentionally redacts raw gateway secrets: it keeps `gateway_url` plus `gateway_token_masked`, but does not return `gateway_token` or `dashboard_url_with_token`.
+
+The additive `channels.posture` block mirrors a bounded channel-manager health summary derived from queue, dispatcher, delivery, inbound, and recovery signals already present in the same dashboard payload. It includes `summary_posture`, `summary_tone`, `operator_hint`, plus compact nested `queue`, `delivery`, `dispatcher`, and `recovery` detail so the packaged Delivery tab can surface delivery/recovery posture without forcing operators back into raw queue and worker counters.
 
 The additive `provider.status` block now mirrors the current cached provider status used by `clawlite provider status`: it includes the selected/active provider hint plus any persisted `last_live_probe` and `last_capability_probe` summaries so the packaged dashboard can surface cached provider probe posture without forcing a new network probe on every refresh.
 

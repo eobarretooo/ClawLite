@@ -103,6 +103,7 @@ from clawlite.gateway.tuning_loop import (
 from clawlite.gateway.tool_catalog import build_tools_catalog_payload, parse_include_schema_flag
 from clawlite.gateway.dashboard_state import (
     dashboard_provider_budget_summary as _dashboard_provider_budget_summary_payload,
+    dashboard_channel_posture_summary as _dashboard_channel_posture_summary_payload,
     dashboard_channels_summary as _dashboard_channels_summary_payload,
     dashboard_cron_summary as _dashboard_cron_summary_payload,
     dashboard_provider_health_summary as _dashboard_provider_health_summary_payload,
@@ -3596,6 +3597,7 @@ def create_app(
             control_plane_to_dict=_control_plane_to_dict,
             recent_dashboard_sessions_payload=_recent_dashboard_sessions_payload,
             dashboard_channels_summary_payload=_dashboard_channels_summary_payload,
+            dashboard_channel_posture_summary_payload=_dashboard_channel_posture_summary_payload,
             dashboard_cron_summary_payload=_dashboard_cron_summary_payload,
             dashboard_self_evolution_summary_payload=_dashboard_self_evolution_summary_payload,
             dashboard_runtime_posture_summary_payload=_dashboard_runtime_posture_summary_payload,

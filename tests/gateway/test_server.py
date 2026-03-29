@@ -3206,6 +3206,7 @@ def test_gateway_dashboard_assets_are_served(tmp_path: Path) -> None:
     assert "Wake up, my friend!" in js.text
     assert "handoff-grid" in js.text
     assert "renderDeliveryBoard" in js.text
+    assert "Channel posture" in js.text
     assert "renderSupervisorBoard" in js.text
     assert "renderRuntimePostureBoard" in js.text
     assert "renderRuntimePolicyBoard" in js.text
@@ -3469,6 +3470,8 @@ def test_gateway_dashboard_state_endpoint_returns_operational_summary(tmp_path: 
     assert "posture" in payload["runtime"]
     assert "policy" in payload["runtime"]
     assert "items" in payload["channels"]
+    assert "posture" in payload["channels"]
+    assert "summary_posture" in payload["channels"]["posture"]
     assert "enabled" in payload["self_evolution"]
     assert "managed" in payload["skills"]
 

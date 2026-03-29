@@ -4,9 +4,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from clawlite.gateway.dashboard_state import (
+    dashboard_channel_posture_summary,
     dashboard_channels_summary,
-    dashboard_provider_budget_summary,
     dashboard_cron_summary,
+    dashboard_provider_budget_summary,
     dashboard_provider_health_summary,
     dashboard_preview,
     dashboard_runtime_policy_summary,
@@ -98,6 +99,77 @@ def test_dashboard_channel_helpers_shape_operational_rows() -> None:
     channel = SimpleNamespace(operator_status=lambda: {"offset_next": 42})
     assert operator_channel_summary(channel) == {"available": True, "offset_next": 42}
     assert operator_channel_summary(None) == {"available": False}
+
+
+def test_dashboard_channel_posture_summary_flags_dead_letter_backlog() -> None:
+    payload = dashboard_channel_posture_summary(
+        queue_payload={
+            "outbound_size": 2,
+            "dead_letter_size": 3,
+        },
+        channels_dispatcher_payload={
+            "enabled": True,
+            "running": True,
+            "task_state": "running",
+            "active_tasks": 1,
+            "active_sessions": 1,
+        },
+        channels_delivery_payload={
+            "total": {
+                "delivery_confirmed": 5,
+                "delivery_failed_final": 1,
+                "dead_lettered": 3,
+            }
+        },
+        channels_inbound_payload={
+            "persistence": {
+                "pending": 0,
+            }
+        },
+        channels_recovery_payload={
+            "enabled": True,
+            "running": True,
+            "task_state": "running",
+            "total": {
+                "success": 1,
+                "failures": 0,
+                "skipped_cooldown": 0,
+            },
+        },
+    )
+
+    assert payload["summary_posture"] == "dead_letter_backlog"
+    assert payload["summary_tone"] == "warn"
+    assert payload["queue_posture"] == "dead_letter_backlog"
+    assert payload["dispatcher_posture"] == "busy"
+    assert payload["delivery"]["dead_lettered"] == 3
+
+
+def test_dashboard_channel_posture_summary_prefers_dispatcher_error() -> None:
+    payload = dashboard_channel_posture_summary(
+        queue_payload={"outbound_size": 0, "dead_letter_size": 0},
+        channels_dispatcher_payload={
+            "enabled": True,
+            "running": False,
+            "task_state": "crashed",
+            "last_error": "dispatcher crashed",
+            "active_tasks": 0,
+            "active_sessions": 0,
+        },
+        channels_delivery_payload={"total": {}},
+        channels_inbound_payload={"persistence": {"pending": 0}},
+        channels_recovery_payload={
+            "enabled": True,
+            "running": False,
+            "task_state": "stopped",
+            "total": {"success": 0, "failures": 0, "skipped_cooldown": 0},
+        },
+    )
+
+    assert payload["summary_posture"] == "dispatcher_error"
+    assert payload["summary_tone"] == "danger"
+    assert payload["dispatcher_posture"] == "error"
+    assert "dispatcher reported an error" in payload["operator_hint"]
 
 
 def test_dashboard_cron_and_self_evolution_summaries() -> None:
@@ -635,6 +707,7 @@ def test_dashboard_state_payload_assembles_sections() -> None:
         queue_payload={"pending": 1},
         sessions_payload={"count": 2},
         channels_payload={"count": 3},
+        channels_posture_payload={"summary_posture": "healthy"},
         channels_dispatcher_payload={"running": True},
         channels_delivery_payload={"ok": True},
         channels_inbound_payload={"ok": True},
@@ -672,5 +745,9 @@ def test_dashboard_state_payload_assembles_sections() -> None:
     assert payload["runtime"] == {
         "posture": {"autonomy_posture": "disabled"},
         "policy": {"policy_posture": "manual_only"},
+    }
+    assert payload["channels"] == {
+        "count": 3,
+        "posture": {"summary_posture": "healthy"},
     }
     assert payload["skills"] == {"loaded": 4}
