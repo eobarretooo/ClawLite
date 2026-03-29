@@ -55,6 +55,7 @@ from clawlite.tools.memory import (
 from clawlite.tools.message import MessageTool
 from clawlite.tools.pdf import PdfReadTool
 from clawlite.tools.process import ProcessTool
+from clawlite.tools.gateway_admin import GatewayAdminTool
 from clawlite.tools.registry import ToolRegistry
 from clawlite.tools.sessions import (
     SessionStatusTool,
@@ -509,6 +510,13 @@ def build_runtime(
         job_queue.set_journal(jobs_journal)
         job_queue.restore_from_journal()
     tools.register(JobsTool(job_queue))
+    tools.register(
+        GatewayAdminTool(
+            config_path=config_path,
+            config_profile=config_profile,
+            state_path=config.state_path,
+        )
+    )
 
     bus_journal: BusJournal | None = None
     if bool(getattr(config.bus, "journal_enabled", False)):

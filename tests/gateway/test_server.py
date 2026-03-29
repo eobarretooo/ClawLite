@@ -21,6 +21,7 @@ import clawlite.gateway.runtime_builder as gateway_runtime_builder
 import clawlite.gateway.server as gateway_server
 from clawlite.bus.events import OutboundEvent
 from clawlite.channels.base import BaseChannel, ChannelCapabilities
+from clawlite.config.loader import save_raw_config_payload
 from clawlite.config.schema import AppConfig, SchedulerConfig
 from clawlite.core.engine import ProviderChunk
 from clawlite.core.memory import MemoryStore
@@ -28,6 +29,7 @@ from clawlite.core.memory_monitor import MemoryMonitor, MemorySuggestion
 from clawlite.core.skills import SkillsLoader
 from clawlite.core.subagent import SubagentManager, SubagentRun
 from clawlite.gateway.dashboard_sessions import issue_dashboard_handoff
+from clawlite.gateway.restart_sentinel import build_restart_sentinel_payload, restart_sentinel_path, write_restart_sentinel
 from clawlite.gateway.server import (
     _LATEST_MEMORY_ROUTE_CACHE,
     _latest_memory_route,
@@ -38,6 +40,7 @@ from clawlite.gateway.server import (
     build_runtime,
     create_app,
 )
+from clawlite.providers.base import ToolCall
 from clawlite.providers.base import LLMResult
 from clawlite.providers.probe_cache import save_provider_probe_snapshot
 from clawlite.scheduler.heartbeat import HeartbeatDecision
@@ -92,6 +95,37 @@ class ReplayProvider:
         self.calls += 1
         self.snapshots.append(messages)
         return LLMResult(text="replayed", model="fake/replay", tool_calls=[], metadata={})
+
+
+class GatewayAdminProvider:
+    def __init__(self) -> None:
+        self.tool_issued = False
+
+    def get_default_model(self) -> str:
+        return "fake/gateway-admin"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        transcript = json.dumps(messages, ensure_ascii=False)
+        if "Ativa essa config e reinicia." in transcript and not self.tool_issued:
+            self.tool_issued = True
+            return LLMResult(
+                text="Applying requested config change.",
+                model="fake/gateway-admin",
+                tool_calls=[
+                    ToolCall(
+                        id="call_gateway_admin",
+                        name="gateway_admin",
+                        arguments={
+                            "action": "config_patch_and_restart",
+                            "patch": {"tools": {"default_timeout_s": 55}},
+                            "note": "Enabled the requested tool config.",
+                        },
+                    )
+                ],
+                metadata={},
+            )
+        return LLMResult(text="Restart scheduled.", model="fake/gateway-admin", tool_calls=[], metadata={})
 
 
 class FailingProvider:
@@ -578,6 +612,7 @@ def test_gateway_chat_endpoint(tmp_path: Path) -> None:
         workspace_path=str(tmp_path / "workspace"),
         state_path=str(tmp_path / "state"),
         scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        gateway={"heartbeat": {"enabled": False}},
         channels={},
     )
     app = create_app(cfg)
@@ -595,6 +630,134 @@ def test_gateway_chat_endpoint(tmp_path: Path) -> None:
         assert alias.status_code == 200
         assert isinstance(alias.headers.get("X-Request-ID", ""), str) and alias.headers["X-Request-ID"]
         assert alias.json()["text"] == "pong"
+
+
+def test_gateway_chat_can_apply_config_patch_and_schedule_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    save_raw_config_payload(cfg.to_dict(), path=config_path)
+
+    def _fake_schedule(*, delay_s: float = 0.0, reason: str = "", execv_fn=None):
+        del execv_fn
+        return {
+            "ok": True,
+            "scheduled": True,
+            "coalesced": False,
+            "delay_s": delay_s,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("clawlite.tools.gateway_admin.schedule_gateway_restart", _fake_schedule)
+
+    app = create_app(cfg, config_path=str(config_path))
+    app.state.runtime.workspace.should_run_bootstrap = lambda: False
+    app.state.runtime.engine.provider = GatewayAdminProvider()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "telegram:chat42:topic:9",
+                "channel": "telegram",
+                "chat_id": "chat42",
+                "text": "Ativa essa config e reinicia.",
+                "runtime_metadata": {"message_thread_id": 9},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "Restart scheduled."
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["default_timeout_s"] == 55
+    sentinel = json.loads(restart_sentinel_path(cfg.state_path).read_text(encoding="utf-8"))
+    assert sentinel["payload"]["channel"] == "telegram"
+    assert sentinel["payload"]["target"] == "telegram:chat42:topic:9"
+    assert sentinel["payload"]["note"] == "Enabled the requested tool config."
+    assert sentinel["payload"]["metadata"]["message_thread_id"] == 9
+
+
+def test_gateway_startup_sends_restart_sentinel_notice(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        cfg = AppConfig(
+            workspace_path=str(tmp_path / "workspace"),
+            state_path=str(tmp_path / "state"),
+            scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+            gateway={"heartbeat": {"enabled": False}},
+            channels={},
+        )
+        write_restart_sentinel(
+            state_path=cfg.state_path,
+            payload=build_restart_sentinel_payload(
+                kind="config_patch",
+                session_id="telegram:chat42:topic:9",
+                channel="telegram",
+                target="chat42",
+                note="Enabled the requested tool config.",
+                changed_paths=["tools.default_timeout_s"],
+                metadata={"message_thread_id": 9},
+            ),
+        )
+
+        app = create_app(cfg)
+        app.state.runtime.workspace.should_run_bootstrap = lambda: False
+        app.state.runtime.channels.send = AsyncMock(return_value="ok")
+
+        async with app.router.lifespan_context(app):
+            pass
+
+        app.state.runtime.channels.send.assert_awaited_once()
+        send_kwargs = app.state.runtime.channels.send.await_args.kwargs
+        assert send_kwargs["channel"] == "telegram"
+        assert send_kwargs["target"] == "chat42"
+        assert send_kwargs["metadata"]["message_thread_id"] == 9
+        assert "ClawLite restarted and applied the requested config change." in str(send_kwargs["text"])
+        assert "Enabled the requested tool config." in str(send_kwargs["text"])
+        assert not restart_sentinel_path(cfg.state_path).exists()
+
+    asyncio.run(_scenario())
+
+
+def test_gateway_startup_keeps_restart_sentinel_when_notice_delivery_fails(tmp_path: Path) -> None:
+    async def _scenario() -> None:
+        cfg = AppConfig(
+            workspace_path=str(tmp_path / "workspace"),
+            state_path=str(tmp_path / "state"),
+            scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+            gateway={"heartbeat": {"enabled": False}},
+            channels={},
+        )
+        write_restart_sentinel(
+            state_path=cfg.state_path,
+            payload=build_restart_sentinel_payload(
+                kind="config_patch",
+                session_id="telegram:chat42:topic:9",
+                channel="telegram",
+                target="telegram:chat42:topic:9",
+                note="Enabled the requested tool config.",
+                changed_paths=["tools.default_timeout_s"],
+                metadata={"message_thread_id": 9},
+            ),
+        )
+
+        app = create_app(cfg)
+        app.state.runtime.workspace.should_run_bootstrap = lambda: False
+        app.state.runtime.channels.send = AsyncMock(side_effect=RuntimeError("send_failed"))
+
+        async with app.router.lifespan_context(app):
+            pass
+
+        app.state.runtime.channels.send.assert_awaited_once()
+        assert restart_sentinel_path(cfg.state_path).exists()
+
+    asyncio.run(_scenario())
 
 
 def test_gateway_http_request_id_preserves_safe_header(tmp_path: Path) -> None:

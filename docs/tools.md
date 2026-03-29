@@ -1,6 +1,6 @@
 # Tools
 
-ClawLite registers 30 tool IDs at gateway startup, including compatibility aliases. Agents can call them during normal turns, and clients can inspect the live catalog from the gateway.
+ClawLite registers a live tool catalog at gateway startup, including compatibility aliases. Agents can call those tools during normal turns, and clients can inspect the live catalog from the gateway.
 
 ## Inspect the Live Catalog
 
@@ -296,6 +296,7 @@ Notes:
 | Tool | What it does | Typical use |
 | --- | --- | --- |
 | `message` | Sends proactive outbound messages to channels | Push a message to Telegram, Discord, WhatsApp, Email, or Slack |
+| `gateway_admin` | Inspects active config or applies a bounded config patch plus gateway restart | Enable a tool/provider setting after an explicit user request and confirm it after restart |
 | `discord_admin` | Inspects and administers Discord guild structure | List guilds, channels, roles, or build server layout |
 | `cron` | Adds, removes, runs, lists, enables, or disables scheduled jobs | Schedule a later reminder or recurring task |
 | `mcp` | Calls tools from configured MCP servers | Reach remote tool servers through the registry |
@@ -304,6 +305,7 @@ Notes:
 Useful arguments:
 
 - `message`: `channel`, `target`, `text`, `action`, `message_id`, `reply_to_message_id`, `emoji`, `topic_name`, `metadata`, `media`, `buttons`
+- `gateway_admin`: `action`, `patch`, `note`, `restart_delay_s`
 - `discord_admin`: `action`, `guild_id`, `name`, `kind`, `parent_id`, `topic`, `permissions`, `reason`, `template`
 - `cron`: `action`, `expression`, `every_seconds`, `cron_expr`, `at`, `timezone`, `prompt`, `name`, `session_id`, `channel`, `target`, `force`, `run_once`
 - `mcp`: `server`, `tool`, `arguments`, `timeout_s`
@@ -314,6 +316,8 @@ Notes:
 - `message.action` defaults to `send`.
 - Telegram-only `message` actions are `reply`, `edit`, `delete`, `react`, and `create_topic`.
 - Discord currently supports `send` plus button rows bridged as `discord_components`.
+- `gateway_admin` only supports explicit operator asks to inspect config, apply a bounded config patch plus restart, or restart the gateway. It is rejected for background/internal/subagent sessions such as `heartbeat:*`, `autonomy:*`, and `bootstrap:*`.
+- `gateway_admin` keeps one pending restart at a time, preserves Telegram topic/thread routing in the persisted restart notice, and keeps that notice on disk when post-boot delivery fails so the next gateway boot can retry it instead of dropping the confirmation silently.
 - Channels without explicit capability support stay on a conservative send-only contract and reject unsupported `action`, `buttons`, or `media` arguments instead of pretending they work.
 - Scheduled `cron` turns now reuse their resolved `channel` / `target` as engine context, so the agent sees the same safe runtime hints before the eventual outbound send.
 - `discord_admin` expects a configured `channels.discord.token`; server mutations also require matching Discord bot permissions.

@@ -41,6 +41,9 @@ from clawlite.runtime import (
 from clawlite.gateway.control_handlers import GatewayControlHandlers
 from clawlite.gateway.status_handlers import GatewayStatusHandlers
 from clawlite.gateway.request_handlers import GatewayRequestHandlers
+from clawlite.gateway.restart_sentinel import clear_restart_sentinel as _clear_restart_sentinel
+from clawlite.gateway.restart_sentinel import format_restart_sentinel_notice as _format_restart_sentinel_notice
+from clawlite.gateway.restart_sentinel import read_restart_sentinel as _read_restart_sentinel
 from clawlite.gateway.rate_limit import GatewayRateLimiter
 from clawlite.gateway.autonomy_notice import (
     default_heartbeat_route as _default_heartbeat_route_helper,
@@ -3189,6 +3192,30 @@ def create_app(
         if callable(bus_connect):
             await bus_connect()
         await _start_subsystems()
+        restart_notice = _read_restart_sentinel(cfg.state_path)
+        if isinstance(restart_notice, dict):
+            notice_channel = str(restart_notice.get("channel", "") or "").strip().lower()
+            notice_target = str(restart_notice.get("target", "") or "").strip()
+            if not notice_channel or not notice_target:
+                _clear_restart_sentinel(cfg.state_path)
+            else:
+                notice_metadata = dict(restart_notice.get("metadata", {}) or {})
+                try:
+                    await runtime.channels.send(
+                        channel=notice_channel,
+                        target=notice_target,
+                        text=_format_restart_sentinel_notice(restart_notice),
+                        metadata=notice_metadata or None,
+                    )
+                except Exception as exc:
+                    bind_event("gateway.lifecycle").warning(
+                        "restart notice delivery failed channel={} target={} error={}",
+                        notice_channel,
+                        notice_target,
+                        exc,
+                    )
+                else:
+                    _clear_restart_sentinel(cfg.state_path)
         lifecycle.phase = "running"
         lifecycle.ready = True
         bind_event("gateway.lifecycle").info("gateway startup complete")
