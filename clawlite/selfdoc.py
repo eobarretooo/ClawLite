@@ -55,7 +55,7 @@ _TOOL_CONFIG_NOTES: dict[str, str] = {
     "browser": "Não há bloco dedicado no schema; depende de Playwright/Chromium instalados.",
     "pdf_read": "Não há bloco dedicado no schema; depende de `pypdf`.",
     "tts": "Não há bloco dedicado no schema; depende de `edge-tts`.",
-    "gateway_admin": "Usa allowlist interna e hoje só libera mudanças seguras ligadas a tools/gateway restart.",
+    "gateway_admin": "Usa allowlist interna e hoje só libera mudanças seguras ligadas a tools, heartbeat do gateway e gateway restart.",
 }
 
 _TOOL_BLOCKER_NOTES: dict[str, str] = {

@@ -47,6 +47,9 @@ _PREVIEW_TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 _TOOL_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*(?::[a-z_][a-z0-9_]*)*$")
 _GATEWAY_ADMIN_RESTART_LOCK = threading.Lock()
 _SAFE_EDITABLE_PATH_PATTERNS: tuple[str, ...] = (
+    "gateway.heartbeat.enabled",
+    "gateway.heartbeat.interval_s",
+    "scheduler.heartbeat_interval_seconds",
     "tools.restrict_to_workspace",
     "tools.default_timeout_s",
     "tools.timeouts.*",
@@ -83,6 +86,14 @@ _PROTECTED_PATH_PATTERNS: tuple[str, ...] = (
     "tools.web.denylist",
 )
 _SAFE_INTENT_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "name": "set_gateway_heartbeat",
+        "summary": "Toggle the gateway heartbeat loop or tune its interval.",
+        "paths": ["gateway.heartbeat.enabled", "gateway.heartbeat.interval_s"],
+        "required_args": [],
+        "requires_any_of": ["enabled", "interval_s"],
+        "optional_args": ["enabled", "interval_s"],
+    },
     {
         "name": "set_default_tool_timeout",
         "summary": "Set the default timeout applied to tools without a per-tool override.",
@@ -495,6 +506,26 @@ def _coerce_float_argument(value: Any, *, key: str, minimum: float = 0.1) -> flo
     return parsed
 
 
+def _normalize_gateway_heartbeat_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    gateway_present, gateway_interval = _lookup_payload_value(patch, "gateway.heartbeat.interval_s")
+    scheduler_present, scheduler_interval = _lookup_payload_value(patch, "scheduler.heartbeat_interval_seconds")
+    if not gateway_present and not scheduler_present:
+        return patch
+    normalized_gateway_interval = None
+    normalized_scheduler_interval = None
+    if gateway_present:
+        normalized_gateway_interval = _coerce_int_argument(gateway_interval, key="interval_s", minimum=5)
+    if scheduler_present:
+        normalized_scheduler_interval = _coerce_int_argument(scheduler_interval, key="interval_s", minimum=5)
+    if normalized_gateway_interval is not None and normalized_scheduler_interval is not None:
+        if normalized_scheduler_interval != normalized_gateway_interval:
+            raise RuntimeError("gateway_admin_heartbeat_interval_conflict")
+        return patch
+    if normalized_gateway_interval is not None:
+        return _deep_merge(patch, {"scheduler": {"heartbeat_interval_seconds": normalized_gateway_interval}})
+    return _deep_merge(patch, {"gateway": {"heartbeat": {"interval_s": normalized_scheduler_interval}}})
+
+
 def _build_intent_patch(arguments: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
     intent = _normalize_intent_name(arguments.get("intent"))
     if intent == "set_default_tool_timeout":
@@ -504,6 +535,27 @@ def _build_intent_patch(arguments: dict[str, Any]) -> tuple[str, dict[str, Any],
             {"tools": {"default_timeout_s": timeout_s}},
             f"Updated the default tool timeout to {timeout_s:g}s.",
         )
+    if intent == "set_gateway_heartbeat":
+        patch: dict[str, Any] = {}
+        if "enabled" in arguments:
+            patch["enabled"] = _coerce_bool_argument(arguments.get("enabled"), key="enabled")
+        if "interval_s" in arguments:
+            patch["interval_s"] = _coerce_int_argument(arguments.get("interval_s"), key="interval_s", minimum=5)
+        if not patch:
+            raise RuntimeError("gateway_admin_heartbeat_update_required")
+        if set(patch) == {"enabled"}:
+            return (
+                intent,
+                {"gateway": {"heartbeat": patch}},
+                "Enabled the gateway heartbeat loop." if patch["enabled"] else "Disabled the gateway heartbeat loop.",
+            )
+        if set(patch) == {"interval_s"}:
+            return (
+                intent,
+                {"gateway": {"heartbeat": patch}},
+                f"Updated the gateway heartbeat interval to {patch['interval_s']}s.",
+            )
+        return (intent, {"gateway": {"heartbeat": patch}}, "Updated the gateway heartbeat settings.")
     if intent == "set_tool_timeout":
         tool_name = _normalize_tool_name(arguments.get("tool_name"))
         timeout_s = _coerce_float_argument(arguments.get("timeout_s"), key="timeout_s")
@@ -697,8 +749,8 @@ class GatewayAdminTool(Tool):
                     "type": "string",
                     "description": (
                         "Safe preset for config_intent_catalog, config_intent_preview, or config_intent_and_restart, "
-                        "for example set_default_tool_timeout, set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, set_web_timeouts, "
-                        "set_web_content_budget, set_web_private_address_blocking, or set_web_fetch_limits."
+                        "for example set_gateway_heartbeat, set_default_tool_timeout, set_tool_timeout, set_workspace_tool_restriction, "
+                        "set_loop_detection, set_web_timeouts, set_web_content_budget, set_web_private_address_blocking, or set_web_fetch_limits."
                     ),
                 },
                 "patch": {
@@ -737,6 +789,11 @@ class GatewayAdminTool(Tool):
                     "type": "number",
                     "minimum": 0.1,
                     "description": "Timeout value used by safe timeout intents.",
+                },
+                "interval_s": {
+                    "type": "integer",
+                    "minimum": 5,
+                    "description": "Interval value used by safe heartbeat intents.",
                 },
                 "history_size": {
                     "type": "integer",
@@ -889,11 +946,12 @@ class GatewayAdminTool(Tool):
             raise RuntimeError("gateway_admin_preview_token_mismatch")
 
     def _preview_patch(self, *, patch: dict[str, Any], note: str, action: str, preview_scope: str) -> dict[str, Any]:
-        changed_paths = _validate_patch_paths(patch)
+        effective_patch = _normalize_gateway_heartbeat_patch(patch)
+        changed_paths = _validate_patch_paths(effective_patch)
         effective_payload = load_raw_config_payload(self._config_path, profile=self._config_profile)
         target_payload = load_target_config_payload(self._config_path, profile=self._config_profile)
         base_payload = load_raw_config_payload(self._config_path, profile=None) if self._config_profile else {}
-        updated_target = _deep_merge(target_payload, patch)
+        updated_target = _deep_merge(target_payload, effective_patch)
         effective_candidate = _deep_merge(base_payload, updated_target) if self._config_profile else updated_target
         _validate_config_keys(effective_candidate)
         AppConfig.model_validate(effective_candidate)
@@ -933,7 +991,7 @@ class GatewayAdminTool(Tool):
         restart_required = updated_target != target_payload
         preview_token, basis_hash = self._preview_token(
             preview_scope=preview_scope,
-            patch=patch,
+            patch=effective_patch,
             note=note,
             target_payload=target_payload,
         )
@@ -942,7 +1000,7 @@ class GatewayAdminTool(Tool):
             "action": action,
             "preview_only": True,
             "changed_paths": changed_paths,
-            "resolved_patch": patch,
+            "resolved_patch": effective_patch,
             "preview_scope": preview_scope,
             "preview_basis_hash": basis_hash,
             "preview_token": preview_token,
@@ -965,19 +1023,20 @@ class GatewayAdminTool(Tool):
         raw_patch = arguments.get("patch")
         if not isinstance(raw_patch, dict) or not raw_patch:
             raise RuntimeError("gateway_admin_requires_non_empty_patch")
-        changed_paths = _validate_patch_paths(raw_patch)
+        effective_patch = _normalize_gateway_heartbeat_patch(raw_patch)
+        changed_paths = _validate_patch_paths(effective_patch)
         note = str(arguments.get("note", "") or "").strip() or _default_note(changed_paths=changed_paths)
 
         target_payload = load_target_config_payload(self._config_path, profile=self._config_profile)
         base_payload = load_raw_config_payload(self._config_path, profile=None) if self._config_profile else {}
-        updated_target = _deep_merge(target_payload, raw_patch)
+        updated_target = _deep_merge(target_payload, effective_patch)
         effective_candidate = _deep_merge(base_payload, updated_target) if self._config_profile else updated_target
         _validate_config_keys(effective_candidate)
         AppConfig.model_validate(effective_candidate)
         self._verify_preview_token(
             arguments=arguments,
             preview_scope=preview_scope,
-            patch=raw_patch,
+            patch=effective_patch,
             note=note,
             target_payload=target_payload,
         )
@@ -990,6 +1049,7 @@ class GatewayAdminTool(Tool):
                 "changed_paths": changed_paths,
                 "config_path": str(self._config_path or ""),
                 "config_profile": str(self._config_profile or ""),
+                "resolved_patch": effective_patch,
             }
 
         self._ensure_restart_not_pending()
@@ -1028,6 +1088,7 @@ class GatewayAdminTool(Tool):
             "saved_path": str(saved_path),
             "config_path": str(self._config_path or ""),
             "config_profile": str(self._config_profile or ""),
+            "resolved_patch": effective_patch,
             "restart": restart,
             "sentinel_path": str(sentinel_path),
             "note": note,
@@ -1037,10 +1098,11 @@ class GatewayAdminTool(Tool):
         raw_patch = arguments.get("patch")
         if not isinstance(raw_patch, dict) or not raw_patch:
             raise RuntimeError("gateway_admin_requires_non_empty_patch")
-        changed_paths = _validate_patch_paths(raw_patch)
+        effective_patch = _normalize_gateway_heartbeat_patch(raw_patch)
+        changed_paths = _validate_patch_paths(effective_patch)
         note = str(arguments.get("note", "") or "").strip() or _default_note(changed_paths=changed_paths)
         return self._preview_patch(
-            patch=raw_patch,
+            patch=effective_patch,
             note=note,
             action="config_patch_preview",
             preview_scope="config_patch",
@@ -1059,7 +1121,6 @@ class GatewayAdminTool(Tool):
         )
         payload["action"] = "config_intent_and_restart"
         payload["intent"] = intent
-        payload["resolved_patch"] = patch
         return payload
 
     def _preview_intent(self, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from clawlite.config.loader import save_raw_config_payload
+from clawlite.config.loader import load_config, save_raw_config_payload
 from clawlite.config.schema import AppConfig
 from clawlite.gateway.restart_sentinel import consume_restart_sentinel
 from clawlite.tools.base import ToolContext
@@ -141,8 +141,11 @@ def test_gateway_admin_config_intent_catalog_lists_safe_intents(tmp_path: Path) 
             )
         )
         assert payload["action"] == "config_intent_catalog"
-        assert payload["count"] >= 8
+        assert payload["count"] >= 9
         rows = {row["name"]: row for row in payload["intents"]}
+        assert rows["set_gateway_heartbeat"]["paths"] == ["gateway.heartbeat.enabled", "gateway.heartbeat.interval_s"]
+        assert rows["set_gateway_heartbeat"]["required_args"] == []
+        assert rows["set_gateway_heartbeat"]["requires_any_of"] == ["enabled", "interval_s"]
         assert rows["set_web_private_address_blocking"]["paths"] == ["tools.web.block_private_addresses"]
         assert rows["set_web_private_address_blocking"]["required_args"] == ["enabled"]
         assert rows["set_web_private_address_blocking"]["requires_any_of"] == []
@@ -379,6 +382,64 @@ def test_gateway_admin_config_intent_preview_reports_web_fetch_patch_without_wri
     assert consume_restart_sentinel(tmp_path / "state") is None
 
 
+def test_gateway_admin_config_intent_preview_reports_gateway_heartbeat_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError(f"restart should not be scheduled: {kwargs}")),
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    before = json.loads(config_path.read_text(encoding="utf-8"))
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_preview",
+                    "intent": "set_gateway_heartbeat",
+                    "enabled": False,
+                    "interval_s": 2400,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_preview"
+        assert payload["intent"] == "set_gateway_heartbeat"
+        assert payload["preview_scope"] == "config_intent:set_gateway_heartbeat"
+        assert payload["changed_paths"] == [
+            "gateway.heartbeat.enabled",
+            "gateway.heartbeat.interval_s",
+            "scheduler.heartbeat_interval_seconds",
+        ]
+        changes = {row["path"]: row for row in payload["changes"]}
+        assert changes["gateway.heartbeat.enabled"]["effective_value"] is True
+        assert changes["gateway.heartbeat.enabled"]["effective_next_value"] is False
+        assert changes["gateway.heartbeat.interval_s"]["effective_value"] == 1800
+        assert changes["gateway.heartbeat.interval_s"]["effective_next_value"] == 2400
+        assert changes["scheduler.heartbeat_interval_seconds"]["effective_value"] == 1800
+        assert changes["scheduler.heartbeat_interval_seconds"]["effective_next_value"] == 2400
+
+    asyncio.run(_scenario())
+
+    after = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after == before
+    assert consume_restart_sentinel(tmp_path / "state") is None
+
+
 def test_gateway_admin_config_patch_preview_reports_dynamic_timeout_without_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -523,6 +584,207 @@ def test_gateway_admin_config_intent_and_restart_sets_default_tool_timeout(
 
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["tools"]["default_timeout_s"] == 31
+
+
+def test_gateway_admin_config_intent_and_restart_updates_gateway_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_gateway_heartbeat",
+                    "enabled": False,
+                    "interval_s": 2400,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_and_restart"
+        assert payload["intent"] == "set_gateway_heartbeat"
+        assert payload["changed_paths"] == [
+            "gateway.heartbeat.enabled",
+            "gateway.heartbeat.interval_s",
+            "scheduler.heartbeat_interval_seconds",
+        ]
+        assert payload["note"] == "Updated the gateway heartbeat settings."
+        assert payload["resolved_patch"] == {
+            "gateway": {"heartbeat": {"enabled": False, "interval_s": 2400}},
+            "scheduler": {"heartbeat_interval_seconds": 2400},
+        }
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["gateway"]["heartbeat"]["enabled"] is False
+    assert saved["gateway"]["heartbeat"]["interval_s"] == 2400
+    assert saved["scheduler"]["heartbeat_interval_seconds"] == 2400
+    sentinel = consume_restart_sentinel(tmp_path / "state")
+    assert sentinel is not None
+    assert sentinel["changed_paths"] == [
+        "gateway.heartbeat.enabled",
+        "gateway.heartbeat.interval_s",
+        "scheduler.heartbeat_interval_seconds",
+    ]
+
+
+def test_gateway_admin_config_intent_and_restart_syncs_legacy_scheduler_heartbeat_interval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    save_raw_config_payload(
+        {
+            "workspace_path": str(tmp_path / "workspace"),
+            "state_path": str(tmp_path / "state"),
+            "scheduler": {"heartbeat_interval_seconds": 9999},
+            "channels": {},
+        },
+        path=config_path,
+    )
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        preview = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_preview",
+                    "intent": "set_gateway_heartbeat",
+                    "interval_s": 1800,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert preview["changed_paths"] == [
+            "gateway.heartbeat.interval_s",
+            "scheduler.heartbeat_interval_seconds",
+        ]
+        changes = {row["path"]: row for row in preview["changes"]}
+        assert changes["gateway.heartbeat.interval_s"]["effective_value"] == 9999
+        assert changes["gateway.heartbeat.interval_s"]["effective_next_value"] == 1800
+        assert changes["scheduler.heartbeat_interval_seconds"]["effective_value"] == 9999
+        assert changes["scheduler.heartbeat_interval_seconds"]["effective_next_value"] == 1800
+
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_gateway_heartbeat",
+                    "interval_s": 1800,
+                    "preview_token": preview["preview_token"],
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["changed"] is True
+        assert payload["resolved_patch"] == {
+            "gateway": {"heartbeat": {"interval_s": 1800}},
+            "scheduler": {"heartbeat_interval_seconds": 1800},
+        }
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["gateway"]["heartbeat"]["interval_s"] == 1800
+    assert saved["scheduler"]["heartbeat_interval_seconds"] == 1800
+    runtime_cfg = load_config(config_path)
+    assert runtime_cfg.gateway.heartbeat.interval_s == 1800
+
+
+def test_gateway_admin_config_patch_and_restart_syncs_scheduler_only_heartbeat_interval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        preview = json.loads(
+            await tool.run(
+                {
+                    "action": "config_patch_preview",
+                    "patch": {"scheduler": {"heartbeat_interval_seconds": 9999}},
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert preview["changed_paths"] == [
+            "gateway.heartbeat.interval_s",
+            "scheduler.heartbeat_interval_seconds",
+        ]
+        assert preview["resolved_patch"] == {
+            "gateway": {"heartbeat": {"interval_s": 9999}},
+            "scheduler": {"heartbeat_interval_seconds": 9999},
+        }
+
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_patch_and_restart",
+                    "patch": {"scheduler": {"heartbeat_interval_seconds": 9999}},
+                    "preview_token": preview["preview_token"],
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["changed"] is True
+        assert payload["changed_paths"] == [
+            "gateway.heartbeat.interval_s",
+            "scheduler.heartbeat_interval_seconds",
+        ]
+        assert payload["resolved_patch"] == {
+            "gateway": {"heartbeat": {"interval_s": 9999}},
+            "scheduler": {"heartbeat_interval_seconds": 9999},
+        }
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["gateway"]["heartbeat"]["interval_s"] == 9999
+    assert saved["scheduler"]["heartbeat_interval_seconds"] == 9999
+    runtime_cfg = load_config(config_path)
+    assert runtime_cfg.gateway.heartbeat.interval_s == 9999
 
 
 def test_gateway_admin_config_intent_and_restart_accepts_matching_preview_token(

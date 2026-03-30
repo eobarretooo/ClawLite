@@ -161,6 +161,39 @@ class GatewayAdminIntentProvider:
         return LLMResult(text="Restart scheduled.", model="fake/gateway-admin-intent", tool_calls=[], metadata={})
 
 
+class GatewayAdminHeartbeatProvider:
+    def __init__(self) -> None:
+        self.tool_issued = False
+
+    def get_default_model(self) -> str:
+        return "fake/gateway-admin-heartbeat"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        transcript = json.dumps(messages, ensure_ascii=False)
+        if "Desliga o heartbeat e aumenta o intervalo." in transcript and not self.tool_issued:
+            self.tool_issued = True
+            return LLMResult(
+                text="Applying requested heartbeat intent.",
+                model="fake/gateway-admin-heartbeat",
+                tool_calls=[
+                    ToolCall(
+                        id="call_gateway_admin_heartbeat",
+                        name="gateway_admin",
+                        arguments={
+                            "action": "config_intent_and_restart",
+                            "intent": "set_gateway_heartbeat",
+                            "enabled": False,
+                            "interval_s": 2400,
+                            "note": "Updated the gateway heartbeat settings.",
+                        },
+                    )
+                ],
+                metadata={},
+            )
+        return LLMResult(text="Restart scheduled.", model="fake/gateway-admin-heartbeat", tool_calls=[], metadata={})
+
+
 class GatewayAdminPreviewProvider:
     def __init__(self) -> None:
         self.tool_issued = False
@@ -958,6 +991,65 @@ def test_gateway_chat_can_apply_config_intent_and_schedule_restart(
     assert sentinel["payload"]["target"] == "telegram:chat42:topic:9"
     assert sentinel["payload"]["note"] == "Raised the default tool timeout."
     assert sentinel["payload"]["changed_paths"] == ["tools.default_timeout_s"]
+    assert sentinel["payload"]["metadata"]["message_thread_id"] == 9
+
+
+def test_gateway_chat_can_apply_gateway_heartbeat_intent_and_schedule_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    save_raw_config_payload(cfg.to_dict(), path=config_path)
+
+    def _fake_schedule(*, delay_s: float = 0.0, reason: str = "", execv_fn=None):
+        del execv_fn
+        return {
+            "ok": True,
+            "scheduled": True,
+            "coalesced": False,
+            "delay_s": delay_s,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("clawlite.tools.gateway_admin.schedule_gateway_restart", _fake_schedule)
+
+    app = create_app(cfg, config_path=str(config_path))
+    app.state.runtime.workspace.should_run_bootstrap = lambda: False
+    app.state.runtime.engine.provider = GatewayAdminHeartbeatProvider()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "telegram:chat42:topic:9",
+                "channel": "telegram",
+                "chat_id": "chat42",
+                "text": "Desliga o heartbeat e aumenta o intervalo.",
+                "runtime_metadata": {"message_thread_id": 9},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "Restart scheduled."
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["gateway"]["heartbeat"]["enabled"] is False
+    assert saved["gateway"]["heartbeat"]["interval_s"] == 2400
+    assert saved["scheduler"]["heartbeat_interval_seconds"] == 2400
+    sentinel = json.loads(restart_sentinel_path(cfg.state_path).read_text(encoding="utf-8"))
+    assert sentinel["payload"]["channel"] == "telegram"
+    assert sentinel["payload"]["target"] == "telegram:chat42:topic:9"
+    assert sentinel["payload"]["note"] == "Updated the gateway heartbeat settings."
+    assert sentinel["payload"]["changed_paths"] == [
+        "gateway.heartbeat.enabled",
+        "gateway.heartbeat.interval_s",
+        "scheduler.heartbeat_interval_seconds",
+    ]
     assert sentinel["payload"]["metadata"]["message_thread_id"] == 9
 
 
