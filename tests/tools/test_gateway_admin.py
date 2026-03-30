@@ -315,6 +315,57 @@ def test_gateway_admin_config_intent_preview_reports_web_fetch_patch_without_wri
     assert consume_restart_sentinel(tmp_path / "state") is None
 
 
+def test_gateway_admin_config_patch_preview_reports_dynamic_timeout_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError(f"restart should not be scheduled: {kwargs}")),
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    before = json.loads(config_path.read_text(encoding="utf-8"))
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_patch_preview",
+                    "patch": {"tools": {"timeouts": {"web_fetch": 33}}},
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_patch_preview"
+        assert payload["preview_only"] is True
+        assert payload["restart_required"] is True
+        assert payload["would_change"] is True
+        assert payload["changed_paths"] == ["tools.timeouts.web_fetch"]
+        assert payload["resolved_patch"] == {"tools": {"timeouts": {"web_fetch": 33}}}
+        assert payload["note"] == "Applied the requested config change for `tools.timeouts.web_fetch`."
+        changes = {row["path"]: row for row in payload["changes"]}
+        assert changes["tools.timeouts.web_fetch"]["effective_value_present"] is False
+        assert changes["tools.timeouts.web_fetch"]["effective_next_value"] == 33
+
+    asyncio.run(_scenario())
+
+    after = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after == before
+    assert consume_restart_sentinel(tmp_path / "state") is None
+
+
 def test_gateway_admin_config_intent_preview_reports_web_timeouts_without_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

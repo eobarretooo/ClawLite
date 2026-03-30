@@ -521,7 +521,7 @@ class GatewayAdminTool(Tool):
     description = (
         "Inspect the active config, apply a partial config patch, and restart the ClawLite gateway. "
         "Use only when the user explicitly asks to change config or restart the runtime. "
-        "Prefer config_intent_preview or config_intent_and_restart for supported safe presets, and use config_schema_lookup before raw patching. "
+        "Prefer config_intent_preview or config_intent_and_restart for supported safe presets, and use config_schema_lookup or config_patch_preview before raw patching. "
         "For config_patch_and_restart, always pass a short human-readable note describing what was enabled or changed; "
         "ClawLite will send that note back after the gateway restarts."
     )
@@ -546,6 +546,7 @@ class GatewayAdminTool(Tool):
                     "enum": [
                         "config_get",
                         "config_schema_lookup",
+                        "config_patch_preview",
                         "config_intent_preview",
                         "config_intent_and_restart",
                         "config_patch_and_restart",
@@ -568,7 +569,8 @@ class GatewayAdminTool(Tool):
                     "type": "object",
                     "description": (
                         "Partial snake_case config patch merged into the current on-disk target config. "
-                        "Only gateway_admin allowlisted tool-tuning paths may be changed."
+                        "Only gateway_admin allowlisted tool-tuning paths may be changed. "
+                        "Use with config_patch_preview before config_patch_and_restart when the patch is not one of the bounded safe intents."
                     ),
                 },
                 "note": {
@@ -807,6 +809,14 @@ class GatewayAdminTool(Tool):
             "note": note,
         }
 
+    def _preview_raw_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        raw_patch = arguments.get("patch")
+        if not isinstance(raw_patch, dict) or not raw_patch:
+            raise RuntimeError("gateway_admin_requires_non_empty_patch")
+        changed_paths = _validate_patch_paths(raw_patch)
+        note = str(arguments.get("note", "") or "").strip() or _default_note(changed_paths=changed_paths)
+        return self._preview_patch(patch=raw_patch, note=note, action="config_patch_preview")
+
     def _apply_intent_and_restart(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         intent, patch, default_note = _build_intent_patch(arguments)
         patch_arguments = dict(arguments)
@@ -869,6 +879,8 @@ class GatewayAdminTool(Tool):
             payload = self._config_snapshot()
         elif action == "config_schema_lookup":
             payload = self._config_schema_lookup(arguments)
+        elif action == "config_patch_preview":
+            payload = self._preview_raw_patch(arguments)
         elif action == "config_intent_preview":
             payload = self._preview_intent(arguments)
         elif action == "config_intent_and_restart":
