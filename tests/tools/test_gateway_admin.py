@@ -241,6 +241,80 @@ def test_gateway_admin_config_patch_and_restart_allows_dynamic_tool_timeout_keys
     assert sentinel["changed_paths"] == ["tools.timeouts.web_fetch"]
 
 
+def test_gateway_admin_config_intent_preview_reports_web_fetch_patch_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError(f"restart should not be scheduled: {kwargs}")),
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    before = json.loads(config_path.read_text(encoding="utf-8"))
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_preview",
+                    "intent": "set_web_fetch_limits",
+                    "timeout_s": 18,
+                    "search_timeout_s": 11,
+                    "max_redirects": 7,
+                    "max_chars": 16000,
+                    "block_private_addresses": False,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_preview"
+        assert payload["intent"] == "set_web_fetch_limits"
+        assert payload["preview_only"] is True
+        assert payload["restart_required"] is True
+        assert payload["would_change"] is True
+        assert payload["changed_paths"] == [
+            "tools.web.block_private_addresses",
+            "tools.web.max_chars",
+            "tools.web.max_redirects",
+            "tools.web.search_timeout",
+            "tools.web.timeout",
+        ]
+        assert payload["resolved_patch"] == {
+            "tools": {
+                "web": {
+                    "timeout": 18.0,
+                    "search_timeout": 11.0,
+                    "max_redirects": 7,
+                    "max_chars": 16000,
+                    "block_private_addresses": False,
+                }
+            }
+        }
+        changes = {row["path"]: row for row in payload["changes"]}
+        assert changes["tools.web.timeout"]["effective_value"] == 15.0
+        assert changes["tools.web.timeout"]["effective_next_value"] == 18.0
+        assert changes["tools.web.block_private_addresses"]["effective_value"] is True
+        assert changes["tools.web.block_private_addresses"]["effective_next_value"] is False
+
+    asyncio.run(_scenario())
+
+    after = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after == before
+    assert consume_restart_sentinel(tmp_path / "state") is None
+
+
 def test_gateway_admin_config_intent_and_restart_sets_default_tool_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

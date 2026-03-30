@@ -482,7 +482,7 @@ class GatewayAdminTool(Tool):
     description = (
         "Inspect the active config, apply a partial config patch, and restart the ClawLite gateway. "
         "Use only when the user explicitly asks to change config or restart the runtime. "
-        "Prefer config_intent_and_restart for supported safe presets, and use config_schema_lookup before raw patching. "
+        "Prefer config_intent_preview or config_intent_and_restart for supported safe presets, and use config_schema_lookup before raw patching. "
         "For config_patch_and_restart, always pass a short human-readable note describing what was enabled or changed; "
         "ClawLite will send that note back after the gateway restarts."
     )
@@ -507,6 +507,7 @@ class GatewayAdminTool(Tool):
                     "enum": [
                         "config_get",
                         "config_schema_lookup",
+                        "config_intent_preview",
                         "config_intent_and_restart",
                         "config_patch_and_restart",
                         "restart_gateway",
@@ -519,7 +520,7 @@ class GatewayAdminTool(Tool):
                 "intent": {
                     "type": "string",
                     "description": (
-                        "Safe preset for config_intent_and_restart, for example set_default_tool_timeout, "
+                        "Safe preset for config_intent_preview or config_intent_and_restart, for example set_default_tool_timeout, "
                         "set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, or set_web_fetch_limits."
                     ),
                 },
@@ -643,6 +644,64 @@ class GatewayAdminTool(Tool):
         if gateway_restart_pending():
             raise RuntimeError("gateway_restart_already_pending")
 
+    def _preview_patch(self, *, patch: dict[str, Any], note: str, action: str) -> dict[str, Any]:
+        changed_paths = _validate_patch_paths(patch)
+        effective_payload = load_raw_config_payload(self._config_path, profile=self._config_profile)
+        target_payload = load_target_config_payload(self._config_path, profile=self._config_profile)
+        base_payload = load_raw_config_payload(self._config_path, profile=None) if self._config_profile else {}
+        updated_target = _deep_merge(target_payload, patch)
+        effective_candidate = _deep_merge(base_payload, updated_target) if self._config_profile else updated_target
+        _validate_config_keys(effective_candidate)
+        AppConfig.model_validate(effective_candidate)
+        default_payload = AppConfig().to_dict()
+        changes: list[dict[str, Any]] = []
+        for path in changed_paths:
+            status, reason = _path_mutation_status(path)
+            effective_present, effective_value = _lookup_payload_value(effective_payload, path)
+            target_present, target_value = _lookup_payload_value(target_payload, path)
+            effective_next_present, effective_next_value = _lookup_payload_value(effective_candidate, path)
+            target_next_present, target_next_value = _lookup_payload_value(updated_target, path)
+            default_present, default_value = _lookup_payload_value(default_payload, path)
+            changes.append(
+                {
+                    "path": path,
+                    "editable_via_gateway_admin": status == "editable",
+                    "status": status,
+                    "reason": reason,
+                    "effective_value_present": effective_present,
+                    "effective_value": _redact_payload(effective_value) if effective_present else None,
+                    "target_value_present": target_present,
+                    "target_value": _redact_payload(target_value) if target_present else None,
+                    "effective_next_value_present": effective_next_present,
+                    "effective_next_value": _redact_payload(effective_next_value) if effective_next_present else None,
+                    "target_next_value_present": target_next_present,
+                    "target_next_value": _redact_payload(target_next_value) if target_next_present else None,
+                    "default_value_present": default_present,
+                    "default_value": _redact_payload(default_value) if default_present else None,
+                    "would_change": (
+                        (not target_present and target_next_present)
+                        or target_value != target_next_value
+                        or (not effective_present and effective_next_present)
+                        or effective_value != effective_next_value
+                    ),
+                }
+            )
+        restart_required = updated_target != target_payload
+        return {
+            "ok": True,
+            "action": action,
+            "preview_only": True,
+            "changed_paths": changed_paths,
+            "resolved_patch": patch,
+            "would_change": restart_required,
+            "config_path": str(self._config_path or ""),
+            "config_profile": str(self._config_profile or ""),
+            "note": note,
+            "restart_note_preview": note,
+            "restart_required": restart_required,
+            "changes": changes,
+        }
+
     def _apply_patch_and_restart(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         raw_patch = arguments.get("patch")
         if not isinstance(raw_patch, dict) or not raw_patch:
@@ -720,6 +779,13 @@ class GatewayAdminTool(Tool):
         payload["resolved_patch"] = patch
         return payload
 
+    def _preview_intent(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        intent, patch, default_note = _build_intent_patch(arguments)
+        note = str(arguments.get("note", "") or "").strip() or default_note
+        payload = self._preview_patch(patch=patch, note=note, action="config_intent_preview")
+        payload["intent"] = intent
+        return payload
+
     def _restart_gateway(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         self._ensure_restart_not_pending()
         note = str(arguments.get("note", "") or "").strip() or "Restarted the gateway as requested."
@@ -763,6 +829,8 @@ class GatewayAdminTool(Tool):
             payload = self._config_snapshot()
         elif action == "config_schema_lookup":
             payload = self._config_schema_lookup(arguments)
+        elif action == "config_intent_preview":
+            payload = self._preview_intent(arguments)
         elif action == "config_intent_and_restart":
             with _GATEWAY_ADMIN_RESTART_LOCK:
                 payload = self._apply_intent_and_restart(arguments, ctx)
