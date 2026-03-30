@@ -374,6 +374,61 @@ def test_gateway_admin_config_intent_and_restart_updates_loop_detection(
     assert saved["tools"]["loop_detection"]["critical_threshold"] == 7
 
 
+def test_gateway_admin_config_intent_and_restart_updates_web_fetch_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_web_fetch_limits",
+                    "timeout_s": 18,
+                    "search_timeout_s": 11,
+                    "max_redirects": 7,
+                    "max_chars": 16000,
+                    "block_private_addresses": False,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["intent"] == "set_web_fetch_limits"
+        assert payload["changed_paths"] == [
+            "tools.web.block_private_addresses",
+            "tools.web.max_chars",
+            "tools.web.max_redirects",
+            "tools.web.search_timeout",
+            "tools.web.timeout",
+        ]
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["web"]["timeout"] == 18
+    assert saved["tools"]["web"]["search_timeout"] == 11
+    assert saved["tools"]["web"]["max_redirects"] == 7
+    assert saved["tools"]["web"]["max_chars"] == 16000
+    assert saved["tools"]["web"]["block_private_addresses"] is False
+
+
 def test_gateway_admin_config_intent_and_restart_rejects_unsupported_intent(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     save_raw_config_payload({}, path=config_path)

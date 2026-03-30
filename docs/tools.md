@@ -305,7 +305,7 @@ Notes:
 Useful arguments:
 
 - `message`: `channel`, `target`, `text`, `action`, `message_id`, `reply_to_message_id`, `emoji`, `topic_name`, `metadata`, `media`, `buttons`
-- `gateway_admin`: `action`, `path`, `intent`, `patch`, `note`, `restart_delay_s`, `enabled`, `tool_name`, `timeout_s`, `history_size`, `repeat_threshold`, `critical_threshold`
+- `gateway_admin`: `action`, `path`, `intent`, `patch`, `note`, `restart_delay_s`, `enabled`, `tool_name`, `timeout_s`, `search_timeout_s`, `history_size`, `repeat_threshold`, `critical_threshold`, `max_redirects`, `max_chars`, `block_private_addresses`
 - `discord_admin`: `action`, `guild_id`, `name`, `kind`, `parent_id`, `topic`, `permissions`, `reason`, `template`
 - `cron`: `action`, `expression`, `every_seconds`, `cron_expr`, `at`, `timezone`, `prompt`, `name`, `session_id`, `channel`, `target`, `force`, `run_once`
 - `mcp`: `server`, `tool`, `arguments`, `timeout_s`
@@ -318,7 +318,7 @@ Notes:
 - Discord currently supports `send` plus button rows bridged as `discord_components`.
 - `gateway_admin` only supports explicit operator asks to inspect config, inspect a snake_case config path through `config_schema_lookup`, apply a bounded config patch plus restart, apply a safe preset through `config_intent_and_restart`, or restart the gateway. It is rejected for background/internal/subagent sessions such as `heartbeat:*`, `autonomy:*`, and `bootstrap:*`.
 - `gateway_admin` config patches are fail-closed to a small allowlist of safe tool-tuning paths such as `tools.default_timeout_s`, `tools.timeouts.*`, `tools.loop_detection.*`, and selected `tools.web.*` fields. Protected paths like auth, channels, providers, gateway auth, `tools.exec.*`, `tools.mcp.*`, `tools.safety.*`, secrets, and network-policy fields are rejected even if the caller tries to patch them directly.
-- `gateway_admin` safe intents currently cover a small bounded set of tool-tuning changes: `set_default_tool_timeout`, `set_tool_timeout`, `set_workspace_tool_restriction`, and `set_loop_detection`. They reuse the same allowlist and restart-notice flow as raw `config_patch_and_restart`, but avoid making the model synthesize a full patch object for those common cases.
+- `gateway_admin` safe intents currently cover a small bounded set of tool-tuning changes: `set_default_tool_timeout`, `set_tool_timeout`, `set_workspace_tool_restriction`, `set_loop_detection`, and `set_web_fetch_limits`. They reuse the same allowlist and restart-notice flow as raw `config_patch_and_restart`, but avoid making the model synthesize a full patch object for those common cases.
 - `gateway_admin` keeps one pending restart at a time, preserves Telegram topic/thread routing in the persisted restart notice, and keeps that notice on disk when post-boot delivery fails so the next gateway boot can retry it instead of dropping the confirmation silently.
 - Channels without explicit capability support stay on a conservative send-only contract and reject unsupported `action`, `buttons`, or `media` arguments instead of pretending they work.
 - Scheduled `cron` turns now reuse their resolved `channel` / `target` as engine context, so the agent sees the same safe runtime hints before the eventual outbound send.

@@ -444,6 +444,36 @@ def _build_intent_patch(arguments: dict[str, Any]) -> tuple[str, dict[str, Any],
         if set(patch) == {"enabled"}:
             note = "Enabled tool loop detection." if patch["enabled"] else "Disabled tool loop detection."
         return (intent, {"tools": {"loop_detection": patch}}, note)
+    if intent == "set_web_fetch_limits":
+        patch: dict[str, Any] = {}
+        if "timeout_s" in arguments:
+            patch["timeout"] = _coerce_float_argument(arguments.get("timeout_s"), key="timeout_s", minimum=1.0)
+        if "search_timeout_s" in arguments or "search_timeout" in arguments:
+            patch["search_timeout"] = _coerce_float_argument(
+                arguments.get("search_timeout_s", arguments.get("search_timeout")),
+                key="search_timeout_s",
+                minimum=1.0,
+            )
+        if "max_redirects" in arguments:
+            patch["max_redirects"] = _coerce_int_argument(arguments.get("max_redirects"), key="max_redirects", minimum=0)
+        if "max_chars" in arguments:
+            patch["max_chars"] = _coerce_int_argument(arguments.get("max_chars"), key="max_chars", minimum=128)
+        if "block_private_addresses" in arguments:
+            patch["block_private_addresses"] = _coerce_bool_argument(
+                arguments.get("block_private_addresses"),
+                key="block_private_addresses",
+            )
+        if not patch:
+            raise RuntimeError("gateway_admin_web_fetch_update_required")
+        if set(patch) == {"block_private_addresses"}:
+            return (
+                intent,
+                {"tools": {"web": patch}},
+                "Enabled web private-address blocking."
+                if patch["block_private_addresses"]
+                else "Disabled web private-address blocking.",
+            )
+        return (intent, {"tools": {"web": patch}}, "Updated web fetch limits.")
     raise RuntimeError(f"gateway_admin_intent_unsupported:{intent}")
 
 
@@ -490,7 +520,7 @@ class GatewayAdminTool(Tool):
                     "type": "string",
                     "description": (
                         "Safe preset for config_intent_and_restart, for example set_default_tool_timeout, "
-                        "set_tool_timeout, set_workspace_tool_restriction, or set_loop_detection."
+                        "set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, or set_web_fetch_limits."
                     ),
                 },
                 "patch": {
@@ -532,6 +562,22 @@ class GatewayAdminTool(Tool):
                 "critical_threshold": {
                     "type": "integer",
                     "minimum": 1,
+                },
+                "search_timeout_s": {
+                    "type": "number",
+                    "minimum": 1.0,
+                },
+                "max_redirects": {
+                    "type": "integer",
+                    "minimum": 0,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 128,
+                },
+                "block_private_addresses": {
+                    "type": "boolean",
+                    "description": "Boolean flag used by set_web_fetch_limits.",
                 },
             },
             "required": ["action"],
