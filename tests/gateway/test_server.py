@@ -128,6 +128,38 @@ class GatewayAdminProvider:
         return LLMResult(text="Restart scheduled.", model="fake/gateway-admin", tool_calls=[], metadata={})
 
 
+class GatewayAdminIntentProvider:
+    def __init__(self) -> None:
+        self.tool_issued = False
+
+    def get_default_model(self) -> str:
+        return "fake/gateway-admin-intent"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        transcript = json.dumps(messages, ensure_ascii=False)
+        if "Ajusta esse timeout e reinicia." in transcript and not self.tool_issued:
+            self.tool_issued = True
+            return LLMResult(
+                text="Applying requested tool intent.",
+                model="fake/gateway-admin-intent",
+                tool_calls=[
+                    ToolCall(
+                        id="call_gateway_admin_intent",
+                        name="gateway_admin",
+                        arguments={
+                            "action": "config_intent_and_restart",
+                            "intent": "set_default_tool_timeout",
+                            "timeout_s": 66,
+                            "note": "Raised the default tool timeout.",
+                        },
+                    )
+                ],
+                metadata={},
+            )
+        return LLMResult(text="Restart scheduled.", model="fake/gateway-admin-intent", tool_calls=[], metadata={})
+
+
 class FailingProvider:
     def __init__(self, message: str) -> None:
         self.message = message
@@ -681,6 +713,59 @@ def test_gateway_chat_can_apply_config_patch_and_schedule_restart(
     assert sentinel["payload"]["channel"] == "telegram"
     assert sentinel["payload"]["target"] == "telegram:chat42:topic:9"
     assert sentinel["payload"]["note"] == "Enabled the requested tool config."
+    assert sentinel["payload"]["metadata"]["message_thread_id"] == 9
+
+
+def test_gateway_chat_can_apply_config_intent_and_schedule_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    save_raw_config_payload(cfg.to_dict(), path=config_path)
+
+    def _fake_schedule(*, delay_s: float = 0.0, reason: str = "", execv_fn=None):
+        del execv_fn
+        return {
+            "ok": True,
+            "scheduled": True,
+            "coalesced": False,
+            "delay_s": delay_s,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("clawlite.tools.gateway_admin.schedule_gateway_restart", _fake_schedule)
+
+    app = create_app(cfg, config_path=str(config_path))
+    app.state.runtime.workspace.should_run_bootstrap = lambda: False
+    app.state.runtime.engine.provider = GatewayAdminIntentProvider()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "telegram:chat42:topic:9",
+                "channel": "telegram",
+                "chat_id": "chat42",
+                "text": "Ajusta esse timeout e reinicia.",
+                "runtime_metadata": {"message_thread_id": 9},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "Restart scheduled."
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["default_timeout_s"] == 66
+    sentinel = json.loads(restart_sentinel_path(cfg.state_path).read_text(encoding="utf-8"))
+    assert sentinel["payload"]["channel"] == "telegram"
+    assert sentinel["payload"]["target"] == "telegram:chat42:topic:9"
+    assert sentinel["payload"]["note"] == "Raised the default tool timeout."
+    assert sentinel["payload"]["changed_paths"] == ["tools.default_timeout_s"]
     assert sentinel["payload"]["metadata"]["message_thread_id"] == 9
 
 

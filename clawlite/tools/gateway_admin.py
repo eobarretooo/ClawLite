@@ -40,7 +40,9 @@ _DISALLOWED_SESSION_PREFIXES: tuple[str, ...] = (
     "heartbeat:",
     "bootstrap:",
 )
+_INTENT_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 _LOOKUP_PATH_RE = re.compile(r"^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*$")
+_TOOL_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*(?::[a-z_][a-z0-9_]*)*$")
 _GATEWAY_ADMIN_RESTART_LOCK = threading.Lock()
 _SAFE_EDITABLE_PATH_PATTERNS: tuple[str, ...] = (
     "tools.restrict_to_workspace",
@@ -345,11 +347,112 @@ def _validate_patch_paths(patch: dict[str, Any]) -> list[str]:
     return changed_paths
 
 
+def _normalize_intent_name(value: Any) -> str:
+    intent = str(value or "").strip().lower()
+    if not intent:
+        raise RuntimeError("gateway_admin_intent_required")
+    if len(intent) > 80 or _INTENT_NAME_RE.fullmatch(intent) is None:
+        raise RuntimeError("gateway_admin_intent_invalid")
+    return intent
+
+
+def _normalize_tool_name(value: Any) -> str:
+    tool_name = str(value or "").strip().lower().replace("-", "_")
+    if not tool_name:
+        raise RuntimeError("gateway_admin_tool_name_required")
+    if len(tool_name) > 80 or _TOOL_NAME_RE.fullmatch(tool_name) is None:
+        raise RuntimeError("gateway_admin_tool_name_invalid")
+    return tool_name
+
+
+def _coerce_bool_argument(value: Any, *, key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    token = str(value or "").strip().lower()
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"gateway_admin_argument_invalid_bool:{key}")
+
+
+def _coerce_int_argument(value: Any, *, key: str, minimum: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"gateway_admin_argument_invalid_int:{key}") from exc
+    if parsed < minimum:
+        raise RuntimeError(f"gateway_admin_argument_invalid_int:{key}")
+    return parsed
+
+
+def _coerce_float_argument(value: Any, *, key: str, minimum: float = 0.1) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"gateway_admin_argument_invalid_number:{key}") from exc
+    if parsed < minimum:
+        raise RuntimeError(f"gateway_admin_argument_invalid_number:{key}")
+    return parsed
+
+
+def _build_intent_patch(arguments: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
+    intent = _normalize_intent_name(arguments.get("intent"))
+    if intent == "set_default_tool_timeout":
+        timeout_s = _coerce_float_argument(arguments.get("timeout_s"), key="timeout_s")
+        return (
+            intent,
+            {"tools": {"default_timeout_s": timeout_s}},
+            f"Updated the default tool timeout to {timeout_s:g}s.",
+        )
+    if intent == "set_tool_timeout":
+        tool_name = _normalize_tool_name(arguments.get("tool_name"))
+        timeout_s = _coerce_float_argument(arguments.get("timeout_s"), key="timeout_s")
+        return (
+            intent,
+            {"tools": {"timeouts": {tool_name: timeout_s}}},
+            f"Updated the `{tool_name}` tool timeout to {timeout_s:g}s.",
+        )
+    if intent == "set_workspace_tool_restriction":
+        enabled = _coerce_bool_argument(arguments.get("enabled"), key="enabled")
+        return (
+            intent,
+            {"tools": {"restrict_to_workspace": enabled}},
+            "Restricted tools to the workspace only."
+            if enabled
+            else "Removed the workspace-only tool restriction.",
+        )
+    if intent == "set_loop_detection":
+        patch: dict[str, Any] = {}
+        if "enabled" in arguments:
+            patch["enabled"] = _coerce_bool_argument(arguments.get("enabled"), key="enabled")
+        if "history_size" in arguments:
+            patch["history_size"] = _coerce_int_argument(arguments.get("history_size"), key="history_size")
+        if "repeat_threshold" in arguments:
+            patch["repeat_threshold"] = _coerce_int_argument(
+                arguments.get("repeat_threshold"),
+                key="repeat_threshold",
+            )
+        if "critical_threshold" in arguments:
+            patch["critical_threshold"] = _coerce_int_argument(
+                arguments.get("critical_threshold"),
+                key="critical_threshold",
+            )
+        if not patch:
+            raise RuntimeError("gateway_admin_loop_detection_update_required")
+        note = "Updated tool loop-detection settings."
+        if set(patch) == {"enabled"}:
+            note = "Enabled tool loop detection." if patch["enabled"] else "Disabled tool loop detection."
+        return (intent, {"tools": {"loop_detection": patch}}, note)
+    raise RuntimeError(f"gateway_admin_intent_unsupported:{intent}")
+
+
 class GatewayAdminTool(Tool):
     name = "gateway_admin"
     description = (
         "Inspect the active config, apply a partial config patch, and restart the ClawLite gateway. "
         "Use only when the user explicitly asks to change config or restart the runtime. "
+        "Prefer config_intent_and_restart for supported safe presets, and use config_schema_lookup before raw patching. "
         "For config_patch_and_restart, always pass a short human-readable note describing what was enabled or changed; "
         "ClawLite will send that note back after the gateway restarts."
     )
@@ -371,11 +474,24 @@ class GatewayAdminTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["config_get", "config_schema_lookup", "config_patch_and_restart", "restart_gateway"],
+                    "enum": [
+                        "config_get",
+                        "config_schema_lookup",
+                        "config_intent_and_restart",
+                        "config_patch_and_restart",
+                        "restart_gateway",
+                    ],
                 },
                 "path": {
                     "type": "string",
                     "description": "Snake_case config path to inspect, for example tools.default_timeout_s.",
+                },
+                "intent": {
+                    "type": "string",
+                    "description": (
+                        "Safe preset for config_intent_and_restart, for example set_default_tool_timeout, "
+                        "set_tool_timeout, set_workspace_tool_restriction, or set_loop_detection."
+                    ),
                 },
                 "patch": {
                     "type": "object",
@@ -391,6 +507,31 @@ class GatewayAdminTool(Tool):
                 "restart_delay_s": {
                     "type": "number",
                     "minimum": 0,
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Boolean flag used by safe intents such as set_loop_detection.",
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "Tool name used by set_tool_timeout, for example web_fetch.",
+                },
+                "timeout_s": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "description": "Timeout value used by safe timeout intents.",
+                },
+                "history_size": {
+                    "type": "integer",
+                    "minimum": 1,
+                },
+                "repeat_threshold": {
+                    "type": "integer",
+                    "minimum": 1,
+                },
+                "critical_threshold": {
+                    "type": "integer",
+                    "minimum": 1,
                 },
             },
             "required": ["action"],
@@ -521,6 +662,18 @@ class GatewayAdminTool(Tool):
             "note": note,
         }
 
+    def _apply_intent_and_restart(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        intent, patch, default_note = _build_intent_patch(arguments)
+        patch_arguments = dict(arguments)
+        patch_arguments["patch"] = patch
+        if not str(patch_arguments.get("note", "") or "").strip():
+            patch_arguments["note"] = default_note
+        payload = self._apply_patch_and_restart(patch_arguments, ctx)
+        payload["action"] = "config_intent_and_restart"
+        payload["intent"] = intent
+        payload["resolved_patch"] = patch
+        return payload
+
     def _restart_gateway(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         self._ensure_restart_not_pending()
         note = str(arguments.get("note", "") or "").strip() or "Restarted the gateway as requested."
@@ -564,6 +717,9 @@ class GatewayAdminTool(Tool):
             payload = self._config_snapshot()
         elif action == "config_schema_lookup":
             payload = self._config_schema_lookup(arguments)
+        elif action == "config_intent_and_restart":
+            with _GATEWAY_ADMIN_RESTART_LOCK:
+                payload = self._apply_intent_and_restart(arguments, ctx)
         elif action == "config_patch_and_restart":
             with _GATEWAY_ADMIN_RESTART_LOCK:
                 payload = self._apply_patch_and_restart(arguments, ctx)

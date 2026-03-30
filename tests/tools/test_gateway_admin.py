@@ -241,6 +241,161 @@ def test_gateway_admin_config_patch_and_restart_allows_dynamic_tool_timeout_keys
     assert sentinel["changed_paths"] == ["tools.timeouts.web_fetch"]
 
 
+def test_gateway_admin_config_intent_and_restart_sets_default_tool_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_default_tool_timeout",
+                    "timeout_s": 31,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_and_restart"
+        assert payload["intent"] == "set_default_tool_timeout"
+        assert payload["resolved_patch"] == {"tools": {"default_timeout_s": 31.0}}
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["default_timeout_s"] == 31
+
+
+def test_gateway_admin_config_intent_and_restart_sets_named_tool_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_tool_timeout",
+                    "tool_name": "web-fetch",
+                    "timeout_s": 33,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["intent"] == "set_tool_timeout"
+        assert payload["changed_paths"] == ["tools.timeouts.web_fetch"]
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["timeouts"]["web_fetch"] == 33
+
+
+def test_gateway_admin_config_intent_and_restart_updates_loop_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_loop_detection",
+                    "enabled": True,
+                    "repeat_threshold": 4,
+                    "critical_threshold": 7,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["intent"] == "set_loop_detection"
+        assert payload["changed_paths"] == [
+            "tools.loop_detection.critical_threshold",
+            "tools.loop_detection.enabled",
+            "tools.loop_detection.repeat_threshold",
+        ]
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["loop_detection"]["enabled"] is True
+    assert saved["tools"]["loop_detection"]["repeat_threshold"] == 4
+    assert saved["tools"]["loop_detection"]["critical_threshold"] == 7
+
+
+def test_gateway_admin_config_intent_and_restart_rejects_unsupported_intent(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    save_raw_config_payload({}, path=config_path)
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        with pytest.raises(RuntimeError, match="gateway_admin_intent_unsupported:enable_exec"):
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "enable_exec",
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+
+    asyncio.run(_scenario())
+
+
 def test_gateway_admin_rejects_background_sessions(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     save_raw_config_payload({}, path=config_path)
