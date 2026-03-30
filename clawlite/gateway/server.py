@@ -377,6 +377,11 @@ class DiscordRefreshRequest(BaseModel):
     noop: bool = False
 
 
+class GatewayRestartRequest(BaseModel):
+    reason: str = "operator_restart"
+    delay_s: float = 1.5
+
+
 class ToolApprovalReviewRequest(BaseModel):
     actor: str = ""
     note: str = ""
@@ -4079,6 +4084,18 @@ def create_app(
         request: Request, payload: DiscordRefreshRequest | None = None
     ) -> dict[str, Any]:
         return await control_handlers.discord_refresh(request, payload or DiscordRefreshRequest())
+
+    @app.post("/v1/control/gateway/restart")
+    async def gateway_restart(
+        request: Request, payload: GatewayRestartRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.gateway_restart(request, payload or GatewayRestartRequest())
+
+    @app.post("/api/gateway/restart")
+    async def api_gateway_restart(
+        request: Request, payload: GatewayRestartRequest | None = None
+    ) -> dict[str, Any]:
+        return await control_handlers.gateway_restart(request, payload or GatewayRestartRequest())
 
     @app.post("/v1/control/supervisor/recover")
     async def supervisor_recover(request: Request, payload: SupervisorRecoverRequest | None = None) -> dict[str, Any]:

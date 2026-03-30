@@ -125,7 +125,7 @@ User Message
 
 ```bash
 pip install -e ".[all]"
-python -m pytest tests/ -q --tb=short   # full suite (2099 passed, 1 skipped)
+python -m pytest tests/ -q --tb=short   # full suite (2105 passed, 1 skipped)
 python -m ruff check --select=E,F,W .   # lint
 ```
 
@@ -146,6 +146,8 @@ clawlite gateway                # start HTTP/WS gateway
 clawlite run "..."              # one-shot agent call
 clawlite status                 # runtime health summary
 clawlite diagnostics            # full diagnostic snapshot
+clawlite generate-self          # generate runtime SELF.md (+ optional extra outputs)
+clawlite restart-gateway        # schedule a live gateway restart through the control plane
 
 clawlite skills list            # list available skills
 clawlite skills doctor          # diagnose broken skills

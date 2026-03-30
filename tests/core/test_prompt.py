@@ -10,6 +10,7 @@ from clawlite.core.prompt import PromptBuilder
 def test_prompt_builder_reads_workspace_files(tmp_path: Path) -> None:
     (tmp_path / "IDENTITY.md").write_text("I am Claw", encoding="utf-8")
     (tmp_path / "SOUL.md").write_text("Be direct", encoding="utf-8")
+    (tmp_path / "SELF.md").write_text("Resumo do agente.", encoding="utf-8")
 
     builder = PromptBuilder(tmp_path)
     out = builder.build(
@@ -21,6 +22,8 @@ def test_prompt_builder_reads_workspace_files(tmp_path: Path) -> None:
 
     assert "IDENTITY.md" in out.system_prompt
     assert "SOUL.md" in out.system_prompt
+    assert "SELF.md" in out.system_prompt
+    assert "Resumo do agente." in out.system_prompt
     assert "fact A" in out.memory_section
     assert out.history_messages == [{"role": "user", "content": "old"}]
     assert "[Runtime Context" in out.runtime_context
@@ -48,6 +51,22 @@ def test_prompt_builder_keeps_stable_section_order_and_sorted_skills(
     assert identity_pos >= 0
     assert skills_pos > identity_pos
     assert "- alpha\n- zeta" in out.system_prompt
+
+
+def test_prompt_builder_warns_when_self_doc_is_missing(tmp_path: Path) -> None:
+    (tmp_path / "IDENTITY.md").write_text("I am Claw", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text("Be direct", encoding="utf-8")
+
+    builder = PromptBuilder(tmp_path)
+    out = builder.build(
+        user_text="hello",
+        memory_snippets=[],
+        history=[],
+        skills_for_prompt=[],
+    )
+
+    assert "## SELF.md" in out.system_prompt
+    assert "clawlite generate-self" in out.system_prompt
 
 
 def test_prompt_builder_applies_token_budget_shaping_deterministically(

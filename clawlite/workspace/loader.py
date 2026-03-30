@@ -26,6 +26,13 @@ TEMPLATE_FILES = (
 )
 
 RUNTIME_CRITICAL_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
+SELF_CONTEXT_NOTICE = (
+    "## SELF.md\n"
+    "[SELF.md ausente]\n"
+    "- SELF.md nao foi encontrado no workspace atual.\n"
+    "- Na proxima interacao com o usuario, avise para rodar `clawlite generate-self`.\n"
+    "- Nao invente detalhes de runtime, config ou operacao que nao estejam no codigo atual."
+)
 
 DEFAULT_VARS = {
     "assistant_name": "ClawLite",
@@ -569,15 +576,20 @@ class WorkspaceLoader:
 
     def system_context(self, *, include_heartbeat: bool = True, include_bootstrap: bool = True) -> str:
         self.ensure_runtime_files()
-        files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md"]
+        files = ["IDENTITY.md", "SOUL.md", "SELF.md", "AGENTS.md", "TOOLS.md", "USER.md"]
         if include_heartbeat:
             files.append("HEARTBEAT.md")
         if include_bootstrap and self.should_run_bootstrap():
             files.append("BOOTSTRAP.md")
 
         docs = self.read(files)
-        ordered_files = [name for name in files if name in docs]
-        parts = [f"## {name}\n{docs[name]}" for name in ordered_files]
+        parts: list[str] = []
+        for name in files:
+            if name == "SELF.md" and name not in docs:
+                parts.append(SELF_CONTEXT_NOTICE)
+                continue
+            if name in docs:
+                parts.append(f"## {name}\n{docs[name]}")
         return "\n\n".join(parts).strip()
 
     def prompt_context(
@@ -590,7 +602,7 @@ class WorkspaceLoader:
         self.ensure_runtime_files()
         # USER.md is parsed separately into a structured profile hint so raw placeholders
         # do not leak into the live system prompt.
-        files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md"]
+        files = ["IDENTITY.md", "SOUL.md", "SELF.md", "AGENTS.md", "TOOLS.md"]
         if include_heartbeat:
             files.append("HEARTBEAT.md")
         if include_bootstrap and self.should_run_bootstrap():
@@ -601,6 +613,11 @@ class WorkspaceLoader:
             prompt_file_max_bytes=prompt_file_max_bytes,
             critical_files=RUNTIME_CRITICAL_FILES,
         )
-        ordered_files = [name for name in files if name in docs]
-        parts = [f"## {name}\n{docs[name]}" for name in ordered_files]
+        parts: list[str] = []
+        for name in files:
+            if name == "SELF.md" and name not in docs:
+                parts.append(SELF_CONTEXT_NOTICE)
+                continue
+            if name in docs:
+                parts.append(f"## {name}\n{docs[name]}")
         return "\n\n".join(parts).strip()

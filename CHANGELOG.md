@@ -10,9 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - official Docker foundation with `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and host-mounted `~/.clawlite` runtime state
 - persisted Discord focus bindings with `/focus` / `/unfocus`, routed through the inbound interceptor before the agent loop
+- `clawlite generate-self`, which renders a factual `SELF.md` from the live schema/CLI/runtime and can write both the runtime workspace copy plus additional outputs such as `docs/SELF.md`
+- `clawlite restart-gateway`, plus `POST /v1/control/gateway/restart` and `/api/gateway/restart`, so operators have a first-class CLI/control-plane path for scheduled live gateway restarts
 
 ### Changed
 - refreshed README/docs status snapshot to point at the new Docker path and the active parity track
+- new sessions now also load `SELF.md` into workspace prompt context when present, and inject a fail-closed notice telling the agent to ask for `clawlite generate-self` when the file is missing
 - Discord policy/routing parity slice now includes DM/guild policy controls, guild/channel/role allowlists, bot gating, explicit session keys, configurable `reply_to_mode`, isolated slash sessions, deferred interaction replies, and persisted thread/channel bindings with idle/max-age expiry
 - Discord operator flows now include native `/discord-status` and `/discord-refresh` commands handled before the agent loop
 - `self_evolution` now supports a canary-style autonomy-session allowlist so the background loop can stay disabled outside explicitly approved runtime sessions while operator-forced dry runs still work

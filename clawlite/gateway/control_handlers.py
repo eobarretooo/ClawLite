@@ -8,6 +8,7 @@ from fastapi import HTTPException, Request
 
 from clawlite.core.memory_monitor import MemoryMonitor
 from clawlite.core.skills import skills_doctor_report, skills_managed_report, skills_sync_report, skills_validate_report
+from clawlite.gateway.restart_control import gateway_restart_pending, pending_gateway_restart_reason, schedule_gateway_restart
 
 
 @dataclass
@@ -262,6 +263,16 @@ class GatewayControlHandlers:
         operator = self._require_channel_operator("discord", "operator_refresh_transport")
         summary = await operator()
         return {"ok": bool(summary.get("ok", False)), "summary": summary}
+
+    async def gateway_restart(self, request: Request, payload: Any) -> dict[str, Any]:
+        self._check_control(request)
+        reason = str(getattr(payload, "reason", "") or "").strip() or "operator_restart"
+        delay_s = max(0.0, float(getattr(payload, "delay_s", 1.5) or 0.0))
+        summary = schedule_gateway_restart(delay_s=delay_s, reason=reason)
+        summary["gateway_restarted"] = True
+        summary["pending"] = gateway_restart_pending()
+        summary["pending_reason"] = pending_gateway_restart_reason()
+        return {"ok": True, "summary": summary}
 
     async def heartbeat_trigger(self, request: Request) -> dict[str, Any]:
         self._check_control(request)

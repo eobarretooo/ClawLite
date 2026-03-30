@@ -30,6 +30,27 @@ def test_workspace_system_context_includes_core_docs(tmp_path: Path) -> None:
     assert "## SOUL.md" in content
 
 
+def test_workspace_prompt_context_includes_self_doc_when_present(tmp_path: Path) -> None:
+    loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
+    loader.bootstrap()
+    (tmp_path / "ws" / "SELF.md").write_text("Resumo factual do runtime.", encoding="utf-8")
+
+    content = loader.prompt_context()
+
+    assert "## SELF.md" in content
+    assert "Resumo factual do runtime." in content
+
+
+def test_workspace_prompt_context_warns_when_self_doc_is_missing(tmp_path: Path) -> None:
+    loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
+    loader.bootstrap()
+
+    content = loader.prompt_context()
+
+    assert "## SELF.md" in content
+    assert "clawlite generate-self" in content
+
+
 def test_workspace_bootstrap_lifecycle(tmp_path: Path) -> None:
     loader = WorkspaceLoader(workspace_path=tmp_path / "ws")
     loader.bootstrap()

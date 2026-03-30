@@ -405,6 +405,38 @@ def discord_refresh(
     return payload
 
 
+def gateway_restart(
+    config: AppConfig,
+    *,
+    gateway_url: str = "",
+    token: str = "",
+    timeout: float = 10.0,
+    reason: str = "",
+    delay_s: float = 1.5,
+) -> dict[str, Any]:
+    payload, response, body = _gateway_control_request(
+        config,
+        gateway_url=gateway_url,
+        token=token,
+        timeout=timeout,
+        method="POST",
+        endpoint="/v1/control/gateway/restart",
+        json_body={
+            "reason": str(reason or "").strip() or "operator_restart",
+            "delay_s": max(0.0, float(delay_s or 0.0)),
+        },
+    )
+    if response is None:
+        return payload
+    if response.is_success and isinstance(body, dict) and "summary" in body:
+        payload["ok"] = bool(body.get("ok", False))
+        payload["summary"] = body.get("summary", {})
+        return payload
+    detail = body.get("detail", body.get("error", "gateway_restart_failed")) if isinstance(body, dict) else str(body or "gateway_restart_failed")
+    payload["error"] = str(detail)
+    return payload
+
+
 def telegram_refresh(
     config: AppConfig,
     *,

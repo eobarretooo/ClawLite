@@ -9356,6 +9356,42 @@ def test_gateway_discord_refresh_endpoint_calls_channel_operator_hook(tmp_path: 
     fake_channel.operator_refresh_transport.assert_awaited_once_with()
 
 
+def test_gateway_restart_endpoint_schedules_runtime_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    app = create_app(cfg)
+
+    def _fake_schedule(*, delay_s: float = 0.0, reason: str = "", execv_fn=None):
+        del execv_fn
+        return {
+            "ok": True,
+            "scheduled": True,
+            "coalesced": False,
+            "delay_s": delay_s,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("clawlite.gateway.control_handlers.schedule_gateway_restart", _fake_schedule)
+
+    with TestClient(app) as client:
+        response = client.post("/v1/control/gateway/restart", json={"reason": "operator_request", "delay_s": 0.25})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["gateway_restarted"] is True
+    assert payload["summary"]["scheduled"] is True
+    assert payload["summary"]["reason"] == "operator_request"
+    assert payload["summary"]["delay_s"] == 0.25
+
+
 def test_gateway_autonomy_wake_endpoint_calls_runtime_wake_submitter(tmp_path: Path) -> None:
     cfg = AppConfig(
         workspace_path=str(tmp_path / "workspace"),

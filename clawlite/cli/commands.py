@@ -19,6 +19,7 @@ from clawlite.cli.ops import fetch_gateway_diagnostics
 from clawlite.cli.ops import fetch_gateway_tool_approval_audit
 from clawlite.cli.ops import fetch_gateway_tool_approval_audit_export
 from clawlite.cli.ops import fetch_gateway_tool_approvals
+from clawlite.cli.ops import gateway_restart
 from clawlite.cli.ops import memory_eval_snapshot
 from clawlite.cli.ops import memory_branch_checkout
 from clawlite.cli.ops import memory_branch_create
@@ -87,6 +88,7 @@ from clawlite.core.skills import skills_doctor_status
 from clawlite.core.skills import skills_managed_report
 from clawlite.core.skills import skills_sync_report
 from clawlite.scheduler.cron import CronService
+from clawlite.selfdoc import write_self_markdown
 from clawlite.tools.registry import ToolRegistry
 from clawlite.utils.logger import stdout_json
 from clawlite.utils.logger import stdout_text
@@ -314,6 +316,45 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def cmd_generate_self(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config, profile=getattr(args, "profile", None))
+    runtime_target = Path(cfg.workspace_path).expanduser() / "SELF.md"
+    targets: list[Path] = [runtime_target]
+    for raw in list(getattr(args, "out", []) or []):
+        target = Path(str(raw)).expanduser()
+        if target not in targets:
+            targets.append(target)
+    written = write_self_markdown(
+        targets=targets,
+        config_path=args.config,
+        profile=getattr(args, "profile", None),
+    )
+    _print_json(
+        {
+            "ok": True,
+            "action": "generate_self",
+            "runtime_target": str(runtime_target),
+            "written": [str(path) for path in written],
+        }
+    )
+    return 0
+
+
+def cmd_restart_gateway(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config, profile=getattr(args, "profile", None))
+    payload = gateway_restart(
+        cfg,
+        gateway_url=str(args.gateway_url or ""),
+        token=str(args.token or ""),
+        timeout=float(args.timeout),
+        reason=str(args.reason or ""),
+        delay_s=float(args.delay_s),
+    )
+    payload["action"] = "restart_gateway"
+    _print_json(payload)
+    return 0 if payload.get("ok", False) else 2
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -2667,6 +2708,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_dashboard = sub.add_parser("dashboard", help="Print or open the local dashboard URL")
     p_dashboard.add_argument("--no-open", action="store_true", help="Print dashboard URLs without opening a browser")
     p_dashboard.set_defaults(handler=cmd_dashboard)
+
+    p_generate_self = sub.add_parser("generate-self", help="Generate SELF.md for the runtime workspace and optional extra output paths")
+    p_generate_self.add_argument("--out", action="append", default=[], help="Optional extra output path; can be passed multiple times")
+    p_generate_self.set_defaults(handler=cmd_generate_self)
+
+    p_restart_gateway = sub.add_parser("restart-gateway", help="Schedule a gateway restart through the live control endpoint")
+    p_restart_gateway.add_argument("--gateway-url", default="", help="Gateway base URL, e.g. http://127.0.0.1:8787")
+    p_restart_gateway.add_argument("--token", default="", help="Bearer token for protected gateway endpoints")
+    p_restart_gateway.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds")
+    p_restart_gateway.add_argument("--reason", default="operator_restart", help="Reason label recorded with the restart request")
+    p_restart_gateway.add_argument("--delay-s", type=float, default=1.5, help="Restart delay in seconds before execv")
+    p_restart_gateway.set_defaults(handler=cmd_restart_gateway)
 
     p_configure = sub.add_parser("configure", help="Interactive configuration wizard (Basic / Advanced settings)")
     p_configure.add_argument(

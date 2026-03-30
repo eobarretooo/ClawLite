@@ -5851,6 +5851,46 @@ def test_cli_telegram_refresh_and_offset_commit_use_gateway_controls(
     )
 
 
+def test_cli_generate_self_writes_runtime_and_requested_outputs(
+    tmp_path: Path, capsys
+) -> None:
+    config_path = tmp_path / "config.json"
+    runtime_workspace = tmp_path / "runtime-workspace"
+    repo_workspace = tmp_path / "workspace" / "SELF.md"
+    repo_docs = tmp_path / "docs" / "SELF.md"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(runtime_workspace),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "generate-self",
+            "--out",
+            str(repo_workspace),
+            "--out",
+            str(repo_docs),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert (runtime_workspace / "SELF.md").exists()
+    assert repo_workspace.exists()
+    assert repo_docs.exists()
+    assert "# SELF.md" in repo_workspace.read_text(encoding="utf-8")
+    assert "## 1. O que é o ClawLite" in repo_docs.read_text(encoding="utf-8")
+
+
 def test_cli_telegram_offset_sync_uses_gateway_control(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
@@ -6168,6 +6208,75 @@ def test_cli_discord_refresh_uses_gateway_control(
         "POST",
         "http://127.0.0.1:8787/v1/control/channels/discord/refresh",
         {},
+    )
+
+
+def test_cli_restart_gateway_uses_gateway_control(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(tmp_path / "workspace"),
+                "state_path": str(tmp_path / "state"),
+                "provider": {"model": "openai/gpt-4o-mini"},
+                "gateway": {
+                    "host": "127.0.0.1",
+                    "port": 8787,
+                    "auth": {"token": "gw-token"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, str, object]] = []
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.is_success = True
+
+        def json(self) -> dict[str, object]:
+            return {"ok": True, "summary": {"gateway_restarted": True, "scheduled": True}}
+
+    class _FakeClient:
+        def __init__(self, *, timeout, headers):
+            del timeout, headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None):
+            calls.append(("POST", url, json))
+            return _FakeResponse()
+
+    monkeypatch.setattr("clawlite.cli.ops.httpx.Client", _FakeClient)
+
+    rc = main(
+        [
+            "--config",
+            str(config_path),
+            "restart-gateway",
+            "--reason",
+            "operator_request",
+            "--delay-s",
+            "0.25",
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["summary"]["gateway_restarted"] is True
+    assert calls[0] == (
+        "POST",
+        "http://127.0.0.1:8787/v1/control/gateway/restart",
+        {"reason": "operator_request", "delay_s": 0.25},
     )
 
 
