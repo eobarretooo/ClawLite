@@ -80,6 +80,90 @@ _PROTECTED_PATH_PATTERNS: tuple[str, ...] = (
     "tools.web.allowlist",
     "tools.web.denylist",
 )
+_SAFE_INTENT_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "name": "set_default_tool_timeout",
+        "summary": "Set the default timeout applied to tools without a per-tool override.",
+        "paths": ["tools.default_timeout_s"],
+        "required_args": ["timeout_s"],
+        "optional_args": [],
+    },
+    {
+        "name": "set_tool_timeout",
+        "summary": "Set the timeout for one named tool.",
+        "paths": ["tools.timeouts.<tool_name>"],
+        "required_args": ["tool_name", "timeout_s"],
+        "optional_args": [],
+    },
+    {
+        "name": "set_workspace_tool_restriction",
+        "summary": "Toggle workspace-only restriction for tool execution.",
+        "paths": ["tools.restrict_to_workspace"],
+        "required_args": ["enabled"],
+        "optional_args": [],
+    },
+    {
+        "name": "set_loop_detection",
+        "summary": "Tune the bounded loop-detection settings for tools.",
+        "paths": [
+            "tools.loop_detection.enabled",
+            "tools.loop_detection.history_size",
+            "tools.loop_detection.repeat_threshold",
+            "tools.loop_detection.critical_threshold",
+        ],
+        "required_args": [],
+        "requires_any_of": ["enabled", "history_size", "repeat_threshold", "critical_threshold"],
+        "optional_args": ["enabled", "history_size", "repeat_threshold", "critical_threshold"],
+    },
+    {
+        "name": "set_web_timeouts",
+        "summary": "Adjust web fetch and search timeout values.",
+        "paths": ["tools.web.timeout", "tools.web.search_timeout"],
+        "required_args": [],
+        "requires_any_of": ["timeout_s", "search_timeout_s"],
+        "optional_args": ["timeout_s", "search_timeout_s"],
+    },
+    {
+        "name": "set_web_content_budget",
+        "summary": "Set the max-char budget returned by web fetch.",
+        "paths": ["tools.web.max_chars"],
+        "required_args": ["max_chars"],
+        "optional_args": [],
+    },
+    {
+        "name": "set_web_private_address_blocking",
+        "summary": "Toggle private-address blocking for web fetch.",
+        "paths": ["tools.web.block_private_addresses"],
+        "required_args": ["enabled"],
+        "optional_args": [],
+    },
+    {
+        "name": "set_web_fetch_limits",
+        "summary": "Adjust several safe web fetch limits in one bounded intent.",
+        "paths": [
+            "tools.web.timeout",
+            "tools.web.search_timeout",
+            "tools.web.max_redirects",
+            "tools.web.max_chars",
+            "tools.web.block_private_addresses",
+        ],
+        "required_args": [],
+        "requires_any_of": [
+            "timeout_s",
+            "search_timeout_s",
+            "max_redirects",
+            "max_chars",
+            "block_private_addresses",
+        ],
+        "optional_args": [
+            "timeout_s",
+            "search_timeout_s",
+            "max_redirects",
+            "max_chars",
+            "block_private_addresses",
+        ],
+    },
+)
 
 
 def _deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -516,12 +600,47 @@ def _build_intent_patch(arguments: dict[str, Any]) -> tuple[str, dict[str, Any],
     raise RuntimeError(f"gateway_admin_intent_unsupported:{intent}")
 
 
+def _intent_catalog_rows(*, requested_intent: str = "") -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    normalized_requested = str(requested_intent or "").strip().lower()
+    for spec in _SAFE_INTENT_CATALOG:
+        name = str(spec.get("name", "") or "").strip().lower()
+        if normalized_requested and name != normalized_requested:
+            continue
+        rows.append(
+            {
+                "name": name,
+                "summary": str(spec.get("summary", "") or "").strip(),
+                "paths": [str(item or "").strip() for item in list(spec.get("paths", []) or []) if str(item or "").strip()],
+                "required_args": [
+                    str(item or "").strip()
+                    for item in list(spec.get("required_args", []) or [])
+                    if str(item or "").strip()
+                ],
+                "requires_any_of": [
+                    str(item or "").strip()
+                    for item in list(spec.get("requires_any_of", []) or [])
+                    if str(item or "").strip()
+                ],
+                "optional_args": [
+                    str(item or "").strip()
+                    for item in list(spec.get("optional_args", []) or [])
+                    if str(item or "").strip()
+                ],
+                "preview_action": "config_intent_preview",
+                "apply_action": "config_intent_and_restart",
+            }
+        )
+    return rows
+
+
 class GatewayAdminTool(Tool):
     name = "gateway_admin"
     description = (
         "Inspect the active config, apply a partial config patch, and restart the ClawLite gateway. "
         "Use only when the user explicitly asks to change config or restart the runtime. "
-        "Prefer config_intent_preview or config_intent_and_restart for supported safe presets, and use config_schema_lookup or config_patch_preview before raw patching. "
+        "Prefer config_intent_catalog to discover supported safe presets, then use config_intent_preview or config_intent_and_restart, "
+        "and use config_schema_lookup or config_patch_preview before raw patching. "
         "For config_patch_and_restart, always pass a short human-readable note describing what was enabled or changed; "
         "ClawLite will send that note back after the gateway restarts."
     )
@@ -546,6 +665,7 @@ class GatewayAdminTool(Tool):
                     "enum": [
                         "config_get",
                         "config_schema_lookup",
+                        "config_intent_catalog",
                         "config_patch_preview",
                         "config_intent_preview",
                         "config_intent_and_restart",
@@ -560,8 +680,8 @@ class GatewayAdminTool(Tool):
                 "intent": {
                     "type": "string",
                     "description": (
-                        "Safe preset for config_intent_preview or config_intent_and_restart, for example set_default_tool_timeout, "
-                        "set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, set_web_timeouts, "
+                        "Safe preset for config_intent_catalog, config_intent_preview, or config_intent_and_restart, "
+                        "for example set_default_tool_timeout, set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, set_web_timeouts, "
                         "set_web_content_budget, set_web_private_address_blocking, or set_web_fetch_limits."
                     ),
                 },
@@ -680,6 +800,23 @@ class GatewayAdminTool(Tool):
                 current_payload=effective_payload,
                 default_payload=default_payload,
             ),
+        }
+
+    def _config_intent_catalog(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        requested = ""
+        if str(arguments.get("intent", "") or "").strip():
+            requested = _normalize_intent_name(arguments.get("intent"))
+        rows = _intent_catalog_rows(requested_intent=requested)
+        if requested and not rows:
+            raise RuntimeError(f"gateway_admin_intent_unsupported:{requested}")
+        return {
+            "ok": True,
+            "action": "config_intent_catalog",
+            "config_path": str(self._config_path or ""),
+            "config_profile": str(self._config_profile or ""),
+            "intent": requested,
+            "count": len(rows),
+            "intents": rows,
         }
 
     def _ensure_restart_not_pending(self) -> None:
@@ -879,6 +1016,8 @@ class GatewayAdminTool(Tool):
             payload = self._config_snapshot()
         elif action == "config_schema_lookup":
             payload = self._config_schema_lookup(arguments)
+        elif action == "config_intent_catalog":
+            payload = self._config_intent_catalog(arguments)
         elif action == "config_patch_preview":
             payload = self._preview_raw_patch(arguments)
         elif action == "config_intent_preview":

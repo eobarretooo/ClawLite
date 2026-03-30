@@ -124,6 +124,67 @@ def test_gateway_admin_config_schema_lookup_marks_protected_container_path(tmp_p
     asyncio.run(_scenario())
 
 
+def test_gateway_admin_config_intent_catalog_lists_safe_intents(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    save_raw_config_payload({}, path=config_path)
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {"action": "config_intent_catalog"},
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_catalog"
+        assert payload["count"] >= 8
+        rows = {row["name"]: row for row in payload["intents"]}
+        assert rows["set_web_private_address_blocking"]["paths"] == ["tools.web.block_private_addresses"]
+        assert rows["set_web_private_address_blocking"]["required_args"] == ["enabled"]
+        assert rows["set_web_private_address_blocking"]["requires_any_of"] == []
+        assert rows["set_web_private_address_blocking"]["preview_action"] == "config_intent_preview"
+        assert rows["set_web_private_address_blocking"]["apply_action"] == "config_intent_and_restart"
+        assert rows["set_loop_detection"]["required_args"] == []
+        assert rows["set_loop_detection"]["requires_any_of"] == [
+            "enabled",
+            "history_size",
+            "repeat_threshold",
+            "critical_threshold",
+        ]
+        assert rows["set_web_timeouts"]["requires_any_of"] == ["timeout_s", "search_timeout_s"]
+
+    asyncio.run(_scenario())
+
+
+def test_gateway_admin_config_intent_catalog_can_filter_one_intent(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    save_raw_config_payload({}, path=config_path)
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {"action": "config_intent_catalog", "intent": "set_web_content_budget"},
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_catalog"
+        assert payload["intent"] == "set_web_content_budget"
+        assert payload["count"] == 1
+        assert payload["intents"][0]["name"] == "set_web_content_budget"
+        assert payload["intents"][0]["paths"] == ["tools.web.max_chars"]
+
+    asyncio.run(_scenario())
+
+
 def test_gateway_admin_config_patch_and_restart_writes_config_and_sentinel(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

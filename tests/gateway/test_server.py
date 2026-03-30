@@ -223,6 +223,36 @@ class GatewayAdminPatchPreviewProvider:
         return LLMResult(text="Preview ready.", model="fake/gateway-admin-patch-preview", tool_calls=[], metadata={})
 
 
+class GatewayAdminIntentCatalogProvider:
+    def __init__(self) -> None:
+        self.tool_issued = False
+
+    def get_default_model(self) -> str:
+        return "fake/gateway-admin-intent-catalog"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        transcript = json.dumps(messages, ensure_ascii=False)
+        if "Quais intents seguros voce suporta?" in transcript and not self.tool_issued:
+            self.tool_issued = True
+            return LLMResult(
+                text="Inspecting safe config intents.",
+                model="fake/gateway-admin-intent-catalog",
+                tool_calls=[
+                    ToolCall(
+                        id="call_gateway_admin_intent_catalog",
+                        name="gateway_admin",
+                        arguments={
+                            "action": "config_intent_catalog",
+                            "intent": "set_web_private_address_blocking",
+                        },
+                    )
+                ],
+                metadata={},
+            )
+        return LLMResult(text="Catalog ready.", model="fake/gateway-admin-intent-catalog", tool_calls=[], metadata={})
+
+
 class GatewayAdminWebBlockingProvider:
     def __init__(self) -> None:
         self.tool_issued = False
@@ -944,6 +974,49 @@ def test_gateway_chat_can_preview_raw_config_patch_without_scheduling_restart(
 
     assert response.status_code == 200
     assert response.json()["text"] == "Preview ready."
+    after = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after == before
+    assert not restart_sentinel_path(cfg.state_path).exists()
+
+
+def test_gateway_chat_can_query_config_intent_catalog_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    save_raw_config_payload(cfg.to_dict(), path=config_path)
+
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError(f"restart should not be scheduled: {kwargs}")),
+    )
+
+    before = json.loads(config_path.read_text(encoding="utf-8"))
+
+    app = create_app(cfg, config_path=str(config_path))
+    app.state.runtime.workspace.should_run_bootstrap = lambda: False
+    app.state.runtime.engine.provider = GatewayAdminIntentCatalogProvider()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "telegram:chat42:topic:9",
+                "channel": "telegram",
+                "chat_id": "chat42",
+                "text": "Quais intents seguros voce suporta?",
+                "runtime_metadata": {"message_thread_id": 9},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "Catalog ready."
     after = json.loads(config_path.read_text(encoding="utf-8"))
     assert after == before
     assert not restart_sentinel_path(cfg.state_path).exists()
