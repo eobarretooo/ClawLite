@@ -192,6 +192,37 @@ class GatewayAdminPreviewProvider:
         return LLMResult(text="Preview ready.", model="fake/gateway-admin-preview", tool_calls=[], metadata={})
 
 
+class GatewayAdminWebBlockingProvider:
+    def __init__(self) -> None:
+        self.tool_issued = False
+
+    def get_default_model(self) -> str:
+        return "fake/gateway-admin-web-blocking"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        transcript = json.dumps(messages, ensure_ascii=False)
+        if "Bloqueia enderecos privados e reinicia." in transcript and not self.tool_issued:
+            self.tool_issued = True
+            return LLMResult(
+                text="Applying requested web safety intent.",
+                model="fake/gateway-admin-web-blocking",
+                tool_calls=[
+                    ToolCall(
+                        id="call_gateway_admin_web_blocking",
+                        name="gateway_admin",
+                        arguments={
+                            "action": "config_intent_and_restart",
+                            "intent": "set_web_private_address_blocking",
+                            "enabled": False,
+                        },
+                    )
+                ],
+                metadata={},
+            )
+        return LLMResult(text="Restart scheduled.", model="fake/gateway-admin-web-blocking", tool_calls=[], metadata={})
+
+
 class FailingProvider:
     def __init__(self, message: str) -> None:
         self.message = message
@@ -842,6 +873,56 @@ def test_gateway_chat_can_preview_config_intent_without_scheduling_restart(
     after = json.loads(config_path.read_text(encoding="utf-8"))
     assert after == before
     assert not restart_sentinel_path(cfg.state_path).exists()
+
+
+def test_gateway_chat_can_apply_web_private_address_blocking_intent_and_schedule_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    save_raw_config_payload(cfg.to_dict(), path=config_path)
+
+    def _fake_schedule(*, delay_s: float = 0.0, reason: str = "", execv_fn=None):
+        del execv_fn
+        return {
+            "ok": True,
+            "scheduled": True,
+            "coalesced": False,
+            "delay_s": delay_s,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("clawlite.tools.gateway_admin.schedule_gateway_restart", _fake_schedule)
+
+    app = create_app(cfg, config_path=str(config_path))
+    app.state.runtime.workspace.should_run_bootstrap = lambda: False
+    app.state.runtime.engine.provider = GatewayAdminWebBlockingProvider()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "telegram:chat42:topic:9",
+                "channel": "telegram",
+                "chat_id": "chat42",
+                "text": "Bloqueia enderecos privados e reinicia.",
+                "runtime_metadata": {"message_thread_id": 9},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "Restart scheduled."
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["web"]["block_private_addresses"] is False
+    sentinel = json.loads(restart_sentinel_path(cfg.state_path).read_text(encoding="utf-8"))
+    assert sentinel["payload"]["note"] == "Disabled web private-address blocking."
+    assert sentinel["payload"]["changed_paths"] == ["tools.web.block_private_addresses"]
 
 
 def test_gateway_startup_sends_restart_sentinel_notice(tmp_path: Path) -> None:

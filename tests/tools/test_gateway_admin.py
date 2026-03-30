@@ -315,6 +315,54 @@ def test_gateway_admin_config_intent_preview_reports_web_fetch_patch_without_wri
     assert consume_restart_sentinel(tmp_path / "state") is None
 
 
+def test_gateway_admin_config_intent_preview_reports_web_timeouts_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError(f"restart should not be scheduled: {kwargs}")),
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    before = json.loads(config_path.read_text(encoding="utf-8"))
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_preview",
+                    "intent": "set_web_timeouts",
+                    "timeout_s": 18,
+                    "search_timeout_s": 11,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["intent"] == "set_web_timeouts"
+        assert payload["changed_paths"] == ["tools.web.search_timeout", "tools.web.timeout"]
+        changes = {row["path"]: row for row in payload["changes"]}
+        assert changes["tools.web.timeout"]["effective_next_value"] == 18.0
+        assert changes["tools.web.search_timeout"]["effective_next_value"] == 11.0
+
+    asyncio.run(_scenario())
+
+    after = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after == before
+    assert consume_restart_sentinel(tmp_path / "state") is None
+
+
 def test_gateway_admin_config_intent_and_restart_sets_default_tool_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -500,6 +548,89 @@ def test_gateway_admin_config_intent_and_restart_updates_web_fetch_limits(
     assert saved["tools"]["web"]["search_timeout"] == 11
     assert saved["tools"]["web"]["max_redirects"] == 7
     assert saved["tools"]["web"]["max_chars"] == 16000
+    assert saved["tools"]["web"]["block_private_addresses"] is False
+
+
+def test_gateway_admin_config_intent_and_restart_updates_web_content_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_web_content_budget",
+                    "max_chars": 4096,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["intent"] == "set_web_content_budget"
+        assert payload["changed_paths"] == ["tools.web.max_chars"]
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["web"]["max_chars"] == 4096
+
+
+def test_gateway_admin_config_intent_and_restart_updates_web_private_address_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_web_private_address_blocking",
+                    "enabled": False,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["intent"] == "set_web_private_address_blocking"
+        assert payload["changed_paths"] == ["tools.web.block_private_addresses"]
+        assert payload["note"] == "Disabled web private-address blocking."
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["tools"]["web"]["block_private_addresses"] is False
 
 

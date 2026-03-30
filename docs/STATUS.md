@@ -52,6 +52,7 @@ That same `gateway_admin` path is now schema-aware and fail-closed for config wr
 That same `gateway_admin` path now also adds a first bounded intent layer on top of those guarded writes: `config_intent_and_restart` can apply safe presets such as default tool timeout, per-tool timeout, workspace-only restriction, and loop-detection tuning without making the model synthesize a raw patch object, while still reusing the same schema-aware allowlist enforcement, restart sentinel, and post-boot confirmation path.
 That same intent layer now also expands one step further into the existing safe `tools.web.*` allowlist: `set_web_fetch_limits` can update timeout, search timeout, redirect limit, max-char budget, and private-address blocking through the same guarded restart flow, so common web-fetch tuning no longer needs a raw patch payload either.
 That same bounded intent layer now also exposes a read-only `config_intent_preview` path before the real restart flow: the agent can resolve a safe preset into its exact patch, inspect the changed paths plus current-vs-next values, and preview the restart confirmation note without writing config or scheduling a restart first. That keeps the chat-driven admin loop safer before we widen it into more sensitive domains.
+That same safe web domain now also exposes smaller task-shaped intents on top of the existing `tools.web.*` allowlist: operators can ask for web timeout-only changes, a tighter content budget, or private-address blocking directly, without forcing the model to always route those requests through the broader `set_web_fetch_limits` preset.
 The newest install follow-up now closes two real setup regressions before the roadmap continues: local checkout installs through `scripts/install.sh` no longer lose `pyproject.toml` dependencies during the editable install pass, and the Termux/proot wrapper now forwards `SYNC_HELPER_URL` into the inner Ubuntu shell so the repository sync helper can actually run during bootstrap instead of failing on an unset variable.
 The newest skills follow-up now adds a compact managed-marketplace lifecycle summary to `skills.diagnostics_report()`: dashboard/control-plane payloads can now see managed `count`, `ready_count`, `blocked_count`, `disabled_count`, bounded `items`, and `status_counts`, and the Knowledge tab surfaces those managed marketplace signals directly instead of leaving marketplace lifecycle visible only in the CLI `skills managed` path.
 The newest skills follow-up now promotes that same managed lifecycle into a first-class live control-plane surface: `GET /v1/control/skills/managed` and `GET /api/skills/managed` expose the full managed inventory with live filters/counts, and the packaged dashboard Knowledge tab now offers `Inspect managed skills` to fetch that snapshot on demand instead of relying only on the bounded diagnostics preview.
@@ -71,7 +72,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 
 - Latest tag: `v0.7.0-beta.0`
 - `main` is ahead of that tag — provider onboarding was expanded with better wizard suggestions and additional OpenAI-compatible providers, and Docker now includes the next parity slice with runtime extras, an optional Redis bus profile, a rootless image, and an official setup helper
-- Full suite: `python -m pytest tests/ -q --tb=short` → **2090 passed, 1 skipped**
+- Full suite: `python -m pytest tests/ -q --tb=short` → **2094 passed, 1 skipped**
 - Focused runtime slice: `python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py` → **194 passed**
 - CI: pytest on Python 3.10 and 3.12, Ruff lint, autonomy contracts, and smoke coverage for YAML CLI config, local-provider probes, quickstart wizard, cron, browser bootstrap hints, and isolated self-evolution branch validation
 - Docker: official `Dockerfile`, `docker-compose.yml`, `docs/DOCKER.md`, and `scripts/docker_setup.sh` now ship in-tree; the current parity slice also adds the `runtime` extra, env overrides for the bus backend, an optional Redis compose profile, a rootless `clawlite` image user, CI smoke for `docker compose config` plus image build, and a browser-enabled image gate that verifies Playwright + Chromium are baked into the container
@@ -202,7 +203,7 @@ The newest follow-up slice tightens the default approval baseline on Telegram/Di
 ## Validation
 
 ```bash
-python -m pytest tests/ -q --tb=short  # 2090 passed, 1 skipped
+python -m pytest tests/ -q --tb=short  # 2094 passed, 1 skipped
 python -m pytest -q tests/runtime/test_autonomy_actions.py tests/gateway/test_server.py tests/runtime/test_self_evolution.py  # 194 passed
 bash scripts/smoke_test.sh  # 8 ok / 0 failure(s)
 python -m ruff check --select=E,F,W .  # when ruff is installed

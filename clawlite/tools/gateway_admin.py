@@ -444,6 +444,45 @@ def _build_intent_patch(arguments: dict[str, Any]) -> tuple[str, dict[str, Any],
         if set(patch) == {"enabled"}:
             note = "Enabled tool loop detection." if patch["enabled"] else "Disabled tool loop detection."
         return (intent, {"tools": {"loop_detection": patch}}, note)
+    if intent == "set_web_timeouts":
+        patch: dict[str, Any] = {}
+        if "timeout_s" in arguments:
+            patch["timeout"] = _coerce_float_argument(arguments.get("timeout_s"), key="timeout_s", minimum=1.0)
+        if "search_timeout_s" in arguments or "search_timeout" in arguments:
+            patch["search_timeout"] = _coerce_float_argument(
+                arguments.get("search_timeout_s", arguments.get("search_timeout")),
+                key="search_timeout_s",
+                minimum=1.0,
+            )
+        if not patch:
+            raise RuntimeError("gateway_admin_web_timeout_update_required")
+        if set(patch) == {"timeout"}:
+            return (
+                intent,
+                {"tools": {"web": patch}},
+                f"Updated the web fetch timeout to {patch['timeout']:g}s.",
+            )
+        if set(patch) == {"search_timeout"}:
+            return (
+                intent,
+                {"tools": {"web": patch}},
+                f"Updated the web search timeout to {patch['search_timeout']:g}s.",
+            )
+        return (intent, {"tools": {"web": patch}}, "Updated web fetch timeouts.")
+    if intent == "set_web_content_budget":
+        max_chars = _coerce_int_argument(arguments.get("max_chars"), key="max_chars", minimum=128)
+        return (
+            intent,
+            {"tools": {"web": {"max_chars": max_chars}}},
+            f"Updated the web fetch max-char budget to {max_chars}.",
+        )
+    if intent == "set_web_private_address_blocking":
+        enabled = _coerce_bool_argument(arguments.get("enabled"), key="enabled")
+        return (
+            intent,
+            {"tools": {"web": {"block_private_addresses": enabled}}},
+            "Enabled web private-address blocking." if enabled else "Disabled web private-address blocking.",
+        )
     if intent == "set_web_fetch_limits":
         patch: dict[str, Any] = {}
         if "timeout_s" in arguments:
@@ -521,7 +560,8 @@ class GatewayAdminTool(Tool):
                     "type": "string",
                     "description": (
                         "Safe preset for config_intent_preview or config_intent_and_restart, for example set_default_tool_timeout, "
-                        "set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, or set_web_fetch_limits."
+                        "set_tool_timeout, set_workspace_tool_restriction, set_loop_detection, set_web_timeouts, "
+                        "set_web_content_budget, set_web_private_address_blocking, or set_web_fetch_limits."
                     ),
                 },
                 "patch": {
