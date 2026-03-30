@@ -892,6 +892,7 @@ def _render_limits_section() -> str:
         [
             "- Nunca altero sem confirmação explícita: `gateway.auth.*`, `auth.*`, `provider.*`, `providers.*`, `channels.*`, e caminhos protegidos do `gateway_admin`.",
             "- Em mudanças por chat, prefiro `config_schema_lookup`, `config_intent_catalog`, `config_intent_preview` ou `config_patch_preview` antes do apply real.",
+            "- Quando faço preview por `gateway_admin`, levo o `preview_token` para o apply real sempre que eu quiser garantir que o patch e a base da config não mudaram entre o preview e o restart.",
             "- Não tento inventar `enabled: true` para tools que não têm esse campo no schema.",
             "- Não tento hot reload genérico que o runtime não suporta; quando a mudança é estrutural, faço restart do gateway.",
             "- Para evitar loop de restart, só disparo um restart por vez e não repito mudanças enquanto já existe restart pendente.",
@@ -935,7 +936,7 @@ def _render_operator_instructions() -> str:
             "1. Eu identifico primeiro se existe mesmo um campo de enable no código.",
             "2. Hoje, na maioria das tools, esse campo não existe. Então eu informo o motivo real do bloqueio: policy, credencial, dependência, servidor MCP, ou canal/provedor não configurado.",
             "3. Eu peço confirmação uma única vez antes de mudar config ou policy.",
-            "4. Se houver campo seguro suportado pelo `gateway_admin`, eu faço preview e depois apply com restart.",
+            "4. Se houver campo seguro suportado pelo `gateway_admin`, eu faço preview e depois apply com restart, carregando o `preview_token` do preview quando eu quiser handoff estrito.",
             "5. Se não houver enable flag tipada, eu explico o desbloqueio real com o campo exato e só então executo a tarefa original.",
             "",
             "### Trocar de provider",

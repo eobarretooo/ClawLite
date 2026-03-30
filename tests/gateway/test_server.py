@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import re
 import sys
 import threading
 import time
@@ -221,6 +222,73 @@ class GatewayAdminPatchPreviewProvider:
                 metadata={},
             )
         return LLMResult(text="Preview ready.", model="fake/gateway-admin-patch-preview", tool_calls=[], metadata={})
+
+
+class GatewayAdminPreviewApplyProvider:
+    def __init__(self) -> None:
+        self.stage = 0
+
+    def get_default_model(self) -> str:
+        return "fake/gateway-admin-preview-apply"
+
+    async def complete(self, *, messages, tools):
+        del tools
+        transcript = json.dumps(messages, ensure_ascii=False)
+        if "Mostra e depois aplica com seguranca." in transcript and self.stage == 0:
+            self.stage = 1
+            return LLMResult(
+                text="Preparing verified preview.",
+                model="fake/gateway-admin-preview-apply",
+                tool_calls=[
+                    ToolCall(
+                        id="call_gateway_admin_verified_preview",
+                        name="gateway_admin",
+                        arguments={
+                            "action": "config_intent_preview",
+                            "intent": "set_default_tool_timeout",
+                            "timeout_s": 67,
+                            "note": "Would raise the default tool timeout to 67s.",
+                        },
+                    )
+                ],
+                metadata={},
+            )
+        if self.stage == 1:
+            preview_token = ""
+            for message in reversed(messages):
+                if str(message.get("role", "")).strip() != "tool":
+                    continue
+                if str(message.get("name", "")).strip() != "gateway_admin":
+                    continue
+                try:
+                    payload = json.loads(str(message.get("content", "") or ""))
+                except Exception:
+                    continue
+                candidate = str(payload.get("preview_token", "") or "").strip().lower()
+                if re.fullmatch(r"[0-9a-f]{64}", candidate):
+                    preview_token = candidate
+                    break
+            if preview_token:
+                self.stage = 2
+                return LLMResult(
+                    text="Applying verified preview.",
+                    model="fake/gateway-admin-preview-apply",
+                    tool_calls=[
+                        ToolCall(
+                            id="call_gateway_admin_verified_apply",
+                            name="gateway_admin",
+                            arguments={
+                                "action": "config_intent_and_restart",
+                                "intent": "set_default_tool_timeout",
+                                "timeout_s": 67,
+                                "note": "Would raise the default tool timeout to 67s.",
+                                "preview_token": preview_token,
+                            },
+                        )
+                    ],
+                    metadata={},
+                )
+        return LLMResult(text="Restart scheduled.", model="fake/gateway-admin-preview-apply", tool_calls=[], metadata={})
 
 
 class GatewayAdminIntentCatalogProvider:
@@ -977,6 +1045,56 @@ def test_gateway_chat_can_preview_raw_config_patch_without_scheduling_restart(
     after = json.loads(config_path.read_text(encoding="utf-8"))
     assert after == before
     assert not restart_sentinel_path(cfg.state_path).exists()
+
+
+def test_gateway_chat_can_preview_then_apply_verified_config_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    cfg = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        scheduler=SchedulerConfig(heartbeat_interval_seconds=9999),
+        channels={},
+    )
+    save_raw_config_payload(cfg.to_dict(), path=config_path)
+
+    def _fake_schedule(*, delay_s: float = 0.0, reason: str = "", execv_fn=None):
+        del execv_fn
+        return {
+            "ok": True,
+            "scheduled": True,
+            "coalesced": False,
+            "delay_s": delay_s,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("clawlite.tools.gateway_admin.schedule_gateway_restart", _fake_schedule)
+
+    app = create_app(cfg, config_path=str(config_path))
+    app.state.runtime.workspace.should_run_bootstrap = lambda: False
+    app.state.runtime.engine.provider = GatewayAdminPreviewApplyProvider()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "session_id": "telegram:chat42:topic:9",
+                "channel": "telegram",
+                "chat_id": "chat42",
+                "text": "Mostra e depois aplica com seguranca.",
+                "runtime_metadata": {"message_thread_id": 9},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "Restart scheduled."
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["default_timeout_s"] == 67
+    sentinel = json.loads(restart_sentinel_path(cfg.state_path).read_text(encoding="utf-8"))
+    assert sentinel["payload"]["target"] == "telegram:chat42:topic:9"
+    assert sentinel["payload"]["note"] == "Would raise the default tool timeout to 67s."
 
 
 def test_gateway_chat_can_query_config_intent_catalog_without_mutation(

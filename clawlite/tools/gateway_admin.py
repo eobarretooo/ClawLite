@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -42,6 +43,7 @@ _DISALLOWED_SESSION_PREFIXES: tuple[str, ...] = (
 )
 _INTENT_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 _LOOKUP_PATH_RE = re.compile(r"^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*$")
+_PREVIEW_TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 _TOOL_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*(?::[a-z_][a-z0-9_]*)*$")
 _GATEWAY_ADMIN_RESTART_LOCK = threading.Lock()
 _SAFE_EDITABLE_PATH_PATTERNS: tuple[str, ...] = (
@@ -219,6 +221,10 @@ def _default_note(*, changed_paths: list[str]) -> str:
     if len(changed_paths) == 1:
         return f"Applied the requested config change for `{changed_paths[0]}`."
     return f"Applied the requested config change for {len(changed_paths)} config fields."
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _normalize_lookup_path(value: Any) -> str:
@@ -449,6 +455,15 @@ def _normalize_tool_name(value: Any) -> str:
     return tool_name
 
 
+def _normalize_preview_token(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    if not token:
+        return ""
+    if _PREVIEW_TOKEN_RE.fullmatch(token) is None:
+        raise RuntimeError("gateway_admin_preview_token_invalid")
+    return token
+
+
 def _coerce_bool_argument(value: Any, *, key: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -642,7 +657,8 @@ class GatewayAdminTool(Tool):
         "Prefer config_intent_catalog to discover supported safe presets, then use config_intent_preview or config_intent_and_restart, "
         "and use config_schema_lookup or config_patch_preview before raw patching. "
         "For config_patch_and_restart, always pass a short human-readable note describing what was enabled or changed; "
-        "ClawLite will send that note back after the gateway restarts."
+        "ClawLite will send that note back after the gateway restarts. "
+        "When applying after a preview, carry the preview_token from config_intent_preview or config_patch_preview into the real apply call."
     )
 
     def __init__(
@@ -696,6 +712,14 @@ class GatewayAdminTool(Tool):
                 "note": {
                     "type": "string",
                     "description": "Human-readable post-restart confirmation note.",
+                },
+                "preview_token": {
+                    "type": "string",
+                    "description": (
+                        "Optional verification token returned by config_intent_preview or config_patch_preview. "
+                        "If supplied on config_intent_and_restart or config_patch_and_restart, the live apply must "
+                        "match the previewed patch, note, and config base or the tool fails closed."
+                    ),
                 },
                 "restart_delay_s": {
                     "type": "number",
@@ -823,7 +847,48 @@ class GatewayAdminTool(Tool):
         if gateway_restart_pending():
             raise RuntimeError("gateway_restart_already_pending")
 
-    def _preview_patch(self, *, patch: dict[str, Any], note: str, action: str) -> dict[str, Any]:
+    def _preview_token(
+        self,
+        *,
+        preview_scope: str,
+        patch: dict[str, Any],
+        note: str,
+        target_payload: dict[str, Any],
+    ) -> tuple[str, str]:
+        basis_hash = hashlib.sha256(_canonical_json(target_payload).encode("utf-8")).hexdigest()
+        token_payload = {
+            "preview_scope": str(preview_scope or "").strip().lower(),
+            "patch": patch,
+            "note": note,
+            "config_path": str(self._config_path or ""),
+            "config_profile": str(self._config_profile or ""),
+            "target_basis_hash": basis_hash,
+        }
+        token = hashlib.sha256(_canonical_json(token_payload).encode("utf-8")).hexdigest()
+        return (token, basis_hash)
+
+    def _verify_preview_token(
+        self,
+        *,
+        arguments: dict[str, Any],
+        preview_scope: str,
+        patch: dict[str, Any],
+        note: str,
+        target_payload: dict[str, Any],
+    ) -> None:
+        provided = _normalize_preview_token(arguments.get("preview_token"))
+        if not provided:
+            return
+        expected, _basis_hash = self._preview_token(
+            preview_scope=preview_scope,
+            patch=patch,
+            note=note,
+            target_payload=target_payload,
+        )
+        if provided != expected:
+            raise RuntimeError("gateway_admin_preview_token_mismatch")
+
+    def _preview_patch(self, *, patch: dict[str, Any], note: str, action: str, preview_scope: str) -> dict[str, Any]:
         changed_paths = _validate_patch_paths(patch)
         effective_payload = load_raw_config_payload(self._config_path, profile=self._config_profile)
         target_payload = load_target_config_payload(self._config_path, profile=self._config_profile)
@@ -866,12 +931,21 @@ class GatewayAdminTool(Tool):
                 }
             )
         restart_required = updated_target != target_payload
+        preview_token, basis_hash = self._preview_token(
+            preview_scope=preview_scope,
+            patch=patch,
+            note=note,
+            target_payload=target_payload,
+        )
         return {
             "ok": True,
             "action": action,
             "preview_only": True,
             "changed_paths": changed_paths,
             "resolved_patch": patch,
+            "preview_scope": preview_scope,
+            "preview_basis_hash": basis_hash,
+            "preview_token": preview_token,
             "would_change": restart_required,
             "config_path": str(self._config_path or ""),
             "config_profile": str(self._config_profile or ""),
@@ -881,11 +955,18 @@ class GatewayAdminTool(Tool):
             "changes": changes,
         }
 
-    def _apply_patch_and_restart(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    def _apply_patch_and_restart(
+        self,
+        arguments: dict[str, Any],
+        ctx: ToolContext,
+        *,
+        preview_scope: str = "config_patch",
+    ) -> dict[str, Any]:
         raw_patch = arguments.get("patch")
         if not isinstance(raw_patch, dict) or not raw_patch:
             raise RuntimeError("gateway_admin_requires_non_empty_patch")
         changed_paths = _validate_patch_paths(raw_patch)
+        note = str(arguments.get("note", "") or "").strip() or _default_note(changed_paths=changed_paths)
 
         target_payload = load_target_config_payload(self._config_path, profile=self._config_profile)
         base_payload = load_raw_config_payload(self._config_path, profile=None) if self._config_profile else {}
@@ -893,6 +974,13 @@ class GatewayAdminTool(Tool):
         effective_candidate = _deep_merge(base_payload, updated_target) if self._config_profile else updated_target
         _validate_config_keys(effective_candidate)
         AppConfig.model_validate(effective_candidate)
+        self._verify_preview_token(
+            arguments=arguments,
+            preview_scope=preview_scope,
+            patch=raw_patch,
+            note=note,
+            target_payload=target_payload,
+        )
         if updated_target == target_payload:
             return {
                 "ok": True,
@@ -906,7 +994,6 @@ class GatewayAdminTool(Tool):
 
         self._ensure_restart_not_pending()
         saved_path = save_raw_config_payload(updated_target, self._config_path, profile=self._config_profile)
-        note = str(arguments.get("note", "") or "").strip() or _default_note(changed_paths=changed_paths)
         try:
             sentinel_payload = build_restart_sentinel_payload(
                 kind="config_patch",
@@ -952,7 +1039,12 @@ class GatewayAdminTool(Tool):
             raise RuntimeError("gateway_admin_requires_non_empty_patch")
         changed_paths = _validate_patch_paths(raw_patch)
         note = str(arguments.get("note", "") or "").strip() or _default_note(changed_paths=changed_paths)
-        return self._preview_patch(patch=raw_patch, note=note, action="config_patch_preview")
+        return self._preview_patch(
+            patch=raw_patch,
+            note=note,
+            action="config_patch_preview",
+            preview_scope="config_patch",
+        )
 
     def _apply_intent_and_restart(self, arguments: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         intent, patch, default_note = _build_intent_patch(arguments)
@@ -960,7 +1052,11 @@ class GatewayAdminTool(Tool):
         patch_arguments["patch"] = patch
         if not str(patch_arguments.get("note", "") or "").strip():
             patch_arguments["note"] = default_note
-        payload = self._apply_patch_and_restart(patch_arguments, ctx)
+        payload = self._apply_patch_and_restart(
+            patch_arguments,
+            ctx,
+            preview_scope=f"config_intent:{intent}",
+        )
         payload["action"] = "config_intent_and_restart"
         payload["intent"] = intent
         payload["resolved_patch"] = patch
@@ -969,7 +1065,12 @@ class GatewayAdminTool(Tool):
     def _preview_intent(self, arguments: dict[str, Any]) -> dict[str, Any]:
         intent, patch, default_note = _build_intent_patch(arguments)
         note = str(arguments.get("note", "") or "").strip() or default_note
-        payload = self._preview_patch(patch=patch, note=note, action="config_intent_preview")
+        payload = self._preview_patch(
+            patch=patch,
+            note=note,
+            action="config_intent_preview",
+            preview_scope=f"config_intent:{intent}",
+        )
         payload["intent"] = intent
         return payload
 

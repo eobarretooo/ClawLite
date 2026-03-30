@@ -343,6 +343,9 @@ def test_gateway_admin_config_intent_preview_reports_web_fetch_patch_without_wri
         assert payload["action"] == "config_intent_preview"
         assert payload["intent"] == "set_web_fetch_limits"
         assert payload["preview_only"] is True
+        assert payload["preview_scope"] == "config_intent:set_web_fetch_limits"
+        assert len(payload["preview_basis_hash"]) == 64
+        assert len(payload["preview_token"]) == 64
         assert payload["restart_required"] is True
         assert payload["would_change"] is True
         assert payload["changed_paths"] == [
@@ -411,6 +414,9 @@ def test_gateway_admin_config_patch_preview_reports_dynamic_timeout_without_writ
         )
         assert payload["action"] == "config_patch_preview"
         assert payload["preview_only"] is True
+        assert payload["preview_scope"] == "config_patch"
+        assert len(payload["preview_basis_hash"]) == 64
+        assert len(payload["preview_token"]) == 64
         assert payload["restart_required"] is True
         assert payload["would_change"] is True
         assert payload["changed_paths"] == ["tools.timeouts.web_fetch"]
@@ -463,6 +469,8 @@ def test_gateway_admin_config_intent_preview_reports_web_timeouts_without_writin
             )
         )
         assert payload["intent"] == "set_web_timeouts"
+        assert payload["preview_scope"] == "config_intent:set_web_timeouts"
+        assert len(payload["preview_token"]) == 64
         assert payload["changed_paths"] == ["tools.web.search_timeout", "tools.web.timeout"]
         changes = {row["path"]: row for row in payload["changes"]}
         assert changes["tools.web.timeout"]["effective_next_value"] == 18.0
@@ -515,6 +523,63 @@ def test_gateway_admin_config_intent_and_restart_sets_default_tool_timeout(
 
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["tools"]["default_timeout_s"] == 31
+
+
+def test_gateway_admin_config_intent_and_restart_accepts_matching_preview_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        preview = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_preview",
+                    "intent": "set_default_tool_timeout",
+                    "timeout_s": 31,
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        payload = json.loads(
+            await tool.run(
+                {
+                    "action": "config_intent_and_restart",
+                    "intent": "set_default_tool_timeout",
+                    "timeout_s": 31,
+                    "preview_token": preview["preview_token"],
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        assert payload["action"] == "config_intent_and_restart"
+        assert payload["changed"] is True
+        assert payload["intent"] == "set_default_tool_timeout"
+        assert payload["changed_paths"] == ["tools.default_timeout_s"]
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["default_timeout_s"] == 31
+    sentinel = consume_restart_sentinel(tmp_path / "state")
+    assert sentinel is not None
+    assert sentinel["changed_paths"] == ["tools.default_timeout_s"]
 
 
 def test_gateway_admin_config_intent_and_restart_sets_named_tool_timeout(
@@ -817,6 +882,64 @@ def test_gateway_admin_rejects_when_restart_already_pending(
             )
 
     asyncio.run(_scenario())
+
+
+def test_gateway_admin_config_patch_and_restart_rejects_stale_preview_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    initial = AppConfig(
+        workspace_path=str(tmp_path / "workspace"),
+        state_path=str(tmp_path / "state"),
+        channels={},
+    )
+    save_raw_config_payload(initial.to_dict(), path=config_path)
+    monkeypatch.setattr(
+        "clawlite.tools.gateway_admin.schedule_gateway_restart",
+        lambda **kwargs: {"ok": True, "scheduled": True, "coalesced": False, **kwargs},
+    )
+    tool = GatewayAdminTool(
+        config_path=config_path,
+        config_profile=None,
+        state_path=tmp_path / "state",
+    )
+
+    async def _scenario() -> None:
+        preview = json.loads(
+            await tool.run(
+                {
+                    "action": "config_patch_preview",
+                    "patch": {"tools": {"default_timeout_s": 44}},
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+        )
+        save_raw_config_payload(
+            {
+                **initial.to_dict(),
+                "tools": {
+                    **initial.to_dict()["tools"],
+                    "default_timeout_s": 25,
+                },
+            },
+            path=config_path,
+        )
+        with pytest.raises(RuntimeError, match="gateway_admin_preview_token_mismatch"):
+            await tool.run(
+                {
+                    "action": "config_patch_and_restart",
+                    "patch": {"tools": {"default_timeout_s": 44}},
+                    "preview_token": preview["preview_token"],
+                },
+                ToolContext(session_id="telegram:chat42", channel="telegram", user_id="chat42"),
+            )
+
+    asyncio.run(_scenario())
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["tools"]["default_timeout_s"] == 25
+    assert consume_restart_sentinel(tmp_path / "state") is None
 
 
 def test_gateway_admin_rolls_back_config_when_sentinel_write_fails(
