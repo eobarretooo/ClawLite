@@ -40,7 +40,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload to Codecov (non-blocking)
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         continue-on-error: true
         with:
           files: coverage.xml
