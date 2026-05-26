@@ -34,6 +34,7 @@ ONBOARDING_PROVIDER_ORDER: tuple[str, ...] = (
     "kimi-coding",
     "ollama",
     "vllm",
+    "llamacpp",
 )
 
 
@@ -196,6 +197,11 @@ PROVIDER_PROFILES: dict[str, ProviderProfile] = {
         family="local_runtime",
         recommended_models=("vllm/meta-llama/Llama-3.2-3B-Instruct",),
         onboarding_hint="vLLM requires a running server and a model loaded when the process starts.",
+    ),
+    "llamacpp": ProviderProfile(
+        family="local_runtime",
+        recommended_models=("llamacpp/qwen2.5-1.5b-instruct-q4_k_m", "llamacpp/glm-edge-1.5b-chat-q4_k_m", "llamacpp/minicpm4-0.5b-q4_k_m"),
+        onboarding_hint="llama.cpp requires a running llama-server on an OpenAI-compatible /v1 endpoint, usually http://127.0.0.1:8080/v1.",
     ),
 }
 

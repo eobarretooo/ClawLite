@@ -11,7 +11,8 @@
     "gemini":     { "api_key": "" },
     "openai":     { "api_key": "" },
     "anthropic":  { "api_key": "" },
-    "openrouter": { "api_key": "" }
+    "openrouter": { "api_key": "" },
+    "llamacpp":  { "api_key": "", "api_base": "http://127.0.0.1:8080/v1" }
   },
   "gateway": {
     "host": "127.0.0.1",

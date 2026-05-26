@@ -63,7 +63,7 @@ for provider_id in SUPPORTED_PROVIDERS:
     if spec is None:
         continue
     default_base = str(spec.default_base_url or "").strip()
-    if spec.name in {"ollama", "vllm"} and default_base:
+    if spec.name in {"ollama", "vllm", "llamacpp"} and default_base:
         default_base = normalize_local_runtime_base_url(spec.name, default_base)
     DEFAULT_PROVIDER_BASE_URLS[spec.name] = default_base
 
@@ -131,7 +131,7 @@ def _base_url_matches_provider(base_url: str, provider_key: str, spec: Any | Non
     if not candidate or spec is None:
         return False
     expected_default = str(default_base_url or "").strip().lower().rstrip("/")
-    if provider_key in {"ollama", "vllm"}:
+    if provider_key in {"ollama", "vllm", "llamacpp"}:
         detected_runtime = detect_local_runtime(candidate)
         if detected_runtime == provider_key:
             return True
@@ -153,7 +153,7 @@ def _provider_base_url_prompt_default(config: AppConfig, provider_key: str, defa
     current_base = str(config.provider.litellm_base_url or "").strip()
     spec = _provider_spec(provider_key)
     if current_base and _base_url_matches_provider(current_base, provider_key, spec, default_base_url):
-        if provider_key in {"ollama", "vllm"}:
+        if provider_key in {"ollama", "vllm", "llamacpp"}:
             return normalize_local_runtime_base_url(provider_key, current_base)
         return current_base
     return str(default_base_url or "").strip()
@@ -225,7 +225,7 @@ def _can_skip_local_runtime_base_url_prompt(
 ) -> bool:
     if not prefer_fast_defaults:
         return False
-    if provider_key not in {"ollama", "vllm"}:
+    if provider_key not in {"ollama", "vllm", "llamacpp"}:
         return False
     if provider_key != current_provider or not str(provider_hint or "").strip() or provider_alternatives:
         return False
@@ -368,7 +368,7 @@ def _render_provider_suggestions(provider_key: str, *, base_url: str = "", oauth
         body.append(f"[bold]Suggested models:[/] {', '.join(recommended_models)}")
     if base_url:
         body.append(f"[bold]Base URL:[/] {base_url}")
-    if provider_key in {"ollama", "vllm"} and base_url:
+    if provider_key in {"ollama", "vllm", "llamacpp"} and base_url:
         normalized_base_url = normalize_local_runtime_base_url(provider_key, base_url)
         body.append(
             f"[bold]Local runtime:[/] ClawLite normalizes local runtime endpoints to {normalized_base_url} and checks that the model is loaded."
@@ -697,7 +697,7 @@ def apply_provider_selection(
     raw_base_url = str(base_url or "").strip() or DEFAULT_PROVIDER_BASE_URLS.get(provider_key, "")
     selected_base_url = (
         normalize_local_runtime_base_url(provider_key, raw_base_url)
-        if provider_key in {"ollama", "vllm"} and raw_base_url
+        if provider_key in {"ollama", "vllm", "llamacpp"} and raw_base_url
         else raw_base_url
     )
     selected_api_key = str(api_key or "").strip()
@@ -758,7 +758,7 @@ def probe_provider(
     headers: dict[str, str] = {}
     payload: dict[str, Any] | None = None
     probe_method = "GET"
-    auth_mode = "none" if provider_key in {"ollama", "vllm"} else "oauth" if spec.is_oauth else "api_key"
+    auth_mode = "none" if provider_key in {"ollama", "vllm", "llamacpp"} else "oauth" if spec.is_oauth else "api_key"
     transport = provider_transport_name(provider=provider_key, spec=spec, auth_mode=auth_mode)
     default_base_url = str(spec.default_base_url or "")
     key_envs = list(spec.key_envs)
@@ -909,7 +909,7 @@ def probe_provider(
             ),
         }
 
-    if provider_key not in {"ollama", "vllm"} and not key:
+    if provider_key not in {"ollama", "vllm", "llamacpp"} and not key:
         error = "api_key_missing"
         return {
             "ok": False,
@@ -965,7 +965,7 @@ def probe_provider(
                     error_detail = str(body.get("message", "") or body.get("detail", "") or "").strip()
             elif isinstance(body, str):
                 error_detail = body.strip()
-        elif provider_key in {"ollama", "vllm"}:
+        elif provider_key in {"ollama", "vllm", "llamacpp"}:
             model_check = probe_local_provider_runtime(
                 model=selected_model,
                 base_url=resolved_base,
@@ -995,7 +995,7 @@ def probe_provider(
             if hint not in hints:
                 hints.append(hint)
         ok = bool(response.is_success)
-        if provider_key in {"ollama", "vllm"}:
+        if provider_key in {"ollama", "vllm", "llamacpp"}:
             ok = ok and bool(model_check.get("ok", True))
         return {
             "ok": ok,
@@ -1246,7 +1246,7 @@ def _configure_model(
 
     # Show key URL if available
     key_url = _PROVIDER_KEY_URLS.get(provider_key, "")
-    if key_url and provider_key not in {"ollama", "vllm"}:
+    if key_url and provider_key not in {"ollama", "vllm", "llamacpp"}:
         console.print(f"\n  [dim]Get your API key at:[/] [underline]{key_url}[/]\n")
 
     provider_default_base = DEFAULT_PROVIDER_BASE_URLS.get(provider_key, "")
@@ -1297,7 +1297,7 @@ def _configure_model(
             "account_id": str(oauth_status.get("account_id", "") or "").strip(),
             "source": str(oauth_status.get("source", "") or "").strip(),
         }
-    elif provider_key not in {"ollama", "vllm"}:
+    elif provider_key not in {"ollama", "vllm", "llamacpp"}:
         provider_target = _resolve_provider_probe_target(config, provider_key)
         detected_api_key = str(provider_target.get("api_key", "") or "").strip()
         detected_api_key_source = str(provider_target.get("api_key_source", "") or "").strip()

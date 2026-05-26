@@ -23,7 +23,7 @@ def normalize_provider_probe_base_url(provider: str, base_url: str) -> str:
     text = str(base_url or "").strip()
     if not text:
         return ""
-    if provider_key in {"ollama", "vllm"}:
+    if provider_key in {"ollama", "vllm", "llamacpp"}:
         text = normalize_local_runtime_base_url(provider_key, text)
     return text.rstrip("/")
 

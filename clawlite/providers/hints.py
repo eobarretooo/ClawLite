@@ -81,12 +81,16 @@ def provider_probe_hints(
         _append_hint(hints, "The Ollama local probe checks /api/tags and verifies the configured model.")
     elif transport == "local_runtime" and provider_name == "vllm":
         _append_hint(hints, "The vLLM local probe checks /health and /v1/models.")
+    elif transport == "local_runtime" and provider_name == "llamacpp":
+        _append_hint(hints, "The llama.cpp local probe checks /v1/models on the running llama-server.")
 
     if not error_text and int(status_code or 0) < 400:
         if provider_name == "ollama":
             _append_hint(hints, "The local Ollama runtime responded normally.")
         elif provider_name == "vllm":
             _append_hint(hints, "The local vLLM runtime responded normally.")
+        elif provider_name == "llamacpp":
+            _append_hint(hints, "The local llama.cpp runtime responded normally.")
         return hints
 
     if error_text == "api_key_missing":
@@ -115,6 +119,11 @@ def provider_probe_hints(
     if lowered.startswith("provider_config_error:vllm_model_missing:"):
         model_name = error_text.rsplit(":", 1)[-1]
         _append_hint(hints, f"Serve model '{model_name}' in vLLM or adjust the configured model.")
+    if lowered.startswith("provider_config_error:llamacpp_unreachable:") or (provider_name == "llamacpp" and _networkish(lowered)):
+        _append_hint(hints, "Start llama-server and confirm it is listening on http://127.0.0.1:8080.")
+    if lowered.startswith("provider_config_error:llamacpp_model_missing:"):
+        model_name = error_text.rsplit(":", 1)[-1]
+        _append_hint(hints, f"Start llama-server with the intended GGUF model or adjust the configured model name '{model_name}'.")
 
     if lowered.startswith("http_status:401") or lowered.startswith("http_status:403"):
         _append_hint(hints, "Authentication was rejected; review the configured key and the associated account.")
@@ -123,7 +132,7 @@ def provider_probe_hints(
     if lowered.startswith("http_status:404"):
         if transport == "anthropic":
             _append_hint(hints, "The Anthropic-compatible endpoint was not found; review the api_base and provider compatibility.")
-        elif provider_name in {"ollama", "vllm"}:
+        elif provider_name in {"ollama", "vllm", "llamacpp"}:
             _append_hint(hints, "The runtime responded without the expected route; review the base URL and server version.")
         elif default_base_url:
             _append_hint(hints, f"Review whether the api_base follows the expected pattern for this provider: {default_base_url}.")
@@ -197,7 +206,7 @@ def provider_status_hints(
     )
     if configured and auth_mode == "api_key":
         _append_hint(hints, "Provider credentials were detected; the next step is to validate them with a live provider probe.")
-    if configured and auth_mode == "none" and provider_name in {"ollama", "vllm"}:
+    if configured and auth_mode == "none" and provider_name in {"ollama", "vllm", "llamacpp"}:
         _append_hint(hints, "Local runtime is configured; verify that the model is loaded before using it in production.")
     return hints
 

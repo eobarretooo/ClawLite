@@ -32,7 +32,7 @@ def _base_with_path(base_url: str) -> str:
 def _local_runtime_root(runtime: str, base_url: str) -> str:
     candidate = _base_with_path(base_url)
     runtime_name = str(runtime or "").strip().lower()
-    if runtime_name in {"ollama", "vllm"} and candidate.endswith("/v1"):
+    if runtime_name in {"ollama", "vllm", "llamacpp"} and candidate.endswith("/v1"):
         return candidate[:-3]
     return candidate
 
@@ -42,7 +42,7 @@ def normalize_local_runtime_base_url(runtime: str, base_url: str) -> str:
     if not candidate:
         return candidate
     runtime_name = str(runtime or "").strip().lower()
-    if runtime_name in {"ollama", "vllm"}:
+    if runtime_name in {"ollama", "vllm", "llamacpp"}:
         return f"{_local_runtime_root(runtime_name, candidate)}/v1"
     return candidate
 
@@ -81,6 +81,8 @@ def detect_local_runtime(base_url: str) -> str:
         return "ollama"
     if parsed.port == 8000 or "vllm" in raw:
         return "vllm"
+    if parsed.port == 8080 or "llamacpp" in raw or "llama.cpp" in raw or "llama-server" in raw:
+        return "llamacpp"
     return ""
 
 
@@ -147,17 +149,18 @@ def probe_local_provider_runtime(*, model: str, base_url: str, timeout_s: float 
                 return payload
 
             runtime_root = _local_runtime_root(runtime, base_url)
-            health_response = client.get(_join_base(runtime_root, "/health"))
-            if not health_response.is_success:
-                payload["ok"] = False
-                payload["error"] = f"provider_config_error:vllm_unreachable:{base_url}"
-                payload["detail"] = f"http_status:{health_response.status_code}"
-                return payload
+            if runtime == "vllm":
+                health_response = client.get(_join_base(runtime_root, "/health"))
+                if not health_response.is_success:
+                    payload["ok"] = False
+                    payload["error"] = f"provider_config_error:vllm_unreachable:{base_url}"
+                    payload["detail"] = f"http_status:{health_response.status_code}"
+                    return payload
 
             models_response = client.get(_join_base(normalize_local_runtime_base_url(runtime, base_url), "/models"))
             if not models_response.is_success:
                 payload["ok"] = False
-                payload["error"] = f"provider_config_error:vllm_unreachable:{base_url}"
+                payload["error"] = f"provider_config_error:{runtime}_unreachable:{base_url}"
                 payload["detail"] = f"http_status:{models_response.status_code}"
                 return payload
             try:
@@ -170,7 +173,7 @@ def probe_local_provider_runtime(*, model: str, base_url: str, timeout_s: float 
                 return payload
 
             payload["ok"] = False
-            payload["error"] = f"provider_config_error:vllm_model_missing:{target_model}"
+            payload["error"] = f"provider_config_error:{runtime}_model_missing:{target_model}"
             payload["detail"] = "model_not_listed"
             return payload
     except Exception as exc:

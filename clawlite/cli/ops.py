@@ -1497,7 +1497,7 @@ def provider_status(config: AppConfig, provider: str = "openai-codex") -> dict[s
         base_url = spec.default_base_url
         base_url_source = f"spec:{spec.name}.default_base_url"
 
-    auth_mode = "none" if spec.name in {"ollama", "vllm"} else "api_key"
+    auth_mode = "none" if spec.name in {"ollama", "vllm", "llamacpp"} else "api_key"
     configured = bool(base_url) if auth_mode == "none" else bool(api_key)
     transport = provider_transport_name(provider=spec.name, spec=spec, auth_mode=auth_mode)
     last_live_probe = _last_live_provider_probe(
@@ -1692,13 +1692,20 @@ def _resolve_provider_probe_target(config: AppConfig, provider_name: str) -> dic
             "account_id": str(oauth_status.get("account_id", "") or "").strip(),
         }
 
-    if provider_key in {"ollama", "vllm"}:
+    if provider_key in {"ollama", "vllm", "llamacpp"}:
         selected = _provider_override(config, provider_key)
         cfg_base = str(getattr(selected, "api_base", "") or "").strip()
         global_base = str(config.provider.litellm_base_url or "").strip()
-        env_name = "OLLAMA_BASE_URL" if provider_key == "ollama" else "VLLM_BASE_URL"
+        if provider_key == "ollama":
+            env_name = "OLLAMA_BASE_URL"
+            default_base = "http://127.0.0.1:11434"
+        elif provider_key == "vllm":
+            env_name = "VLLM_BASE_URL"
+            default_base = "http://127.0.0.1:8000/v1"
+        else:
+            env_name = "LLAMACPP_BASE_URL"
+            default_base = "http://127.0.0.1:8080/v1"
         env_base = str(os.getenv(env_name, "") or "").strip()
-        default_base = "http://127.0.0.1:11434" if provider_key == "ollama" else "http://127.0.0.1:8000/v1"
         base_url = cfg_base or global_base or env_base or default_base
         base_url_source = (
             f"config:providers.{provider_key}.api_base"
@@ -1796,7 +1803,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
     hint_api_key = str(getattr(hint_selected, "api_key", "") or "").strip()
     hint_api_base = str(getattr(hint_selected, "api_base", "") or "").strip()
     local_base_hint = ""
-    for local_name in ("ollama", "vllm"):
+    for local_name in ("ollama", "vllm", "llamacpp"):
         local_selected = _provider_override(config, local_name)
         local_candidate = str(getattr(local_selected, "api_base", "") or "").strip()
         if local_candidate:
@@ -2150,7 +2157,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
         error = "" if ok else f"http_status:{status_code}"
         if not ok:
             error_detail = _response_error_detail(response)
-        elif provider not in {"ollama", "vllm"} and payload is None:
+        elif provider not in {"ollama", "vllm", "llamacpp"} and payload is None:
             try:
                 response_payload = response.json()
             except Exception:
@@ -2169,7 +2176,7 @@ def provider_live_probe(config: AppConfig, *, timeout: float = 3.0) -> dict[str,
         error = str(exc)
         error_detail = ""
 
-    if ok and provider in {"ollama", "vllm"}:
+    if ok and provider in {"ollama", "vllm", "llamacpp"}:
         model_check = probe_local_provider_runtime(
             model=model,
             base_url=base_url,
@@ -2294,7 +2301,7 @@ def provider_use_model(
     fallback_norm = str(fallback_model or "").strip()
     guidance = _provider_profile_payload(provider_norm)
     provider_spec = _provider_spec(provider_norm)
-    auth_mode = "oauth" if bool(provider_spec and provider_spec.is_oauth) else ("none" if provider_norm in {"ollama", "vllm"} else "api_key")
+    auth_mode = "oauth" if bool(provider_spec and provider_spec.is_oauth) else ("none" if provider_norm in {"ollama", "vllm", "llamacpp"} else "api_key")
     transport = provider_transport_name(provider=provider_norm, spec=provider_spec, auth_mode=auth_mode)
 
     if not provider_norm:
@@ -2411,7 +2418,7 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
     hint_api_key = str(getattr(hint_selected, "api_key", "") or "")
     hint_api_base = str(getattr(hint_selected, "api_base", "") or "")
     local_base_hint = ""
-    for local_name in ("ollama", "vllm"):
+    for local_name in ("ollama", "vllm", "llamacpp"):
         local_selected = _provider_override(config, local_name)
         local_candidate = str(getattr(local_selected, "api_base", "") or "")
         if local_candidate.strip():
@@ -2458,7 +2465,7 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
     warnings: list[str] = []
 
     oauth = bool(spec.is_oauth) if spec is not None else False
-    auth_mode = "oauth" if oauth else ("none" if provider_name in {"ollama", "vllm"} else "api_key")
+    auth_mode = "oauth" if oauth else ("none" if provider_name in {"ollama", "vllm", "llamacpp"} else "api_key")
     transport = provider_transport_name(provider=provider_name, spec=spec, auth_mode=auth_mode)
     guidance = _provider_profile_payload(provider_name)
     checks.append({"name": "provider_detected", "status": "ok", "detail": provider_name})
@@ -2497,7 +2504,7 @@ def provider_validation(config: AppConfig) -> dict[str, Any]:
             }
         )
     else:
-        key_optional = provider_name in {"ollama", "vllm"}
+        key_optional = provider_name in {"ollama", "vllm", "llamacpp"}
         has_key = bool(resolved_api_key) or any(env_hits.values()) or key_optional
         if has_key:
             checks.append(

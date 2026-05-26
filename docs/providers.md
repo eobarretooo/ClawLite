@@ -304,6 +304,32 @@ Notes:
 }
 ```
 
+
+### llama.cpp / llama-server
+
+```json
+{
+  "provider": {
+    "model": "llamacpp/qwen2.5-1.5b-instruct-q4_k_m"
+  },
+  "providers": {
+    "llamacpp": {
+      "api_key": "",
+      "api_base": "http://127.0.0.1:8080/v1"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "llamacpp/qwen2.5-1.5b-instruct-q4_k_m",
+      "max_tokens": 1024,
+      "temperature": 0.2
+    }
+  }
+}
+```
+
+Use this when `llama-server` is running locally, for example on Termux. The endpoint is OpenAI-compatible and does not need an API key. See [`docs/TERMUX_LLAMA_CPP.md`](TERMUX_LLAMA_CPP.md) for Android/Termux commands and diagnostics.
+
 ### Custom OpenAI-compatible Endpoint
 
 ```json
@@ -329,6 +355,7 @@ ClawLite probes local runtimes at startup:
 
 - Ollama: derives the runtime root from the configured base URL, preserves reverse-proxy prefixes, then checks `/api/tags` and `/api/show`.
 - vLLM: preserves reverse-proxy prefixes when checking `/health` and `/v1/models`.
+- llama.cpp: preserves reverse-proxy prefixes when checking `/v1/models` on `llama-server`.
 
 If every local candidate is unavailable, gateway startup fails fast with an explicit provider config error. If a local primary is down but a non-local fallback exists, startup continues and the failover provider takes over at request time.
 

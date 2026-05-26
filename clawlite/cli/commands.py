@@ -1170,7 +1170,7 @@ def _docker_secret_status(
     provider_model = str(provider_payload.get("model", "") or "")
     spec = _provider_spec(provider_name) if provider_name else None
     provider_auth_mode = "oauth" if bool(spec and getattr(spec, "is_oauth", False)) else (
-        "none" if provider_name in {"ollama", "vllm"} else "api_key"
+        "none" if provider_name in {"ollama", "vllm", "llamacpp"} else "api_key"
     )
     provider_configured = provider_auth_mode == "none"
     provider_source = ""

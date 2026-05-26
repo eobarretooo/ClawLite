@@ -347,6 +347,15 @@ SPECS: tuple[ProviderSpec, ...] = (
         default_base_url="http://127.0.0.1:8000/v1",
         base_url_keywords=("vllm",),
     ),
+    ProviderSpec(
+        name="llamacpp",
+        aliases=("llama_cpp", "llama.cpp", "llama-server"),
+        keywords=("llamacpp", "llama.cpp", "llama-server"),
+        model_prefixes=("llamacpp/", "llama_cpp/", "llama.cpp/"),
+        key_envs=(),
+        default_base_url="http://127.0.0.1:8080/v1",
+        base_url_keywords=("llamacpp", "llama.cpp", "llama-server"),
+    ),
 )
 
 
@@ -899,7 +908,7 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
     extra_headers_raw = selected_cfg.get("extra_headers", selected_cfg.get("extraHeaders", {}))
     extra_headers = dict(extra_headers_raw) if isinstance(extra_headers_raw, dict) else {}
     runtime_base_url = resolved.base_url
-    if resolved.name in {"ollama", "vllm"}:
+    if resolved.name in {"ollama", "vllm", "llamacpp"}:
         runtime_base_url = normalize_local_runtime_base_url(resolved.name, resolved.base_url)
 
     return LiteLLMProvider(
@@ -909,7 +918,7 @@ def _build_provider_single(config: dict[str, Any]) -> LLMProvider:
         provider_name=resolved.name,
         openai_compatible=resolved.openai_compatible,
         native_transport=resolved.native_transport,
-        allow_empty_api_key=resolved.name in {"ollama", "vllm"},
+        allow_empty_api_key=resolved.name in {"ollama", "vllm", "llamacpp"},
         extra_headers=extra_headers,
         **reliability,
     )
