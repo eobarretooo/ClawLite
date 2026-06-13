@@ -22,7 +22,7 @@ dependencies = [
   "rank_bm25>=0.2.2",
   "loguru>=0.7.2",
   "json-repair>=0.30.0",
-  "croniter>=6.0.0",
+  "croniter>=6.2.2",
   "portalocker>=3.0.0",
   "pyyaml>=6.0.2",
 ]
