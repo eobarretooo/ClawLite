@@ -32,7 +32,7 @@ browser = [
   "playwright>=1.46.0",
 ]
 runtime = [
-  "redis>=5.0.0",
+  "redis>=7.4.0",
 ]
 observability = [
   "opentelemetry-sdk>=1.27.0",
@@ -47,7 +47,7 @@ media = [
 ]
 all = [
   "playwright>=1.46.0",
-  "redis>=5.0.0",
+  "redis>=7.4.0",
   "opentelemetry-sdk>=1.27.0",
   "opentelemetry-exporter-otlp>=1.27.0",
   "python-telegram-bot>=21.0",
@@ -56,7 +56,7 @@ all = [
 ]
 dev = [
   "playwright>=1.46.0",
-  "redis>=5.0.0",
+  "redis>=7.4.0",
   "opentelemetry-sdk>=1.27.0",
   "opentelemetry-exporter-otlp>=1.27.0",
   "python-telegram-bot>=21.0",
