@@ -23,7 +23,7 @@ dependencies = [
   "loguru>=0.7.2",
   "json-repair>=0.30.0",
   "croniter>=6.0.0",
-  "portalocker>=3.0.0",
+  "portalocker>=3.2.0",
   "pyyaml>=6.0.2",
 ]
 
